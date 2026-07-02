@@ -1,0 +1,21 @@
+# Не пускаем в образ ничего лишнего и опасного
+.env
+.env.*
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+logs/
+tmp/

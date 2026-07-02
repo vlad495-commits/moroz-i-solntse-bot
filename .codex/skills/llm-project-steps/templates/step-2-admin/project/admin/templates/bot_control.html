@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Управление ботом — Admin{% endblock %}
+{% block content %}
+<h1>Управление ботом</h1>
+
+{% if error %}
+<div class="error">Не удалось подключиться к Redis: {{ error }}</div>
+{% endif %}
+
+<div class="bot-toggle">
+    <div class="bot-status">
+        Текущее состояние:
+        {% if paused %}
+        <span class="badge badge-status-error">⏸ ПАУЗА</span>
+        <p class="muted">Бот не отвечает на новые сообщения. Пользователи получают «бот на технической паузе».</p>
+        {% else %}
+        <span class="badge badge-status-finished">▶ Работает</span>
+        <p class="muted">Бот принимает и обрабатывает сообщения в обычном режиме.</p>
+        {% endif %}
+    </div>
+    <form method="post" action="/bot-control/toggle">
+        {% if paused %}
+        <button type="submit" class="btn btn-primary">Включить бота</button>
+        {% else %}
+        <button type="submit" class="btn btn-danger"
+                onclick="return confirm('Поставить бота на паузу? Все новые сообщения получат шаблонный ответ.')">
+            Поставить на паузу
+        </button>
+        {% endif %}
+    </form>
+</div>
+
+<h2>Что это</h2>
+<ul>
+    <li>Тумблер хранится в Redis-ключе <code>bot:paused</code>.</li>
+    <li>Бот проверяет флаг перед каждым входящим сообщением. Применяется немедленно (без рестарта).</li>
+    <li>Inflight-ответы (LLM уже отвечает) дойдут до пользователя — пауза влияет только на новые сообщения.</li>
+    <li>Если Redis недоступен — флаг считается выключенным (бот работает).</li>
+</ul>
+{% endblock %}

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Прогон #{{ run.id }} — Admin{% endblock %}
+{% block content %}
+<a href="/eval/" class="back">← К списку эвалов</a>
+
+<h1>Прогон эвалюэйшенов #{{ run.id }}</h1>
+<div class="meta">
+    Запущен: {{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}
+    {% if run.finished_at %} · Завершён: {{ run.finished_at.strftime('%H:%M:%S') }}{% endif %}
+    · Judge-модель: <code>{{ run.judge_model }}</code>
+</div>
+
+<div class="run-status" id="run-status">
+    <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+    </div>
+    <div class="progress-stats">
+        <span id="progress-text">{{ run.passed + run.failed }} / {{ run.total }}</span>
+        <span class="badge badge-status-{{ run.status }}" id="status-badge">{{ run.status }}</span>
+        <span>✅ <span id="passed-count">{{ run.passed }}</span></span>
+        <span>❌ <span id="failed-count">{{ run.failed }}</span></span>
+    </div>
+    {% if run.error_message %}
+    <div class="error">Ошибка: {{ run.error_message }}</div>
+    {% endif %}
+</div>
+
+<h2>Лог прогона</h2>
+<div class="run-log" id="run-log">
+    {% for r in results %}
+    <div class="log-row log-{{ r.verdict }}">
+        <span class="log-id">#{{ r.case_id or '?' }}</span>
+        <span class="log-verdict">
+            {% if r.verdict == 'pass' %}✅ PASS{% elif r.verdict == 'fail' %}❌ FAIL{% else %}⚠ ERROR{% endif %}
+        </span>
+        <span class="log-layer">
+            {% if r.check_layer == 'regex' %}<span class="chip">regex</span>
+            {% elif r.check_layer == 'judge' %}<span class="chip chip-judge">judge {{ "%.2f"|format(r.score or 0) }}</span>
+            {% endif %}
+        </span>
+        <span class="log-question">{{ r.question[:120] }}{% if r.question|length > 120 %}…{% endif %}</span>
+    </div>
+    {% endfor %}
+</div>
+
+<h2>Детали кейсов</h2>
+<div class="results-detail">
+    {% for r in results %}
+    <div class="result-card result-{{ r.verdict }}">
+        <div class="result-header">
+            <strong>Кейс #{{ r.case_id or '—' }}</strong>
+            <span class="badge badge-verdict-{{ r.verdict }}">{{ r.verdict|upper }}</span>
+            {% if r.check_layer %}<span class="chip">{{ r.check_layer }}</span>{% endif %}
+            {% if r.score is not none %}<span class="chip chip-score">{{ "%.2f"|format(r.score) }}</span>{% endif %}
+            <span class="muted">{{ r.duration_ms }} мс</span>
+        </div>
+        <div class="result-body">
+            <div><strong>Вопрос:</strong><div class="quoted">{{ r.question }}</div></div>
+            <div><strong>Эталон:</strong><div class="quoted">{{ r.expected_answer }}</div></div>
+            <div><strong>Ответ бота:</strong><div class="quoted quoted-actual">{{ r.actual_answer or '(нет ответа)' }}</div></div>
+            {% if r.judge_reasoning %}
+            <div><strong>Обоснование judge:</strong><div class="quoted reasoning">{{ r.judge_reasoning }}</div></div>
+            {% endif %}
+            {% if r.error_message %}
+            <div class="error">Ошибка: {{ r.error_message }}</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if run.status == 'running' %}
+<script>
+(function() {
+    const fill = document.getElementById('progress-fill');
+    const text = document.getElementById('progress-text');
+    const passed = document.getElementById('passed-count');
+    const failed = document.getElementById('failed-count');
+    const status = document.getElementById('status-badge');
+    const log = document.getElementById('run-log');
+    const total = {{ run.total }};
+
+    const es = new EventSource('/eval/runs/{{ run.id }}/stream');
+
+    es.addEventListener('progress', function(e) {
+        const d = JSON.parse(e.data);
+        const done = d.passed + d.failed;
+        const pct = total ? (done / total * 100) : 0;
+        fill.style.width = pct + '%';
+        text.textContent = done + ' / ' + total;
+        passed.textContent = d.passed;
+        failed.textContent = d.failed;
+        status.textContent = d.status;
+        status.className = 'badge badge-status-' + d.status;
+    });
+
+    es.addEventListener('result', function(e) {
+        const r = JSON.parse(e.data);
+        const row = document.createElement('div');
+        row.className = 'log-row log-' + r.verdict;
+        const verdict = r.verdict === 'pass' ? '✅ PASS' : (r.verdict === 'fail' ? '❌ FAIL' : '⚠ ERROR');
+        const layer = r.check_layer === 'judge'
+            ? '<span class="chip chip-judge">judge ' + (r.score !== null ? r.score.toFixed(2) : '?') + '</span>'
+            : (r.check_layer ? '<span class="chip">' + r.check_layer + '</span>' : '');
+        row.innerHTML = '<span class="log-id">#' + (r.case_id || '?') + '</span>' +
+                        '<span class="log-verdict">' + verdict + '</span>' +
+                        '<span class="log-layer">' + layer + '</span>' +
+                        '<span class="log-question">' + r.question + '</span>';
+        log.appendChild(row);
+        log.scrollTop = log.scrollHeight;
+    });
+
+    es.addEventListener('done', function() {
+        es.close();
+        setTimeout(function() { location.reload(); }, 1500);
+    });
+
+    es.addEventListener('error', function() {
+        es.close();
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

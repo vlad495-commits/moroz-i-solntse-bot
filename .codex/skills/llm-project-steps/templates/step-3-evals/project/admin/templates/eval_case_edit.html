@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{% if case %}Редактирование кейса #{{ case.id }}{% else %}Новый кейс{% endif %} — Admin{% endblock %}
+{% block content %}
+<a href="/eval/" class="back">← К списку эвалов</a>
+
+<h1>{% if case %}Редактирование кейса #{{ case.id }}{% else %}Новый тест-кейс{% endif %}</h1>
+
+<form method="post" action="{% if case %}/eval/cases/{{ case.id }}{% else %}/eval/cases{% endif %}" class="eval-form">
+    <label>
+        Категория
+        <input type="text" name="category" value="{{ case.category if case else 'general' }}" placeholder="general / faq / pricing / ...">
+    </label>
+
+    <label>
+        Вопрос пользователя <span class="req">*</span>
+        <textarea name="question" rows="3" required placeholder="Что задаёт пользователь">{{ case.question if case else '' }}</textarea>
+    </label>
+
+    <label>
+        Эталонный ответ <span class="req">*</span>
+        <textarea name="expected_answer" rows="6" required placeholder="Идеальный ответ ассистента (LLM-judge будет сравнивать с этим)">{{ case.expected_answer if case else '' }}</textarea>
+        <small>По этому ответу LLM-judge оценит фактический ответ бота по смыслу.</small>
+    </label>
+
+    <label>
+        Обязательные слова (по одному на строку)
+        <textarea name="expected_keywords" rows="4" placeholder="плазма
+давление
+&#10;Префикс r: для regex, например:
+r:плазм[аы]">{% if case %}{{ case.expected_keywords|join('\n') }}{% endif %}</textarea>
+        <small>
+            Если все эти слова найдены в фактическом ответе → сразу <strong>PASS</strong> (без LLM-judge, экономия).<br>
+            Если хоть одно не найдено → запускается LLM-judge для проверки по смыслу.<br>
+            Префикс <code>r:</code> = regex (например <code>r:плазм[аы]</code>).
+        </small>
+    </label>
+
+    <label>
+        Запрещённые слова (по одному на строку)
+        <textarea name="forbidden_keywords" rows="3" placeholder="ошибка
+не знаю
+извините">{% if case %}{{ case.forbidden_keywords|join('\n') }}{% endif %}</textarea>
+        <small>Если хоть одно из этих слов есть в ответе → запускается LLM-judge или fail.</small>
+    </label>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">{% if case %}Сохранить{% else %}Создать{% endif %}</button>
+        <a href="/eval/" class="btn">Отмена</a>
+    </div>
+</form>
+{% endblock %}

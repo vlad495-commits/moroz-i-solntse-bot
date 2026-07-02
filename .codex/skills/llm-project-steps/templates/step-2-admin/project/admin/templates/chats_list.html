@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Диалоги — Admin{% endblock %}
+{% block content %}
+<h1>Диалоги <span class="muted">({{ total }})</span></h1>
+
+{% if not chats %}
+<div class="empty">Пока нет диалогов. Бот ещё не получал сообщений или БД пуста.</div>
+{% else %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Чат</th>
+            <th>Юзер</th>
+            <th>Сообщений</th>
+            <th>Последнее</th>
+            <th>Токены</th>
+            <th>Кэш</th>
+            <th>Стоимость</th>
+            <th>Сэкономлено</th>
+            <th>LLM-вызовов</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in chats %}
+        <tr>
+            <td><a href="/chats/{{ c.chat_id }}">#{{ c.chat_id }}</a></td>
+            <td>{% if c.username %}@{{ c.username }}{% elif c.user_id %}id:{{ c.user_id }}{% else %}—{% endif %}</td>
+            <td>{{ c.message_count }}</td>
+            <td>{{ c.last_message_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>{{ c.total_tokens|int }}</td>
+            <td>{{ c.cached_tokens|int }}</td>
+            <td>{{ c.cost_usd|money }}</td>
+            <td class="savings">{{ c.savings_usd|money }}</td>
+            <td>{{ c.llm_calls }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

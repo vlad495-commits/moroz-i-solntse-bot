@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Диалог #{{ chat.chat_id }} — Admin{% endblock %}
+{% block content %}
+<a href="/" class="back">← К списку диалогов</a>
+
+<h1>Диалог #{{ chat.chat_id }}</h1>
+<div class="meta">
+    {% if chat.username %}@{{ chat.username }}{% elif chat.user_id %}user_id: {{ chat.user_id }}{% else %}неизвестный пользователь{% endif %}
+</div>
+
+<div class="stats-grid">
+    <div class="stat"><div class="stat-label">Сообщений</div><div class="stat-value">{{ chat.messages|length }}</div></div>
+    <div class="stat"><div class="stat-label">LLM-вызовов</div><div class="stat-value">{{ chat.stats.llm_calls or 0 }}</div></div>
+    <div class="stat"><div class="stat-label">Prompt-токенов</div><div class="stat-value">{{ (chat.stats.prompt_tokens or 0)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Completion-токенов</div><div class="stat-value">{{ (chat.stats.completion_tokens or 0)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Кэшировано</div><div class="stat-value">{{ (chat.stats.cached_tokens or 0)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Стоимость</div><div class="stat-value">{{ (chat.stats.cost_usd or 0)|money }}</div></div>
+    <div class="stat"><div class="stat-label">Сэкономлено</div><div class="stat-value savings">{{ (chat.stats.savings_usd or 0)|money }}</div></div>
+    <div class="stat"><div class="stat-label">Модель</div><div class="stat-value model">{{ chat.stats.last_model or '—' }}</div></div>
+</div>
+
+<h2>Сообщения</h2>
+<div class="messages">
+    {% for msg in chat.messages %}
+    <div class="msg msg-{{ msg.role }}">
+        <div class="msg-header">
+            <span class="msg-role">{{ 'Юзер' if msg.role == 'user' else 'Бот' }}</span>
+            <span class="msg-time">{{ msg.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+        </div>
+        <div class="msg-body">{{ msg.content }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

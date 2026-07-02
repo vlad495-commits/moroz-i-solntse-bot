@@ -1,0 +1,39 @@
+# Секреты
+.env
+.env.local
+.env.*.local
+
+# Временные файлы
+tmp/
+project/tmp/
+*.tmp
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Логи
+*.log
+logs/
+
+# БД-файлы
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+.docker/
+
+# Личные заметки
+Игнор/
