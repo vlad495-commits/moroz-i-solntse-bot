@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Версия промпта #{{ version.id }} — Admin{% endblock %}
+{% block content %}
+<a href="/prompt/" class="back">← К редактору</a>
+
+<h1>Версия промпта #{{ version.id }}</h1>
+<div class="meta">
+    Сохранена: {{ version.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+    {% if version.author %} · Автор: <code>{{ version.author }}</code>{% endif %}
+    {% if version.comment %} · Комментарий: {{ version.comment }}{% endif %}
+</div>
+
+<div class="quoted">{{ version.content }}</div>
+
+<div class="form-actions">
+    <form method="post" action="/prompt/rollback/{{ version.id }}">
+        <button type="submit" class="btn btn-primary"
+                onclick="return confirm('Откатиться на эту версию? Текущий промпт перезапишется и бот применит изменения.')">
+            Откатить на эту версию
+        </button>
+    </form>
+    <a href="/prompt/" class="btn">К редактору</a>
+</div>
+{% endblock %}

@@ -34,6 +34,36 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_messages_chat_created
             ON messages (chat_id, created_at DESC)
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id BIGSERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                user_id BIGINT,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                cached_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                model VARCHAR(64) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_token_usage_chat_created
+            ON token_usage (chat_id, created_at DESC)
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS prompt_versions (
+                id BIGSERIAL PRIMARY KEY,
+                content TEXT NOT NULL,
+                author VARCHAR(64),
+                comment TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_prompt_versions_created
+            ON prompt_versions (created_at DESC)
+        """)
 
         # --- Миграции существующих таблиц ---
         # Правило: новую колонку добавляй И в CREATE TABLE выше (для новых БД),
@@ -104,6 +134,31 @@ async def get_context(chat_id: int) -> list[dict[str, str]]:
         return []
 
 
+async def save_token_usage(
+    chat_id: int,
+    user_id: int | None,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_tokens: int,
+    total_tokens: int,
+    model: str,
+) -> None:
+    if not await _ensure_pool():
+        return
+    try:
+        async with _pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO token_usage
+                   (chat_id, user_id, prompt_tokens, completion_tokens,
+                    cached_tokens, total_tokens, model)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                chat_id, user_id, prompt_tokens, completion_tokens,
+                cached_tokens, total_tokens, model,
+            )
+    except Exception:
+        logger.exception("Ошибка сохранения token_usage")
+
+
 async def cleanup_old_records() -> dict[str, int]:
     """Удалить старые записи. Срок хранения — DATA_RETENTION_DAYS (дефолт 3 года).
 
@@ -115,15 +170,17 @@ async def cleanup_old_records() -> dict[str, int]:
         return {}
     if not await _ensure_pool():
         return {}
+    tables = ("messages", "token_usage")
     result = {}
     try:
         async with _pool.acquire() as conn:
-            status = await conn.execute(
-                "DELETE FROM messages "
-                "WHERE created_at < NOW() - ($1 || ' days')::INTERVAL",
-                str(DATA_RETENTION_DAYS),
-            )
-            result["messages"] = int(status.split()[-1])
+            for table in tables:
+                status = await conn.execute(
+                    f"DELETE FROM {table} "
+                    f"WHERE created_at < NOW() - ($1 || ' days')::INTERVAL",
+                    str(DATA_RETENTION_DAYS),
+                )
+                result[table] = int(status.split()[-1])
         return result
     except Exception:
         logger.exception("Ошибка автоочистки")

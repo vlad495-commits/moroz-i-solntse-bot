@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Статистика — Admin{% endblock %}
+{% block content %}
+<h1>Общая статистика</h1>
+
+<div class="stats-grid">
+    <div class="stat"><div class="stat-label">Всего чатов</div><div class="stat-value">{{ stats.total_chats|int }}</div></div>
+    <div class="stat"><div class="stat-label">Всего юзеров</div><div class="stat-value">{{ stats.total_users|int }}</div></div>
+    <div class="stat"><div class="stat-label">Всего сообщений</div><div class="stat-value">{{ stats.total_messages|int }}</div></div>
+    <div class="stat"><div class="stat-label">LLM-вызовов</div><div class="stat-value">{{ stats.total_llm_calls|int }}</div></div>
+    <div class="stat"><div class="stat-label">Prompt-токенов</div><div class="stat-value">{{ stats.prompt_tokens|int }}</div></div>
+    <div class="stat"><div class="stat-label">Completion-токенов</div><div class="stat-value">{{ stats.completion_tokens|int }}</div></div>
+    <div class="stat"><div class="stat-label">Кэшировано токенов</div><div class="stat-value">{{ stats.cached_tokens|int }}</div></div>
+    <div class="stat"><div class="stat-label">Всего токенов</div><div class="stat-value">{{ stats.total_tokens|int }}</div></div>
+    <div class="stat"><div class="stat-label">Стоимость</div><div class="stat-value">{{ stats.cost_usd|money }}</div></div>
+    <div class="stat"><div class="stat-label">Сэкономлено на кэше</div><div class="stat-value savings">{{ stats.savings_usd|money }}</div></div>
+    <div class="stat"><div class="stat-label">Инцидентов безопасности</div><div class="stat-value">{{ stats.total_incidents|int }}</div></div>
+</div>
+
+<h2>Последние инциденты безопасности</h2>
+{% if not incidents %}
+<div class="empty">Инцидентов нет.</div>
+{% else %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Время</th>
+            <th>Чат</th>
+            <th>Юзер</th>
+            <th>Тип</th>
+            <th>Причина</th>
+            <th>Сообщение</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for i in incidents %}
+        <tr>
+            <td>{{ i.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td><a href="/chats/{{ i.chat_id }}">#{{ i.chat_id }}</a></td>
+            <td>{% if i.username %}@{{ i.username }}{% elif i.user_id %}{{ i.user_id }}{% else %}—{% endif %}</td>
+            <td><span class="badge badge-{{ i.incident_type }}">{{ i.incident_type }}</span></td>
+            <td class="reason">{{ i.reason }}</td>
+            <td class="msg-preview">{{ (i.user_message or '')[:120] }}{% if i.user_message and i.user_message|length > 120 %}…{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

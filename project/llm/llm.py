@@ -10,11 +10,13 @@
 - Иначе → AsyncOpenAI (с указанным base_url или дефолтным openai.com).
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from types import SimpleNamespace
 
 from openai import AsyncOpenAI
+import redis.asyncio as aioredis
 
 from config import (
     LLM_API_KEY,
@@ -23,6 +25,8 @@ from config import (
     LLM_TEMPERATURE,
     LLM_MAX_TOKENS,
     LLM_REQUEST_TIMEOUT_SEC,
+    PROMPT_RELOAD_CHANNEL,
+    REDIS_URL,
     SYSTEM_PROMPT_PATH,
 )
 
@@ -200,3 +204,33 @@ async def generate_response(
         total_tokens=usage.total_tokens,
         model=response.model or LLM_MODEL,
     )
+
+
+async def prompt_reload_listener() -> None:
+    """Listen for prompt reload events and reread system.md without restart."""
+    backoff = 1.0
+    while True:
+        try:
+            client = aioredis.from_url(REDIS_URL, decode_responses=True)
+            pubsub = client.pubsub()
+            await pubsub.subscribe(PROMPT_RELOAD_CHANNEL)
+            logger.info("Prompt reload channel subscription active: %s", PROMPT_RELOAD_CHANNEL)
+            backoff = 1.0
+            async for msg in pubsub.listen():
+                if msg.get("type") != "message":
+                    continue
+                _load_prompt()
+                logger.info(
+                    "Prompt reloaded from disk: %d chars (trigger: %s)",
+                    len(_system_prompt),
+                    msg.get("data"),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "prompt_reload_listener failed, retry in %.1f sec",
+                backoff,
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)

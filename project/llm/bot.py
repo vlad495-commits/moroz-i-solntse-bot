@@ -26,7 +26,7 @@ from config import (
     TELEGRAM_BOT_TOKEN,
 )
 from handlers import router
-from llm import init_llm
+from llm import init_llm, prompt_reload_listener
 
 
 def _setup_logging() -> None:
@@ -115,6 +115,7 @@ async def main() -> None:
 
     background_tasks: list[asyncio.Task] = [
         asyncio.create_task(_cleanup_loop(), name="cleanup_loop"),
+        asyncio.create_task(prompt_reload_listener(), name="prompt_reload_listener"),
     ]
 
     stop_event = asyncio.Event()

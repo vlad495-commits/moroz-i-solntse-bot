@@ -50,6 +50,12 @@ async def _ensure_redis() -> bool:
         return False
 
 
+async def get_redis() -> aioredis.Redis | None:
+    if not await _ensure_redis():
+        return None
+    return _redis
+
+
 async def push_message(chat_id: int, role: str, content: str) -> None:
     """Добавить сообщение в контекст чата (RPUSH + LTRIM до CONTEXT_MESSAGES_LIMIT)."""
     if not await _ensure_redis():

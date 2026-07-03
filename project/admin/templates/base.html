@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin{% endblock %}</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    {% if user %}
+    <nav class="navbar">
+        <div class="nav-brand">Moroz i Solntse Bot — Admin</div>
+        <div class="nav-links">
+            <a href="/">Диалоги</a>
+            <a href="/stats">Статистика</a>
+            <a href="/prompt/">Промпт</a>
+            <a href="/bot-control/">Управление</a>
+            <a href="/logs/">Логи</a>
+        </div>
+        <div class="nav-status" id="llm-status">
+            <span class="llm-pill llm-pill--unknown" id="llm-main" title="Загрузка...">Main: …</span>
+            <span class="llm-pill llm-pill--unknown" id="llm-reserve" title="Загрузка...">Reserve: …</span>
+        </div>
+        <div class="nav-user">
+            <span>{{ user }}</span>
+            <a href="/logout" class="logout">Выйти</a>
+        </div>
+    </nav>
+    <script>
+    (function() {
+        const STATE = {
+            ok:       { cls: 'llm-pill--ok',       label: 'OK' },
+            depleted: { cls: 'llm-pill--depleted', label: 'Funds depleted' },
+            unknown:  { cls: 'llm-pill--unknown',  label: '—' },
+        };
+        function fmtTs(ts) {
+            if (!ts) return 'нет данных';
+            const d = new Date(ts * 1000);
+            return d.toLocaleString('ru-RU', { hour12: false });
+        }
+        function render(elId, prefix, info, configured) {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            if (configured === false) {
+                el.className = 'llm-pill llm-pill--unknown';
+                el.textContent = prefix + ': не настроен';
+                el.title = 'RESERVE_API_KEY/RESERVE_MODEL пусты в .env';
+                return;
+            }
+            const status = (info && info.status) || 'unknown';
+            const s = STATE[status] || STATE.unknown;
+            el.className = 'llm-pill ' + s.cls;
+            el.textContent = prefix + ': ' + s.label;
+            const model = info && info.model ? info.model : '—';
+            const detail = info && info.detail ? '\n' + info.detail : '';
+            el.title = 'Модель: ' + model + '\nОбновлено: ' + fmtTs(info && info.ts) + detail;
+        }
+        async function poll() {
+            try {
+                const r = await fetch('/api/llm-status', { credentials: 'same-origin' });
+                if (!r.ok) return;
+                const data = await r.json();
+                render('llm-main', 'Main', data.main, true);
+                render('llm-reserve', 'Reserve', data.reserve, data.reserve_configured);
+            } catch (e) { /* тихо */ }
+        }
+        poll();
+        setInterval(poll, 30000);
+    })();
+    </script>
+    {% endif %}
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

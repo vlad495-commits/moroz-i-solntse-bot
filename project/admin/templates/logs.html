@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Логи бота — Admin{% endblock %}
+{% block content %}
+<h1>Логи бота <span class="muted">({{ log_file }})</span></h1>
+
+{% if not log_exists %}
+<div class="empty">
+    Файл логов ещё не создан. Бот пишет в <code>{{ log_file }}</code> через RotatingFileHandler.
+    Проверь, что папка <code>./logs</code> примонтирована и доступна на запись.
+</div>
+{% endif %}
+
+<form method="get" action="/logs/" class="logs-filters">
+    <label>
+        Уровень
+        <select name="level">
+            {% for l in levels %}
+            <option value="{{ l }}" {% if l == level %}selected{% endif %}>{{ l }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Поиск (подстрока)
+        <input type="text" name="search" value="{{ search }}" placeholder="часть сообщения">
+    </label>
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Применить</button>
+        <a href="/logs/" class="btn">Сбросить</a>
+        <button type="button" id="auto-refresh-toggle" class="btn">⏵ Авто (3с)</button>
+    </div>
+</form>
+
+<div class="run-log" id="logs-output">
+    {% if not rows %}
+    <div class="empty">Записей нет (или все отфильтрованы).</div>
+    {% else %}
+    {% for r in rows %}
+    <div class="log-line log-level-{{ r.level }}">{{ r.text }}</div>
+    {% endfor %}
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    const btn = document.getElementById('auto-refresh-toggle');
+    const out = document.getElementById('logs-output');
+    let timer = null;
+
+    async function refresh() {
+        const level = (new URL(location.href)).searchParams.get('level') || 'ALL';
+        const search = (new URL(location.href)).searchParams.get('search') || '';
+        try {
+            const resp = await fetch(`/logs/tail?level=${encodeURIComponent(level)}&search=${encodeURIComponent(search)}&lines=300`);
+            const data = await resp.json();
+            const html = (data.rows || []).map(r =>
+                `<div class="log-line log-level-${r.level}">${escapeHtml(r.text)}</div>`
+            ).join('') || '<div class="empty">Записей нет.</div>';
+            out.innerHTML = html;
+            out.scrollTop = out.scrollHeight;
+        } catch (e) {
+            console.error('logs/tail failed', e);
+        }
+    }
+
+    function escapeHtml(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    btn.addEventListener('click', () => {
+        if (timer) {
+            clearInterval(timer);
+            timer = null;
+            btn.textContent = '⏵ Авто (3с)';
+        } else {
+            timer = setInterval(refresh, 3000);
+            btn.textContent = '⏸ Остановить авто';
+            refresh();
+        }
+    });
+})();
+</script>
+{% endblock %}

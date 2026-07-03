@@ -10,6 +10,8 @@ from aiogram.enums import ChatAction
 import cache
 import db
 from config import (
+    BOT_PAUSE_KEY,
+    BOT_PAUSED_REPLY,
     INPUT_TOO_LONG_REPLY,
     MAX_INPUT_LENGTH,
     NON_TEXT_REPLY,
@@ -21,9 +23,23 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+async def _is_bot_paused() -> bool:
+    """Global bot on/off toggle stored as bot:paused in Redis."""
+    redis = await cache.get_redis() if hasattr(cache, "get_redis") else None
+    if not redis:
+        return False
+    try:
+        return bool(await redis.get(BOT_PAUSE_KEY))
+    except Exception:
+        return False
+
+
 @router.message(Command("start"))
 async def handle_start(message: Message) -> None:
     """Команда /start — приветствие."""
+    if await _is_bot_paused():
+        await message.answer(BOT_PAUSED_REPLY)
+        return
     await message.answer(START_REPLY)
 
 
@@ -34,6 +50,10 @@ async def handle_text(message: Message, bot: Bot) -> None:
     user_id = message.from_user.id if message.from_user else None
     username = message.from_user.username if message.from_user else None
     text = message.text or ""
+
+    if await _is_bot_paused():
+        await message.answer(BOT_PAUSED_REPLY)
+        return
 
     # Лимит длины
     if len(text) > MAX_INPUT_LENGTH:
@@ -75,9 +95,21 @@ async def handle_text(message: Message, bot: Bot) -> None:
 
     # Отправка пользователю
     await message.answer(result.text)
+    await db.save_token_usage(
+        chat_id=chat_id,
+        user_id=user_id,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+        cached_tokens=result.cached_tokens,
+        total_tokens=result.total_tokens,
+        model=result.model,
+    )
 
 
 @router.message()
 async def handle_non_text(message: Message) -> None:
     """Любое нетекстовое сообщение (фото, голос, видео, документ, стикер)."""
+    if await _is_bot_paused():
+        await message.answer(BOT_PAUSED_REPLY)
+        return
     await message.answer(NON_TEXT_REPLY)

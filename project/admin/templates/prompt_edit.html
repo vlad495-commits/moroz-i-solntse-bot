@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Системный промпт — Admin{% endblock %}
+{% block content %}
+<h1>Системный промпт <span class="muted">({{ file_path }})</span></h1>
+
+{% if saved %}
+<div class="success">Сохранено. Версия #{{ saved }}. Бот перечитает промпт без рестарта.</div>
+{% endif %}
+{% if error %}
+<div class="error">Ошибка: {{ error }}</div>
+{% endif %}
+
+<form method="post" action="/prompt/save" class="prompt-form">
+    <label>
+        Содержимое промпта
+        <textarea name="content" rows="20" required>{{ current_content }}</textarea>
+        <small>
+            Этот текст идёт в <code>system</code>-роль для LLM.
+            Перед ним автоматически подклеивается anti-injection preamble (см. <code>prompts/_guardrails_preamble.md</code>).
+        </small>
+    </label>
+    <label>
+        Комментарий к версии (необязательно)
+        <input type="text" name="comment" maxlength="200" placeholder="Что изменили и зачем">
+    </label>
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Сохранить и применить</button>
+        <a href="/" class="btn">Отмена</a>
+    </div>
+</form>
+
+<h2>История версий</h2>
+{% if not versions %}
+<div class="empty">Версий пока нет. Сохраните первую — появится в этом списке.</div>
+{% else %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Дата</th>
+            <th>Автор</th>
+            <th>Комментарий</th>
+            <th>Размер</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for v in versions %}
+        <tr>
+            <td>#{{ v.id }}</td>
+            <td>{{ v.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ v.author or '—' }}</td>
+            <td class="cell-trunc">{{ v.comment or '' }}</td>
+            <td>{{ v.content|length }} симв.</td>
+            <td class="actions">
+                <a href="/prompt/versions/{{ v.id }}" class="btn-sm">Открыть</a>
+                <form method="post" action="/prompt/rollback/{{ v.id }}" style="display:inline">
+                    <button type="submit" class="btn-sm"
+                            onclick="return confirm('Откатиться на версию #{{ v.id }}? Текущий промпт перезапишется.')">
+                        Откатить
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

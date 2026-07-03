@@ -71,3 +71,32 @@ SHUTDOWN_INFLIGHT_TIMEOUT_SEC = int(os.getenv("SHUTDOWN_INFLIGHT_TIMEOUT_SEC", "
 # Каждые сутки фоновая задача удаляет старше этого срока. По дефолту 3 года.
 # 0 или отрицательное значение = выключить автоочистку (хранить вечно).
 DATA_RETENTION_DAYS = int(os.getenv("DATA_RETENTION_DAYS", "1095"))
+
+# --- Admin panel ---
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+ADMIN_SESSION_SECRET = os.getenv("ADMIN_SESSION_SECRET", "change-me-in-production")
+ADMIN_SESSION_TTL_SEC = int(os.getenv("ADMIN_SESSION_TTL_SEC", "86400"))
+
+# --- Prompt hot reload ---
+PROMPT_RELOAD_CHANNEL = "prompt:reload"
+
+# --- Bot on/off toggle ---
+BOT_PAUSE_KEY = "bot:paused"
+BOT_PAUSED_REPLY = os.getenv(
+    "BOT_PAUSED_REPLY",
+    "Сейчас бот на технической паузе. Мы скоро вернёмся.",
+)
+
+# --- Admin logs ---
+LOGS_TAIL_LINES = int(os.getenv("LOGS_TAIL_LINES", "300"))
+
+# --- Pricing (admin cost estimates) ---
+PRICING_PER_1M_TOKENS = {
+    "gpt-4.1-mini": {"prompt": 0.40, "completion": 1.60, "cache_discount": 0.75},
+    "gpt-4.1": {"prompt": 2.00, "completion": 8.00, "cache_discount": 0.75},
+    "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60, "cache_discount": 0.50},
+    "gpt-4o": {"prompt": 2.50, "completion": 10.00, "cache_discount": 0.50},
+    "claude-haiku-4-5": {"prompt": 1.00, "completion": 5.00, "cache_discount": 0.90},
+    "claude-sonnet-4-6": {"prompt": 3.00, "completion": 15.00, "cache_discount": 0.90},
+}
