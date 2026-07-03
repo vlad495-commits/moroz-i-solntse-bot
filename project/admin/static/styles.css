@@ -11,6 +11,8 @@
     --text: #102033;
     --muted: #6B7A90;
     --accent: #FF3B1F;
+    --logo-orange: #FF8A2A;
+    --logo-orange-soft: #FFE0C7;
     --ok: #078B5B;
     --line: rgba(16, 75, 169, 0.14);
     --shadow: 0 18px 45px rgba(7, 27, 46, 0.08);
@@ -114,7 +116,7 @@ code { color: #0B2A4A; }
     transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
 
-.nav-links a span {
+.nav-links a .nav-icon {
     display: inline-grid;
     place-items: center;
     width: 24px;
@@ -123,8 +125,17 @@ code { color: #0B2A4A; }
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.12);
     color: rgba(255, 255, 255, 0.86);
-    font-size: 11px;
-    font-weight: 800;
+    transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.nav-icon svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2;
 }
 
 .nav-links a:hover,
@@ -134,9 +145,22 @@ code { color: #0B2A4A; }
     transform: translateX(2px);
 }
 
-.nav-links a.active span {
+.nav-links a:hover .nav-icon,
+.nav-links a:focus-visible .nav-icon {
+    background: var(--logo-orange-soft);
+    color: #9A3A00;
+    box-shadow: 0 0 0 3px rgba(255, 138, 42, 0.12);
+}
+
+.nav-links a.active .nav-icon {
     background: #fff;
     color: var(--brand);
+}
+
+.nav-links a.active:hover .nav-icon,
+.nav-links a.active:focus-visible .nav-icon {
+    background: var(--logo-orange-soft);
+    color: #9A3A00;
 }
 
 .nav-bottom {
