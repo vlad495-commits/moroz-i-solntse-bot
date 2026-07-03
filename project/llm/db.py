@@ -64,6 +64,52 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_prompt_versions_created
             ON prompt_versions (created_at DESC)
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS eval_cases (
+                id BIGSERIAL PRIMARY KEY,
+                category VARCHAR(64) NOT NULL DEFAULT 'general',
+                question TEXT NOT NULL,
+                expected_keywords TEXT[] NOT NULL DEFAULT '{}',
+                forbidden_keywords TEXT[] NOT NULL DEFAULT '{}',
+                expected_answer TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS eval_runs (
+                id BIGSERIAL PRIMARY KEY,
+                started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                finished_at TIMESTAMPTZ,
+                total INTEGER NOT NULL DEFAULT 0,
+                passed INTEGER NOT NULL DEFAULT 0,
+                failed INTEGER NOT NULL DEFAULT 0,
+                status VARCHAR(16) NOT NULL DEFAULT 'running',
+                judge_model VARCHAR(64),
+                error_message TEXT
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS eval_results (
+                id BIGSERIAL PRIMARY KEY,
+                run_id BIGINT NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+                case_id BIGINT REFERENCES eval_cases(id) ON DELETE SET NULL,
+                question TEXT NOT NULL,
+                expected_answer TEXT NOT NULL,
+                actual_answer TEXT,
+                verdict VARCHAR(32) NOT NULL,
+                check_layer VARCHAR(16),
+                score REAL,
+                judge_reasoning TEXT,
+                duration_ms INTEGER,
+                error_message TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_eval_results_run
+            ON eval_results (run_id, id)
+        """)
 
         # --- Миграции существующих таблиц ---
         # Правило: новую колонку добавляй И в CREATE TABLE выше (для новых БД),

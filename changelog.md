@@ -25,3 +25,5 @@
 [2026-07-03 18:37] Created `project/data/services_prices.md` as a draft knowledge-base price file from the current prompt. Marked all prices as requiring client confirmation and added a checklist of full price-list data to request from the client.
 
 [2026-07-03 20:22] Начат апгрейд со ступени 2 на ступень 3 (Эвалы): проверены `project/.step`, манифест `step-3-evals/UPGRADE.md` и текущие незакоммиченные изменения.
+
+[2026-07-03 20:22] Апгрейд на ступень 3 (Эвалы). Добавлены eval-runner, CRUD тест-кейсов в админке `/eval/`, таблицы `eval_cases`, `eval_runs`, `eval_results`, SSE-прогресс прогонов, настройки judge-модели и локальный скилл `evals`. `project/.step` обновлён до `3`, дорожная карта обновлена.

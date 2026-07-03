@@ -100,3 +100,9 @@ PRICING_PER_1M_TOKENS = {
     "claude-haiku-4-5": {"prompt": 1.00, "completion": 5.00, "cache_discount": 0.90},
     "claude-sonnet-4-6": {"prompt": 3.00, "completion": 15.00, "cache_discount": 0.90},
 }
+
+# --- Eval (LLM-as-judge) ---
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gpt-4.1-mini")
+JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", "") or LLM_API_KEY
+JUDGE_BASE_URL = os.getenv("JUDGE_BASE_URL", "") or LLM_BASE_URL
+JUDGE_PASS_THRESHOLD = float(os.getenv("JUDGE_PASS_THRESHOLD", "0.8"))
