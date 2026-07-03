@@ -27,12 +27,13 @@
             <div class="section-eyebrow">Последние обращения</div>
             <h2>Список диалогов</h2>
         </div>
-        <a href="/stats" class="btn btn-primary">Смотреть статистику</a>
+        <a href="#dialogs-list" class="btn btn-primary">Смотреть весь список</a>
     </div>
 
 {% if not chats %}
 <div class="empty">Пока нет диалогов. Бот ещё не получал сообщений или БД пуста.</div>
 {% else %}
+<div class="dialogs-table-scroll" id="dialogs-list">
 <table class="data-table">
     <thead>
         <tr>
@@ -63,6 +64,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% endif %}
 </section>
 </div>

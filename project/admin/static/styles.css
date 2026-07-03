@@ -343,7 +343,7 @@ select:focus {
 .dialogs-page {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 16px;
 }
 
 .dialogs-header {
@@ -369,12 +369,12 @@ select:focus {
 .dialogs-summary-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 18px;
+    gap: 14px;
 }
 
 .dialogs-card,
 .dialogs-model-card {
-    min-height: 112px;
+    min-height: 92px;
     margin: 0;
     border: 1px solid rgba(255, 255, 255, 0.82);
     border-radius: 24px;
@@ -383,12 +383,12 @@ select:focus {
 }
 
 .dialogs-card-large {
-    min-height: 180px;
+    min-height: 138px;
 }
 
 .dialogs-model-card {
-    min-height: 180px;
-    padding: 22px;
+    min-height: 138px;
+    padding: 18px;
     background: linear-gradient(135deg, #0F55B5 0%, #062142 100%);
     color: #fff;
 }
@@ -404,9 +404,9 @@ select:focus {
 
 .dialogs-model-card .model-line {
     grid-template-columns: 1fr;
-    gap: 5px;
-    margin-top: 12px;
-    padding: 14px 16px;
+    gap: 3px;
+    margin-top: 8px;
+    padding: 10px 14px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.1);
@@ -427,7 +427,7 @@ select:focus {
 }
 
 .dialogs-table-panel {
-    padding: 22px;
+    padding: 18px;
     border: 1px solid rgba(255, 255, 255, 0.72);
     border-radius: 28px;
     background: rgba(210, 220, 236, 0.58);
@@ -439,12 +439,18 @@ select:focus {
     align-items: flex-start;
     justify-content: space-between;
     gap: 16px;
-    margin-bottom: 18px;
+    margin-bottom: 12px;
 }
 
 .dialogs-table-head h2 {
     margin: 4px 0 0;
-    font-size: 22px;
+    font-size: 21px;
+}
+
+.dialogs-table-scroll {
+    max-height: 430px;
+    overflow: auto;
+    padding-right: 4px;
 }
 
 .dialogs-table-panel .data-table {
@@ -454,7 +460,11 @@ select:focus {
 }
 
 .dialogs-table-panel .data-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     padding-top: 6px;
+    background: rgba(210, 220, 236, 0.96);
 }
 
 .stat {
