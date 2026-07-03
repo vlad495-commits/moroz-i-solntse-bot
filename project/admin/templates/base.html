@@ -18,8 +18,8 @@
             <a href="/" class="{% if path == '/' or path.startswith('/chats') %}active{% endif %}"><span>Д</span>Диалоги</a>
             <a href="/stats" class="{% if path.startswith('/stats') %}active{% endif %}"><span>С</span>Статистика</a>
             <a href="/prompt/" class="{% if path.startswith('/prompt') %}active{% endif %}"><span>П</span>Промпт</a>
-            <a href="/eval/" class="{% if path.startswith('/eval') %}active{% endif %}"><span>Э</span>Эвалы</a>
-            <a href="/review/evals" class="{% if path.startswith('/review') %}active{% endif %}"><span>R</span>Review</a>
+            <a href="/eval/" class="{% if path.startswith('/eval') %}active{% endif %}"><span>E</span>Evaluations</a>
+            <a href="/review/evals" class="{% if path.startswith('/review') %}active{% endif %}"><span>R</span>Review кейсов</a>
             <a href="/bot-control/" class="{% if path.startswith('/bot-control') %}active{% endif %}"><span>У</span>Управление</a>
             <a href="/logs/" class="{% if path.startswith('/logs') %}active{% endif %}"><span>Л</span>Логи</a>
         </div>
