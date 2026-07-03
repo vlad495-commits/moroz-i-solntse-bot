@@ -21,7 +21,7 @@ services:
         max-size: "10m"
         max-file: "5"
     healthcheck:
-      test: ["CMD-SHELL", "test -f /app/logs/bot.log && find /app/logs/bot.log -mmin -2 | grep -q ."]
+      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q 'python bot.py'"]
       interval: 30s
       timeout: 10s
       retries: 3

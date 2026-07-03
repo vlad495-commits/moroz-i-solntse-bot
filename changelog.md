@@ -7,3 +7,5 @@
 [2026-07-02 19:14] Инициализация проекта Moroz i Solntse Bot — ступень 1 (прототип). Развёрнут шаблон бота: bot.py, handlers.py, llm.py, db.py, cache.py, config.py + Docker (3 контейнера: llm, redis, postgres).
 
 [2026-07-02 19:14] Project initialized. Step 1 (prototype). Model: gpt-4.1-mini. Secrets for Telegram and LLM are left empty for local setup.
+
+[2026-07-03 15:47] Deploy preparation: llm healthcheck changed from recent-log freshness to Python bot process check, so an idle but running Telegram polling bot is not marked unhealthy.
