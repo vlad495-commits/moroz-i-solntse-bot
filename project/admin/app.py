@@ -125,6 +125,18 @@ async def index(request: Request):
 
     chats = await database.get_chats_list(limit=100)
     total = await database.get_chats_total()
+    summary = await database.get_global_stats()
+    summary_cost, _ = calculate_cost(
+        summary.get("prompt_tokens", 0),
+        summary.get("completion_tokens", 0),
+        summary.get("cached_tokens", 0),
+        os.getenv("LLM_MODEL", "gpt-4.1-mini"),
+    )
+    summary["cost_usd"] = summary_cost
+    llm_models = {
+        "main": os.getenv("LLM_MODEL", "не настроена"),
+        "reserve": os.getenv("RESERVE_MODEL") or "не настроена",
+    }
 
     # Расчёт стоимости для каждого чата
     for c in chats:
@@ -138,7 +150,13 @@ async def index(request: Request):
     return templates.TemplateResponse(
         request,
         "chats_list.html",
-        {"user": user, "chats": chats, "total": total},
+        {
+            "user": user,
+            "chats": chats,
+            "total": total,
+            "summary": summary,
+            "llm_models": llm_models,
+        },
     )
 
 

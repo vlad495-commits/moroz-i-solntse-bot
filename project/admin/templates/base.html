@@ -6,19 +6,24 @@
     <title>{% block title %}Admin{% endblock %}</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body>
+<body class="{% if user %}is-authenticated{% else %}is-login{% endif %}">
     {% if user %}
-    <nav class="navbar">
-        <div class="nav-brand">Moroz i Solntse Bot — Admin</div>
-        <div class="nav-links">
-            <a href="/">Диалоги</a>
-            <a href="/stats">Статистика</a>
-            <a href="/prompt/">Промпт</a>
-            <a href="/eval/">Эвалы</a>
-            <a href="/review/evals">Ревью кейсов</a>
-            <a href="/bot-control/">Управление</a>
-            <a href="/logs/">Логи</a>
+    {% set path = request.url.path %}
+    <nav class="sidebar">
+        <div class="nav-brand">
+            <span class="brand-mark">MS</span>
+            <span>Moroz i Solntse</span>
         </div>
+        <div class="nav-links">
+            <a href="/" class="{% if path == '/' or path.startswith('/chats') %}active{% endif %}"><span>Д</span>Диалоги</a>
+            <a href="/stats" class="{% if path.startswith('/stats') %}active{% endif %}"><span>С</span>Статистика</a>
+            <a href="/prompt/" class="{% if path.startswith('/prompt') %}active{% endif %}"><span>П</span>Промпт</a>
+            <a href="/eval/" class="{% if path.startswith('/eval') %}active{% endif %}"><span>Э</span>Эвалы</a>
+            <a href="/review/evals" class="{% if path.startswith('/review') %}active{% endif %}"><span>R</span>Review</a>
+            <a href="/bot-control/" class="{% if path.startswith('/bot-control') %}active{% endif %}"><span>У</span>Управление</a>
+            <a href="/logs/" class="{% if path.startswith('/logs') %}active{% endif %}"><span>Л</span>Логи</a>
+        </div>
+        <div class="nav-bottom">
         <div class="nav-status" id="llm-status">
             <span class="llm-pill llm-pill--unknown" id="llm-main" title="Загрузка...">Main: …</span>
             <span class="llm-pill llm-pill--unknown" id="llm-reserve" title="Загрузка...">Reserve: …</span>
@@ -26,6 +31,7 @@
         <div class="nav-user">
             <span>{{ user }}</span>
             <a href="/logout" class="logout">Выйти</a>
+        </div>
         </div>
     </nav>
     <script>

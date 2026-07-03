@@ -3,6 +3,18 @@
 {% block content %}
 <h1>Диалоги <span class="muted">({{ total }})</span></h1>
 
+<div class="stats-grid stats-grid-compact">
+    <div class="stat"><div class="stat-label">Всего чатов</div><div class="stat-value">{{ summary.total_chats|default(total)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Всего юзеров</div><div class="stat-value">{{ summary.total_users|default(0)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Всего сообщений</div><div class="stat-value">{{ summary.total_messages|default(0)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Общая стоимость</div><div class="stat-value">{{ summary.cost_usd|default(0)|money }}</div></div>
+    <div class="stat stat-models">
+        <div class="stat-label">LLM-модели</div>
+        <div class="model-line"><span>Основная:</span><strong>{{ llm_models.main }}</strong></div>
+        <div class="model-line"><span>Резервная:</span><strong>{{ llm_models.reserve }}</strong></div>
+    </div>
+</div>
+
 {% if not chats %}
 <div class="empty">Пока нет диалогов. Бот ещё не получал сообщений или БД пуста.</div>
 {% else %}
