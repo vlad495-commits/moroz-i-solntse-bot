@@ -13,3 +13,11 @@
 [2026-07-03 17:00] Upgrade to step 2 (Admin). Added FastAPI admin panel on port 8080, prompt editor with versions/rollback, bot on/off control, logs view, token usage storage, prompt hot-reload listener, and admin service in Docker Compose.
 
 [2026-07-03 17:25] Roadmap updated after step 2 deploy. Added project rule: update roadmap and changelog after each completed step.
+
+[2026-07-03 17:58] Roadmap expanded for the next target version. Fixed scope: fast baseline Telegram LLM bot plus internal testing admin panel; YCLIENTS API moved after test launch; next major block is evals.
+
+[2026-07-03 18:20] System prompt updated to v1.1 locally. Clarified response style, prompt-safety boundaries, appointment fallback, admin handoff wording, and quality checks without changing code, Docker, or environment files.
+
+[2026-07-03 18:24] System prompt updated to v1.2 locally. Added a quick response algorithm, stronger anti-hallucination rules for appointments/slots, sensitive medical handling, admin handoff examples, and roadmap notes without changing code, Docker, or environment files.
+
+[2026-07-03 18:24] Tried to apply prompt v1.2 through the deployed admin panel. Login worked, but `/prompt/save` returned `write_failed` for `/app/prompts/system.md`; added a roadmap task to check server write permissions/volume before hot-reload can apply the prompt live.
