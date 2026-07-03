@@ -145,22 +145,16 @@ code { color: #0B2A4A; }
     transform: translateX(2px);
 }
 
-.nav-links a:hover .nav-icon,
-.nav-links a:focus-visible .nav-icon {
+.nav-links a.active .nav-icon {
     background: var(--logo-orange-soft);
     color: #9A3A00;
     box-shadow: 0 0 0 3px rgba(255, 138, 42, 0.12);
 }
 
-.nav-links a.active .nav-icon {
-    background: #fff;
-    color: var(--brand);
-}
-
-.nav-links a.active:hover .nav-icon,
-.nav-links a.active:focus-visible .nav-icon {
+.nav-links a:focus-visible .nav-icon {
     background: var(--logo-orange-soft);
     color: #9A3A00;
+    box-shadow: 0 0 0 3px rgba(255, 138, 42, 0.12);
 }
 
 .nav-bottom {
