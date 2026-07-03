@@ -64,7 +64,6 @@
             <th>#</th>
             <th>Категория</th>
             <th>Вопрос</th>
-            <th>Ключевые слова</th>
             <th>Эталон</th>
             <th></th>
         </tr>
@@ -75,10 +74,6 @@
             <td>{{ c.id }}</td>
             <td><span class="chip">{{ c.category }}</span></td>
             <td class="cell-trunc">{{ c.question }}</td>
-            <td>
-                {% for kw in c.expected_keywords %}<span class="chip chip-kw">{{ kw }}</span>{% endfor %}
-                {% for kw in c.forbidden_keywords %}<span class="chip chip-forbidden">⊘ {{ kw }}</span>{% endfor %}
-            </td>
             <td class="cell-trunc">{{ c.expected_answer }}</td>
             <td>
                 <a href="/eval/cases/{{ c.id }}" class="btn-sm">✎</a>
