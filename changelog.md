@@ -11,3 +11,5 @@
 [2026-07-03 15:47] Deploy preparation: llm healthcheck changed from recent-log freshness to Python bot process check, so an idle but running Telegram polling bot is not marked unhealthy.
 
 [2026-07-03 17:00] Upgrade to step 2 (Admin). Added FastAPI admin panel on port 8080, prompt editor with versions/rollback, bot on/off control, logs view, token usage storage, prompt hot-reload listener, and admin service in Docker Compose.
+
+[2026-07-03 17:25] Roadmap updated after step 2 deploy. Added project rule: update roadmap and changelog after each completed step.
