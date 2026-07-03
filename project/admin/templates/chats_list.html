@@ -3,59 +3,50 @@
 {% block content %}
 <h1>Диалоги <span class="muted">({{ total }})</span></h1>
 
-<div class="dialogue-dashboard">
-    <section class="dialogue-metrics-card">
-        <div class="dashboard-stat-grid">
-            <div class="stat"><div class="stat-label">Всего чатов</div><div class="stat-value">{{ summary.total_chats|default(total)|int }}</div></div>
-            <div class="stat"><div class="stat-label">Всего юзеров</div><div class="stat-value">{{ summary.total_users|default(0)|int }}</div></div>
-            <div class="stat"><div class="stat-label">Всего сообщений</div><div class="stat-value">{{ summary.total_messages|default(0)|int }}</div></div>
-            <div class="stat"><div class="stat-label">Общая стоимость</div><div class="stat-value">{{ summary.cost_usd|default(0)|money }}</div></div>
-        </div>
-    </section>
-
-    <section class="stat stat-models dialogue-model-card">
+<div class="stats-grid stats-grid-compact">
+    <div class="stat"><div class="stat-label">Всего чатов</div><div class="stat-value">{{ summary.total_chats|default(total)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Всего юзеров</div><div class="stat-value">{{ summary.total_users|default(0)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Всего сообщений</div><div class="stat-value">{{ summary.total_messages|default(0)|int }}</div></div>
+    <div class="stat"><div class="stat-label">Общая стоимость</div><div class="stat-value">{{ summary.cost_usd|default(0)|money }}</div></div>
+    <div class="stat stat-models">
         <div class="stat-label">LLM-модели</div>
         <div class="model-line"><span>Основная:</span><strong>{{ llm_models.main }}</strong></div>
         <div class="model-line"><span>Резервная:</span><strong>{{ llm_models.reserve }}</strong></div>
-    </section>
+    </div>
+</div>
 
 {% if not chats %}
-    <section class="dialogue-table-card">
-        <div class="empty">Пока нет диалогов. Бот ещё не получал сообщений или БД пуста.</div>
-    </section>
+<div class="empty">Пока нет диалогов. Бот ещё не получал сообщений или БД пуста.</div>
 {% else %}
-    <section class="dialogue-table-card">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Чат</th>
-                    <th>Юзер</th>
-                    <th>Сообщений</th>
-                    <th>Последнее</th>
-                    <th>Токены</th>
-                    <th>Кэш</th>
-                    <th>Стоимость</th>
-                    <th>Сэкономлено</th>
-                    <th>LLM-вызовов</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for c in chats %}
-                <tr>
-                    <td><a href="/chats/{{ c.chat_id }}">#{{ c.chat_id }}</a></td>
-                    <td>{% if c.username %}@{{ c.username }}{% elif c.user_id %}id:{{ c.user_id }}{% else %}—{% endif %}</td>
-                    <td>{{ c.message_count }}</td>
-                    <td>{{ c.last_message_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                    <td>{{ c.total_tokens|int }}</td>
-                    <td>{{ c.cached_tokens|int }}</td>
-                    <td>{{ c.cost_usd|money }}</td>
-                    <td class="savings">{{ c.savings_usd|money }}</td>
-                    <td>{{ c.llm_calls }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </section>
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Чат</th>
+            <th>Юзер</th>
+            <th>Сообщений</th>
+            <th>Последнее</th>
+            <th>Токены</th>
+            <th>Кэш</th>
+            <th>Стоимость</th>
+            <th>Сэкономлено</th>
+            <th>LLM-вызовов</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in chats %}
+        <tr>
+            <td><a href="/chats/{{ c.chat_id }}">#{{ c.chat_id }}</a></td>
+            <td>{% if c.username %}@{{ c.username }}{% elif c.user_id %}id:{{ c.user_id }}{% else %}—{% endif %}</td>
+            <td>{{ c.message_count }}</td>
+            <td>{{ c.last_message_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>{{ c.total_tokens|int }}</td>
+            <td>{{ c.cached_tokens|int }}</td>
+            <td>{{ c.cost_usd|money }}</td>
+            <td class="savings">{{ c.savings_usd|money }}</td>
+            <td>{{ c.llm_calls }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
 {% endif %}
-</div>
 {% endblock %}
