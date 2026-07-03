@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Ревью eval-кейсов — Admin{% endblock %}
+{% block content %}
+<div class="row-between">
+    <div>
+        <h1>Ревью eval-кейсов</h1>
+        <p class="page-note">Площадка для заказчика: комментарии и эталонные ответы сохраняются отдельно и не запускают LLM.</p>
+    </div>
+    <a href="/eval/" class="btn">Технические эвалы</a>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="success">Сохранено.</div>
+{% endif %}
+
+<div class="review-tabs">
+    <a class="review-tab {% if active_status == 'all' %}active{% endif %}" href="/review/evals?status=all">Все <span>{{ counts.all }}</span></a>
+    <a class="review-tab {% if active_status == 'pending' %}active{% endif %}" href="/review/evals?status=pending">На проверке <span>{{ counts.pending }}</span></a>
+    <a class="review-tab {% if active_status == 'needs_edit' %}active{% endif %}" href="/review/evals?status=needs_edit">Нужно поправить <span>{{ counts.needs_edit }}</span></a>
+    <a class="review-tab {% if active_status == 'ok' %}active{% endif %}" href="/review/evals?status=ok">Ок <span>{{ counts.ok }}</span></a>
+    <a class="review-tab {% if active_status == 'delete' %}active{% endif %}" href="/review/evals?status=delete">Убрать <span>{{ counts.delete }}</span></a>
+</div>
+
+<section class="review-new">
+    <h2>Добавить новый кейс</h2>
+    <form method="post" action="/review/evals/suggestions" class="review-new-form">
+        <label>
+            Категория
+            <input type="text" name="category" value="general" placeholder="pricing / services / booking / ...">
+        </label>
+        <label>
+            Вопрос клиента
+            <textarea name="question" rows="3" required placeholder="Как клиент может спросить?"></textarea>
+        </label>
+        <label>
+            Как должен отвечать бот
+            <textarea name="expected_answer" rows="5" required placeholder="Полный эталонный ответ"></textarea>
+        </label>
+        <label>
+            Комментарий
+            <textarea name="comment" rows="2" placeholder="Что важно учесть"></textarea>
+        </label>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Добавить предложение</button>
+        </div>
+    </form>
+</section>
+
+{% if suggestions %}
+<section>
+    <h2>Новые предложения <span class="muted">({{ suggestions|length }})</span></h2>
+    <div class="review-suggestions">
+        {% for s in suggestions %}
+        <article class="review-card review-card-new">
+            <div class="review-card-head">
+                <span class="chip">{{ s.category or 'general' }}</span>
+                <span class="badge badge-review-new_case">Новый кейс</span>
+                <span class="muted">#{{ s.id }}</span>
+            </div>
+            <div class="review-block">
+                <strong>Вопрос</strong>
+                <div class="quoted">{{ s.proposed_question }}</div>
+            </div>
+            <div class="review-block">
+                <strong>Эталон</strong>
+                <div class="quoted quoted-actual">{{ s.proposed_answer }}</div>
+            </div>
+            {% if s.comment %}
+            <div class="review-block">
+                <strong>Комментарий</strong>
+                <div class="quoted reasoning">{{ s.comment }}</div>
+            </div>
+            {% endif %}
+        </article>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+<section>
+    <h2>Текущие кейсы <span class="muted">({{ cases|length }})</span></h2>
+    {% if not cases %}
+    <div class="empty">По выбранному фильтру кейсов нет.</div>
+    {% else %}
+    <div class="review-grid">
+        {% for c in cases %}
+        <article class="review-card">
+            <form method="post" action="/review/evals/cases/{{ c.id }}">
+                <div class="review-card-head">
+                    <span class="chip">{{ c.category }}</span>
+                    <span class="badge badge-review-{{ c.review_status }}">{{ statuses[c.review_status] }}</span>
+                    <span class="muted">Кейс #{{ c.id }}</span>
+                </div>
+
+                <div class="review-block">
+                    <strong>Вопрос</strong>
+                    <div class="quoted">{{ c.question }}</div>
+                </div>
+
+                <div class="review-block">
+                    <strong>Текущий эталон</strong>
+                    <div class="quoted">{{ c.expected_answer }}</div>
+                </div>
+
+                <label>
+                    Статус
+                    <select name="status">
+                        <option value="pending" {% if c.review_status == 'pending' %}selected{% endif %}>На проверке</option>
+                        <option value="ok" {% if c.review_status == 'ok' %}selected{% endif %}>Ок, оставить так</option>
+                        <option value="needs_edit" {% if c.review_status == 'needs_edit' %}selected{% endif %}>Нужно поправить</option>
+                        <option value="delete" {% if c.review_status == 'delete' %}selected{% endif %}>Убрать кейс</option>
+                    </select>
+                </label>
+
+                <label>
+                    Как должен звучать эталон
+                    <textarea name="proposed_answer" rows="5" placeholder="Если текущий эталон не подходит, напишите правильный вариант">{{ c.proposed_answer or '' }}</textarea>
+                </label>
+
+                <label>
+                    Комментарий
+                    <textarea name="comment" rows="3" placeholder="Что поправить, почему убрать, что важно учесть">{{ c.review_comment or '' }}</textarea>
+                </label>
+
+                <div class="review-card-actions">
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                    <a href="/eval/cases/{{ c.id }}" class="btn">Открыть в эвалах</a>
+                </div>
+            </form>
+        </article>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+{% endblock %}

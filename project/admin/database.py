@@ -73,6 +73,29 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_eval_results_run
             ON eval_results (run_id, id)
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS eval_case_reviews (
+                id BIGSERIAL PRIMARY KEY,
+                case_id BIGINT REFERENCES eval_cases(id) ON DELETE CASCADE,
+                status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                reviewer VARCHAR(64),
+                comment TEXT NOT NULL DEFAULT '',
+                proposed_question TEXT,
+                proposed_answer TEXT,
+                category VARCHAR(64),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_eval_case_reviews_case_id
+            ON eval_case_reviews (case_id)
+            WHERE case_id IS NOT NULL
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_eval_case_reviews_status
+            ON eval_case_reviews (status, updated_at DESC)
+        """)
     logger.info("Админка: пул подключений к БД создан")
 
 
