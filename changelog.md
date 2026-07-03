@@ -21,3 +21,5 @@
 [2026-07-03 18:24] System prompt updated to v1.2 locally. Added a quick response algorithm, stronger anti-hallucination rules for appointments/slots, sensitive medical handling, admin handoff examples, and roadmap notes without changing code, Docker, or environment files.
 
 [2026-07-03 18:24] Tried to apply prompt v1.2 through the deployed admin panel. Login worked, but `/prompt/save` returned `write_failed` for `/app/prompts/system.md`; added a roadmap task to check server write permissions/volume before hot-reload can apply the prompt live.
+
+[2026-07-03 18:37] Created `project/data/services_prices.md` as a draft knowledge-base price file from the current prompt. Marked all prices as requiring client confirmation and added a checklist of full price-list data to request from the client.
