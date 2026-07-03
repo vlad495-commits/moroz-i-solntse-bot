@@ -12,6 +12,9 @@
 {% if request.query_params.get('saved') %}
 <div class="success">Сохранено.</div>
 {% endif %}
+{% if request.query_params.get('deleted') %}
+<div class="success">Удалено.</div>
+{% endif %}
 
 <div class="review-tabs">
     <a class="review-tab {% if active_status == 'all' %}active{% endif %}" href="/review/evals?status=all">Все <span>{{ counts.all }}</span></a>
@@ -24,10 +27,6 @@
 <section class="review-new">
     <h2>Добавить новый кейс</h2>
     <form method="post" action="/review/evals/suggestions" class="review-new-form">
-        <label>
-            Категория
-            <input type="text" name="category" value="general" placeholder="pricing / services / booking / ...">
-        </label>
         <label>
             Вопрос клиента
             <textarea name="question" rows="3" required placeholder="Как клиент может спросить?"></textarea>
@@ -53,7 +52,6 @@
         {% for s in suggestions %}
         <article class="review-card review-card-new">
             <div class="review-card-head">
-                <span class="chip">{{ s.category or 'general' }}</span>
                 <span class="badge badge-review-new_case">Новый кейс</span>
                 <span class="muted">#{{ s.id }}</span>
             </div>
@@ -71,6 +69,10 @@
                 <div class="quoted reasoning">{{ s.comment }}</div>
             </div>
             {% endif %}
+            <form method="post" action="/review/evals/suggestions/{{ s.id }}/delete"
+                  onsubmit="return confirm('Удалить это новое предложение?')">
+                <button type="submit" class="btn btn-danger">Удалить</button>
+            </form>
         </article>
         {% endfor %}
     </div>
@@ -87,7 +89,6 @@
         <article class="review-card">
             <form method="post" action="/review/evals/cases/{{ c.id }}">
                 <div class="review-card-head">
-                    <span class="chip">{{ c.category }}</span>
                     <span class="badge badge-review-{{ c.review_status }}">{{ statuses[c.review_status] }}</span>
                     <span class="muted">Кейс #{{ c.id }}</span>
                 </div>

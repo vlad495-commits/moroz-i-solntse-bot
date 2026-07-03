@@ -545,11 +545,11 @@ h2 {
 .review-new h2 { margin-top: 0; }
 .review-new-form {
     display: grid;
-    grid-template-columns: 180px minmax(220px, 1fr) minmax(260px, 1.2fr);
+    grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.2fr);
     gap: 12px;
     align-items: end;
 }
-.review-new-form label:nth-child(4),
+.review-new-form label:nth-child(3),
 .review-new-form .form-actions {
     grid-column: 1 / -1;
 }

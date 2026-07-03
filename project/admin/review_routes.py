@@ -57,17 +57,22 @@ async def review_case_save(
 @router.post("/evals/suggestions")
 async def review_suggestion_create(
     request: Request,
-    category: str = Form("general"),
     question: str = Form(...),
     expected_answer: str = Form(...),
     comment: str = Form(""),
 ):
     user = get_current_user(request)
     await rvdb.create_suggestion(
-        category=category,
         question=question,
         expected_answer=expected_answer,
         comment=comment,
         reviewer=user,
     )
     return RedirectResponse(url="/review/evals?saved=1", status_code=302)
+
+
+@router.post("/evals/suggestions/{suggestion_id}/delete")
+async def review_suggestion_delete(request: Request, suggestion_id: int):
+    get_current_user(request)
+    await rvdb.delete_suggestion(suggestion_id)
+    return RedirectResponse(url="/review/evals?deleted=1", status_code=302)

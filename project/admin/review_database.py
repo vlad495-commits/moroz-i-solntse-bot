@@ -135,7 +135,6 @@ async def save_case_review(
 
 
 async def create_suggestion(
-    category: str,
     question: str,
     expected_answer: str,
     comment: str,
@@ -153,5 +152,15 @@ async def create_suggestion(
             (comment or "").strip(),
             (question or "").strip(),
             (expected_answer or "").strip(),
-            (category or "general").strip() or "general",
+            "general",
+        )
+
+
+async def delete_suggestion(suggestion_id: int) -> None:
+    if not database._pool:
+        return
+    async with database._pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM eval_case_reviews WHERE id = $1 AND case_id IS NULL",
+            suggestion_id,
         )
