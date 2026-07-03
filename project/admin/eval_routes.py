@@ -30,11 +30,12 @@ def _split_keywords(text: str) -> list[str]:
 async def eval_index(request: Request):
     user = get_current_user(request)
     cases = await evdb.list_cases()
+    problem_cases = await evdb.list_problem_cases()
     runs = await evdb.list_runs(limit=10)
     return templates.TemplateResponse(
         request,
         "eval_list.html",
-        {"user": user, "cases": cases, "runs": runs},
+        {"user": user, "cases": cases, "problem_cases": problem_cases, "runs": runs},
     )
 
 
@@ -123,6 +124,21 @@ async def eval_run_start(request: Request, background_tasks: BackgroundTasks):
     )
     # Запускаем фоновую задачу — отдельный asyncio task
     asyncio.create_task(eval_runner.run_eval_set(run_id))
+    return RedirectResponse(url=f"/eval/runs/{run_id}", status_code=302)
+
+
+@router.post("/runs/problematic")
+async def eval_problem_run_start(request: Request):
+    get_current_user(request)
+    cases = await evdb.list_problem_cases()
+    if not cases:
+        return RedirectResponse(url="/eval/?error=no_problem_cases", status_code=302)
+
+    run_id = await evdb.create_run(
+        total=len(cases),
+        judge_model=eval_runner.JUDGE_MODEL,
+    )
+    asyncio.create_task(eval_runner.run_eval_set(run_id, cases=cases))
     return RedirectResponse(url=f"/eval/runs/{run_id}", status_code=302)
 
 

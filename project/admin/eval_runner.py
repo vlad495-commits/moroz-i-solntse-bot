@@ -338,11 +338,12 @@ async def run_case(case: dict, run_id: int) -> dict:
 
 # --- Главный прогон ---
 
-async def run_eval_set(run_id: int) -> None:
+async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
     """Прогнать все кейсы. Идёт последовательно, чтобы прогресс-бар был стабилен."""
     _init_clients()
 
-    cases = await evdb.list_cases()
+    if cases is None:
+        cases = await evdb.list_cases()
     total = len(cases)
 
     if total == 0:

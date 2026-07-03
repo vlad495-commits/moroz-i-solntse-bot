@@ -9,9 +9,18 @@
                 ▶ Запустить эвалюэйшены
             </button>
         </form>
+        <form method="post" action="/eval/runs/problematic" style="display: inline">
+            <button type="submit" class="btn" {% if not problem_cases %}disabled{% endif %}>
+                ⚠ Прогнать проблемные{% if problem_cases %} ({{ problem_cases|length }}){% endif %}
+            </button>
+        </form>
         <a href="/eval/cases/new" class="btn">+ Новый кейс</a>
     </div>
 </div>
+
+{% if request.query_params.get('error') == 'no_problem_cases' %}
+<div class="empty">Проблемных кейсов сейчас нет: последние результаты всех кейсов зелёные.</div>
+{% endif %}
 
 <h2>Последние прогоны</h2>
 {% if not runs %}

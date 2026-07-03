@@ -23,6 +23,30 @@ async def list_cases() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+async def list_problem_cases() -> list[dict[str, Any]]:
+    """Return cases whose latest eval result is fail/error."""
+    if not database._pool:
+        return []
+    async with database._pool.acquire() as conn:
+        rows = await conn.fetch(
+            """WITH latest_results AS (
+                   SELECT DISTINCT ON (case_id)
+                          case_id, verdict, run_id, created_at, id
+                   FROM eval_results
+                   WHERE case_id IS NOT NULL
+                   ORDER BY case_id, created_at DESC, id DESC
+               )
+               SELECT c.id, c.category, c.question,
+                      c.expected_keywords, c.forbidden_keywords,
+                      c.expected_answer, c.created_at, c.updated_at
+               FROM eval_cases c
+               JOIN latest_results lr ON lr.case_id = c.id
+               WHERE lr.verdict <> 'pass'
+               ORDER BY c.id ASC"""
+        )
+    return [dict(r) for r in rows]
+
+
 async def get_case(case_id: int) -> dict[str, Any] | None:
     if not database._pool:
         return None
