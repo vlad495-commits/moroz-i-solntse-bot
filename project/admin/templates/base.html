@@ -11,8 +11,12 @@
     {% set path = request.url.path %}
     <nav class="sidebar">
         <div class="nav-brand">
-            <span class="brand-mark">MS</span>
-            <span>Moroz i Solntse</span>
+            <span class="brand-mark">
+                <img src="/static/moroz-solntse-logo.png" alt="Мороз и Солнце">
+            </span>
+            <span class="brand-title">
+                <span>Мороз и Солнце | bot</span>
+            </span>
         </div>
         <div class="nav-links">
             <a href="/" class="{% if path == '/' or path.startswith('/chats') %}active{% endif %}"><span>Д</span>Диалоги</a>
