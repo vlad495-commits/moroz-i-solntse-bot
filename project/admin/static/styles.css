@@ -11,7 +11,6 @@
     --text: #102033;
     --muted: #6B7A90;
     --accent: #FF3B1F;
-    --accent-soft: rgba(255, 59, 31, 0.16);
     --ok: #078B5B;
     --line: rgba(16, 75, 169, 0.14);
     --shadow: 0 18px 45px rgba(7, 27, 46, 0.08);
@@ -145,15 +144,15 @@ code { color: #0B2A4A; }
 }
 
 .nav-links a.active .nav-icon {
-    background: var(--accent-soft);
-    color: #FFB5AA;
-    box-shadow: 0 0 0 3px rgba(255, 59, 31, 0.13);
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 0 3px rgba(255, 59, 31, 0.2);
 }
 
 .nav-links a:focus-visible .nav-icon {
-    background: var(--accent-soft);
-    color: #FFB5AA;
-    box-shadow: 0 0 0 3px rgba(255, 59, 31, 0.13);
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 0 3px rgba(255, 59, 31, 0.2);
 }
 
 .nav-bottom {
