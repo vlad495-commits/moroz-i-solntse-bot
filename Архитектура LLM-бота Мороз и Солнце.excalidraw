@@ -6,7 +6,7 @@
     {
       "type": "rectangle",
       "id": "n1001",
-      "x": 105.0,
+      "x": 105,
       "y": 20,
       "width": 150,
       "height": 54,
@@ -40,8 +40,8 @@
     {
       "type": "text",
       "id": "n1002",
-      "x": 113.0,
-      "y": 37.0,
+      "x": 113,
+      "y": 37,
       "width": 134,
       "height": 20,
       "angle": 0,
@@ -75,7 +75,7 @@
     {
       "type": "rectangle",
       "id": "n1007",
-      "x": 355.0,
+      "x": 355,
       "y": 20,
       "width": 150,
       "height": 54,
@@ -109,8 +109,8 @@
     {
       "type": "text",
       "id": "n1008",
-      "x": 363.0,
-      "y": 37.0,
+      "x": 363,
+      "y": 37,
       "width": 134,
       "height": 20,
       "angle": 0,
@@ -144,7 +144,7 @@
     {
       "type": "rectangle",
       "id": "n1013",
-      "x": 605.0,
+      "x": 605,
       "y": 20,
       "width": 150,
       "height": 54,
@@ -178,8 +178,8 @@
     {
       "type": "text",
       "id": "n1014",
-      "x": 613.0,
-      "y": 37.0,
+      "x": 613,
+      "y": 37,
       "width": 134,
       "height": 20,
       "angle": 0,
@@ -213,7 +213,7 @@
     {
       "type": "rectangle",
       "id": "n1019",
-      "x": 855.0,
+      "x": 855,
       "y": 20,
       "width": 150,
       "height": 54,
@@ -247,8 +247,8 @@
     {
       "type": "text",
       "id": "n1020",
-      "x": 863.0,
-      "y": 37.0,
+      "x": 863,
+      "y": 37,
       "width": 134,
       "height": 20,
       "angle": 0,
@@ -321,7 +321,7 @@
       "type": "text",
       "id": "n1026",
       "x": 433.6,
-      "y": 162.0,
+      "y": 162,
       "width": 242.8,
       "height": 40,
       "angle": 0,
@@ -566,7 +566,7 @@
       "type": "text",
       "id": "n1044",
       "x": 480.4,
-      "y": 287.0,
+      "y": 287,
       "width": 149.20000000000002,
       "height": 40,
       "angle": 0,
@@ -697,7 +697,7 @@
       "type": "text",
       "id": "n1053",
       "x": 462.6,
-      "y": 430.0,
+      "y": 430,
       "width": 184.79999999999998,
       "height": 20,
       "angle": 0,
@@ -822,7 +822,7 @@
       "type": "text",
       "id": "n1062",
       "x": 809.8,
-      "y": 412.0,
+      "y": 412,
       "width": 180.4,
       "height": 40,
       "angle": 0,
@@ -857,9 +857,9 @@
       "type": "arrow",
       "id": "n1067",
       "x": 655.4,
-      "y": 440.0,
+      "y": 440,
       "width": 146.39999999999998,
-      "height": 8.0,
+      "height": 8,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -888,12 +888,12 @@
       "locked": false,
       "points": [
         [
-          0.0,
-          0.0
+          0,
+          0
         ],
         [
           146.39999999999998,
-          -8.0
+          -8
         ]
       ],
       "lastCommittedPoint": null,
@@ -914,7 +914,7 @@
       "type": "text",
       "id": "n1070",
       "x": 713.5999999999999,
-      "y": 425.0,
+      "y": 425,
       "width": 30,
       "height": 22,
       "angle": 0,
@@ -991,7 +991,7 @@
       "type": "text",
       "id": "n1074",
       "x": 475.2,
-      "y": 562.0,
+      "y": 562,
       "width": 159.6,
       "height": 40,
       "angle": 0,
@@ -1083,7 +1083,7 @@
       "type": "text",
       "id": "n1082",
       "x": 535.5,
-      "y": 504.0,
+      "y": 504,
       "width": 39,
       "height": 22,
       "angle": 0,
@@ -1120,7 +1120,7 @@
       "x": 900,
       "y": 469,
       "width": 257.20000000000005,
-      "height": 113.0,
+      "height": 113,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -1154,11 +1154,11 @@
         ],
         [
           -227.20000000000005,
-          113.0
+          113
         ],
         [
           -257.20000000000005,
-          113.0
+          113
         ]
       ],
       "lastCommittedPoint": null,
@@ -1205,9 +1205,9 @@
     {
       "type": "rectangle",
       "id": "n1091",
-      "x": 462.0,
+      "x": 462,
       "y": 670,
-      "width": 186.0,
+      "width": 186,
       "height": 74,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -1247,9 +1247,9 @@
     {
       "type": "text",
       "id": "n1092",
-      "x": 470.0,
-      "y": 687.0,
-      "width": 170.0,
+      "x": 470,
+      "y": 687,
+      "width": 170,
       "height": 40,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -1334,10 +1334,10 @@
     {
       "type": "rectangle",
       "id": "n1100",
-      "x": 462.0,
+      "x": 462,
       "y": 795,
-      "width": 186.0,
-      "height": 74,
+      "width": 240,
+      "height": 88,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#a5d8ff",
@@ -1376,10 +1376,10 @@
     {
       "type": "text",
       "id": "n1101",
-      "x": 470.0,
-      "y": 812.0,
-      "width": 170.0,
-      "height": 40,
+      "x": 470,
+      "y": 803,
+      "width": 224,
+      "height": 72,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -1399,13 +1399,13 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "text": "Валидация входа\nлимиты и формат",
+      "text": "Валидация входа\nscripts first • лимиты\nформат • rate limit",
       "fontSize": 16,
       "fontFamily": 2,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "n1100",
-      "originalText": "Валидация входа\nлимиты и формат",
+      "originalText": "Валидация входа\nscripts first • лимиты\nформат • rate limit",
       "lineHeight": 1.25
     },
     {
@@ -1465,8 +1465,8 @@
       "id": "n1109",
       "x": 451.6,
       "y": 920,
-      "width": 206.8,
-      "height": 74,
+      "width": 260,
+      "height": 88,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#a5d8ff",
@@ -1506,9 +1506,9 @@
       "type": "text",
       "id": "n1110",
       "x": 459.6,
-      "y": 937.0,
-      "width": 190.8,
-      "height": 40,
+      "y": 928,
+      "width": 244,
+      "height": 72,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -1528,13 +1528,13 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "text": "Input guardrails\n+ маскирование ПД",
+      "text": "Input guardrails\n+ маскирование ПД\nLLM только если спорно",
       "fontSize": 16,
       "fontFamily": 2,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "n1109",
-      "originalText": "Input guardrails\n+ маскирование ПД",
+      "originalText": "Input guardrails\n+ маскирование ПД\nLLM только если спорно",
       "lineHeight": 1.25
     },
     {
@@ -1635,7 +1635,7 @@
       "type": "text",
       "id": "n1119",
       "x": 449.2,
-      "y": 1062.0,
+      "y": 1062,
       "width": 211.6,
       "height": 40,
       "angle": 0,
@@ -1721,10 +1721,10 @@
     {
       "type": "diamond",
       "id": "n1127",
-      "x": 322.0,
+      "x": 322,
       "y": 1175,
-      "width": 466.0,
-      "height": 100.0,
+      "width": 466,
+      "height": 100,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#ffd8a8",
@@ -1757,9 +1757,9 @@
     {
       "type": "text",
       "id": "n1128",
-      "x": 330.0,
-      "y": 1205.0,
-      "width": 450.0,
+      "x": 330,
+      "y": 1205,
+      "width": 450,
       "height": 40,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -1879,7 +1879,7 @@
       "type": "text",
       "id": "n1137",
       "x": 49.8,
-      "y": 987.0,
+      "y": 987,
       "width": 180.4,
       "height": 60,
       "angle": 0,
@@ -1948,7 +1948,7 @@
       "type": "text",
       "id": "n1143",
       "x": 44.599999999999994,
-      "y": 1142.0,
+      "y": 1142,
       "width": 190.8,
       "height": 80,
       "angle": 0,
@@ -2017,7 +2017,7 @@
       "type": "text",
       "id": "n1149",
       "x": 889.6,
-      "y": 1052.0,
+      "y": 1052,
       "width": 190.8,
       "height": 80,
       "angle": 0,
@@ -2051,9 +2051,9 @@
     {
       "type": "rectangle",
       "id": "n1154",
-      "x": 1182.0,
+      "x": 1182,
       "y": 1035,
-      "width": 186.0,
+      "width": 186,
       "height": 114,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -2085,9 +2085,9 @@
     {
       "type": "text",
       "id": "n1155",
-      "x": 1190.0,
-      "y": 1052.0,
-      "width": 170.0,
+      "x": 1190,
+      "y": 1052,
+      "width": 170,
       "height": 80,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -2121,9 +2121,9 @@
       "type": "arrow",
       "id": "n1160",
       "x": 441.2,
-      "y": 1082.0,
-      "width": 203.0,
-      "height": 65.0,
+      "y": 1082,
+      "width": 203,
+      "height": 65,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -2152,12 +2152,12 @@
       "locked": false,
       "points": [
         [
-          0.0,
-          0.0
+          0,
+          0
         ],
         [
-          -203.0,
-          -65.0
+          -203,
+          -65
         ]
       ],
       "lastCommittedPoint": null,
@@ -2205,9 +2205,9 @@
       "type": "arrow",
       "id": "n1166",
       "x": 441.2,
-      "y": 1102.0,
+      "y": 1102,
       "width": 197.79999999999998,
-      "height": 80.0,
+      "height": 80,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -2236,12 +2236,12 @@
       "locked": false,
       "points": [
         [
-          0.0,
-          0.0
+          0,
+          0
         ],
         [
           -197.79999999999998,
-          80.0
+          80
         ]
       ],
       "lastCommittedPoint": null,
@@ -2254,7 +2254,7 @@
       "type": "text",
       "id": "n1169",
       "x": 304.8,
-      "y": 1131.0,
+      "y": 1131,
       "width": 75,
       "height": 22,
       "angle": 0,
@@ -2289,9 +2289,9 @@
       "type": "arrow",
       "id": "n1172",
       "x": 881.6,
-      "y": 1092.0,
+      "y": 1092,
       "width": 638.2,
-      "height": 70.0,
+      "height": 70,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -2320,12 +2320,12 @@
       "locked": false,
       "points": [
         [
-          0.0,
-          0.0
+          0,
+          0
         ],
         [
           -638.2,
-          70.0
+          70
         ]
       ],
       "lastCommittedPoint": null,
@@ -2338,7 +2338,7 @@
       "type": "text",
       "id": "n1175",
       "x": 529.5,
-      "y": 1116.0,
+      "y": 1116,
       "width": 66,
       "height": 22,
       "angle": 0,
@@ -2372,10 +2372,10 @@
     {
       "type": "arrow",
       "id": "n1178",
-      "x": 1182.0,
-      "y": 1092.0,
+      "x": 1182,
+      "y": 1092,
       "width": 93.59999999999991,
-      "height": 0.0,
+      "height": 0,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -2404,12 +2404,12 @@
       "locked": false,
       "points": [
         [
-          0.0,
-          0.0
+          0,
+          0
         ],
         [
           -93.59999999999991,
-          0.0
+          0
         ]
       ],
       "lastCommittedPoint": null,
@@ -2422,7 +2422,7 @@
       "type": "text",
       "id": "n1181",
       "x": 1102.2,
-      "y": 1081.0,
+      "y": 1081,
       "width": 66,
       "height": 22,
       "angle": 0,
@@ -2495,7 +2495,7 @@
       "type": "text",
       "id": "n1185",
       "x": 20.599999999999994,
-      "y": 1362.0,
+      "y": 1362,
       "width": 138.8,
       "height": 40,
       "angle": 0,
@@ -2572,7 +2572,7 @@
       "type": "text",
       "id": "n1191",
       "x": 10.200000000000003,
-      "y": 1482.0,
+      "y": 1482,
       "width": 159.6,
       "height": 60,
       "angle": 0,
@@ -2697,7 +2697,7 @@
       "type": "text",
       "id": "n1200",
       "x": -0.20000000000000284,
-      "y": 1622.0,
+      "y": 1622,
       "width": 180.4,
       "height": 40,
       "angle": 0,
@@ -2822,7 +2822,7 @@
       "type": "text",
       "id": "n1209",
       "x": 299.8,
-      "y": 1362.0,
+      "y": 1362,
       "width": 180.4,
       "height": 40,
       "angle": 0,
@@ -2899,7 +2899,7 @@
       "type": "text",
       "id": "n1215",
       "x": 310.2,
-      "y": 1482.0,
+      "y": 1482,
       "width": 159.6,
       "height": 60,
       "angle": 0,
@@ -3028,7 +3028,7 @@
       "type": "text",
       "id": "n1224",
       "x": 310.2,
-      "y": 1622.0,
+      "y": 1622,
       "width": 159.6,
       "height": 40,
       "angle": 0,
@@ -3114,9 +3114,9 @@
     {
       "type": "rectangle",
       "id": "n1232",
-      "x": 297.0,
+      "x": 297,
       "y": 1725,
-      "width": 186.0,
+      "width": 186,
       "height": 74,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -3152,9 +3152,9 @@
     {
       "type": "text",
       "id": "n1233",
-      "x": 305.0,
-      "y": 1742.0,
-      "width": 170.0,
+      "x": 305,
+      "y": 1742,
+      "width": 170,
       "height": 40,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -3239,9 +3239,9 @@
     {
       "type": "rectangle",
       "id": "n1241",
-      "x": 597.0,
+      "x": 597,
       "y": 1345,
-      "width": 186.0,
+      "width": 186,
       "height": 94,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -3277,9 +3277,9 @@
     {
       "type": "text",
       "id": "n1242",
-      "x": 605.0,
-      "y": 1362.0,
-      "width": 170.0,
+      "x": 605,
+      "y": 1362,
+      "width": 170,
       "height": 60,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -3355,7 +3355,7 @@
       "type": "text",
       "id": "n1248",
       "x": 610.2,
-      "y": 1502.0,
+      "y": 1502,
       "width": 159.6,
       "height": 40,
       "angle": 0,
@@ -3484,7 +3484,7 @@
       "type": "text",
       "id": "n1257",
       "x": 599.8,
-      "y": 1622.0,
+      "y": 1622,
       "width": 180.4,
       "height": 40,
       "angle": 0,
@@ -3609,7 +3609,7 @@
       "type": "text",
       "id": "n1266",
       "x": 610.2,
-      "y": 1742.0,
+      "y": 1742,
       "width": 159.6,
       "height": 40,
       "angle": 0,
@@ -3734,7 +3734,7 @@
       "type": "text",
       "id": "n1275",
       "x": 910.2,
-      "y": 1362.0,
+      "y": 1362,
       "width": 159.6,
       "height": 40,
       "angle": 0,
@@ -3811,7 +3811,7 @@
       "type": "text",
       "id": "n1281",
       "x": 910.2,
-      "y": 1482.0,
+      "y": 1482,
       "width": 159.6,
       "height": 40,
       "angle": 0,
@@ -3936,7 +3936,7 @@
       "type": "text",
       "id": "n1290",
       "x": 920.6,
-      "y": 1602.0,
+      "y": 1602,
       "width": 138.8,
       "height": 40,
       "angle": 0,
@@ -4022,7 +4022,7 @@
     {
       "type": "rectangle",
       "id": "n1298",
-      "x": 1215.0,
+      "x": 1215,
       "y": 1345,
       "width": 150,
       "height": 54,
@@ -4060,8 +4060,8 @@
     {
       "type": "text",
       "id": "n1299",
-      "x": 1223.0,
-      "y": 1362.0,
+      "x": 1223,
+      "y": 1362,
       "width": 134,
       "height": 20,
       "angle": 0,
@@ -4095,10 +4095,10 @@
     {
       "type": "rectangle",
       "id": "n1304",
-      "x": 1215.0,
+      "x": 1215,
       "y": 1445,
-      "width": 150,
-      "height": 94,
+      "width": 260,
+      "height": 92,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#d0ebff",
@@ -4137,10 +4137,10 @@
     {
       "type": "text",
       "id": "n1305",
-      "x": 1223.0,
-      "y": 1462.0,
-      "width": 134,
-      "height": 60,
+      "x": 1223,
+      "y": 1453,
+      "width": 244,
+      "height": 76,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -4160,13 +4160,13 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "text": "Напоминания\nfollow-up\nреактивация",
+      "text": "Напоминания\npost-visit: оценка 1–5\nнизкая → администратор",
       "fontSize": 16,
       "fontFamily": 2,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "n1304",
-      "originalText": "Напоминания\nfollow-up\nреактивация",
+      "originalText": "Напоминания\npost-visit: оценка 1–5\nнизкая → администратор",
       "lineHeight": 1.25
     },
     {
@@ -4224,7 +4224,7 @@
     {
       "type": "rectangle",
       "id": "n1313",
-      "x": 1215.0,
+      "x": 1215,
       "y": 1585,
       "width": 150,
       "height": 74,
@@ -4262,8 +4262,8 @@
     {
       "type": "text",
       "id": "n1314",
-      "x": 1223.0,
-      "y": 1602.0,
+      "x": 1223,
+      "y": 1602,
       "width": 134,
       "height": 40,
       "angle": 0,
@@ -4349,7 +4349,7 @@
     {
       "type": "rectangle",
       "id": "n1322",
-      "x": 1515.0,
+      "x": 1515,
       "y": 1345,
       "width": 150,
       "height": 74,
@@ -4387,8 +4387,8 @@
     {
       "type": "text",
       "id": "n1323",
-      "x": 1523.0,
-      "y": 1362.0,
+      "x": 1523,
+      "y": 1362,
       "width": 134,
       "height": 40,
       "angle": 0,
@@ -4465,7 +4465,7 @@
       "type": "text",
       "id": "n1329",
       "x": 1520.6,
-      "y": 1482.0,
+      "y": 1482,
       "width": 138.8,
       "height": 60,
       "angle": 0,
@@ -4551,10 +4551,10 @@
     {
       "type": "rectangle",
       "id": "n1337",
-      "x": 1515.0,
+      "x": 1515,
       "y": 1605,
-      "width": 150,
-      "height": 94,
+      "width": 250,
+      "height": 92,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#d0ebff",
@@ -4589,10 +4589,10 @@
     {
       "type": "text",
       "id": "n1338",
-      "x": 1523.0,
-      "y": 1622.0,
-      "width": 134,
-      "height": 60,
+      "x": 1523,
+      "y": 1613,
+      "width": 234,
+      "height": 76,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -4612,13 +4612,13 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "text": "Лимиты\nстоп-кнопка\nотчеты",
+      "text": "Лимиты • стоп-кнопка\nсогласие на рекламу\nбез дублей • отчеты",
       "fontSize": 16,
       "fontFamily": 2,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "n1337",
-      "originalText": "Лимиты\nстоп-кнопка\nотчеты",
+      "originalText": "Лимиты • стоп-кнопка\nсогласие на рекламу\nбез дублей • отчеты",
       "lineHeight": 1.25
     },
     {
@@ -4677,9 +4677,9 @@
       "type": "arrow",
       "id": "n1346",
       "x": 555,
-      "y": 1275.0,
+      "y": 1275,
       "width": 465,
-      "height": 70.0,
+      "height": 70,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -4704,7 +4704,7 @@
       "points": [
         [
           0,
-          0.0
+          0
         ],
         [
           -465,
@@ -4712,7 +4712,7 @@
         ],
         [
           -465,
-          70.0
+          70
         ]
       ],
       "lastCommittedPoint": null,
@@ -4725,9 +4725,9 @@
       "type": "arrow",
       "id": "n1349",
       "x": 555,
-      "y": 1275.0,
+      "y": 1275,
       "width": 165,
-      "height": 70.0,
+      "height": 70,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -4752,7 +4752,7 @@
       "points": [
         [
           0,
-          0.0
+          0
         ],
         [
           -165,
@@ -4760,7 +4760,7 @@
         ],
         [
           -165,
-          70.0
+          70
         ]
       ],
       "lastCommittedPoint": null,
@@ -4773,9 +4773,9 @@
       "type": "arrow",
       "id": "n1352",
       "x": 555,
-      "y": 1275.0,
+      "y": 1275,
       "width": 135,
-      "height": 70.0,
+      "height": 70,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -4800,7 +4800,7 @@
       "points": [
         [
           0,
-          0.0
+          0
         ],
         [
           135,
@@ -4808,7 +4808,7 @@
         ],
         [
           135,
-          70.0
+          70
         ]
       ],
       "lastCommittedPoint": null,
@@ -4821,9 +4821,9 @@
       "type": "arrow",
       "id": "n1355",
       "x": 555,
-      "y": 1275.0,
+      "y": 1275,
       "width": 435,
-      "height": 70.0,
+      "height": 70,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -4848,7 +4848,7 @@
       "points": [
         [
           0,
-          0.0
+          0
         ],
         [
           435,
@@ -4856,7 +4856,7 @@
         ],
         [
           435,
-          70.0
+          70
         ]
       ],
       "lastCommittedPoint": null,
@@ -4869,9 +4869,9 @@
       "type": "arrow",
       "id": "n1358",
       "x": 555,
-      "y": 1275.0,
+      "y": 1275,
       "width": 735,
-      "height": 70.0,
+      "height": 70,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -4896,7 +4896,7 @@
       "points": [
         [
           0,
-          0.0
+          0
         ],
         [
           735,
@@ -4904,7 +4904,7 @@
         ],
         [
           735,
-          70.0
+          70
         ]
       ],
       "lastCommittedPoint": null,
@@ -4917,9 +4917,9 @@
       "type": "arrow",
       "id": "n1361",
       "x": 555,
-      "y": 1275.0,
+      "y": 1275,
       "width": 1035,
-      "height": 70.0,
+      "height": 70,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -4944,7 +4944,7 @@
       "points": [
         [
           0,
-          0.0
+          0
         ],
         [
           1035,
@@ -4952,7 +4952,7 @@
         ],
         [
           1035,
-          70.0
+          70
         ]
       ],
       "lastCommittedPoint": null,
@@ -4964,9 +4964,9 @@
     {
       "type": "rectangle",
       "id": "n1364",
-      "x": 297.0,
+      "x": 297,
       "y": 1965,
-      "width": 186.0,
+      "width": 186,
       "height": 94,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -4998,9 +4998,9 @@
     {
       "type": "text",
       "id": "n1365",
-      "x": 305.0,
-      "y": 1982.0,
-      "width": 170.0,
+      "x": 305,
+      "y": 1982,
+      "width": 170,
       "height": 60,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -5033,7 +5033,7 @@
     {
       "type": "rectangle",
       "id": "n1370",
-      "x": 615.0,
+      "x": 615,
       "y": 1965,
       "width": 150,
       "height": 94,
@@ -5067,8 +5067,8 @@
     {
       "type": "text",
       "id": "n1371",
-      "x": 623.0,
-      "y": 1982.0,
+      "x": 623,
+      "y": 1982,
       "width": 134,
       "height": 60,
       "angle": 0,
@@ -5102,9 +5102,9 @@
     {
       "type": "rectangle",
       "id": "n1376",
-      "x": 897.0,
+      "x": 897,
       "y": 1965,
-      "width": 186.0,
+      "width": 186,
       "height": 74,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -5136,9 +5136,9 @@
     {
       "type": "text",
       "id": "n1377",
-      "x": 905.0,
-      "y": 1982.0,
-      "width": 170.0,
+      "x": 905,
+      "y": 1982,
+      "width": 170,
       "height": 40,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -5206,7 +5206,7 @@
       "type": "text",
       "id": "n1383",
       "x": 1210.2,
-      "y": 1982.0,
+      "y": 1982,
       "width": 159.6,
       "height": 60,
       "angle": 0,
@@ -5290,7 +5290,7 @@
       "type": "text",
       "id": "n1391",
       "x": 370.5,
-      "y": 1811.0,
+      "y": 1811,
       "width": 39,
       "height": 22,
       "angle": 0,
@@ -5373,8 +5373,8 @@
     {
       "type": "text",
       "id": "n1397",
-      "x": 657.0,
-      "y": 1811.0,
+      "x": 657,
+      "y": 1811,
       "width": 66,
       "height": 22,
       "angle": 0,
@@ -5458,7 +5458,7 @@
       "type": "text",
       "id": "n1403",
       "x": 943.5,
-      "y": 1801.0,
+      "y": 1801,
       "width": 93,
       "height": 22,
       "angle": 0,
@@ -5541,8 +5541,8 @@
     {
       "type": "text",
       "id": "n1409",
-      "x": 1257.0,
-      "y": 1801.0,
+      "x": 1257,
+      "y": 1801,
       "width": 66,
       "height": 22,
       "angle": 0,
@@ -5578,8 +5578,8 @@
       "id": "n1412",
       "x": 741.8,
       "y": 2200,
-      "width": 196.4,
-      "height": 94,
+      "width": 320,
+      "height": 92,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#a5d8ff",
@@ -5615,9 +5615,9 @@
       "type": "text",
       "id": "n1413",
       "x": 749.8,
-      "y": 2217.0,
-      "width": 180.4,
-      "height": 60,
+      "y": 2208,
+      "width": 304,
+      "height": 76,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -5637,13 +5637,13 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "text": "Единый результат\nответ / запись /\nоплата / задача",
+      "text": "Единый результат сценария\nstatus • message • next_action\nevents • cost • error_code",
       "fontSize": 16,
       "fontFamily": 2,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "n1412",
-      "originalText": "Единый результат\nответ / запись /\nоплата / задача",
+      "originalText": "Единый результат сценария\nstatus • message • next_action\nevents • cost • error_code",
       "lineHeight": 1.25
     },
     {
@@ -5903,8 +5903,8 @@
       "id": "n1436",
       "x": 736.6,
       "y": 2360,
-      "width": 206.8,
-      "height": 74,
+      "width": 320,
+      "height": 92,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#a5d8ff",
@@ -5948,9 +5948,9 @@
       "type": "text",
       "id": "n1437",
       "x": 744.6,
-      "y": 2377.0,
-      "width": 190.8,
-      "height": 40,
+      "y": 2368,
+      "width": 304,
+      "height": 76,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -5970,13 +5970,13 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "text": "Output guardrails\nвалидатор ответа",
+      "text": "Output security + validator\nутечки • ПД • факты • формат\nне прошло → 1 повтор максимум",
       "fontSize": 16,
       "fontFamily": 2,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "n1436",
-      "originalText": "Output guardrails\nвалидатор ответа",
+      "originalText": "Output security + validator\nутечки • ПД • факты • формат\nне прошло → 1 повтор максимум",
       "lineHeight": 1.25
     },
     {
@@ -6036,8 +6036,8 @@
       "id": "n1445",
       "x": 752.2,
       "y": 2500,
-      "width": 175.6,
-      "height": 74,
+      "width": 320,
+      "height": 92,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#b2f2bb",
@@ -6081,9 +6081,9 @@
       "type": "text",
       "id": "n1446",
       "x": 760.2,
-      "y": 2517.0,
-      "width": 159.6,
-      "height": 40,
+      "y": 2508,
+      "width": 304,
+      "height": 76,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -6103,13 +6103,13 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "text": "Ответ клиенту\nв нужный канал",
+      "text": "Восстановить разрешенные ПД\nтолько из текущей сессии\n→ ответ в нужный канал",
       "fontSize": 16,
       "fontFamily": 2,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "n1445",
-      "originalText": "Ответ клиенту\nв нужный канал",
+      "originalText": "Восстановить разрешенные ПД\nтолько из текущей сессии\n→ ответ в нужный канал",
       "lineHeight": 1.25
     },
     {
@@ -6167,10 +6167,10 @@
     {
       "type": "rectangle",
       "id": "n1454",
-      "x": 747.0,
+      "x": 747,
       "y": 2640,
-      "width": 186.0,
-      "height": 94,
+      "width": 320,
+      "height": 92,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#b2f2bb",
@@ -6205,10 +6205,10 @@
     {
       "type": "text",
       "id": "n1455",
-      "x": 755.0,
-      "y": 2657.0,
-      "width": 170.0,
-      "height": 60,
+      "x": 755,
+      "y": 2648,
+      "width": 304,
+      "height": 76,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
@@ -6228,13 +6228,13 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "text": "Логирование\nметрики, аудит,\nKPI",
+      "text": "Журнал событий • correlation_id\nэтапы • ошибки • latency\nтокены • стоимость • KPI",
       "fontSize": 16,
       "fontFamily": 2,
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "n1454",
-      "originalText": "Логирование\nметрики, аудит,\nKPI",
+      "originalText": "Журнал событий • correlation_id\nэтапы • ошибки • latency\nтокены • стоимость • KPI",
       "lineHeight": 1.25
     },
     {
@@ -6331,7 +6331,7 @@
       "type": "text",
       "id": "n1464",
       "x": 1099.8,
-      "y": 2517.0,
+      "y": 2517,
       "width": 180.4,
       "height": 60,
       "angle": 0,
@@ -6366,9 +6366,9 @@
       "type": "arrow",
       "id": "n1469",
       "x": 927.8000000000001,
-      "y": 2537.0,
+      "y": 2537,
       "width": 163.9999999999999,
-      "height": 10.0,
+      "height": 10,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -6397,12 +6397,12 @@
       "locked": false,
       "points": [
         [
-          0.0,
-          0.0
+          0,
+          0
         ],
         [
           163.9999999999999,
-          10.0
+          10
         ]
       ],
       "lastCommittedPoint": null,
@@ -6423,7 +6423,7 @@
       "type": "text",
       "id": "n1472",
       "x": 976.8,
-      "y": 2531.0,
+      "y": 2531,
       "width": 66,
       "height": 22,
       "angle": 0,
@@ -6496,7 +6496,7 @@
       "type": "text",
       "id": "n1476",
       "x": 1099.8,
-      "y": 2377.0,
+      "y": 2377,
       "width": 180.4,
       "height": 60,
       "angle": 0,
@@ -6531,9 +6531,9 @@
       "type": "arrow",
       "id": "n1481",
       "x": 943.4000000000001,
-      "y": 2397.0,
+      "y": 2397,
       "width": 148.39999999999986,
-      "height": 10.0,
+      "height": 10,
       "angle": 0,
       "strokeColor": "#343a40",
       "backgroundColor": "transparent",
@@ -6562,12 +6562,12 @@
       "locked": false,
       "points": [
         [
-          0.0,
-          0.0
+          0,
+          0
         ],
         [
           148.39999999999986,
-          10.0
+          10
         ]
       ],
       "lastCommittedPoint": null,
@@ -6588,7 +6588,7 @@
       "type": "text",
       "id": "n1484",
       "x": 984.6,
-      "y": 2391.0,
+      "y": 2391,
       "width": 66,
       "height": 22,
       "angle": 0,
@@ -6672,7 +6672,7 @@
       "type": "text",
       "id": "n1490",
       "x": 1161.5,
-      "y": 2466.0,
+      "y": 2466,
       "width": 57,
       "height": 22,
       "angle": 0,
@@ -6702,6 +6702,450 @@
       "containerId": "n1487",
       "originalText": "алерт",
       "lineHeight": 1.25
+    },
+    {
+      "type": "rectangle",
+      "id": "lesson9001r",
+      "x": 760,
+      "y": 645,
+      "width": 300,
+      "height": 92,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#d0ebff",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": {
+        "type": 3
+      },
+      "seed": 9001,
+      "version": 1,
+      "versionNonce": 9002,
+      "isDeleted": false,
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "lesson9001t"
+        }
+      ],
+      "updated": 1,
+      "link": null,
+      "locked": false
+    },
+    {
+      "type": "text",
+      "id": "lesson9001t",
+      "x": 768,
+      "y": 653,
+      "width": 284,
+      "height": 76,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 9003,
+      "version": 1,
+      "versionNonce": 9004,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1,
+      "link": null,
+      "locked": false,
+      "text": "Privacy gate\nсогласие на обработку ПД\nбез согласия — без истории и LLM",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "lesson9001r",
+      "originalText": "Privacy gate\nсогласие на обработку ПД\nбез согласия — без истории и LLM",
+      "lineHeight": 1.25
+    },
+    {
+      "type": "arrow",
+      "id": "lesson9010",
+      "x": 610,
+      "y": 610,
+      "width": 150,
+      "height": 70,
+      "angle": 0,
+      "strokeColor": "#343a40",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "dashed",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 9010,
+      "version": 1,
+      "versionNonce": 9011,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1,
+      "link": null,
+      "locked": false,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          150,
+          70
+        ]
+      ],
+      "lastCommittedPoint": null,
+      "startBinding": null,
+      "endBinding": null,
+      "startArrowhead": null,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "rectangle",
+      "id": "lesson9021r",
+      "x": 740,
+      "y": 1165,
+      "width": 300,
+      "height": 92,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#e5dbff",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": {
+        "type": 3
+      },
+      "seed": 9021,
+      "version": 1,
+      "versionNonce": 9022,
+      "isDeleted": false,
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "lesson9021t"
+        }
+      ],
+      "updated": 1,
+      "link": null,
+      "locked": false
+    },
+    {
+      "type": "text",
+      "id": "lesson9021t",
+      "x": 748,
+      "y": 1173,
+      "width": 284,
+      "height": 76,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 9023,
+      "version": 1,
+      "versionNonce": 9024,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1,
+      "link": null,
+      "locked": false,
+      "text": "Compact длинной истории\nпорог: > 30 сообщений\nsummary + последние реплики",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "lesson9021r",
+      "originalText": "Compact длинной истории\nпорог: > 30 сообщений\nsummary + последние реплики",
+      "lineHeight": 1.25
+    },
+    {
+      "type": "arrow",
+      "id": "lesson9030",
+      "x": 690,
+      "y": 1110,
+      "width": 50,
+      "height": 80,
+      "angle": 0,
+      "strokeColor": "#343a40",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "dashed",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 9030,
+      "version": 1,
+      "versionNonce": 9031,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1,
+      "link": null,
+      "locked": false,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          50,
+          80
+        ]
+      ],
+      "lastCommittedPoint": null,
+      "startBinding": null,
+      "endBinding": null,
+      "startArrowhead": null,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "rectangle",
+      "id": "lesson9041r",
+      "x": 1450,
+      "y": 1740,
+      "width": 300,
+      "height": 112,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#d3f9d8",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": {
+        "type": 3
+      },
+      "seed": 9041,
+      "version": 1,
+      "versionNonce": 9042,
+      "isDeleted": false,
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "lesson9041t"
+        }
+      ],
+      "updated": 1,
+      "link": null,
+      "locked": false
+    },
+    {
+      "type": "text",
+      "id": "lesson9041t",
+      "x": 1458,
+      "y": 1748,
+      "width": 284,
+      "height": 96,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 9043,
+      "version": 1,
+      "versionNonce": 9044,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1,
+      "link": null,
+      "locked": false,
+      "text": "Реактивация\nрекламное согласие • idempotency\nлимит попыток • «стоп»\nответ → новый диалог",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "lesson9041r",
+      "originalText": "Реактивация\nрекламное согласие • idempotency\nлимит попыток • «стоп»\nответ → новый диалог",
+      "lineHeight": 1.25
+    },
+    {
+      "type": "arrow",
+      "id": "lesson9050",
+      "x": 1350,
+      "y": 1660,
+      "width": 100,
+      "height": 120,
+      "angle": 0,
+      "strokeColor": "#343a40",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "dashed",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 9050,
+      "version": 1,
+      "versionNonce": 9051,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1,
+      "link": null,
+      "locked": false,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          100,
+          120
+        ]
+      ],
+      "lastCommittedPoint": null,
+      "startBinding": null,
+      "endBinding": null,
+      "startArrowhead": null,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "rectangle",
+      "id": "lesson9061r",
+      "x": 1450,
+      "y": 1900,
+      "width": 300,
+      "height": 112,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#d3f9d8",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": {
+        "type": 3
+      },
+      "seed": 9061,
+      "version": 1,
+      "versionNonce": 9062,
+      "isDeleted": false,
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "lesson9061t"
+        }
+      ],
+      "updated": 1,
+      "link": null,
+      "locked": false
+    },
+    {
+      "type": "text",
+      "id": "lesson9061t",
+      "x": 1458,
+      "y": 1908,
+      "width": 284,
+      "height": 96,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 9063,
+      "version": 1,
+      "versionNonce": 9064,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1,
+      "link": null,
+      "locked": false,
+      "text": "Post-visit feedback\nодин запрос на визит\nнизкая оценка → задача админу\nагрегат услуги / специалиста",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "lesson9061r",
+      "originalText": "Post-visit feedback\nодин запрос на визит\nнизкая оценка → задача админу\nагрегат услуги / специалиста",
+      "lineHeight": 1.25
+    },
+    {
+      "type": "arrow",
+      "id": "lesson9070",
+      "x": 1350,
+      "y": 1660,
+      "width": 100,
+      "height": 300,
+      "angle": 0,
+      "strokeColor": "#343a40",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "dashed",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 9070,
+      "version": 1,
+      "versionNonce": 9071,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1,
+      "link": null,
+      "locked": false,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          100,
+          300
+        ]
+      ],
+      "lastCommittedPoint": null,
+      "startBinding": null,
+      "endBinding": null,
+      "startArrowhead": null,
+      "endArrowhead": "arrow"
     }
   ],
   "appState": {
