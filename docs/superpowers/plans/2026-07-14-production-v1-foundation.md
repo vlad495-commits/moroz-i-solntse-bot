@@ -220,11 +220,11 @@ def event_payload(event: str, correlation_id: UUID, **fields: object) -> str:
 
 Wrap asyncpg pool creation in `Database`; keep existing query functions as compatibility wrappers using this shared pool. Do not refactor queries unrelated to the phase.
 
-- [ ] **Step 4: Run unit tests and existing bot/admin smoke**
+- [ ] **Step 4: Run unit tests and safe bot/admin image smoke**
 
-Run: `docker compose --profile test run --rm test pytest tests/unit/common -q && docker compose up -d --build bot admin && docker compose ps`
+Run: `docker compose --profile test run --rm test pytest tests/unit/common -q && docker compose build bot admin && docker compose run --rm --no-deps bot python -m compileall -q /app && docker compose run --rm --no-deps admin python -m compileall -q /app && docker compose config --quiet`
 
-Expected: tests pass; bot/admin running.
+Expected: tests pass; bot/admin images build and compile/import smoke succeeds without starting Telegram polling. Do not run a second bot instance against a token that may already be active on the test server.
 
 - [ ] **Step 5: Commit**
 
