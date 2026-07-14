@@ -6,6 +6,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
+    env_file: ../.env
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    env_file: ../.env
+    command: ["alembic", "-c", "/workspace/alembic.ini", "upgrade", "head"]
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   bot:
     build:
