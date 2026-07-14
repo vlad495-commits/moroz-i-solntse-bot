@@ -132,6 +132,12 @@ docker compose down
 
 **Почему:** код полагается на хосты Redis/Postgres из docker-сети (`redis://redis:6379`, `postgres://postgres:5432`). При запуске напрямую — не подключится.
 
+### RabbitMQ credentials
+
+Для RabbitMQ обязательны переменные `RABBITMQ_USER`, `RABBITMQ_PASSWORD` и `RABBITMQ_URL`. Значения хранятся только во внешнем `.env`, не попадают в Git/образ/логи и перед production-запуском передаются Compose через `docker compose --env-file ../.env ...`.
+
+Удалённый `guest` запрещён. Production-запуск блокируется, пока для RabbitMQ не создан и не записан в `RABBITMQ_URL` отдельный стойкий уникальный пароль; пароль ротируется вне Git перед релизом и при любом подозрении на утечку.
+
 ---
 
 ## ЖЕЛЕЗНОЕ ПРАВИЛО: временные файлы

@@ -19,7 +19,5 @@ class Settings:
         return cls(
             database_url=database_url,
             redis_url=env.get("REDIS_URL", "redis://redis:6379/0"),
-            rabbitmq_url=env.get(
-                "RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/"
-            ),
+            rabbitmq_url=env["RABBITMQ_URL"],
         )
