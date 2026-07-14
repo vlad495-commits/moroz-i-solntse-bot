@@ -177,11 +177,12 @@ git commit -m "db: добавлен Alembic baseline"
 - Create: `project/src/moroz/common/db.py`
 - Create: `project/src/moroz/common/observability.py`
 - Create: `project/tests/unit/common/test_observability.py`
+- Create: `project/tests/integration/test_database.py`
 - Modify: `project/llm/db.py`
 - Modify: `project/admin/database.py`
 
 **Interfaces:**
-- Produces: `Database.connect()`, `Database.close()`, `Database.acquire()`.
+- Produces: `Database(database_url)`, `Database.connect()`, `Database.close()`, `Database.acquire()`.
 - Produces: `new_correlation_id() -> UUID` and `log_event(logger, event, correlation_id, **fields)`.
 
 - [ ] **Step 1: Write failing observability test**
@@ -201,11 +202,23 @@ def test_event_payload_contains_stable_correlation_id():
     }
 ```
 
+```python
+from moroz.common.db import Database
+
+
+async def test_database_connect_acquire_and_close(migrated_database_url):
+    database = Database(migrated_database_url)
+    await database.connect()
+    async with database.acquire() as connection:
+        assert await connection.fetchval("SELECT 1") == 1
+    await database.close()
+```
+
 - [ ] **Step 2: Run red**
 
-Run: `docker compose --profile test run --rm test pytest tests/unit/common/test_observability.py -q`
+Run: `docker compose --profile test run --rm test pytest tests/unit/common/test_observability.py tests/integration/test_database.py -q`
 
-Expected: FAIL because module is absent.
+Expected: FAIL because the shared observability/database modules are absent.
 
 - [ ] **Step 3: Implement minimal shared helpers**
 
@@ -222,14 +235,14 @@ Wrap asyncpg pool creation in `Database`; keep existing query functions as compa
 
 - [ ] **Step 4: Run unit tests and safe bot/admin image smoke**
 
-Run: `docker compose --profile test run --rm test pytest tests/unit/common -q && docker compose build bot admin && docker compose run --rm --no-deps bot python -m compileall -q /app && docker compose run --rm --no-deps admin python -m compileall -q /app && docker compose config --quiet`
+Run: `docker compose --profile test run --rm test pytest tests/unit/common tests/integration/test_database.py -q && docker compose build bot admin && docker compose run --rm --no-deps bot python -m compileall -q /app && docker compose run --rm --no-deps admin python -m compileall -q /app && docker compose config --quiet`
 
 Expected: tests pass; bot/admin images build and compile/import smoke succeeds without starting Telegram polling. Do not run a second bot instance against a token that may already be active on the test server.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add project/src/moroz/common project/tests/unit/common project/llm/db.py project/admin/database.py
+git add project/src/moroz/common project/tests/unit/common project/tests/integration/test_database.py project/llm/db.py project/admin/database.py
 git commit -m "refactor: добавлены общие БД и observability helpers"
 ```
 
