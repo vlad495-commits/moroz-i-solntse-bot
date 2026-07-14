@@ -319,35 +319,46 @@ git commit -m "feat: добавлены RabbitMQ worker и scheduler"
 ### Task 5: Foundation regression gate
 
 **Files:**
+- Create: `project/.dockerignore`
+- Create: `project/migrate/Dockerfile`
+- Create: `project/migrate/requirements.txt`
+- Modify: `project/docker-compose.yml`
+- Modify: `project/Dockerfile.test`
+- Modify: `project/tests/integration/conftest.py`
+- Modify: `project/tests/integration/test_migrations.py`
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`
 
 **Interfaces:**
 - Produces: подтвержденный checkpoint «foundation complete».
 
-- [ ] **Step 1: Run the complete Docker suite**
+- [ ] **Step 1: Close deferred Foundation review notes test-first**
+
+Add dedicated cutover regressions for an empty `alembic_version` table and an unexpected revision; both must fail closed without changing the version state. Harden the disposable database fixture so the admin connection closes in an outer `finally`, even if terminate/drop fails. Add `project/.dockerignore` so Docker never receives `.env*`, `data/`, `logs/`, `tmp/`, caches or bytecode. Replace the test-image/read-only-bind migration runtime with one immutable, non-root migration image shared by `migrate` and `cutover`. Remove the unused scheduler copy from `Dockerfile.test`.
+
+- [ ] **Step 2: Run the complete Docker suite**
 
 Run: `docker compose --profile test run --rm test pytest -q`
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Validate migration and Compose state**
+- [ ] **Step 3: Validate migration and safe Compose state**
 
-Run: `docker compose run --rm migrate && docker compose config --quiet && docker compose up -d --build && docker compose ps`
+Use an isolated `COMPOSE_PROJECT_NAME` plus shell-only generated PostgreSQL, Redis and RabbitMQ test credentials; never print or persist their values. Run normal/test/migration `docker compose config --quiet`, then `docker compose --profile migration run --rm migrate`. Build the bot image and run compile/import smoke without starting Telegram polling. Start only `postgres redis rabbitmq admin worker scheduler` and inspect `docker compose ps`.
 
-Expected: exit 0; bot/admin/worker/scheduler and stores are running.
+Expected: exit 0; the immutable migration image upgrades successfully; admin/worker/scheduler and stores are healthy; bot image compiles/imports but no Telegram polling process starts. A live Telegram E2E remains a launch gate until a separate test token exists.
 
-- [ ] **Step 3: Inspect fresh logs**
+- [ ] **Step 4: Inspect fresh logs and production boundaries**
 
-Run: `docker compose logs --since=5m bot admin worker scheduler`
+Run: `docker compose logs --since=5m admin worker scheduler`
 
-Expected: no traceback; schema is not created by runtime.
+Expected: no traceback; schema is not created by runtime; scheduler heartbeat is present. Verify production images run as non-root, runtime DDL matches are zero, tracked `.env` files are zero, hardcoded credentials are zero, build contexts exclude sensitive/runtime data, and isolated containers/volumes/networks are removed after the gate.
 
-- [ ] **Step 4: Record result**
+- [ ] **Step 5: Record result**
 
 Mark foundation tasks complete in `Дорожная карта.md`; add commands and results to `changelog.md`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add "Дорожная карта.md" changelog.md
