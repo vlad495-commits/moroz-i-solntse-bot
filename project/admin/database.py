@@ -27,7 +27,7 @@ async def init_db() -> None:
         raise RuntimeError("DATABASE_URL не задан")
     if _pool is not None:
         return
-    database = Database(DATABASE_URL)
+    database = Database(DATABASE_URL, min_size=1, max_size=5)
     await database.connect()
     _pool = database
     logger.info("Админка: пул подключений к БД создан")

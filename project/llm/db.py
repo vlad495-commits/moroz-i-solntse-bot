@@ -1,5 +1,6 @@
 """PostgreSQL: история сообщений диалога."""
 
+import asyncio
 import logging
 
 from config import DATABASE_URL, CONTEXT_MESSAGES_LIMIT, DATA_RETENTION_DAYS
@@ -8,6 +9,7 @@ from moroz.common.db import Database
 logger = logging.getLogger(__name__)
 
 _pool: Database | None = None
+_pool_lock = asyncio.Lock()
 
 
 async def init_db() -> None:
@@ -15,19 +17,21 @@ async def init_db() -> None:
     if not DATABASE_URL:
         logger.warning("DATABASE_URL не задан — без БД")
         return
-    if _pool is not None:
-        return
-    database = Database(DATABASE_URL)
-    await database.connect()
-    _pool = database
-    logger.info("Пул подключений к БД создан")
+    async with _pool_lock:
+        if _pool is not None:
+            return
+        database = Database(DATABASE_URL, min_size=2, max_size=10)
+        await database.connect()
+        _pool = database
+        logger.info("Пул подключений к БД создан")
 
 
 async def close_db() -> None:
     global _pool
-    if _pool:
-        await _pool.close()
-        _pool = None
+    async with _pool_lock:
+        pool, _pool = _pool, None
+        if pool:
+            await pool.close()
 
 
 async def _ensure_pool() -> bool:
@@ -36,15 +40,17 @@ async def _ensure_pool() -> bool:
         return True
     if not DATABASE_URL:
         return False
-    try:
-        database = Database(DATABASE_URL)
-        await database.connect()
+    async with _pool_lock:
+        if _pool:
+            return True
+        try:
+            database = Database(DATABASE_URL, min_size=2, max_size=10)
+            await database.connect()
+        except Exception:
+            logger.exception("PostgreSQL недоступен")
+            return False
         _pool = database
         return True
-    except Exception:
-        logger.exception("PostgreSQL недоступен")
-        _pool = None
-        return False
 
 
 async def save_message(
