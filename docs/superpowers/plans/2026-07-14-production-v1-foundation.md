@@ -259,18 +259,25 @@ git commit -m "refactor: добавлены общие БД и observability hel
 - Modify: `project/llm/requirements.txt`
 
 **Interfaces:**
-- Produces: `RabbitQueue(QueuePort).publish(task: QueueTask) -> None`.
-- Produces: `consume(handler: Callable[[QueueTask], Awaitable[None]]) -> None` with manual ack.
+- Produces: immutable `QueueTask(kind, payload, idempotency_key)` with JSON round-trip and `QueuePort.publish(task)`.
+- Produces: `RabbitQueue.connect()`, `close()`, `publish(task)`, `consume_one(handler)` and long-running `consume(handler)` with manual ack.
+- Uses: durable direct exchange/queue `tasks`, retry header `x-retry-count`, direct DLX `tasks.dlx` and queue `tasks.dlq` retained for 30 days.
 
 - [ ] **Step 1: Write failing round-trip test**
 
 ```python
 async def test_queue_round_trip(rabbit_queue):
     received = []
+
+    async def handle(task):
+        received.append(task)
+
     await rabbit_queue.publish(QueueTask(kind="ping", payload={"value": 7}, idempotency_key="ping:7"))
-    await rabbit_queue.consume_one(lambda task: received.append(task))
+    await rabbit_queue.consume_one(handle)
     assert received[0].payload == {"value": 7}
 ```
+
+Add a second integration case: a handler that always raises is called once initially plus exactly three retries; after the third retry the persistent message is routed to `tasks.dlq` with the original `message_id`/idempotency key and is no longer present in `tasks`.
 
 - [ ] **Step 2: Run red**
 
@@ -283,24 +290,24 @@ Expected: FAIL because RabbitMQ service and adapter are absent.
 ```python
 class RabbitQueue(QueuePort):
     async def publish(self, task: QueueTask) -> None:
-        connection = await aio_pika.connect_robust(self.settings.rabbitmq_url)
-        channel = await connection.channel(publisher_confirms=True)
-        await channel.set_qos(prefetch_count=4)
         message = aio_pika.Message(
             body=task.to_json().encode(),
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
             message_id=task.idempotency_key,
+            headers={"x-retry-count": 0},
         )
-        await channel.default_exchange.publish(message, routing_key="tasks")
+        await self.exchange.publish(message, routing_key="tasks")
 ```
 
-Declare durable `tasks` exchange/queue and DLQ. Worker consumes with `message.process(requeue=False)` only around a successful handler; failures follow bounded retry headers then DLQ. Scheduler skeleton is a long-running process: it logs periodic heartbeat, handles graceful shutdown and stays healthy until stopped. Add RabbitMQ healthcheck and worker/scheduler services.
+`connect()` creates and reuses one robust connection/channel with publisher confirms, QoS 4, durable direct exchange `tasks`, durable queue `tasks`, durable direct exchange `tasks.dlx` and durable queue `tasks.dlq`; `close()` releases them. Bind `tasks` with routing key `tasks`; bind the DLQ with `tasks.dlq` and set its message TTL to `2592000000` ms (30 days).
+
+On successful handler completion, ack manually. On failure, republish with incremented `x-retry-count` and ack the original only after publisher confirm; allow three retries after the initial delivery. After retry count 3, publish to the DLX preserving persistent delivery and `message_id`, then ack the original. If republish itself fails, do not silently lose the original message. Worker connects once and consumes continuously. Scheduler skeleton is a long-running process: it logs periodic heartbeat, handles graceful shutdown and stays healthy until stopped. Add a pinned RabbitMQ 4 management-alpine service with healthcheck plus worker/scheduler services.
 
 - [ ] **Step 4: Run queue test and container health**
 
-Run: `docker compose up -d rabbitmq worker scheduler && docker compose --profile test run --rm test pytest tests/integration/test_queue.py -q && docker compose ps`
+Run: `docker compose up -d rabbitmq && docker compose --profile test run --rm test pytest tests/integration/test_queue.py -q && docker compose up -d worker scheduler && docker compose ps`
 
-Expected: test passes; rabbitmq, worker, scheduler are running/healthy.
+Expected: queue round-trip and retry/DLQ tests pass without a competing worker; then rabbitmq, worker and scheduler are running/healthy.
 
 - [ ] **Step 5: Commit**
 
