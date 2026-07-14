@@ -15,11 +15,26 @@ logger = logging.getLogger("worker")
 
 
 async def handle(task: QueueTask) -> None:
-    logger.info(
-        "Task received kind=%s idempotency_key=%s",
-        task.kind,
-        task.idempotency_key,
-    )
+    logger.error("No worker task handler is registered; task will be retried")
+    raise NotImplementedError("No worker task handlers are registered")
+
+
+async def _supervise(queue: RabbitQueue, stop: asyncio.Event) -> None:
+    consumer = asyncio.create_task(queue.consume(handle))
+    waiter = asyncio.create_task(stop.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {consumer, waiter},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if consumer in done:
+            await consumer
+            raise RuntimeError("Consumer stopped unexpectedly")
+    finally:
+        consumer.cancel()
+        waiter.cancel()
+        await asyncio.gather(consumer, waiter, return_exceptions=True)
+        await queue.close()
 
 
 async def run() -> None:
@@ -30,14 +45,10 @@ async def run() -> None:
 
     queue = RabbitQueue(Settings.from_env(os.environ).rabbitmq_url)
     await queue.connect()
-    consumer = asyncio.create_task(queue.consume(handle))
     logger.info("Worker started")
     try:
-        await stop.wait()
+        await _supervise(queue, stop)
     finally:
-        consumer.cancel()
-        await asyncio.gather(consumer, return_exceptions=True)
-        await queue.close()
         logger.info("Worker stopped")
 
 

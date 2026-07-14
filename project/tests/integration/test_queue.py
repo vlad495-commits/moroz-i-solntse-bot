@@ -8,6 +8,7 @@ import pytest_asyncio
 from aio_pika.exceptions import ChannelInvalidStateError
 
 from moroz.common.queue import QueueTask, RabbitQueue
+from worker.main import handle as worker_handle
 
 
 @pytest_asyncio.fixture
@@ -149,3 +150,67 @@ async def test_failed_republish_keeps_original_for_reconnect(rabbit_queue):
 
     assert received == [task]
     assert await tasks.get(fail=False) is None
+
+
+@pytest.mark.asyncio
+async def test_raw_message_preserves_metadata_and_normalizes_invalid_retry_header(
+    rabbit_queue,
+):
+    queue, tasks, dead_letters = rabbit_queue
+    handler_calls = 0
+    publisher = await aio_pika.connect_robust(os.environ["RABBITMQ_URL"])
+    channel = await publisher.channel(publisher_confirms=True)
+    exchange = await channel.get_exchange("tasks")
+
+    async def handle(_task):
+        nonlocal handler_calls
+        handler_calls += 1
+
+    try:
+        await exchange.publish(
+            aio_pika.Message(
+                body=b"not-json",
+                correlation_id="raw-correlation",
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                headers={
+                    "custom-header": "preserved",
+                    "x-retry-count": "invalid",
+                },
+                message_id="raw-message",
+            ),
+            routing_key="tasks",
+        )
+        for _ in range(4):
+            await queue.consume_one(handle)
+
+        assert handler_calls == 0
+        assert await tasks.get(fail=False) is None
+        dead_letter = await dead_letters.get(fail=False)
+        assert dead_letter is not None
+        assert dead_letter.correlation_id == "raw-correlation"
+        assert dead_letter.headers["custom-header"] == "preserved"
+        assert dead_letter.headers["x-retry-count"] == 3
+        await dead_letter.ack()
+    finally:
+        await publisher.close()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_worker_task_retries_then_reaches_dlq(rabbit_queue):
+    queue, tasks, dead_letters = rabbit_queue
+    task = QueueTask(
+        kind="unsupported",
+        payload={"personal_data": "must not be logged"},
+        idempotency_key="unsupported:1",
+    )
+
+    await queue.publish(task)
+    for _ in range(4):
+        await queue.consume_one(worker_handle)
+
+    assert await tasks.get(fail=False) is None
+    dead_letter = await dead_letters.get(fail=False)
+    assert dead_letter is not None
+    assert QueueTask.from_json(dead_letter.body.decode()) == task
+    assert dead_letter.headers["x-retry-count"] == 3
+    await dead_letter.ack()
