@@ -14,11 +14,26 @@ services:
         condition: service_healthy
 
   migrate:
+    profiles: ["migration"]
     build:
       context: .
       dockerfile: Dockerfile.test
     env_file: ../.env
     command: ["alembic", "-c", "/workspace/alembic.ini", "upgrade", "head"]
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  cutover:
+    profiles: ["migration"]
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    env_file: ../.env
+    command:
+      ["python", "/workspace/migrations/audit_existing_schema.py", "--config", "/workspace/alembic.ini"]
     volumes:
       - .:/workspace:ro
     depends_on:

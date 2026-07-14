@@ -1,16 +1,16 @@
+"""Fail-closed audit and Alembic stamp for the pre-Alembic schema."""
+
+import argparse
+import asyncio
 import os
-import subprocess
+import sys
 
 import asyncpg
-import pytest
+from alembic import command
+from alembic.config import Config
 
-from conftest import RedactedDatabaseURL
 
-
-pytestmark = pytest.mark.asyncio
-
-CONFIG = "/workspace/alembic.ini"
-CUTOVER = "/workspace/migrations/audit_existing_schema.py"
+REVISION = "0001_existing_schema"
 
 EXPECTED_COLUMNS = {
     "messages": [
@@ -156,49 +156,42 @@ EXPECTED_INDEXES = {
 }
 
 
-def run_alembic(database_url, *args):
-    subprocess.run(
-        ["alembic", "-c", CONFIG, *args],
-        check=True,
-        env={**os.environ, "DATABASE_URL": database_url},
+class SchemaMismatch(Exception):
+    pass
+
+
+def database_url() -> str:
+    url = os.getenv("DATABASE_URL")
+    if url:
+        return url
+    return (
+        f"postgresql://{os.environ['POSTGRES_USER']}:"
+        f"{os.environ['POSTGRES_PASSWORD']}@postgres:5432/"
+        f"{os.environ['POSTGRES_DB']}"
     )
 
 
-def run_cutover(database_url):
-    return subprocess.run(
-        ["python", CUTOVER, "--config", CONFIG],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "DATABASE_URL": database_url},
-    )
-
-
-async def make_unversioned_schema(database_url):
-    run_alembic(database_url, "upgrade", "head")
-    conn = await asyncpg.connect(database_url)
+async def audit_schema() -> bool:
+    conn = await asyncpg.connect(database_url())
     try:
-        await conn.execute("DROP TABLE alembic_version")
-    finally:
-        await conn.close()
+        version_table = await conn.fetchval(
+            "SELECT to_regclass('public.alembic_version')"
+        )
+        if version_table:
+            versions = await conn.fetch("SELECT version_num FROM alembic_version")
+            if [row["version_num"] for row in versions] == [REVISION]:
+                return False
+            raise SchemaMismatch("alembic_version is not the baseline revision")
 
-
-async def test_database_url_repr_is_redacted():
-    value = RedactedDatabaseURL("sensitive-value")
-
-    assert repr(value) == "'<redacted-database-url>'"
-    assert "sensitive-value" not in repr(value)
-
-
-async def test_alembic_creates_exact_existing_schema(migrated_database_url):
-    conn = await asyncpg.connect(migrated_database_url)
-    try:
         tables = {
             row["tablename"]
             for row in await conn.fetch(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
             )
         }
+        if tables != set(EXPECTED_COLUMNS):
+            raise SchemaMismatch("table set mismatch")
+
         column_rows = await conn.fetch(
             """
             SELECT c.relname AS table_name, a.attname AS column_name,
@@ -215,6 +208,19 @@ async def test_alembic_creates_exact_existing_schema(migrated_database_url):
             """,
             list(EXPECTED_COLUMNS),
         )
+        columns = {}
+        for row in column_rows:
+            columns.setdefault(row["table_name"], []).append(
+                (
+                    row["column_name"],
+                    row["data_type"],
+                    row["attnotnull"],
+                    row["default_expr"],
+                )
+            )
+        if columns != EXPECTED_COLUMNS:
+            raise SchemaMismatch("column contract mismatch")
+
         constraints = {
             (
                 row["table_name"],
@@ -233,6 +239,9 @@ async def test_alembic_creates_exact_existing_schema(migrated_database_url):
                 list(EXPECTED_COLUMNS),
             )
         }
+        if constraints != EXPECTED_CONSTRAINTS:
+            raise SchemaMismatch("constraint contract mismatch")
+
         indexes = {
             (row["tablename"], row["indexname"], row["indexdef"])
             for row in await conn.fetch(
@@ -244,69 +253,32 @@ async def test_alembic_creates_exact_existing_schema(migrated_database_url):
                 list(EXPECTED_COLUMNS),
             )
         }
+        if indexes != EXPECTED_INDEXES:
+            raise SchemaMismatch("index contract mismatch")
+        return True
     finally:
         await conn.close()
 
-    columns = {}
-    for row in column_rows:
-        columns.setdefault(row["table_name"], []).append(
-            (
-                row["column_name"],
-                row["data_type"],
-                row["attnotnull"],
-                row["default_expr"],
-            )
-        )
 
-    assert tables == {*EXPECTED_COLUMNS, "alembic_version"}
-    assert columns == EXPECTED_COLUMNS
-    assert constraints == EXPECTED_CONSTRAINTS
-    assert indexes == EXPECTED_INDEXES
-
-
-async def test_cutover_audits_and_stamps_exact_unversioned_schema(
-    disposable_database_url,
-):
-    await make_unversioned_schema(disposable_database_url)
-
-    result = run_cutover(disposable_database_url)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    conn = await asyncpg.connect(disposable_database_url)
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    args = parser.parse_args()
     try:
-        assert await conn.fetchval("SELECT version_num FROM alembic_version") == "0001_existing_schema"
-    finally:
-        await conn.close()
+        needs_stamp = asyncio.run(audit_schema())
+        if not needs_stamp:
+            print(f"Database already stamped at {REVISION}")
+            return 0
+        command.stamp(Config(args.config), REVISION)
+        print(f"Schema audit passed; stamped {REVISION}")
+        return 0
+    except SchemaMismatch as exc:
+        print(f"Schema audit failed: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Cutover failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
 
 
-async def test_cutover_is_idempotent_for_versioned_baseline(migrated_database_url):
-    result = run_cutover(migrated_database_url)
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-@pytest.mark.parametrize("schema_state", ["fresh", "partial", "mismatch"])
-async def test_cutover_fails_closed_without_stamping(
-    disposable_database_url, schema_state
-):
-    if schema_state != "fresh":
-        await make_unversioned_schema(disposable_database_url)
-        conn = await asyncpg.connect(disposable_database_url)
-        try:
-            if schema_state == "partial":
-                await conn.execute("DROP TABLE token_usage")
-            else:
-                await conn.execute(
-                    "ALTER TABLE messages ALTER COLUMN username TYPE VARCHAR(128)"
-                )
-        finally:
-            await conn.close()
-
-    result = run_cutover(disposable_database_url)
-
-    assert result.returncode != 0
-    assert "Schema audit failed" in result.stderr
-    conn = await asyncpg.connect(disposable_database_url)
-    try:
-        assert await conn.fetchval("SELECT to_regclass('public.alembic_version')") is None
-    finally:
-        await conn.close()
+if __name__ == "__main__":
+    raise SystemExit(main())
