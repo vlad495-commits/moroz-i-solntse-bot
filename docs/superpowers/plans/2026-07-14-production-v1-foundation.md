@@ -107,6 +107,7 @@ git commit -m "build: добавлен общий пакет и Docker-тест�
 - Create: `project/migrations/versions/0001_existing_schema.py`
 - Create: `project/tests/integration/conftest.py`
 - Create: `project/tests/integration/test_migrations.py`
+- Modify: `project/requirements-dev.txt`
 - Modify: `project/llm/db.py:14-123`
 - Modify: `project/admin/database.py:24-101`
 - Modify: `project/docker-compose.yml`
@@ -155,6 +156,8 @@ def upgrade() -> None:
 
 Repeat explicit table definitions for the five existing tables and their indexes. `init_db()` in both apps must only call `asyncpg.create_pool`. Add `migrate` as an explicit one-shot Compose service; do not make application startup mutate schema.
 
+Pin compatible `alembic`, `SQLAlchemy` and `pytest-asyncio` versions in `requirements-dev.txt`; SQLAlchemy is used only by Alembic migration infrastructure, not as an application ORM.
+
 - [ ] **Step 4: Run upgrade, downgrade on disposable DB, upgrade and tests**
 
 Run: `docker compose run --rm migrate && docker compose --profile test run --rm test pytest tests/integration/test_migrations.py -q`
@@ -164,7 +167,7 @@ Expected: the normal migration exits 0; the integration fixture independently pe
 - [ ] **Step 5: Commit**
 
 ```bash
-git add project/alembic.ini project/migrations project/tests/integration/test_migrations.py project/llm/db.py project/admin/database.py project/docker-compose.yml
+git add project/alembic.ini project/migrations project/tests/integration project/requirements-dev.txt project/llm/db.py project/admin/database.py project/docker-compose.yml
 git commit -m "db: добавлен Alembic baseline"
 ```
 
