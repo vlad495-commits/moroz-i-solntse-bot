@@ -9,14 +9,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV TZ=Europe/Moscow \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src
 
 # Зависимости (отдельный слой для кэширования)
-COPY requirements.txt .
+COPY llm/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Код
-COPY . .
+COPY llm/ .
+COPY src/ /app/src/
 
 # Папка для логов (volume :rw в docker-compose)
 RUN mkdir -p /app/logs

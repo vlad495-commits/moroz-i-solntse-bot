@@ -1,8 +1,16 @@
 name: moroz-i-solntse-bot
 
 services:
-  llm:
-    build: ./llm
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+
+  bot:
+    build:
+      context: .
+      dockerfile: llm/Dockerfile
     restart: unless-stopped
     env_file: ../.env
     stop_grace_period: 30s
@@ -28,7 +36,9 @@ services:
       start_period: 60s
 
   admin:
-    build: ./admin
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
     restart: unless-stopped
     env_file: ../.env
     stop_grace_period: 30s
