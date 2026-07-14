@@ -1,4 +1,4 @@
-"""Точка входа Telegram-бота. Запускается через: docker compose up llm."""
+"""Точка входа Telegram-бота. Запускается через: docker compose up bot."""
 
 import asyncio
 import logging

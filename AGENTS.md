@@ -50,7 +50,7 @@ moroz-i-solntse-bot/
 ```
 
 **Контейнеры в `docker-compose.yml` (3 шт):**
-1. `llm` — бот + LLM (build из `./llm`)
+1. `bot` — бот + LLM (код и entrypoint остаются в `./llm`)
 2. `redis` — `redis:7-alpine` (кэш контекста)
 3. `postgres` — `postgres:16-alpine` (история сообщений)
 
@@ -76,7 +76,7 @@ moroz-i-solntse-bot/
     │
     ▼
 ┌─────────────────────────────────────────────────┐
-│ КОНТЕЙНЕР llm                                   │
+│ КОНТЕЙНЕР bot                                   │
 │                                                 │
 │  bot.py (long-polling aiogram)                  │
 │    │                                            │
@@ -114,14 +114,17 @@ moroz-i-solntse-bot/
 **Проект ВСЕГДА запускается через Docker.** Никогда напрямую `python bot.py`. Даже локально.
 
 ```bash
+# Один раз перед первым запуском после переименования сервиса llm → bot:
+docker compose down --remove-orphans
+
 # Локальный запуск:
 cd project && docker compose up --build
 
 # Логи:
-docker compose logs -f llm
+docker compose logs -f bot
 
 # Перезапуск контейнера (после изменения кода или .env):
-docker compose restart llm
+docker compose restart bot
 
 # Остановить всё:
 docker compose down

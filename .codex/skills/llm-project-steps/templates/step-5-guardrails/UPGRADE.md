@@ -261,12 +261,13 @@ RUN if [ "$INSTALL_SPACY_RU" = "true" ]; then \
 
 ### `<root>/project/docker-compose.yml`
 
-В сервис `llm` секцию `build:` добавить `args:` (если ещё нет):
+В сервис `bot` секцию `build:` добавить `args:` (если ещё нет):
 
 ```yaml
-  llm:
+  bot:
     build:
-      context: ./llm
+      context: .
+      dockerfile: llm/Dockerfile
       args:
         INSTALL_SPACY_RU: ${PII_NER_ENABLED:-false}
 ```
@@ -325,7 +326,7 @@ GUARDRAILS_INPUT_CATEGORIES=
 # PII_NER_ENABLED=true   — Слой 2 (опц.): имена, локации, организации через
 #                          Presidio + spaCy ru_core_news_lg. Требует:
 #                          1) Раскомментировать presidio/spacy в requirements.txt.
-#                          2) Пересобрать образ: `docker compose build llm`
+#                          2) Пересобрать образ: `docker compose build bot`
 #                             (Compose сам пробросит INSTALL_SPACY_RU=true).
 #                          Образ распухнет на ~600 МБ, +200 мс на сообщение.
 PII_MASK_ENABLED=false
@@ -337,7 +338,7 @@ PII_NER_ENABLED=false
 ## 4. Миграция БД
 
 ```bash
-cd <root>/project && docker compose exec llm python -c "import asyncio, db; asyncio.run(db.init_db())"
+cd <root>/project && docker compose exec bot python -c "import asyncio, db; asyncio.run(db.init_db())"
 ```
 
 ---

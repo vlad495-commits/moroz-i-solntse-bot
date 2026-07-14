@@ -8,9 +8,10 @@ ENV PYTHONPATH=/app/src:/app/llm:/app/admin \
 COPY llm/requirements.txt /tmp/requirements-llm.txt
 COPY admin/requirements.txt /tmp/requirements-admin.txt
 COPY requirements-dev.txt /tmp/requirements-dev.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-llm.txt && \
-    pip install --no-cache-dir -r /tmp/requirements-admin.txt && \
-    pip install --no-cache-dir -r /tmp/requirements-dev.txt
+RUN pip install --no-cache-dir \
+    -r /tmp/requirements-llm.txt \
+    -r /tmp/requirements-admin.txt \
+    -r /tmp/requirements-dev.txt
 
 COPY llm /app/llm
 COPY admin /app/admin

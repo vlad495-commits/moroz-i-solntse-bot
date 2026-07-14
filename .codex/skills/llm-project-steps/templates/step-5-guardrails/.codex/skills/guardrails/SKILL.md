@@ -103,7 +103,7 @@ GUARDRAILS_INPUT_CATEGORIES=role_switch,prompt_leak,known_attack
 ## Шаг 6 — применить
 
 Скажи клиенту:
-> Чтобы применить — `cd project && docker compose restart llm`. Простой 5-10 секунд. После рестарта в `docker compose logs llm` увидишь строку `Guardrails: input=enabled (categories=[...]), output=enabled` — это подтверждение что флаги подхватились. Если бот ещё не запущен — `docker compose up --build` (применится автоматом).
+> Чтобы применить — `cd project && docker compose restart bot`. Простой 5-10 секунд. После рестарта в `docker compose logs bot` увидишь строку `Guardrails: input=enabled (categories=[...]), output=enabled` — это подтверждение что флаги подхватились. Если бот ещё не запущен — `docker compose up --build` (применится автоматом).
 
 Если клиент согласен — выполни рестарт.
 
@@ -113,4 +113,4 @@ GUARDRAILS_INPUT_CATEGORIES=role_switch,prompt_leak,known_attack
 - НЕ удаляй и не комментируй строки — только меняй значения.
 - Если клиент выбрал «включить вход» но не назвал ни одной категории — не записывай `GUARDRAILS_INPUT_ENABLED=true` с пустым списком (бот всё равно пропустит — раннее `return True` при пустых категориях). Лучше переспроси.
 - НЕ объясняй что-либо если клиент явно отказался («не нужно guardrails сейчас») — просто выйди.
-- adversarial-эвалы (`docker compose exec llm python -m eval.run_evals --only adversarial`) при выключенных guardrails печатают предупреждение и возвращают (0, 0) — это нормально, прогон бессмыслен без активной защиты.
+- adversarial-эвалы (`docker compose exec bot python -m eval.run_evals --only adversarial`) при выключенных guardrails печатают предупреждение и возвращают (0, 0) — это нормально, прогон бессмыслен без активной защиты.

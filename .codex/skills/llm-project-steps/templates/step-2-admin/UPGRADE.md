@@ -311,7 +311,7 @@ PRICING_PER_1M_TOKENS = {
 
 ### `<root>/project/docker-compose.yml`
 
-После сервиса `llm:` добавить сервис `admin:` (вставить блок перед `redis:`):
+После сервиса `bot:` добавить сервис `admin:` (вставить блок перед `redis:`):
 
 ```yaml
   admin:
@@ -369,12 +369,12 @@ LOGS_TAIL_LINES=300
 `UndefinedTableError` (дашборд читает `messages`, статистика — `token_usage`).
 
 ```bash
-cd <root>/project && docker compose run --rm --no-deps llm python -c "import asyncio, db; asyncio.run(db.init_db())"
+cd <root>/project && docker compose run --rm --no-deps bot python -c "import asyncio, db; asyncio.run(db.init_db())"
 ```
 
-**Почему `run`, а не `exec`:** контейнер `llm` не стартует без валидного `TELEGRAM_BOT_TOKEN`
+**Почему `run`, а не `exec`:** контейнер `bot` не стартует без валидного `TELEGRAM_BOT_TOKEN`
 (проверка токена в `bot.py` стоит раньше `db.init_db()`). Если у клиента токена ещё нет —
-`exec llm` невозможен, и таблицы не создаются. `docker compose run --rm --no-deps llm`
+`exec bot` невозможен, и таблицы не создаются. `docker compose run --rm --no-deps bot`
 поднимает одноразовый контейнер из того же образа, выполняет миграцию и удаляется —
 работает независимо от того, запущен ли основной `llm`.
 

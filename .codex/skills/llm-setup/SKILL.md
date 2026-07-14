@@ -146,7 +146,7 @@ test -f project/llm/guardrails.py && echo "EXISTS" || echo "MISSING"
    > Canary добавлены в код, но выходная защита (`GUARDRAILS_OUTPUT_ENABLED`) выключена в `.env`. Без её включения canary не работают — бот может процитировать твой промпт пользователю и мы это не заблокируем. Включи через скилл `/guardrails`.
 
 ### Шаг 1.8 — hot-reload (опционально)
-Если бот запущен (`docker compose ps llm`), опубликуй в Redis канал `prompt:reload` чтобы бот перечитал промпт без рестарта:
+Если бот запущен (`docker compose ps bot`), опубликуй в Redis канал `prompt:reload` чтобы бот перечитал промпт без рестарта:
 ```bash
 docker compose exec redis redis-cli -a "$REDIS_PASSWORD" PUBLISH prompt:reload "manual:$(date +%s)"
 ```
@@ -220,7 +220,7 @@ docker compose exec redis redis-cli -a "$REDIS_PASSWORD" PUBLISH prompt:reload "
 ## Применение раздела 2
 
 После записи всех 4 значений:
-> Готово. Чтобы применить — `cd project && docker compose restart llm`. Если бот ещё не запущен — просто `docker compose up`.
+> Готово. Чтобы применить — `cd project && docker compose restart bot`. Если бот ещё не запущен — просто `docker compose up`.
 
 ## Важно для раздела 2
 
@@ -282,11 +282,11 @@ docker compose exec redis redis-cli -a "$REDIS_PASSWORD" PUBLISH prompt:reload "
 ## Применение раздела 3
 
 После записи:
-> Готово. Чтобы применить — `cd project && docker compose restart llm`. `CONTEXT_MESSAGES_LIMIT` начнёт работать сразу. Автоочистка с новым `DATA_RETENTION_DAYS` запустится в ближайшие 24 часа (по таймеру `_cleanup_loop`).
+> Готово. Чтобы применить — `cd project && docker compose restart bot`. `CONTEXT_MESSAGES_LIMIT` начнёт работать сразу. Автоочистка с новым `DATA_RETENTION_DAYS` запустится в ближайшие 24 часа (по таймеру `_cleanup_loop`).
 >
 > Если хочешь почистить **прямо сейчас** под новый срок — выполни:
 > ```bash
-> docker compose exec llm python -c "import asyncio, db; asyncio.run(db.cleanup_old_records())"
+> docker compose exec bot python -c "import asyncio, db; asyncio.run(db.cleanup_old_records())"
 > ```
 
 ## Важно для раздела 3

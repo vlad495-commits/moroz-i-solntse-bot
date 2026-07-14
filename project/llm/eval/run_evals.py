@@ -1,9 +1,9 @@
 """Прогон evaluation: тестовый датасет + adversarial-атаки.
 
 Запуск (внутри llm-контейнера):
-    docker compose exec llm python -m eval.run_evals
-    docker compose exec llm python -m eval.run_evals --only adversarial
-    docker compose exec llm python -m eval.run_evals --only dataset
+    docker compose exec bot python -m eval.run_evals
+    docker compose exec bot python -m eval.run_evals --only adversarial
+    docker compose exec bot python -m eval.run_evals --only dataset
 """
 
 import argparse
