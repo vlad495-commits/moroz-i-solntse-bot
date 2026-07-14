@@ -34,7 +34,7 @@
 - Produces: `Settings.from_env(env: Mapping[str, str]) -> Settings`
 - Produces: Docker service `test` under profile `test`.
 
-- [ ] **Step 1: Write the failing config test**
+- [x] **Step 1: Write the failing config test**
 
 ```python
 from moroz.common.config import Settings
@@ -50,13 +50,13 @@ def test_settings_build_database_url_from_postgres_parts():
     assert settings.rabbitmq_url == "amqp://guest:guest@rabbitmq:5672/"
 ```
 
-- [ ] **Step 2: Run test to verify red**
+- [x] **Step 2: Run test to verify red**
 
 Run: `docker compose --profile test run --rm test pytest tests/unit/common/test_config.py -q`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'moroz'`.
 
-- [ ] **Step 3: Add minimal package, settings and test image**
+- [x] **Step 3: Add minimal package, settings and test image**
 
 ```python
 from dataclasses import dataclass
@@ -86,13 +86,13 @@ class Settings:
 
 `Dockerfile.test` copies `src`, `tests`, both production requirements files and `requirements-dev.txt`; set `PYTHONPATH=/app/src:/app/llm:/app/admin`. Change production Docker build contexts to `.` with `dockerfile: llm/Dockerfile` and `admin/Dockerfile`; each Dockerfile copies its entrypoint directory plus `src/`. Rename the Compose service `llm` to `bot` without moving `project/llm` or changing the bot entrypoint.
 
-- [ ] **Step 4: Run config test and Compose validation**
+- [x] **Step 4: Run config test and Compose validation**
 
 Run: `docker compose --profile test build test && docker compose --profile test run --rm test pytest tests/unit/common/test_config.py -q && docker compose config --quiet`
 
 Expected: `1 passed`; Compose exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add project/src project/tests project/requirements-dev.txt project/Dockerfile.test project/docker-compose.yml project/llm/Dockerfile project/admin/Dockerfile
