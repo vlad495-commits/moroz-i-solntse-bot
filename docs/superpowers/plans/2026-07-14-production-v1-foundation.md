@@ -116,7 +116,7 @@ git commit -m "build: добавлен общий пакет и Docker-тест�
 - Produces: service `migrate` running `alembic upgrade head`.
 - Preserves: `init_db()` only creates asyncpg pool.
 
-- [ ] **Step 1: Write migration smoke test**
+- [x] **Step 1: Write migration smoke test**
 
 ```python
 import asyncpg
@@ -129,7 +129,7 @@ async def test_alembic_creates_existing_tables(migrated_database_url):
     assert {"messages", "token_usage", "prompt_versions", "eval_cases", "eval_runs", "eval_results"} <= {r["tablename"] for r in names}
 ```
 
-- [ ] **Step 2: Verify red on a clean test database**
+- [x] **Step 2: Verify red on a clean test database**
 
 The integration fixture creates a uniquely named disposable PostgreSQL database, runs `alembic upgrade head` against its overridden `DATABASE_URL`, yields that URL, and always drops the database during cleanup.
 
@@ -137,7 +137,7 @@ Run: `docker compose --profile test run --rm test pytest tests/integration/test_
 
 Expected: FAIL because Alembic configuration/revision does not exist.
 
-- [ ] **Step 3: Add baseline and remove DDL from startup**
+- [x] **Step 3: Add baseline and remove DDL from startup**
 
 ```python
 def upgrade() -> None:
@@ -158,13 +158,13 @@ Repeat explicit table definitions for the five existing tables and their indexes
 
 Pin compatible `alembic`, `SQLAlchemy` and `pytest-asyncio` versions in `requirements-dev.txt`; SQLAlchemy is used only by Alembic migration infrastructure, not as an application ORM.
 
-- [ ] **Step 4: Run upgrade, downgrade on disposable DB, upgrade and tests**
+- [x] **Step 4: Run upgrade, downgrade on disposable DB, upgrade and tests**
 
 Run: `docker compose run --rm migrate && docker compose --profile test run --rm test pytest tests/integration/test_migrations.py -q`
 
 Expected: the normal migration exits 0; the integration fixture independently performs upgrade on a disposable database, the test passes, and cleanup removes that database. Also verify downgrade/upgrade on another disposable database before committing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add project/alembic.ini project/migrations project/tests/integration project/requirements-dev.txt project/llm/db.py project/admin/database.py project/docker-compose.yml
