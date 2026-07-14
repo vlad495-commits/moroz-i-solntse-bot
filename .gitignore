@@ -6,6 +6,7 @@
 # Временные файлы
 tmp/
 project/tmp/
+.superpowers/
 *.tmp
 
 # macOS
