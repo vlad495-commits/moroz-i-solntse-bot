@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any
 
-import asyncpg
+from moroz.common.db import Database
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +18,18 @@ if not DATABASE_URL:
     if _pg_user and _pg_pass and _pg_db:
         DATABASE_URL = f"postgresql://{_pg_user}:{_pg_pass}@postgres:5432/{_pg_db}"
 
-_pool: asyncpg.Pool | None = None
+_pool: Database | None = None
 
 
 async def init_db() -> None:
     global _pool
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL не задан")
-    _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    if _pool is not None:
+        return
+    database = Database(DATABASE_URL)
+    await database.connect()
+    _pool = database
     logger.info("Админка: пул подключений к БД создан")
 
 

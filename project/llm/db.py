@@ -2,13 +2,12 @@
 
 import logging
 
-import asyncpg
-
 from config import DATABASE_URL, CONTEXT_MESSAGES_LIMIT, DATA_RETENTION_DAYS
+from moroz.common.db import Database
 
 logger = logging.getLogger(__name__)
 
-_pool: asyncpg.Pool | None = None
+_pool: Database | None = None
 
 
 async def init_db() -> None:
@@ -16,7 +15,11 @@ async def init_db() -> None:
     if not DATABASE_URL:
         logger.warning("DATABASE_URL не задан — без БД")
         return
-    _pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+    if _pool is not None:
+        return
+    database = Database(DATABASE_URL)
+    await database.connect()
+    _pool = database
     logger.info("Пул подключений к БД создан")
 
 
@@ -34,7 +37,9 @@ async def _ensure_pool() -> bool:
     if not DATABASE_URL:
         return False
     try:
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+        database = Database(DATABASE_URL)
+        await database.connect()
+        _pool = database
         return True
     except Exception:
         logger.exception("PostgreSQL недоступен")
