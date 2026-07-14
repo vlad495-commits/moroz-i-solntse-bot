@@ -263,7 +263,7 @@ git commit -m "refactor: добавлены общие БД и observability hel
 - Produces: `RabbitQueue.connect()`, `close()`, `publish(task)`, `consume_one(handler)` and long-running `consume(handler)` with manual ack.
 - Uses: durable direct exchange/queue `tasks`, retry header `x-retry-count`, direct DLX `tasks.dlx` and queue `tasks.dlq` retained for 30 days.
 
-- [ ] **Step 1: Write failing round-trip test**
+- [x] **Step 1: Write failing round-trip test**
 
 ```python
 async def test_queue_round_trip(rabbit_queue):
@@ -279,13 +279,13 @@ async def test_queue_round_trip(rabbit_queue):
 
 Add a second integration case: a handler that always raises is called once initially plus exactly three retries; after the third retry the persistent message is routed to `tasks.dlq` with the original `message_id`/idempotency key and is no longer present in `tasks`.
 
-- [ ] **Step 2: Run red**
+- [x] **Step 2: Run red**
 
 Run: `docker compose --profile test run --rm test pytest tests/integration/test_queue.py -q`
 
 Expected: FAIL because RabbitMQ service and adapter are absent.
 
-- [ ] **Step 3: Add robust queue and containers**
+- [x] **Step 3: Add robust queue and containers**
 
 ```python
 class RabbitQueue(QueuePort):
@@ -303,13 +303,13 @@ class RabbitQueue(QueuePort):
 
 On successful handler completion, ack manually. On failure, republish with incremented `x-retry-count` and ack the original only after publisher confirm; allow three retries after the initial delivery. After retry count 3, publish to the DLX preserving persistent delivery and `message_id`, then ack the original. If republish itself fails, do not silently lose the original message. Worker connects once and consumes continuously. Scheduler skeleton is a long-running process: it logs periodic heartbeat, handles graceful shutdown and stays healthy until stopped. Add a pinned RabbitMQ 4 management-alpine service with healthcheck plus worker/scheduler services.
 
-- [ ] **Step 4: Run queue test and container health**
+- [x] **Step 4: Run queue test and container health**
 
 Run: `docker compose up -d rabbitmq && docker compose --profile test run --rm test pytest tests/integration/test_queue.py -q && docker compose up -d worker scheduler && docker compose ps`
 
 Expected: queue round-trip and retry/DLQ tests pass without a competing worker; then rabbitmq, worker and scheduler are running/healthy.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add project/src/moroz/common/queue.py project/worker project/scheduler project/tests/integration/test_queue.py project/docker-compose.yml project/llm/requirements.txt
