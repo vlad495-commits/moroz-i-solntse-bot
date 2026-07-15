@@ -61,7 +61,6 @@ services:
       context: .
       dockerfile: worker/Dockerfile
     restart: unless-stopped
-    env_file: ../.env
     environment:
       RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL outside Git}
     stop_grace_period: 30s
@@ -74,7 +73,7 @@ services:
         max-size: "5m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q 'python worker/main.py'"]
+      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q 'python worker/main.py' && test -f /tmp/worker-ready"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -95,7 +94,7 @@ services:
         max-size: "5m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q 'python scheduler/main.py'"]
+      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q 'python scheduler/main.py' && test -f /tmp/scheduler-heartbeat && python -c \"import os,time,sys; sys.exit(0 if time.time()-os.path.getmtime('/tmp/scheduler-heartbeat') <= 75 else 1)\""]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -167,7 +166,6 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    env_file: ../.env
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD outside Git}
     command: >
@@ -193,7 +191,6 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
-    env_file: ../.env
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER outside Git}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}

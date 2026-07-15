@@ -220,10 +220,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("eval_case_reviews")
-    op.drop_table("eval_results")
-    op.drop_table("eval_runs")
-    op.drop_table("eval_cases")
-    op.drop_table("prompt_versions")
-    op.drop_table("token_usage")
-    op.drop_table("messages")
+    raise RuntimeError(
+        "Baseline downgrade is disabled to protect historical application data"
+    )

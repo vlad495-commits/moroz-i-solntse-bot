@@ -134,6 +134,33 @@ def test_compose_process_environment_overrides_external_test_credentials():
             "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
         }
 
+    assert services["worker"]["environment"] == {
+        "RABBITMQ_URL": "${RABBITMQ_URL:?set RABBITMQ_URL outside Git}",
+    }
+    for name in ("worker", "redis", "postgres"):
+        assert "env_file" not in services[name]
+
+
+def test_worker_image_installs_only_exact_queue_dependency():
+    dockerfile = (ROOT / "worker/Dockerfile").read_text(encoding="utf-8")
+    requirements = (ROOT / "worker/requirements.txt").read_text(encoding="utf-8")
+
+    assert requirements.splitlines() == ["aio-pika==9.6.2"]
+    assert "COPY worker/requirements.txt" in dockerfile
+    assert "llm/requirements.txt" not in dockerfile
+
+
+def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
+    services = compose_services()
+    worker_health = " ".join(services["worker"]["healthcheck"]["test"])
+    scheduler_health = " ".join(services["scheduler"]["healthcheck"]["test"])
+
+    assert "/proc/1/cmdline" in worker_health
+    assert "/tmp/worker-ready" in worker_health
+    assert "/proc/1/cmdline" in scheduler_health
+    assert "/tmp/scheduler-heartbeat" in scheduler_health
+    assert "75" in scheduler_health
+
 
 def test_admin_port_is_isolatable_without_changing_default_url():
     assert compose_services()["admin"]["ports"] == [

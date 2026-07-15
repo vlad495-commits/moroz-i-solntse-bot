@@ -259,7 +259,7 @@ git commit -m "refactor: добавлены общие БД и observability hel
 - Modify: `project/llm/requirements.txt`
 
 **Interfaces:**
-- Produces: immutable `QueueTask(kind, payload, idempotency_key)` with JSON round-trip and `QueuePort.publish(task)`.
+- Produces: frozen/shallow-immutable `QueueTask(kind, payload, idempotency_key)` envelope with intentionally mutable JSON payload, JSON round-trip and `QueuePort.publish(task)`.
 - Produces: `RabbitQueue.connect()`, `close()`, `publish(task)`, `consume_one(handler)` and long-running `consume(handler)` with manual ack.
 - Uses: durable direct exchange/queue `tasks`, retry header `x-retry-count`, direct DLX `tasks.dlx` and queue `tasks.dlq` retained for 30 days.
 
@@ -338,7 +338,7 @@ Add dedicated cutover regressions for an empty `alembic_version` table and an un
 
 - [x] **Step 2: Run the complete Docker suite**
 
-Run: `docker compose --env-file ../.env --profile test run --rm test pytest -q`
+Run: `docker compose --env-file ../.env --profile test build test && docker compose --env-file ../.env --profile test run --rm test pytest -q`
 
 Expected: all tests pass.
 
@@ -393,21 +393,21 @@ git commit -m "docs: зафиксирован production foundation checkpoint"
 - Rabbit consumer tracks callback tasks, propagates fatal delivery errors, stops new deliveries before shutdown, drains in-flight work to a bounded timeout and then cancels safely. Worker readiness reflects an active consumer; scheduler health reflects a fresh heartbeat.
 - Retry attempts use increasing delays before the first real producer/handler is introduced. Tests inject zero/fake delays; production defaults remain non-zero and increasing.
 
-- [ ] **Step 1: Add meaningful RED regressions for all branch-review findings**
+- [x] **Step 1: Add meaningful RED regressions for all branch-review findings**
 
 Cover destructive downgrade, stamped-schema drift, reserved-character PostgreSQL password, runtime env allowlists, worker dependency boundary, callback fatal propagation, bounded in-flight drain/cancel, consumer readiness, scheduler heartbeat freshness and increasing retry delays. Update the canonical gate regression to force a fresh test-image build.
 
-- [ ] **Step 2: Implement migration, DSN and least-privilege fixes**
+- [x] **Step 2: Implement migration, DSN and least-privilege fixes**
 
 Use only standard-library URL encoding in shared runtime code and a tiny migration-local helper so the migration image stays minimal. Make baseline downgrade raise without DDL. Audit both stamped and unstamped schemas before returning success/stamping. Remove runtime store/worker `env_file` entries and use explicit allowlists.
 
-- [ ] **Step 3: Implement queue supervision, drain, health and backoff**
+- [x] **Step 3: Implement queue supervision, drain, health and backoff**
 
 Keep at-least-once semantics: stop intake, wait for in-flight callbacks up to a bounded timeout, cancel remaining callbacks and close the connection so unacked messages are redelivered. Any fatal callback error must end `consume()` and the worker process. Health must go false if consumer readiness disappears or scheduler heartbeat becomes stale.
 
-- [ ] **Step 4: Close branch-review Minor notes**
+- [x] **Step 4: Close branch-review Minor notes**
 
-Make the Docker gate build the test image, correct the first AGENTS command working directory, split the Alembic roadmap checkpoint, give worker a minimal requirements file, and document `QueueTask` as a frozen envelope with shallow/mutable JSON payload semantics unless a compatible deep-freeze is demonstrably simpler.
+Make the Docker gate build the test image, correct the first AGENTS command working directory, split the Alembic roadmap checkpoint, give worker a minimal requirements file, and document `QueueTask` as a frozen envelope with shallow/mutable JSON payload semantics.
 
 - [ ] **Step 5: Run safe full regression gate and independent re-review**
 

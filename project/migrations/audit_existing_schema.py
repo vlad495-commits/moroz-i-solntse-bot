@@ -2,12 +2,13 @@
 
 import argparse
 import asyncio
-import os
 import sys
 
 import asyncpg
 from alembic import command
 from alembic.config import Config
+
+from database_url import database_url
 
 
 REVISION = "0001_existing_schema"
@@ -160,17 +161,6 @@ class SchemaMismatch(Exception):
     pass
 
 
-def database_url() -> str:
-    url = os.getenv("DATABASE_URL")
-    if url:
-        return url
-    return (
-        f"postgresql://{os.environ['POSTGRES_USER']}:"
-        f"{os.environ['POSTGRES_PASSWORD']}@postgres:5432/"
-        f"{os.environ['POSTGRES_DB']}"
-    )
-
-
 async def audit_schema() -> bool:
     conn = await asyncpg.connect(database_url())
     try:
@@ -179,9 +169,11 @@ async def audit_schema() -> bool:
         )
         if version_table:
             versions = await conn.fetch("SELECT version_num FROM alembic_version")
-            if [row["version_num"] for row in versions] == [REVISION]:
-                return False
-            raise SchemaMismatch("alembic_version is not the baseline revision")
+            if [row["version_num"] for row in versions] != [REVISION]:
+                raise SchemaMismatch("alembic_version is not the baseline revision")
+            needs_stamp = False
+        else:
+            needs_stamp = True
 
         tables = {
             row["tablename"]
@@ -189,7 +181,10 @@ async def audit_schema() -> bool:
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
             )
         }
-        if tables != set(EXPECTED_COLUMNS):
+        expected_tables = set(EXPECTED_COLUMNS)
+        if version_table:
+            expected_tables.add("alembic_version")
+        if tables != expected_tables:
             raise SchemaMismatch("table set mismatch")
 
         column_rows = await conn.fetch(
@@ -255,7 +250,7 @@ async def audit_schema() -> bool:
         }
         if indexes != EXPECTED_INDEXES:
             raise SchemaMismatch("index contract mismatch")
-        return True
+        return needs_stamp
     finally:
         await conn.close()
 

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from moroz.common.config import database_url_from_env
 
 # Корневой .env (на 2 уровня выше: project/llm/ → project/ → корень)
 _ROOT_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
@@ -31,13 +32,7 @@ LLM_REQUEST_TIMEOUT_SEC = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "30"))
 
 # --- Хранилища ---
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-if not DATABASE_URL:
-    _pg_user = os.getenv("POSTGRES_USER", "")
-    _pg_pass = os.getenv("POSTGRES_PASSWORD", "")
-    _pg_db = os.getenv("POSTGRES_DB", "")
-    if _pg_user and _pg_pass and _pg_db:
-        DATABASE_URL = f"postgresql://{_pg_user}:{_pg_pass}@postgres:5432/{_pg_db}"
+DATABASE_URL = database_url_from_env(os.environ, required=False)
 CONTEXT_MESSAGES_LIMIT = int(os.getenv("CONTEXT_MESSAGES_LIMIT", "20"))
 
 # --- Промпт ---

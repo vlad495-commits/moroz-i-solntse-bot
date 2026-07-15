@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -10,14 +11,24 @@ class ConsumerFailure(RuntimeError):
     pass
 
 
+def test_worker_reads_only_rabbitmq_url_without_aggregate_settings():
+    source = Path("/workspace/worker/main.py").read_text(encoding="utf-8")
+
+    assert "Settings" not in source
+    assert 'os.environ["RABBITMQ_URL"]' in source
+    assert "os.getenv" not in source
+
+
 class FakeQueue:
     def __init__(self, result):
         self.result = result
         self.started = asyncio.Event()
         self.cancelled = False
         self.close_calls = 0
+        self.ready = asyncio.Event()
 
     async def consume(self, _handler):
+        self.ready.set()
         self.started.set()
         if isinstance(self.result, Exception):
             raise self.result
@@ -80,3 +91,36 @@ async def test_stop_cancels_consumer_and_closes_queue_once():
 
     assert queue.cancelled
     assert queue.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_readiness_file_exists_only_for_active_consumer(tmp_path):
+    queue = FakeQueue("wait")
+    stop = asyncio.Event()
+    readiness = tmp_path / "worker-ready"
+    readiness.write_text("stale", encoding="utf-8")
+
+    supervised = asyncio.create_task(worker_main._supervise(queue, stop, readiness))
+    await asyncio.wait_for(queue.started.wait(), timeout=1)
+    for _ in range(100):
+        if readiness.exists() and readiness.read_text(encoding="utf-8") == "ready":
+            break
+        await asyncio.sleep(0)
+    else:
+        raise AssertionError("readiness file was not refreshed")
+
+    stop.set()
+    await supervised
+
+    assert not readiness.exists()
+
+
+@pytest.mark.asyncio
+async def test_worker_removes_readiness_file_after_consumer_failure(tmp_path):
+    queue = FakeQueue(ConsumerFailure("consumer failed"))
+    readiness = tmp_path / "worker-ready"
+
+    with pytest.raises(ConsumerFailure):
+        await worker_main._supervise(queue, asyncio.Event(), readiness)
+
+    assert not readiness.exists()

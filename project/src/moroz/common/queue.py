@@ -26,10 +26,14 @@ DEAD_LETTER_ROUTING_KEY = "tasks.dlq"
 DEAD_LETTER_TTL_MS = 2_592_000_000
 MAX_RETRIES = 3
 RETRY_HEADER = "x-retry-count"
+DEFAULT_RETRY_DELAYS = (1, 5, 30)
+DEFAULT_DRAIN_TIMEOUT = 20.0
 
 
 @dataclass(frozen=True, slots=True)
 class QueueTask:
+    """Frozen task envelope with an intentionally mutable JSON payload."""
+
     kind: str
     payload: dict[str, Any]
     idempotency_key: str
@@ -81,16 +85,34 @@ TaskHandler = Callable[[QueueTask], Awaitable[None]]
 
 
 class RabbitQueue(QueuePort):
-    def __init__(self, url: str):
+    def __init__(
+        self,
+        url: str,
+        *,
+        retry_delays: tuple[float, float, float] = DEFAULT_RETRY_DELAYS,
+        drain_timeout: float = DEFAULT_DRAIN_TIMEOUT,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ):
         if not url:
             raise ValueError("RabbitMQ URL is required")
+        if len(retry_delays) != MAX_RETRIES or any(
+            delay < 0 for delay in retry_delays
+        ):
+            raise ValueError("retry_delays must contain three non-negative values")
+        if drain_timeout < 0:
+            raise ValueError("drain_timeout must be non-negative")
         self._url = url
+        self._retry_delays = retry_delays
+        self._drain_timeout = drain_timeout
+        self._sleep = sleep
         self._connection: AbstractRobustConnection | None = None
         self._channel: AbstractRobustChannel | None = None
         self._exchange: AbstractRobustExchange | None = None
         self._queue: AbstractRobustQueue | None = None
         self._dead_letter_exchange: AbstractRobustExchange | None = None
         self._lifecycle_lock = asyncio.Lock()
+        self._inflight: set[asyncio.Task] = set()
+        self.ready = asyncio.Event()
 
     async def connect(self) -> None:
         async with self._lifecycle_lock:
@@ -151,6 +173,7 @@ class RabbitQueue(QueuePort):
 
     async def close(self) -> None:
         async with self._lifecycle_lock:
+            self.ready.clear()
             connection, self._connection = self._connection, None
             self._channel = None
             self._exchange = None
@@ -180,16 +203,63 @@ class RabbitQueue(QueuePort):
 
     async def consume(self, handler: TaskHandler) -> None:
         queue = self._require(self._queue)
+        fatal = asyncio.get_running_loop().create_future()
+        stopping = asyncio.Event()
 
         async def callback(message: AbstractIncomingMessage) -> None:
-            await self._handle(message, handler)
+            task = asyncio.create_task(self._handle(message, handler))
+            self._inflight.add(task)
+            try:
+                await task
+            except BaseException as error:
+                if not stopping.is_set() and not fatal.done():
+                    fatal.set_exception(error)
+            finally:
+                self._inflight.discard(task)
 
         consumer_tag = await queue.consume(callback, no_ack=False)
+        self.ready.set()
+        primary_error = None
         try:
-            await asyncio.Future()
+            await fatal
+        except BaseException as error:
+            primary_error = error
         finally:
-            if not queue.channel.is_closed:
-                await queue.cancel(consumer_tag)
+            stopping.set()
+            cleanup_error = None
+            try:
+                if not queue.channel.is_closed:
+                    await queue.cancel(consumer_tag)
+            except BaseException as error:
+                cleanup_error = error
+            self.ready.clear()
+            try:
+                await self._drain_inflight()
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+            if not fatal.done():
+                fatal.cancel()
+            if primary_error is not None:
+                raise primary_error
+            if cleanup_error is not None:
+                raise cleanup_error
+
+    async def _drain_inflight(self) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._drain_timeout
+        await asyncio.sleep(0)
+        while self._inflight:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            await asyncio.wait(tuple(self._inflight), timeout=remaining)
+            await asyncio.sleep(0)
+        pending = tuple(self._inflight)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _handle(
         self,
@@ -203,6 +273,7 @@ class RabbitQueue(QueuePort):
             retry_count = self._retry_count(message)
             try:
                 if retry_count < MAX_RETRIES:
+                    await self._sleep(self._retry_delays[retry_count])
                     await self._republish(
                         message,
                         self._require(self._exchange),
@@ -216,8 +287,11 @@ class RabbitQueue(QueuePort):
                         DEAD_LETTER_ROUTING_KEY,
                         retry_count,
                     )
-            except Exception:
-                await message.reject(requeue=True)
+            except Exception as republish_error:
+                try:
+                    await message.reject(requeue=True)
+                except Exception as reject_error:
+                    raise republish_error from reject_error
                 raise
             await message.ack()
             return

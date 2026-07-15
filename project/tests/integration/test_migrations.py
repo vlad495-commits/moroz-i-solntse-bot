@@ -164,6 +164,16 @@ def run_alembic(database_url, *args):
     )
 
 
+def run_alembic_result(database_url, *args):
+    return subprocess.run(
+        ["alembic", "-c", CONFIG, *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "DATABASE_URL": database_url},
+    )
+
+
 def run_cutover(database_url):
     return subprocess.run(
         ["python", CUTOVER, "--config", CONFIG],
@@ -356,6 +366,67 @@ async def test_cutover_audits_and_stamps_exact_unversioned_schema(
 async def test_cutover_is_idempotent_for_versioned_baseline(migrated_database_url):
     result = run_cutover(migrated_database_url)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+async def test_baseline_downgrade_is_rejected_without_changing_schema_or_data(
+    migrated_database_url,
+):
+    conn = await asyncpg.connect(migrated_database_url)
+    try:
+        message_id = await conn.fetchval(
+            """
+            INSERT INTO messages (chat_id, role, content)
+            VALUES (7, 'user', 'preserve me')
+            RETURNING id
+            """
+        )
+    finally:
+        await conn.close()
+
+    result = run_alembic_result(migrated_database_url, "downgrade", "base")
+
+    assert result.returncode != 0
+    conn = await asyncpg.connect(migrated_database_url)
+    try:
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0001_existing_schema"
+        )
+        assert await conn.fetchval(
+            "SELECT content FROM messages WHERE id = $1", message_id
+        ) == "preserve me"
+        assert await conn.fetchval("SELECT to_regclass('public.eval_case_reviews')")
+    finally:
+        await conn.close()
+
+
+@pytest.mark.parametrize("drift", ["column", "index", "constraint"])
+async def test_cutover_rejects_drift_in_already_stamped_schema(
+    migrated_database_url, drift
+):
+    conn = await asyncpg.connect(migrated_database_url)
+    try:
+        if drift == "column":
+            await conn.execute(
+                "ALTER TABLE messages ALTER COLUMN username TYPE VARCHAR(128)"
+            )
+        elif drift == "index":
+            await conn.execute("DROP INDEX idx_token_usage_chat_created")
+        else:
+            await conn.execute("ALTER TABLE messages DROP CONSTRAINT messages_role_check")
+    finally:
+        await conn.close()
+
+    result = run_cutover(migrated_database_url)
+
+    assert result.returncode != 0
+    assert "Schema audit failed" in result.stderr
+    conn = await asyncpg.connect(migrated_database_url)
+    try:
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0001_existing_schema"
+        )
+    finally:
+        await conn.close()
 
 
 @pytest.mark.parametrize("version_state", ["empty", "unexpected"])

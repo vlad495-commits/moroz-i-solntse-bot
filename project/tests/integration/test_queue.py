@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from dataclasses import FrozenInstanceError
@@ -13,7 +14,7 @@ from worker.main import handle as worker_handle
 
 @pytest_asyncio.fixture
 async def rabbit_queue():
-    queue = RabbitQueue(os.environ["RABBITMQ_URL"])
+    queue = RabbitQueue(os.environ["RABBITMQ_URL"], retry_delays=(0, 0, 0))
     await queue.connect()
 
     admin_connection = await aio_pika.connect_robust(os.environ["RABBITMQ_URL"])
@@ -29,7 +30,7 @@ async def rabbit_queue():
         await admin_connection.close()
 
 
-def test_queue_task_json_round_trip_and_is_immutable():
+def test_queue_task_json_round_trip_and_has_shallow_immutable_envelope():
     task = QueueTask(
         kind="ping",
         payload={"value": 7},
@@ -39,6 +40,8 @@ def test_queue_task_json_round_trip_and_is_immutable():
     assert QueueTask.from_json(task.to_json()) == task
     with pytest.raises(FrozenInstanceError):
         task.kind = "changed"
+    task.payload["value"] = 8
+    assert task.payload == {"value": 8}
 
 
 @pytest.mark.parametrize(
@@ -144,6 +147,39 @@ async def test_failed_republish_keeps_original_for_reconnect(rabbit_queue):
     await queue.publish(task)
     with pytest.raises(ChannelInvalidStateError):
         await queue.consume_one(close_channel_then_fail)
+
+    await queue.connect()
+    await queue.consume_one(handle)
+
+    assert received == [task]
+    assert await tasks.get(fail=False) is None
+
+
+@pytest.mark.asyncio
+async def test_long_consumer_propagates_fatal_ack_failure_and_redelivers(
+    rabbit_queue,
+):
+    queue, tasks, _ = rabbit_queue
+    task = QueueTask(
+        kind="fatal-ack",
+        payload={},
+        idempotency_key="fatal-ack:1",
+    )
+    received = []
+
+    async def close_channel(_task):
+        await queue._channel.close()
+
+    async def handle(redelivered):
+        received.append(redelivered)
+
+    await queue.publish(task)
+    consumer = asyncio.create_task(queue.consume(close_channel))
+    await asyncio.wait_for(queue.ready.wait(), timeout=2)
+
+    with pytest.raises(ChannelInvalidStateError):
+        await asyncio.wait_for(consumer, timeout=5)
+    assert not queue.ready.is_set()
 
     await queue.connect()
     await queue.consume_one(handle)

@@ -115,7 +115,7 @@ moroz-i-solntse-bot/
 
 ```bash
 # Один раз перед первым запуском после переименования сервиса llm → bot:
-docker compose --env-file ../.env down --remove-orphans
+cd project && docker compose --env-file ../.env down --remove-orphans
 
 # Безопасный локальный запуск инфраструктуры без Telegram polling:
 cd project && docker compose --env-file ../.env up --build postgres redis rabbitmq admin worker scheduler

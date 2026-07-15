@@ -7,16 +7,11 @@ import os
 from typing import Any
 
 from moroz.common.db import Database
+from moroz.common.config import database_url_from_env
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-if not DATABASE_URL:
-    _pg_user = os.getenv("POSTGRES_USER", "")
-    _pg_pass = os.getenv("POSTGRES_PASSWORD", "")
-    _pg_db = os.getenv("POSTGRES_DB", "")
-    if _pg_user and _pg_pass and _pg_db:
-        DATABASE_URL = f"postgresql://{_pg_user}:{_pg_pass}@postgres:5432/{_pg_db}"
+DATABASE_URL = database_url_from_env(os.environ, required=False)
 
 _pool: Database | None = None
 

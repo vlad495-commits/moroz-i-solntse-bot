@@ -1,10 +1,14 @@
 import asyncio
-import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from database_url import sqlalchemy_database_url  # noqa: E402
 
 
 config = context.config
@@ -14,16 +18,6 @@ if config.config_file_name:
 target_metadata = None
 
 
-def database_url() -> str:
-    url = os.getenv("DATABASE_URL")
-    if not url:
-        user = os.environ["POSTGRES_USER"]
-        password = os.environ["POSTGRES_PASSWORD"]
-        database = os.environ["POSTGRES_DB"]
-        url = f"postgresql://{user}:{password}@postgres:5432/{database}"
-    return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-
 def do_run_migrations(connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
@@ -31,7 +25,7 @@ def do_run_migrations(connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    connectable = create_async_engine(database_url(), poolclass=NullPool)
+    connectable = create_async_engine(sqlalchemy_database_url(), poolclass=NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
