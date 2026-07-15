@@ -327,16 +327,25 @@ raise SystemExit(asyncio.run(run_evals.main()))
 
 
 @pytest.mark.parametrize(
-    ("guardrails_source", "error_type"),
+    ("guardrails_source", "error_type", "sentinel"),
     [
-        ("import missing_guardrail_dependency_sentinel\n", "ModuleNotFoundError"),
-        ("BROKEN_GUARDRAILS = True\n", "ImportError"),
+        (
+            "import missing_guardrail_dependency_sentinel\n",
+            "ModuleNotFoundError",
+            "missing_guardrail_dependency_sentinel",
+        ),
+        ("BROKEN_GUARDRAILS = True\n", "ImportError", "missing-check-sentinel"),
+        ("def syntax_error_sentinel(:\n", "SyntaxError", "syntax_error_sentinel"),
+        (
+            'raise RuntimeError("runtime-error-sentinel")\n',
+            "RuntimeError",
+            "runtime-error-sentinel",
+        ),
     ],
 )
 def test_eval_cli_existing_broken_guardrails_is_nonzero_and_redacted(
-    tmp_path, guardrails_source, error_type
+    tmp_path, guardrails_source, error_type, sentinel
 ):
-    sentinel = "missing_guardrail_dependency_sentinel"
     (tmp_path / "guardrails.py").write_text(guardrails_source, encoding="utf-8")
     code = f"""
 import asyncio

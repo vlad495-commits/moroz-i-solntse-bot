@@ -110,7 +110,7 @@ async def _run_adversarial() -> tuple[int, int]:
     """Прогнать jailbreak-атаки: проверяем что guardrails ловит."""
     try:
         checker = _load_guardrail_checker()
-    except ImportError as error:
+    except Exception as error:
         print(f"[adversarial] status=error error_type={type(error).__name__}")
         return 0, 1
     if checker is None:
