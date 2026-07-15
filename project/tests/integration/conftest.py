@@ -30,12 +30,22 @@ async def disposable_database_url():
         try:
             yield test_url
         finally:
-            await admin.execute(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                "WHERE datname = $1 AND pid <> pg_backend_pid()",
-                database_name,
-            )
-            await admin.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
+            try:
+                await admin.execute(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = $1 AND pid <> pg_backend_pid()",
+                    database_name,
+                )
+            except Exception:
+                try:
+                    await admin.execute(
+                        f'DROP DATABASE IF EXISTS "{database_name}"'
+                    )
+                except Exception:
+                    pass
+                raise
+            else:
+                await admin.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
     finally:
         await admin.close()
 

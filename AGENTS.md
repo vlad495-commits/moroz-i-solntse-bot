@@ -115,19 +115,22 @@ moroz-i-solntse-bot/
 
 ```bash
 # Один раз перед первым запуском после переименования сервиса llm → bot:
-docker compose down --remove-orphans
+docker compose --env-file ../.env down --remove-orphans
 
-# Локальный запуск:
-cd project && docker compose up --build
+# Безопасный локальный запуск инфраструктуры без Telegram polling:
+cd project && docker compose --env-file ../.env up --build postgres redis rabbitmq admin worker scheduler
+
+# Bot запускать отдельно только с выделенным test/production Telegram token:
+docker compose --env-file ../.env up --build bot
 
 # Логи:
-docker compose logs -f bot
+docker compose --env-file ../.env logs -f bot
 
 # Перезапуск контейнера (после изменения кода или .env):
-docker compose restart bot
+docker compose --env-file ../.env restart bot
 
 # Остановить всё:
-docker compose down
+docker compose --env-file ../.env down
 ```
 
 **Почему:** код полагается на хосты Redis/Postgres из docker-сети (`redis://redis:6379`, `postgres://postgres:5432`). При запуске напрямую — не подключится.

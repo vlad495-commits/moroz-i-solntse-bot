@@ -52,7 +52,7 @@ def test_settings_build_database_url_from_postgres_parts():
 
 - [x] **Step 2: Run test to verify red**
 
-Run: `docker compose --profile test run --rm test pytest tests/unit/common/test_config.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/unit/common/test_config.py -q`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'moroz'`.
 
@@ -88,7 +88,7 @@ class Settings:
 
 - [x] **Step 4: Run config test and Compose validation**
 
-Run: `docker compose --profile test build test && docker compose --profile test run --rm test pytest tests/unit/common/test_config.py -q && docker compose config --quiet`
+Run: `docker compose --env-file ../.env --profile test build test && docker compose --env-file ../.env --profile test run --rm test pytest tests/unit/common/test_config.py -q && docker compose --env-file ../.env config --quiet`
 
 Expected: `1 passed`; Compose exits 0.
 
@@ -133,7 +133,7 @@ async def test_alembic_creates_existing_tables(migrated_database_url):
 
 The integration fixture creates a uniquely named disposable PostgreSQL database, runs `alembic upgrade head` against its overridden `DATABASE_URL`, yields that URL, and always drops the database during cleanup.
 
-Run: `docker compose --profile test run --rm test pytest tests/integration/test_migrations.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/integration/test_migrations.py -q`
 
 Expected: FAIL because Alembic configuration/revision does not exist.
 
@@ -160,7 +160,7 @@ Pin compatible `alembic`, `SQLAlchemy` and `pytest-asyncio` versions in `require
 
 - [x] **Step 4: Run upgrade, downgrade on disposable DB, upgrade and tests**
 
-Run: `docker compose run --rm migrate && docker compose --profile test run --rm test pytest tests/integration/test_migrations.py -q`
+Run: `docker compose --env-file ../.env --profile migration run --rm migrate && docker compose --env-file ../.env --profile test run --rm test pytest tests/integration/test_migrations.py -q`
 
 Expected: the normal migration exits 0; the integration fixture independently performs upgrade on a disposable database, the test passes, and cleanup removes that database. Also verify downgrade/upgrade on another disposable database before committing.
 
@@ -216,7 +216,7 @@ async def test_database_connect_acquire_and_close(migrated_database_url):
 
 - [x] **Step 2: Run red**
 
-Run: `docker compose --profile test run --rm test pytest tests/unit/common/test_observability.py tests/integration/test_database.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/unit/common/test_observability.py tests/integration/test_database.py -q`
 
 Expected: FAIL because the shared observability/database modules are absent.
 
@@ -235,7 +235,7 @@ Wrap asyncpg pool creation in `Database`; keep existing query functions as compa
 
 - [x] **Step 4: Run unit tests and safe bot/admin image smoke**
 
-Run: `docker compose --profile test run --rm test pytest tests/unit/common tests/integration/test_database.py -q && docker compose build bot admin && docker compose run --rm --no-deps bot python -m compileall -q /app && docker compose run --rm --no-deps admin python -m compileall -q /app && docker compose config --quiet`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/unit/common tests/integration/test_database.py -q && docker compose --env-file ../.env build bot admin && docker compose --env-file ../.env run --rm --no-deps bot python -m compileall -q /app && docker compose --env-file ../.env run --rm --no-deps admin python -m compileall -q /app && docker compose --env-file ../.env config --quiet`
 
 Expected: tests pass; bot/admin images build and compile/import smoke succeeds without starting Telegram polling. Do not run a second bot instance against a token that may already be active on the test server.
 
@@ -281,7 +281,7 @@ Add a second integration case: a handler that always raises is called once initi
 
 - [x] **Step 2: Run red**
 
-Run: `docker compose --profile test run --rm test pytest tests/integration/test_queue.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/integration/test_queue.py -q`
 
 Expected: FAIL because RabbitMQ service and adapter are absent.
 
@@ -305,7 +305,7 @@ On successful handler completion, ack manually. On failure, republish with incre
 
 - [x] **Step 4: Run queue test and container health**
 
-Run: `docker compose up -d rabbitmq && docker compose --profile test run --rm test pytest tests/integration/test_queue.py -q && docker compose up -d worker scheduler && docker compose ps`
+Run: `docker compose --env-file ../.env up -d rabbitmq && docker compose --env-file ../.env --profile test run --rm test pytest tests/integration/test_queue.py -q && docker compose --env-file ../.env up -d worker scheduler && docker compose --env-file ../.env ps`
 
 Expected: queue round-trip and retry/DLQ tests pass without a competing worker; then rabbitmq, worker and scheduler are running/healthy.
 
@@ -338,19 +338,19 @@ Add dedicated cutover regressions for an empty `alembic_version` table and an un
 
 - [x] **Step 2: Run the complete Docker suite**
 
-Run: `docker compose --profile test run --rm test pytest -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest -q`
 
 Expected: all tests pass.
 
 - [x] **Step 3: Validate migration and safe Compose state**
 
-Use an isolated `COMPOSE_PROJECT_NAME` plus shell-only generated PostgreSQL, Redis and RabbitMQ test credentials; never print or persist their values. Run normal/test/migration `docker compose config --quiet`, then `docker compose --profile migration run --rm migrate`. Build the bot image and run compile/import smoke without starting Telegram polling. Start only `postgres redis rabbitmq admin worker scheduler` and inspect `docker compose ps`.
+Use an isolated `COMPOSE_PROJECT_NAME` plus shell-only generated PostgreSQL, Redis and RabbitMQ test credentials; never print or persist their values. Run normal/test/migration `docker compose --env-file ../.env config --quiet`, then `docker compose --env-file ../.env --profile migration run --rm migrate`. Build the bot image and run compile/import smoke without starting Telegram polling. Start only `postgres redis rabbitmq admin worker scheduler` and inspect `docker compose --env-file ../.env ps`.
 
 Expected: exit 0; the immutable migration image upgrades successfully; admin/worker/scheduler and stores are healthy; bot image compiles/imports but no Telegram polling process starts. A live Telegram E2E remains a launch gate until a separate test token exists.
 
 - [x] **Step 4: Inspect fresh logs and production boundaries**
 
-Run: `docker compose logs --since=5m admin worker scheduler`
+Run: `docker compose --env-file ../.env logs --since=5m admin worker scheduler`
 
 Expected: no traceback; schema is not created by runtime; scheduler heartbeat is present. Verify production images run as non-root, runtime DDL matches are zero, tracked `.env` files are zero, hardcoded credentials are zero, build contexts exclude sensitive/runtime data, and isolated containers/volumes/networks are removed after the gate.
 

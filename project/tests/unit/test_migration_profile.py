@@ -22,6 +22,10 @@ def test_migration_commands_are_excluded_from_default_profile():
 def test_migration_commands_share_immutable_image_without_bind_mounts():
     services = compose_services()
 
+    assert services["migrate"]["image"] == services["cutover"]["image"]
+    assert services["migrate"]["image"] == (
+        "${MIGRATION_IMAGE:-moroz-i-solntse-migrate:local}"
+    )
     for name in ("migrate", "cutover"):
         assert services[name]["build"] == {
             "context": ".",
@@ -48,7 +52,11 @@ def test_migration_image_is_minimal_and_non_root():
     dockerfile = (ROOT / "migrate/Dockerfile").read_text(encoding="utf-8")
     requirements = (ROOT / "migrate/requirements.txt").read_text(encoding="utf-8")
 
-    assert "USER appuser" in dockerfile
+    user_directives = [
+        line.strip() for line in dockerfile.splitlines()
+        if line.strip().startswith("USER ")
+    ]
+    assert user_directives[-1] == "USER appuser"
     assert "COPY migrate/requirements.txt" in dockerfile
     assert "COPY alembic.ini" in dockerfile
     assert "COPY migrations" in dockerfile
@@ -99,10 +107,14 @@ def test_compose_process_environment_overrides_external_test_credentials():
     assert services["redis"]["environment"] == {
         "REDIS_PASSWORD": "${REDIS_PASSWORD:?set REDIS_PASSWORD outside Git}",
     }
-    for name in ("test", "migrate", "cutover"):
-        assert services[name]["environment"]["DATABASE_URL"] == (
-            "${DATABASE_URL:?set DATABASE_URL outside Git}"
-        )
+    allowed = {
+        "test": {"DATABASE_URL", "RABBITMQ_URL"},
+        "migrate": {"DATABASE_URL"},
+        "cutover": {"DATABASE_URL"},
+    }
+    for name, keys in allowed.items():
+        assert "env_file" not in services[name]
+        assert set(services[name]["environment"]) == keys
     for name in ("bot", "admin"):
         assert services[name]["environment"] == {
             "DATABASE_URL": "${DATABASE_URL:?set DATABASE_URL outside Git}",

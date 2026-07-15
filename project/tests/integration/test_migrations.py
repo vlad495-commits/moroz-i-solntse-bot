@@ -190,12 +190,14 @@ async def test_database_url_repr_is_redacted():
     assert "sensitive-value" not in repr(value)
 
 
-@pytest.mark.parametrize("failure", ["create", "terminate", "drop"])
-async def test_disposable_database_closes_admin_when_database_operation_fails(
-    monkeypatch, failure
-):
+async def run_failing_database_fixture(monkeypatch, failures):
+    errors = {
+        name: error for name, error in failures.items()
+    }
+
     class FailingAdmin:
-        closed = False
+        close_calls = 0
+        operations = []
 
         async def execute(self, statement, *args):
             operation = (
@@ -204,11 +206,12 @@ async def test_disposable_database_closes_admin_when_database_operation_fails(
                 else "drop" if statement.startswith("DROP DATABASE")
                 else "other"
             )
-            if operation == failure:
-                raise RuntimeError(f"{failure} failed")
+            self.operations.append(operation)
+            if operation in errors:
+                raise errors[operation]
 
         async def close(self):
-            self.closed = True
+            self.close_calls += 1
 
     admin = FailingAdmin()
 
@@ -217,15 +220,48 @@ async def test_disposable_database_closes_admin_when_database_operation_fails(
 
     monkeypatch.setattr("conftest.asyncpg.connect", connect)
     fixture = database_fixture.__wrapped__()
-    if failure == "create":
-        with pytest.raises(RuntimeError, match="create failed"):
+    try:
+        if "create" in errors:
             await anext(fixture)
-    else:
         await anext(fixture)
-        with pytest.raises(RuntimeError, match=f"{failure} failed"):
-            await fixture.aclose()
+        await fixture.aclose()
+    except Exception as exc:
+        return admin, exc
+    raise AssertionError("fixture did not propagate the configured failure")
 
-    assert admin.closed
+
+@pytest.mark.parametrize("operation", ["create", "drop"])
+async def test_disposable_database_preserves_database_operation_error(
+    monkeypatch, operation
+):
+    expected = ValueError(f"{operation} failed")
+
+    admin, raised = await run_failing_database_fixture(
+        monkeypatch, {operation: expected}
+    )
+
+    assert raised is expected
+    assert type(raised) is ValueError
+    assert str(raised) == f"{operation} failed"
+    assert admin.close_calls == 1
+
+
+@pytest.mark.parametrize("drop_also_fails", [False, True])
+async def test_disposable_database_attempts_drop_but_preserves_terminate_error(
+    monkeypatch, drop_also_fails
+):
+    terminate_error = RuntimeError("terminate failed")
+    failures = {"terminate": terminate_error}
+    if drop_also_fails:
+        failures["drop"] = ValueError("drop failed")
+
+    admin, raised = await run_failing_database_fixture(monkeypatch, failures)
+
+    assert admin.operations == ["create", "terminate", "drop"]
+    assert raised is terminate_error
+    assert type(raised) is RuntimeError
+    assert str(raised) == "terminate failed"
+    assert admin.close_calls == 1
 
 
 async def test_alembic_creates_exact_existing_schema(migrated_database_url):

@@ -6,12 +6,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
-    env_file: ../.env
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL outside Git}
       RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL outside Git}
     volumes:
       - .:/workspace:ro
+      - ../AGENTS.md:/repo/AGENTS.md:ro
+      - ../План реализации.md:/repo/План реализации.md:ro
+      - ../docs/superpowers/plans:/repo/docs/superpowers/plans:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -20,10 +22,10 @@ services:
 
   migrate:
     profiles: ["migration"]
+    image: "${MIGRATION_IMAGE:-moroz-i-solntse-migrate:local}"
     build:
       context: .
       dockerfile: migrate/Dockerfile
-    env_file: ../.env
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL outside Git}
     command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
@@ -33,10 +35,10 @@ services:
 
   cutover:
     profiles: ["migration"]
+    image: "${MIGRATION_IMAGE:-moroz-i-solntse-migrate:local}"
     build:
       context: .
       dockerfile: migrate/Dockerfile
-    env_file: ../.env
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL outside Git}
     command:

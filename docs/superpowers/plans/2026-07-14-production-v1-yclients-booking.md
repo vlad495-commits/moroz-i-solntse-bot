@@ -28,7 +28,7 @@
 **Interfaces:** `SlotQuery`, `Slot`, `CreateBooking`, `RescheduleBooking`, `CancelBooking`, `ExternalBooking`, `BookingPort` from master plan.
 
 - [ ] **Step 1:** Write a test that `list_slots` returns only matching future slots and `create_booking` returns the same booking for the same idempotency key.
-- [ ] **Step 2:** Run `docker compose --profile test run --rm test pytest tests/unit/booking/test_mock_adapter.py -q`; expect import failure.
+- [ ] **Step 2:** Run `docker compose --env-file ../.env --profile test run --rm test pytest tests/unit/booking/test_mock_adapter.py -q`; expect import failure.
 - [ ] **Step 3:** Implement an in-memory adapter keyed by `idempotency_key`:
 
 ```python
