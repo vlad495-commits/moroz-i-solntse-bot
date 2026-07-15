@@ -417,3 +417,7 @@ Make the Docker gate build the test image, correct the first AGENTS command work
 - [x] **Step 5: Run safe full regression gate and independent re-review**
 
 Run focused RED/GREEN plus the complete Docker suite with an isolated Compose project, no bot polling, shell-only test credentials, migration/cutover checks, Rabbit callback/backoff tests, runtime health/graceful shutdown, image/env/dependency/scans and cleanup `0/0/0`. Then request whole-branch re-review from merge base before marking Foundation complete again.
+
+- [ ] **Step 6: Close final whole-branch lifecycle and privacy findings**
+
+Clear worker readiness before broker cancellation I/O and bound `queue.cancel()` itself. Sanitize active Redis/admin/LLM exception paths and guarantee Redis client closure. Remove raw provider exception, user input and invalid regex text from eval output/logs; own background eval tasks and retrieve failures safely. Re-run the fresh Docker gate and whole-branch review.
