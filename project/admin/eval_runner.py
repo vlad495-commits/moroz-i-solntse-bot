@@ -108,7 +108,7 @@ def _matches_keyword(text: str, kw: str) -> bool:
         try:
             return bool(re.search(kw[2:], text, re.IGNORECASE))
         except re.error:
-            logger.warning("Невалидный regex: %s", kw)
+            logger.warning("invalid_eval_regex pattern_length=%s", len(kw) - 2)
             return False
     return kw.lower() in text_lower
 
@@ -358,20 +358,22 @@ async def run_case(case: dict, run_id: int) -> dict:
 
 async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
     """Прогнать все кейсы. Идёт последовательно, чтобы прогресс-бар был стабилен."""
-    _init_clients()
-
-    if cases is None:
-        cases = await evdb.list_cases()
-    total = len(cases)
-
-    if total == 0:
-        await evdb.finish_run(run_id, 0, 0, status="finished")
-        return
-
     passed = 0
     failed = 0
+    safe_run_id = (
+        run_id
+        if isinstance(run_id, int) and not isinstance(run_id, bool)
+        else "unknown"
+    )
 
     try:
+        _init_clients()
+        if cases is None:
+            cases = await evdb.list_cases()
+        if not cases:
+            await evdb.finish_run(run_id, 0, 0, status="finished")
+            return
+
         for case in cases:
             res = await run_case(case, run_id)
             if res["verdict"] == "pass":
@@ -382,17 +384,19 @@ async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
 
         await evdb.finish_run(run_id, passed, failed, status="finished")
     except Exception as error:
-        safe_run_id = (
-            run_id
-            if isinstance(run_id, int) and not isinstance(run_id, bool)
-            else "unknown"
-        )
         error_message = type(error).__name__
         logger.error(
             "eval_run_failed run_id=%s error_type=%s",
             safe_run_id,
             error_message,
         )
-        await evdb.finish_run(
-            run_id, passed, failed, status="error", error_message=error_message
-        )
+        try:
+            await evdb.finish_run(
+                run_id, passed, failed, status="error", error_message=error_message
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "eval_run_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )

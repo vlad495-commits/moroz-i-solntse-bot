@@ -81,8 +81,17 @@ async def handle_text(message: Message, bot: Bot) -> None:
     # LLM
     try:
         result = await generate_response(text, context)
-    except Exception:
-        logger.exception("LLM упал для chat %s", chat_id)
+    except Exception as error:
+        safe_chat_id = (
+            chat_id
+            if isinstance(chat_id, int) and not isinstance(chat_id, bool)
+            else "unknown"
+        )
+        logger.error(
+            "llm_generate_failed chat_id=%s error_type=%s",
+            safe_chat_id,
+            type(error).__name__,
+        )
         await message.answer(
             "Извините, временно не могу ответить. Попробуйте через минуту."
         )

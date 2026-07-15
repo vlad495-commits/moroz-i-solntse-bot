@@ -98,8 +98,10 @@ def init_llm() -> None:
     _primary_kind = _detect_kind(LLM_MODEL, LLM_BASE_URL)
     _primary_client = _create_client(LLM_API_KEY, LLM_BASE_URL, _primary_kind)
     logger.info(
-        "LLM-клиент создан: kind=%s, model=%s, base_url=%s",
-        _primary_kind, LLM_MODEL, LLM_BASE_URL or "(default)",
+        "llm_client_created kind=%s model=%s custom_endpoint=%s",
+        _primary_kind,
+        LLM_MODEL,
+        bool(LLM_BASE_URL),
     )
 
 
@@ -210,27 +212,48 @@ async def prompt_reload_listener() -> None:
     """Listen for prompt reload events and reread system.md without restart."""
     backoff = 1.0
     while True:
+        client = None
+        pubsub = None
+        retry_delay = None
         try:
             client = aioredis.from_url(REDIS_URL, decode_responses=True)
             pubsub = client.pubsub()
             await pubsub.subscribe(PROMPT_RELOAD_CHANNEL)
-            logger.info("Prompt reload channel subscription active: %s", PROMPT_RELOAD_CHANNEL)
+            logger.info("prompt_reload_subscription_active")
             backoff = 1.0
             async for msg in pubsub.listen():
                 if msg.get("type") != "message":
                     continue
                 _load_prompt()
                 logger.info(
-                    "Prompt reloaded from disk: %d chars (trigger: %s)",
+                    "prompt_reload_applied prompt_length=%d",
                     len(_system_prompt),
-                    msg.get("data"),
                 )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception(
-                "prompt_reload_listener failed, retry in %.1f sec",
-                backoff,
+        except Exception as error:
+            logger.error(
+                "prompt_reload_listener_failed error_type=%s",
+                type(error).__name__,
             )
-            await asyncio.sleep(backoff)
+            retry_delay = backoff
+        finally:
+            if pubsub is not None:
+                try:
+                    await pubsub.aclose()
+                except Exception as error:
+                    logger.error(
+                        "prompt_reload_pubsub_close_failed error_type=%s",
+                        type(error).__name__,
+                    )
+            if client is not None:
+                try:
+                    await client.aclose()
+                except Exception as error:
+                    logger.error(
+                        "prompt_reload_redis_close_failed error_type=%s",
+                        type(error).__name__,
+                    )
+        if retry_delay is not None:
+            await asyncio.sleep(retry_delay)
             backoff = min(backoff * 2, 30.0)

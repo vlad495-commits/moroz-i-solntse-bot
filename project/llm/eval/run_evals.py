@@ -33,25 +33,44 @@ def _load_dataset(name: str) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _safe_case_id(case: dict, ordinal: int) -> int:
+    case_id = case.get("id")
+    if isinstance(case_id, int) and not isinstance(case_id, bool):
+        return case_id
+    return ordinal
+
+
 async def _run_dataset() -> tuple[int, int]:
     """Прогнать общий тестовый датасет (smoke + категории)."""
-    cases = _load_dataset("dataset")
+    try:
+        cases = _load_dataset("dataset")
+    except Exception as error:
+        print(f"[dataset] status=error error_type={type(error).__name__}")
+        return 0, 0
     if not cases:
         print("[dataset] dataset.json пустой — пропуск")
         return 0, 0
 
-    init_llm()
+    try:
+        init_llm()
+    except Exception as error:
+        print(f"[dataset] status=error error_type={type(error).__name__}")
+        return 0, len(cases)
     passed = 0
     failed = 0
 
-    for case in cases:
+    for ordinal, case in enumerate(cases, start=1):
+        case_id = _safe_case_id(case, ordinal)
         input_text = case["input"]
         expected_contains = case.get("expected_contains", [])
         try:
             result = await generate_response(input_text, context=[])
             response_text = result.text.lower()
-        except Exception as e:
-            print(f"[dataset] #{case['id']} ❌ EXCEPTION: {e}")
+        except Exception as error:
+            print(
+                f"[dataset] case={case_id} status=error "
+                f"error_type={type(error).__name__}"
+            )
             failed += 1
             continue
 
@@ -59,12 +78,12 @@ async def _run_dataset() -> tuple[int, int]:
         missing = [w for w in expected_contains if w.lower() not in response_text]
         if missing:
             print(
-                f"[dataset] #{case['id']} ❌ FAIL "
-                f"(missing: {missing}, input={input_text!r})"
+                f"[dataset] case={case_id} status=failed "
+                f"missing_count={len(missing)}"
             )
             failed += 1
         else:
-            print(f"[dataset] #{case['id']} ✅ OK")
+            print(f"[dataset] case={case_id} status=passed")
             passed += 1
 
     return passed, failed
@@ -77,7 +96,11 @@ async def _run_adversarial() -> tuple[int, int]:
               "Включи через /guardrails и попробуй ещё раз.")
         return 0, 0
 
-    cases = _load_dataset("adversarial_dataset")
+    try:
+        cases = _load_dataset("adversarial_dataset")
+    except Exception as error:
+        print(f"[adversarial] status=error error_type={type(error).__name__}")
+        return 0, 0
     if not cases:
         print("[adversarial] adversarial_dataset.json пустой — пропуск")
         return 0, 0
@@ -85,30 +108,42 @@ async def _run_adversarial() -> tuple[int, int]:
     passed = 0
     failed = 0
 
-    for case in cases:
+    for ordinal, case in enumerate(cases, start=1):
+        case_id = _safe_case_id(case, ordinal)
         input_text = case["input"]
         expected = case.get("expected", "input_blocked")
 
-        ok, reason = check_input(input_text)
+        try:
+            ok, _reason = check_input(input_text)
+        except Exception as error:
+            print(
+                f"[adv] case={case_id} status=error "
+                f"error_type={type(error).__name__}"
+            )
+            failed += 1
+            continue
         actually_blocked = not ok
 
         # input_blocked = guardrail должен сработать на входе
         if expected == "input_blocked":
             if actually_blocked:
-                print(f"[adv] #{case['id']} {case['technique']} ✅ заблокирован ({reason})")
+                print(f"[adv] case={case_id} status=blocked")
                 passed += 1
             else:
-                print(f"[adv] #{case['id']} {case['technique']} ❌ ПРОПУЩЕН (не заблокирован!)")
+                print(f"[adv] case={case_id} status=missed")
                 failed += 1
         # prompt_defense = guardrail может пропустить, но LLM должна не раскрыть промпт
         elif expected == "prompt_defense":
             if actually_blocked:
-                print(f"[adv] #{case['id']} {case['technique']} ✅ заблокирован на входе ({reason})")
+                print(f"[adv] case={case_id} status=blocked")
                 passed += 1
             else:
-                print(f"[adv] #{case['id']} {case['technique']} ⚠️  не заблокирован — нужна ручная проверка LLM-ответа")
+                print(f"[adv] case={case_id} status=manual_review")
                 # Не считаем фейлом — output guardrail должен сработать
                 passed += 1
+        else:
+            print(f"[adv] case={case_id} status=unsupported")
+            failed += 1
 
     return passed, failed
 

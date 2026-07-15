@@ -243,18 +243,18 @@ class RabbitQueue(QueuePort):
         finally:
             stopping.set()
             cleanup_error = None
-            try:
-                if not queue.channel.is_closed:
-                    await queue.cancel(consumer_tag)
-            except BaseException as error:
-                cleanup_error = error
             self.ready.clear()
             if readiness is not None:
                 try:
                     readiness(False)
                 except BaseException as error:
-                    if cleanup_error is None:
-                        cleanup_error = error
+                    cleanup_error = error
+            try:
+                if not queue.channel.is_closed:
+                    await self._cancel_consumer(queue, consumer_tag)
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
             try:
                 await self._drain_inflight()
             except BaseException as error:
@@ -266,6 +266,16 @@ class RabbitQueue(QueuePort):
                 raise primary_error
             if cleanup_error is not None:
                 raise cleanup_error
+
+    async def _cancel_consumer(self, queue, consumer_tag: str) -> None:
+        task = asyncio.create_task(queue.cancel(consumer_tag))
+        done, _ = await asyncio.wait((task,), timeout=self._cancel_timeout)
+        if done:
+            task.result()
+            return
+        task.cancel()
+        task.add_done_callback(self._consume_task_result)
+        raise TimeoutError("RabbitMQ consumer cancellation timed out")
 
     async def _drain_inflight(self) -> None:
         loop = asyncio.get_running_loop()

@@ -10,6 +10,10 @@ class BrokerFailure(RuntimeError):
     pass
 
 
+class ReadinessFailure(RuntimeError):
+    pass
+
+
 class FakeChannel:
     is_closed = False
 
@@ -281,6 +285,87 @@ async def test_readiness_publish_failure_stops_consumer():
 
     assert raised.value is failure
     assert broker_queue.cancelled
+    assert not adapter.ready.is_set()
+
+
+@pytest.mark.asyncio
+async def test_broker_cancel_is_bounded_and_readiness_clears_before_broker_io():
+    events = []
+    loop = asyncio.get_running_loop()
+    previous_exception_handler = loop.get_exception_handler()
+    exception_contexts = []
+    loop.set_exception_handler(lambda _loop, context: exception_contexts.append(context))
+
+    class HangingCancelQueue(FakeConsumerQueue):
+        async def cancel(self, consumer_tag):
+            assert consumer_tag == "consumer-tag"
+            events.append("broker_cancel")
+            await asyncio.Future()
+
+    adapter = RabbitQueue(
+        "amqp://unused",
+        retry_delays=(0, 0, 0),
+        drain_timeout=0.01,
+        cancel_timeout=0.01,
+    )
+    broker_queue = HangingCancelQueue()
+    adapter._queue = broker_queue
+
+    def readiness(active):
+        events.append(f"readiness:{active}")
+
+    consumer = asyncio.create_task(
+        adapter.consume(lambda _task: asyncio.sleep(0), readiness=readiness)
+    )
+    await adapter.ready.wait()
+    started_at = loop.time()
+    consumer.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(consumer), timeout=0.1)
+        elapsed = loop.time() - started_at
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_exception_handler)
+
+    assert events == ["readiness:True", "readiness:False", "broker_cancel"]
+    assert elapsed < 0.1
+    assert not adapter.ready.is_set()
+    assert exception_contexts == []
+
+
+@pytest.mark.asyncio
+async def test_primary_error_wins_when_readiness_clear_and_broker_cancel_both_fail():
+    events = []
+    primary = BrokerFailure("primary")
+
+    class FailingCancelQueue(FakeConsumerQueue):
+        async def cancel(self, consumer_tag):
+            assert consumer_tag == "consumer-tag"
+            events.append("broker_cancel")
+            raise BrokerFailure("cancel")
+
+    adapter = RabbitQueue("amqp://unused", retry_delays=(0, 0, 0))
+    broker_queue = FailingCancelQueue()
+    adapter._queue = broker_queue
+
+    def readiness(active):
+        events.append(f"readiness:{active}")
+        if not active:
+            raise ReadinessFailure("readiness")
+
+    consumer = asyncio.create_task(
+        adapter.consume(lambda _task: asyncio.sleep(0), readiness=readiness)
+    )
+    await adapter.ready.wait()
+    callback = broker_queue.deliver(FakeMessage(ack_error=primary))
+
+    with pytest.raises(BrokerFailure) as raised:
+        await consumer
+    await callback
+
+    assert raised.value is primary
+    assert events == ["readiness:True", "readiness:False", "broker_cancel"]
     assert not adapter.ready.is_set()
 
 

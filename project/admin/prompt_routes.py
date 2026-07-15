@@ -36,12 +36,23 @@ PROMPT_RELOAD_CHANNEL = "prompt:reload"
 
 async def _publish_reload(version_id: int) -> None:
     """Опубликовать в Redis канал, чтобы LLM перечитал промпт."""
+    client = None
     try:
         client = aioredis.from_url(REDIS_URL, decode_responses=True)
         await client.publish(PROMPT_RELOAD_CHANNEL, f"version:{version_id}")
-        await client.aclose()
-    except Exception:
-        logger.exception("Не удалось опубликовать prompt:reload")
+    except Exception as error:
+        logger.error(
+            "prompt_reload_publish_failed error_type=%s", type(error).__name__
+        )
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception as error:
+                logger.error(
+                    "prompt_reload_redis_close_failed error_type=%s",
+                    type(error).__name__,
+                )
 
 
 def _read_current_prompt() -> str:
@@ -49,8 +60,8 @@ def _read_current_prompt() -> str:
         return ""
     try:
         return PROMPT_FILE.read_text(encoding="utf-8")
-    except OSError:
-        logger.exception("Не удалось прочитать %s", PROMPT_FILE)
+    except OSError as error:
+        logger.error("prompt_read_failed error_type=%s", type(error).__name__)
         return ""
 
 
@@ -59,8 +70,8 @@ def _write_prompt(content: str) -> bool:
         PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
         PROMPT_FILE.write_text(content, encoding="utf-8")
         return True
-    except OSError:
-        logger.exception("Не удалось записать %s", PROMPT_FILE)
+    except OSError as error:
+        logger.error("prompt_write_failed error_type=%s", type(error).__name__)
         return False
 
 
@@ -98,8 +109,8 @@ async def prompt_save(
         version_id = await pdb.create_version(
             content=content, author=user, comment=comment.strip() or None,
         )
-    except Exception:
-        logger.exception("Не удалось сохранить версию в БД")
+    except Exception as error:
+        logger.error("prompt_db_save_failed error_type=%s", type(error).__name__)
         return RedirectResponse(url="/prompt/?error=db_failed", status_code=302)
 
     await _publish_reload(version_id)
@@ -135,8 +146,10 @@ async def prompt_rollback(request: Request, version_id: int):
             author=user,
             comment=f"Откат на версию #{version_id}",
         )
-    except Exception:
-        logger.exception("Не удалось сохранить rollback-версию")
+    except Exception as error:
+        logger.error(
+            "prompt_db_rollback_failed error_type=%s", type(error).__name__
+        )
         return RedirectResponse(url="/prompt/?error=db_failed", status_code=302)
 
     await _publish_reload(new_id)

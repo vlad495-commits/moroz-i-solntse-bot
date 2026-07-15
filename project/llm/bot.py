@@ -61,8 +61,8 @@ async def _cleanup_loop() -> None:
             total = sum(stats.values()) if stats else 0
             if total > 0:
                 logger.info("Автоочистка БД: удалено %d записей (%s)", total, stats)
-        except Exception:
-            logger.exception("Ошибка в _cleanup_loop")
+        except Exception as error:
+            logger.error("cleanup_loop_failed error_type=%s", type(error).__name__)
 
 
 async def _global_error_handler(event: ErrorEvent) -> bool:
@@ -70,20 +70,30 @@ async def _global_error_handler(event: ErrorEvent) -> bool:
     exc = event.exception
 
     if isinstance(exc, TelegramForbiddenError):
-        logger.info("Forbidden: %s", exc)
+        logger.info("telegram_forbidden error_type=%s", type(exc).__name__)
         return True
     if isinstance(exc, TelegramRetryAfter):
-        logger.warning("Telegram RetryAfter: ждать %s сек", exc.retry_after)
+        logger.warning("telegram_retry_after error_type=%s", type(exc).__name__)
         return True
     if isinstance(exc, TelegramNetworkError):
-        logger.warning("Telegram NetworkError: %s", exc)
+        logger.warning("telegram_network_error error_type=%s", type(exc).__name__)
         return True
     if isinstance(exc, TelegramBadRequest):
-        logger.error("Telegram BadRequest: %s", exc)
+        logger.error("telegram_bad_request error_type=%s", type(exc).__name__)
         return True
 
-    logger.exception("Необработанная ошибка в aiogram", exc_info=exc)
+    logger.error("telegram_unhandled_error error_type=%s", type(exc).__name__)
     return True
+
+
+def _report_polling_task(task: asyncio.Task) -> None:
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        logger.info("polling_cancelled")
+        return
+    if error is not None:
+        logger.error("polling_failed error_type=%s", type(error).__name__)
 
 
 async def _wait_for_shutdown(stop_event: asyncio.Event) -> None:
@@ -131,8 +141,8 @@ async def main() -> None:
             return_when=asyncio.FIRST_COMPLETED,
         )
         for t in done:
-            if t is polling_task and t.exception():
-                logger.exception("polling упал", exc_info=t.exception())
+            if t is polling_task:
+                _report_polling_task(t)
     finally:
         logger.info("Останавливаюсь, жду in-flight задачи до %d сек...", SHUTDOWN_INFLIGHT_TIMEOUT_SEC)
         await dp.stop_polling()

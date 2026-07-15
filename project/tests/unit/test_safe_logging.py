@@ -209,3 +209,14 @@ async def test_run_eval_set_sanitizes_log_and_database_error(monkeypatch, caplog
     assert "eval_run_failed run_id=29 error_type=EvalRunError" in caplog.text
     assert sentinel not in caplog.text
     assert sentinel not in repr(finished)
+
+
+def test_invalid_regex_log_does_not_include_pattern(monkeypatch, caplog):
+    pattern = "r:[regex-user-sentinel"
+
+    with caplog.at_level(logging.WARNING, logger=eval_runner.logger.name):
+        assert not eval_runner._matches_keyword("safe text", pattern)
+
+    assert "invalid_eval_regex" in caplog.text
+    assert f"pattern_length={len(pattern) - 2}" in caplog.text
+    assert pattern not in caplog.text

@@ -380,13 +380,26 @@ git commit -m "docs: зафиксирован production foundation checkpoint"
 - Modify: `project/src/moroz/common/queue.py`
 - Modify: `project/worker/main.py`
 - Modify: `project/llm/cache.py`
+- Modify: `project/llm/llm.py`
+- Modify: `project/llm/bot.py`
+- Modify: `project/llm/db.py`
+- Modify: `project/llm/handlers.py`
+- Modify: `project/llm/eval/run_evals.py`
 - Modify: `project/admin/eval_runner.py`
+- Modify: `project/admin/eval_routes.py`
+- Modify: `project/admin/llm_status.py`
+- Modify: `project/admin/bot_control_routes.py`
+- Modify: `project/admin/prompt_routes.py`
+- Modify: `project/admin/logs_routes.py`
 - Create: `project/worker/requirements.txt`
 - Modify: `project/worker/Dockerfile`
 - Modify: `project/scheduler/main.py`
 - Modify: `project/docker-compose.yml`
 - Modify: `project/tests/ops/verify_compose_db_fallback.ps1`
 - Create: `project/tests/unit/test_safe_logging.py`
+- Create: `project/tests/unit/test_active_sanitization.py`
+- Create: `project/tests/unit/test_eval_privacy.py`
+- Create: `project/tests/unit/test_runtime_logging_policy.py`
 - Modify: Foundation unit/integration/ops tests and operator documentation.
 
 **Interfaces and safety contracts:**
@@ -394,9 +407,9 @@ git commit -m "docs: зафиксирован production foundation checkpoint"
 - Cutover audits the full catalog even when `alembic_version` is already at the baseline revision.
 - PostgreSQL fallback DSNs percent-encode reserved characters in user/password/database parts; explicit `DATABASE_URL` remains unchanged and preferred.
 - Worker, Redis and PostgreSQL receive only their required environment variables; worker depends only on aio-pika and reads only `RABBITMQ_URL`.
-- Rabbit consumer tracks the actual aio-pika callback tasks, propagates fatal delivery errors, stops new deliveries before shutdown, drains in-flight work to a bounded timeout and gives cancellation its own one-second bound. A callback that ignores cancellation is detached safely; Docker `stop_grace_period: 30s` remains the final process-level bound. Worker readiness is published synchronously with the consumer lifecycle; scheduler health reflects a fresh heartbeat.
+- Rabbit consumer tracks the actual aio-pika callback tasks, propagates fatal delivery errors, clears readiness before broker I/O, bounds broker subscription cancellation separately, then performs bounded in-flight drain/cancel. A callback or broker cancel that ignores cancellation is detached safely; Docker `stop_grace_period: 30s` remains the final process-level bound. Worker readiness is published synchronously with the consumer lifecycle; scheduler health reflects a fresh heartbeat.
 - Retry attempts use increasing delays before the first real producer/handler is introduced. Tests inject zero/fake delays; production defaults remain non-zero and increasing.
-- Redis, primary/reserve LLM, judge, eval-case and eval-run failures never log connection/provider URLs, raw exception text or raw judge/question/answer content. Diagnostics are limited to fixed events, safe numeric IDs, exception type and content length; persisted eval `error_message` stores only the exception type.
+- Runtime logging has a tracked AST policy: no traceback logging, `exc_info`, raw exception values or credential URLs. Redis clients/pubsub close in `finally`; UI errors are generic. Eval CLI emits only safe IDs/counts/status, background tasks are owned and retrieve completion, and persisted eval `error_message` stores only the exception type.
 
 - [x] **Step 1: Add meaningful RED regressions for all branch-review findings**
 
@@ -418,6 +431,6 @@ Make the Docker gate build the test image, correct the first AGENTS command work
 
 Run focused RED/GREEN plus the complete Docker suite with an isolated Compose project, no bot polling, shell-only test credentials, migration/cutover checks, Rabbit callback/backoff tests, runtime health/graceful shutdown, image/env/dependency/scans and cleanup `0/0/0`. Then request whole-branch re-review from merge base before marking Foundation complete again.
 
-- [ ] **Step 6: Close final whole-branch lifecycle and privacy findings**
+- [x] **Step 6: Close final whole-branch lifecycle and privacy findings**
 
-Clear worker readiness before broker cancellation I/O and bound `queue.cancel()` itself. Sanitize active Redis/admin/LLM exception paths and guarantee Redis client closure. Remove raw provider exception, user input and invalid regex text from eval output/logs; own background eval tasks and retrieve failures safely. Re-run the fresh Docker gate and whole-branch review.
+Clear worker readiness before broker cancellation I/O and bound `queue.cancel()` itself. Sanitize all runtime exception paths and guarantee Redis client closure. Remove raw provider exception, user input and invalid regex text from eval output/logs; own background eval tasks and retrieve failures safely. Re-run the fresh Docker gate, then request final whole-branch re-review.

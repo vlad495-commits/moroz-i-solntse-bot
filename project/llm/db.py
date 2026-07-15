@@ -46,8 +46,8 @@ async def _ensure_pool() -> bool:
         try:
             database = Database(DATABASE_URL, min_size=2, max_size=10)
             await database.connect()
-        except Exception:
-            logger.exception("PostgreSQL недоступен")
+        except Exception as error:
+            logger.error("db_connect_failed error_type=%s", type(error).__name__)
             return False
         _pool = database
         return True
@@ -69,8 +69,8 @@ async def save_message(
                 "VALUES ($1, $2, $3, $4, $5)",
                 chat_id, user_id, username, role, content,
             )
-    except Exception:
-        logger.exception("Ошибка сохранения сообщения")
+    except Exception as error:
+        logger.error("db_message_save_failed error_type=%s", type(error).__name__)
 
 
 async def get_context(chat_id: int) -> list[dict[str, str]]:
@@ -84,8 +84,8 @@ async def get_context(chat_id: int) -> list[dict[str, str]]:
                 chat_id, CONTEXT_MESSAGES_LIMIT,
             )
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
-    except Exception:
-        logger.exception("Ошибка чтения контекста")
+    except Exception as error:
+        logger.error("db_context_read_failed error_type=%s", type(error).__name__)
         return []
 
 
@@ -110,8 +110,10 @@ async def save_token_usage(
                 chat_id, user_id, prompt_tokens, completion_tokens,
                 cached_tokens, total_tokens, model,
             )
-    except Exception:
-        logger.exception("Ошибка сохранения token_usage")
+    except Exception as error:
+        logger.error(
+            "db_token_usage_save_failed error_type=%s", type(error).__name__
+        )
 
 
 async def cleanup_old_records() -> dict[str, int]:
@@ -137,6 +139,6 @@ async def cleanup_old_records() -> dict[str, int]:
                 )
                 result[table] = int(status.split()[-1])
         return result
-    except Exception:
-        logger.exception("Ошибка автоочистки")
+    except Exception as error:
+        logger.error("db_cleanup_failed error_type=%s", type(error).__name__)
         return {}
