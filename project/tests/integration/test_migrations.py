@@ -193,6 +193,59 @@ async def make_unversioned_schema(database_url):
         await conn.close()
 
 
+async def snapshot_application_catalog(conn):
+    tables = tuple(
+        sorted(
+            row["tablename"]
+            for row in await conn.fetch(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+            )
+        )
+    )
+    columns = tuple(
+        tuple(row.values())
+        for row in await conn.fetch(
+            """
+            SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod),
+                   a.attnotnull, pg_get_expr(d.adbin, d.adrelid)
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.oid
+            LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+              AND a.attnum > 0 AND NOT a.attisdropped
+            ORDER BY c.relname, a.attnum
+            """
+        )
+    )
+    constraints = tuple(
+        tuple(row.values())
+        for row in await conn.fetch(
+            """
+            SELECT c.relname, con.contype,
+                   pg_get_constraintdef(con.oid, true)
+            FROM pg_constraint con
+            JOIN pg_class c ON c.oid = con.conrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+            ORDER BY c.relname, con.contype, con.conname
+            """
+        )
+    )
+    indexes = tuple(
+        tuple(row.values())
+        for row in await conn.fetch(
+            """
+            SELECT tablename, indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+            ORDER BY tablename, indexname
+            """
+        )
+    )
+    return tables, columns, constraints, indexes
+
+
 async def test_database_url_repr_is_redacted():
     value = RedactedDatabaseURL("sensitive-value")
 
@@ -380,6 +433,29 @@ async def test_baseline_downgrade_is_rejected_without_changing_schema_or_data(
             RETURNING id
             """
         )
+        case_id = await conn.fetchval(
+            """
+            INSERT INTO eval_cases (question, expected_answer)
+            VALUES ('preserve question', 'preserve answer')
+            RETURNING id
+            """
+        )
+        run_id = await conn.fetchval("INSERT INTO eval_runs DEFAULT VALUES RETURNING id")
+        result_id = await conn.fetchval(
+            """
+            INSERT INTO eval_results
+                (run_id, case_id, question, expected_answer, verdict)
+            VALUES ($1, $2, 'preserve question', 'preserve answer', 'passed')
+            RETURNING id
+            """,
+            run_id,
+            case_id,
+        )
+        review_id = await conn.fetchval(
+            "INSERT INTO eval_case_reviews (case_id) VALUES ($1) RETURNING id",
+            case_id,
+        )
+        catalog_before = await snapshot_application_catalog(conn)
     finally:
         await conn.close()
 
@@ -388,13 +464,26 @@ async def test_baseline_downgrade_is_rejected_without_changing_schema_or_data(
     assert result.returncode != 0
     conn = await asyncpg.connect(migrated_database_url)
     try:
+        catalog_after = await snapshot_application_catalog(conn)
+        assert catalog_after == catalog_before
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
             "0001_existing_schema"
         )
         assert await conn.fetchval(
             "SELECT content FROM messages WHERE id = $1", message_id
         ) == "preserve me"
-        assert await conn.fetchval("SELECT to_regclass('public.eval_case_reviews')")
+        assert tuple(
+            await conn.fetchrow(
+                """
+                SELECT er.id, er.run_id, er.case_id, ecr.id, ecr.case_id
+                FROM eval_results er
+                JOIN eval_case_reviews ecr ON ecr.case_id = er.case_id
+                WHERE er.id = $1 AND ecr.id = $2
+                """,
+                result_id,
+                review_id,
+            )
+        ) == (result_id, run_id, case_id, review_id, case_id)
     finally:
         await conn.close()
 

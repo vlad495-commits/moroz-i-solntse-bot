@@ -20,7 +20,7 @@ async def init_cache() -> None:
     global _redis
     _redis = aioredis.from_url(REDIS_URL, decode_responses=True)
     await _redis.ping()
-    logger.info("Redis подключён: %s", REDIS_URL)
+    logger.info("redis_connected")
 
 
 async def close_cache() -> None:
@@ -36,16 +36,18 @@ async def _ensure_redis() -> bool:
         if _redis:
             await _redis.ping()
             return True
-    except Exception:
-        logger.warning("Redis: соединение потеряно, переподключаюсь...")
+    except Exception as error:
+        logger.warning(
+            "redis_connection_lost error_type=%s", type(error).__name__
+        )
 
     try:
         _redis = aioredis.from_url(REDIS_URL, decode_responses=True)
         await _redis.ping()
         logger.info("Redis: соединение восстановлено")
         return True
-    except Exception:
-        logger.exception("Redis недоступен")
+    except Exception as error:
+        logger.error("redis_unavailable error_type=%s", type(error).__name__)
         _redis = None
         return False
 
@@ -67,8 +69,8 @@ async def push_message(chat_id: int, role: str, content: str) -> None:
             pipe.rpush(key, msg)
             pipe.ltrim(key, -CONTEXT_MESSAGES_LIMIT, -1)
             await pipe.execute()
-    except Exception:
-        logger.exception("Ошибка записи в Redis для чата %s", chat_id)
+    except Exception as error:
+        logger.error("redis_write_failed error_type=%s", type(error).__name__)
 
 
 async def get_context(chat_id: int) -> list[dict[str, str]]:
@@ -78,6 +80,6 @@ async def get_context(chat_id: int) -> list[dict[str, str]]:
     try:
         raw = await _redis.lrange(_key(chat_id), 0, -1)
         return [json.loads(item) for item in raw]
-    except Exception:
-        logger.exception("Ошибка чтения контекста из Redis")
+    except Exception as error:
+        logger.error("redis_read_failed error_type=%s", type(error).__name__)
         return []

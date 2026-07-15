@@ -28,6 +28,7 @@ MAX_RETRIES = 3
 RETRY_HEADER = "x-retry-count"
 DEFAULT_RETRY_DELAYS = (1, 5, 30)
 DEFAULT_DRAIN_TIMEOUT = 20.0
+DEFAULT_CANCEL_TIMEOUT = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,7 @@ class RabbitQueue(QueuePort):
         *,
         retry_delays: tuple[float, float, float] = DEFAULT_RETRY_DELAYS,
         drain_timeout: float = DEFAULT_DRAIN_TIMEOUT,
+        cancel_timeout: float = DEFAULT_CANCEL_TIMEOUT,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         if not url:
@@ -101,9 +103,12 @@ class RabbitQueue(QueuePort):
             raise ValueError("retry_delays must contain three non-negative values")
         if drain_timeout < 0:
             raise ValueError("drain_timeout must be non-negative")
+        if cancel_timeout < 0:
+            raise ValueError("cancel_timeout must be non-negative")
         self._url = url
         self._retry_delays = retry_delays
         self._drain_timeout = drain_timeout
+        self._cancel_timeout = cancel_timeout
         self._sleep = sleep
         self._connection: AbstractRobustConnection | None = None
         self._channel: AbstractRobustChannel | None = None
@@ -201,16 +206,25 @@ class RabbitQueue(QueuePort):
         message = await queue.get(timeout=10, fail=True)
         await self._handle(message, handler)
 
-    async def consume(self, handler: TaskHandler) -> None:
+    async def consume(
+        self,
+        handler: TaskHandler,
+        readiness: Callable[[bool], None] | None = None,
+    ) -> None:
         queue = self._require(self._queue)
         fatal = asyncio.get_running_loop().create_future()
         stopping = asyncio.Event()
 
         async def callback(message: AbstractIncomingMessage) -> None:
-            task = asyncio.create_task(self._handle(message, handler))
+            task = asyncio.current_task()
+            if task is None:
+                error = RuntimeError("RabbitMQ callback has no owning task")
+                if not stopping.is_set() and not fatal.done():
+                    fatal.set_exception(error)
+                return
             self._inflight.add(task)
             try:
-                await task
+                await self._handle(message, handler)
             except BaseException as error:
                 if not stopping.is_set() and not fatal.done():
                     fatal.set_exception(error)
@@ -218,9 +232,11 @@ class RabbitQueue(QueuePort):
                 self._inflight.discard(task)
 
         consumer_tag = await queue.consume(callback, no_ack=False)
-        self.ready.set()
         primary_error = None
         try:
+            self.ready.set()
+            if readiness is not None:
+                readiness(True)
             await fatal
         except BaseException as error:
             primary_error = error
@@ -233,6 +249,12 @@ class RabbitQueue(QueuePort):
             except BaseException as error:
                 cleanup_error = error
             self.ready.clear()
+            if readiness is not None:
+                try:
+                    readiness(False)
+                except BaseException as error:
+                    if cleanup_error is None:
+                        cleanup_error = error
             try:
                 await self._drain_inflight()
             except BaseException as error:
@@ -259,7 +281,22 @@ class RabbitQueue(QueuePort):
         for task in pending:
             task.cancel()
         if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+            done, stubborn = await asyncio.wait(
+                pending,
+                timeout=self._cancel_timeout,
+            )
+            for task in done:
+                self._consume_task_result(task)
+            for task in stubborn:
+                self._inflight.discard(task)
+                task.add_done_callback(self._consume_task_result)
+
+    @staticmethod
+    def _consume_task_result(task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except BaseException:
+            pass
 
     async def _handle(
         self,

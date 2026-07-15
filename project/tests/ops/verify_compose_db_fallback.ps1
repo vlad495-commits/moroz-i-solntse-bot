@@ -13,3 +13,31 @@ docker compose --env-file ../.env config --quiet
 if ($LASTEXITCODE -ne 0) {
     throw "Canonical Compose config rejected PostgreSQL-parts fallback"
 }
+
+$renderedConfig = docker compose --env-file ../.env config --format json
+if ($LASTEXITCODE -ne 0) {
+    throw "Canonical Compose config could not be rendered as JSON"
+}
+$services = ($renderedConfig -join "`n" | ConvertFrom-Json).services
+$expectedEnvironment = @{
+    worker = @("RABBITMQ_URL")
+    redis = @("REDIS_PASSWORD")
+    postgres = @("POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")
+}
+
+foreach ($serviceName in $expectedEnvironment.Keys) {
+    $service = $services.$serviceName
+    if ($null -eq $service) {
+        throw "Rendered Compose config is missing service: $serviceName"
+    }
+    if ($service.PSObject.Properties.Name -contains "env_file") {
+        throw "Rendered Compose service still contains env_file: $serviceName"
+    }
+
+    $actualKeys = @($service.environment.PSObject.Properties.Name | Sort-Object)
+    $expectedKeys = @($expectedEnvironment[$serviceName] | Sort-Object)
+    $difference = @(Compare-Object $expectedKeys $actualKeys)
+    if ($difference.Count -ne 0) {
+        throw "Rendered Compose environment allowlist mismatch: $serviceName"
+    }
+}

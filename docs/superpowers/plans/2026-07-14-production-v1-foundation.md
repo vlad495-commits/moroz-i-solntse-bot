@@ -379,10 +379,14 @@ git commit -m "docs: зафиксирован production foundation checkpoint"
 - Modify: `project/admin/database.py`
 - Modify: `project/src/moroz/common/queue.py`
 - Modify: `project/worker/main.py`
+- Modify: `project/llm/cache.py`
+- Modify: `project/admin/eval_runner.py`
 - Create: `project/worker/requirements.txt`
 - Modify: `project/worker/Dockerfile`
 - Modify: `project/scheduler/main.py`
 - Modify: `project/docker-compose.yml`
+- Modify: `project/tests/ops/verify_compose_db_fallback.ps1`
+- Create: `project/tests/unit/test_safe_logging.py`
 - Modify: Foundation unit/integration/ops tests and operator documentation.
 
 **Interfaces and safety contracts:**
@@ -390,8 +394,9 @@ git commit -m "docs: зафиксирован production foundation checkpoint"
 - Cutover audits the full catalog even when `alembic_version` is already at the baseline revision.
 - PostgreSQL fallback DSNs percent-encode reserved characters in user/password/database parts; explicit `DATABASE_URL` remains unchanged and preferred.
 - Worker, Redis and PostgreSQL receive only their required environment variables; worker depends only on aio-pika and reads only `RABBITMQ_URL`.
-- Rabbit consumer tracks callback tasks, propagates fatal delivery errors, stops new deliveries before shutdown, drains in-flight work to a bounded timeout and then cancels safely. Worker readiness reflects an active consumer; scheduler health reflects a fresh heartbeat.
+- Rabbit consumer tracks the actual aio-pika callback tasks, propagates fatal delivery errors, stops new deliveries before shutdown, drains in-flight work to a bounded timeout and gives cancellation its own one-second bound. A callback that ignores cancellation is detached safely; Docker `stop_grace_period: 30s` remains the final process-level bound. Worker readiness is published synchronously with the consumer lifecycle; scheduler health reflects a fresh heartbeat.
 - Retry attempts use increasing delays before the first real producer/handler is introduced. Tests inject zero/fake delays; production defaults remain non-zero and increasing.
+- Redis and judge failures never log connection URLs, raw exception text or raw judge/question/answer content; diagnostics are limited to fixed events, exception type and content length.
 
 - [x] **Step 1: Add meaningful RED regressions for all branch-review findings**
 
@@ -403,11 +408,11 @@ Use only standard-library URL encoding in shared runtime code and a tiny migrati
 
 - [x] **Step 3: Implement queue supervision, drain, health and backoff**
 
-Keep at-least-once semantics: stop intake, wait for in-flight callbacks up to a bounded timeout, cancel remaining callbacks and close the connection so unacked messages are redelivered. Any fatal callback error must end `consume()` and the worker process. Health must go false if consumer readiness disappears or scheduler heartbeat becomes stale.
+Keep at-least-once semantics: stop intake, wait for actual in-flight callback tasks up to a bounded timeout, cancel remaining callbacks, wait at most one additional second and close the connection so unacked messages are redelivered. Never wait forever for a callback that suppresses cancellation; detach it with safe result retrieval and rely on the 30-second Docker stop grace as the final process bound. Any fatal callback error must end `consume()` and the worker process. Publish worker readiness synchronously after broker registration and remove it synchronously when consumer readiness clears; scheduler health must fail when its heartbeat becomes stale.
 
 - [x] **Step 4: Close branch-review Minor notes**
 
-Make the Docker gate build the test image, correct the first AGENTS command working directory, split the Alembic roadmap checkpoint, give worker a minimal requirements file, and document `QueueTask` as a frozen envelope with shallow/mutable JSON payload semantics.
+Make the Docker gate build the test image, correct the first AGENTS command working directory, split the Alembic roadmap checkpoint, give worker a minimal requirements file, document `QueueTask` as a frozen envelope with shallow/mutable JSON payload semantics, and redact legacy Redis/judge error logs without adding a logging framework.
 
 - [ ] **Step 5: Run safe full regression gate and independent re-review**
 

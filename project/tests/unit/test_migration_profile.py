@@ -166,3 +166,16 @@ def test_admin_port_is_isolatable_without_changing_default_url():
     assert compose_services()["admin"]["ports"] == [
         "${ADMIN_PORT:-8080}:8080"
     ]
+
+
+def test_host_ops_regression_checks_rendered_compose_environment_allowlists():
+    script = (ROOT / "tests/ops/verify_compose_db_fallback.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "config --format json" in script
+    assert '$expectedEnvironment = @{' in script
+    assert 'worker = @("RABBITMQ_URL")' in script
+    assert 'redis = @("REDIS_PASSWORD")' in script
+    assert 'postgres = @("POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")' in script
+    assert 'env_file' in script

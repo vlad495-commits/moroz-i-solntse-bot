@@ -24,41 +24,39 @@ def _remove_readiness(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
+def _publish_readiness(path: Path, active: bool) -> None:
+    if active:
+        path.write_text("ready", encoding="utf-8")
+    else:
+        _remove_readiness(path)
+
+
 async def _supervise(
     queue: RabbitQueue,
     stop: asyncio.Event,
     readiness_path: Path = READINESS_PATH,
 ) -> None:
     _remove_readiness(readiness_path)
-    consumer = asyncio.create_task(queue.consume(handle))
+    consumer = asyncio.create_task(
+        queue.consume(
+            handle,
+            readiness=lambda active: _publish_readiness(readiness_path, active),
+        )
+    )
     waiter = asyncio.create_task(stop.wait())
-    readiness = asyncio.create_task(queue.ready.wait())
     try:
-        while True:
-            watched = {consumer, waiter}
-            if readiness is not None:
-                watched.add(readiness)
-            done, _ = await asyncio.wait(
-                watched,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if readiness is not None and readiness in done:
-                readiness_path.write_text("ready", encoding="utf-8")
-                readiness = None
-            if consumer in done:
-                await consumer
-                raise RuntimeError("Consumer stopped unexpectedly")
-            if waiter in done:
-                return
+        done, _ = await asyncio.wait(
+            {consumer, waiter},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if consumer in done:
+            await consumer
+            raise RuntimeError("Consumer stopped unexpectedly")
     finally:
         _remove_readiness(readiness_path)
         consumer.cancel()
         waiter.cancel()
-        tasks = [consumer, waiter]
-        if readiness is not None:
-            readiness.cancel()
-            tasks.append(readiness)
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(consumer, waiter, return_exceptions=True)
         await queue.close()
 
 

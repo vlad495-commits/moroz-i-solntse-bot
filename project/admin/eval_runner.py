@@ -224,8 +224,12 @@ async def llm_judge(question: str, expected: str, actual: str) -> tuple[float, s
         reasoning = str(data.get("reasoning", "")).strip()
         return max(0.0, min(1.0, score)), reasoning
     except (json.JSONDecodeError, ValueError, TypeError) as e:
-        logger.warning("Judge вернул невалидный JSON: %s | %s", content, e)
-        return 0.0, f"Judge parse error: {e}"
+        logger.warning(
+            "judge_invalid_json content_length=%s error_type=%s",
+            len(content),
+            type(e).__name__,
+        )
+        return 0.0, "Judge parse error"
 
 
 # --- Прогон одного кейса ---

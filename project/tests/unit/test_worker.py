@@ -27,18 +27,24 @@ class FakeQueue:
         self.close_calls = 0
         self.ready = asyncio.Event()
 
-    async def consume(self, _handler):
+    async def consume(self, _handler, readiness=None):
         self.ready.set()
+        if readiness:
+            readiness(True)
         self.started.set()
-        if isinstance(self.result, Exception):
-            raise self.result
-        if self.result == "return":
-            return
         try:
+            if isinstance(self.result, Exception):
+                raise self.result
+            if self.result == "return":
+                return
             await asyncio.Future()
         except asyncio.CancelledError:
             self.cancelled = True
             raise
+        finally:
+            self.ready.clear()
+            if readiness:
+                readiness(False)
 
     async def close(self):
         self.close_calls += 1
@@ -124,3 +130,14 @@ async def test_worker_removes_readiness_file_after_consumer_failure(tmp_path):
         await worker_main._supervise(queue, asyncio.Event(), readiness)
 
     assert not readiness.exists()
+
+
+@pytest.mark.asyncio
+async def test_worker_fails_if_readiness_file_cannot_be_published(tmp_path):
+    queue = FakeQueue("wait")
+    missing_parent = tmp_path / "missing" / "worker-ready"
+
+    with pytest.raises(FileNotFoundError):
+        await worker_main._supervise(queue, asyncio.Event(), missing_parent)
+
+    assert queue.close_calls == 1
