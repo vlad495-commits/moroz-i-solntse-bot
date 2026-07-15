@@ -396,7 +396,7 @@ git commit -m "docs: зафиксирован production foundation checkpoint"
 - Worker, Redis and PostgreSQL receive only their required environment variables; worker depends only on aio-pika and reads only `RABBITMQ_URL`.
 - Rabbit consumer tracks the actual aio-pika callback tasks, propagates fatal delivery errors, stops new deliveries before shutdown, drains in-flight work to a bounded timeout and gives cancellation its own one-second bound. A callback that ignores cancellation is detached safely; Docker `stop_grace_period: 30s` remains the final process-level bound. Worker readiness is published synchronously with the consumer lifecycle; scheduler health reflects a fresh heartbeat.
 - Retry attempts use increasing delays before the first real producer/handler is introduced. Tests inject zero/fake delays; production defaults remain non-zero and increasing.
-- Redis and judge failures never log connection URLs, raw exception text or raw judge/question/answer content; diagnostics are limited to fixed events, exception type and content length.
+- Redis, primary/reserve LLM, judge, eval-case and eval-run failures never log connection/provider URLs, raw exception text or raw judge/question/answer content. Diagnostics are limited to fixed events, safe numeric IDs, exception type and content length; persisted eval `error_message` stores only the exception type.
 
 - [x] **Step 1: Add meaningful RED regressions for all branch-review findings**
 

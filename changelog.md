@@ -356,3 +356,8 @@
 [2026-07-15 06:58] Пропорциональный runtime smoke после redaction прошёл без Telegram polling: migration upgrade, bot cache import, admin healthy, admin logs clean.
 [2026-07-15 07:00] Финальные host rendered-Compose allowlists приняты. Safety scans: runtime DDL 0, destructive baseline downgrade DDL 0, literal credential URLs 0, tracked `.env` 0; broad logging scan оставил только два проверенных безопасных кандидата (structured event helper и сообщение об отсутствующем DATABASE_URL). `git diff --check` clean.
 [2026-07-15 07:03] Все изолированные Task 6 review-fix Compose ресурсы и task-specific images очищены: containers/volumes/networks/images `0/0/0/0`.
+[2026-07-15 07:14] Финальный eval-runner Important принят в узкий TDD fix-loop. Docker RED: 4 failed, 2 deselected — sentinel provider URL/user text утекали через primary/reserve/case/run exception logs и сохранялись в DB `error_message`.
+[2026-07-15 07:18] Eval-runner focused GREEN: 6/6 Docker tests. Primary/reserve/case/run exception paths пишут только fixed event, safe numeric id и `error_type`; DB `error_message` содержит только тип исключения.
+[2026-07-15 07:22] После последней production-правки fresh no-cache test image и полный Docker suite прошли: 90 passed in 39.27s.
+[2026-07-15 07:24] Финальный eval logging scan: broad candidates 2/2 вручную подтверждены безопасными; `logger.exception`/raw DB error/raw exception formatting в eval_runner 0, literal credential URLs 0, `git diff --check` clean. Proportional runtime: migration выполнен, admin healthy, logs clean; Telegram polling не запускался.
+[2026-07-15 07:26] Изолированные final eval fix-loop Compose ресурсы и task-specific images очищены: containers/volumes/networks/images `0/0/0/0`.

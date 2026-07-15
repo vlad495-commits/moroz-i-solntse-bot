@@ -243,14 +243,18 @@ async def _generate_bot_response(question: str, system_prompt: str) -> str:
 
     try:
         return await _invoke_llm(_primary, _primary_kind, LLM_MODEL, messages)
-    except Exception as e:
-        # Fallback на резервный провайдер если основной упал
+    except Exception as primary_error:
+        logger.warning(
+            "primary_llm_failed error_type=%s", type(primary_error).__name__
+        )
         if _reserve:
-            logger.warning("Основной LLM упал, fallback на резервный: %s", e)
             try:
                 return await _invoke_llm(_reserve, _reserve_kind, RESERVE_MODEL, messages)
-            except Exception:
-                logger.exception("Резервный fallback тоже упал")
+            except Exception as reserve_error:
+                logger.error(
+                    "reserve_llm_failed error_type=%s",
+                    type(reserve_error).__name__,
+                )
         raise
 
 
@@ -310,9 +314,19 @@ async def run_case(case: dict, run_id: int) -> dict:
                 verdict = "fail"
                 reasoning = "Нет expected_answer — нечего сравнивать"
 
-    except Exception as e:
-        logger.exception("Ошибка в кейсе #%s", case.get("id"))
-        error_message = str(e)
+    except Exception as error:
+        case_id = case.get("id")
+        safe_case_id = (
+            case_id
+            if isinstance(case_id, int) and not isinstance(case_id, bool)
+            else "unknown"
+        )
+        error_message = type(error).__name__
+        logger.error(
+            "eval_case_failed case_id=%s error_type=%s",
+            safe_case_id,
+            error_message,
+        )
         verdict = "error"
 
     duration_ms = int((time.time() - started) * 1000)
@@ -367,8 +381,18 @@ async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
             await evdb.update_run_progress(run_id, passed, failed)
 
         await evdb.finish_run(run_id, passed, failed, status="finished")
-    except Exception as e:
-        logger.exception("Прогон #%s упал", run_id)
+    except Exception as error:
+        safe_run_id = (
+            run_id
+            if isinstance(run_id, int) and not isinstance(run_id, bool)
+            else "unknown"
+        )
+        error_message = type(error).__name__
+        logger.error(
+            "eval_run_failed run_id=%s error_type=%s",
+            safe_run_id,
+            error_message,
+        )
         await evdb.finish_run(
-            run_id, passed, failed, status="error", error_message=str(e)
+            run_id, passed, failed, status="error", error_message=error_message
         )

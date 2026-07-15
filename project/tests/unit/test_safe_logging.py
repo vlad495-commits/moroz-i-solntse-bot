@@ -19,6 +19,22 @@ class SentinelRedisError(RuntimeError):
     pass
 
 
+class PrimaryProviderError(RuntimeError):
+    pass
+
+
+class ReserveProviderError(RuntimeError):
+    pass
+
+
+class EvalCaseError(RuntimeError):
+    pass
+
+
+class EvalRunError(RuntimeError):
+    pass
+
+
 class FailingRedis:
     async def ping(self):
         raise SentinelRedisError("redis-exception-sentinel")
@@ -83,3 +99,113 @@ async def test_judge_invalid_json_log_does_not_include_raw_content(monkeypatch, 
     assert content not in caplog.text
     assert "private question" not in caplog.text
     assert "private answer" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_primary_llm_failure_before_reserve_logs_only_error_type(
+    monkeypatch, caplog
+):
+    primary = object()
+    reserve = object()
+    sentinel = "https://user:password@provider.test exception-user-sentinel"
+
+    async def invoke(client, *_args, **_kwargs):
+        if client is primary:
+            raise PrimaryProviderError(sentinel)
+        return "safe reserve response"
+
+    monkeypatch.setattr(eval_runner, "_primary", primary)
+    monkeypatch.setattr(eval_runner, "_reserve", reserve)
+    monkeypatch.setattr(eval_runner, "_invoke_llm", invoke)
+
+    with caplog.at_level(logging.WARNING, logger=eval_runner.logger.name):
+        response = await eval_runner._generate_bot_response(
+            "private-question-sentinel", ""
+        )
+
+    assert response == "safe reserve response"
+    assert "primary_llm_failed" in caplog.text
+    assert "error_type=PrimaryProviderError" in caplog.text
+    assert sentinel not in caplog.text
+    assert "private-question-sentinel" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reserve_llm_failure_logs_only_error_type(monkeypatch, caplog):
+    primary = object()
+    reserve = object()
+    primary_sentinel = "https://primary:password@provider.test primary-user-text"
+    reserve_sentinel = "https://reserve:password@provider.test reserve-user-text"
+
+    async def invoke(client, *_args, **_kwargs):
+        if client is primary:
+            raise PrimaryProviderError(primary_sentinel)
+        raise ReserveProviderError(reserve_sentinel)
+
+    monkeypatch.setattr(eval_runner, "_primary", primary)
+    monkeypatch.setattr(eval_runner, "_reserve", reserve)
+    monkeypatch.setattr(eval_runner, "_invoke_llm", invoke)
+
+    with caplog.at_level(logging.WARNING, logger=eval_runner.logger.name):
+        with pytest.raises(PrimaryProviderError):
+            await eval_runner._generate_bot_response("safe question", "")
+
+    assert "primary_llm_failed" in caplog.text
+    assert "error_type=PrimaryProviderError" in caplog.text
+    assert "reserve_llm_failed" in caplog.text
+    assert "error_type=ReserveProviderError" in caplog.text
+    assert primary_sentinel not in caplog.text
+    assert reserve_sentinel not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_case_sanitizes_log_and_database_error(monkeypatch, caplog):
+    sentinel = "https://case:password@provider.test case-user-text"
+    saved = {}
+
+    async def fail_response(*_args, **_kwargs):
+        raise EvalCaseError(sentinel)
+
+    async def save_result(**kwargs):
+        saved.update(kwargs)
+        return 91
+
+    monkeypatch.setattr(eval_runner, "_read_system_prompt", lambda: "")
+    monkeypatch.setattr(eval_runner, "_generate_bot_response", fail_response)
+    monkeypatch.setattr(eval_runner.evdb, "save_result", save_result)
+
+    case = {"id": 17, "question": "safe question", "expected_answer": "safe"}
+    with caplog.at_level(logging.ERROR, logger=eval_runner.logger.name):
+        result = await eval_runner.run_case(case, run_id=23)
+
+    assert result["verdict"] == "error"
+    assert saved["error_message"] == "EvalCaseError"
+    assert "eval_case_failed case_id=17 error_type=EvalCaseError" in caplog.text
+    assert sentinel not in caplog.text
+    assert sentinel not in repr(saved)
+
+
+@pytest.mark.asyncio
+async def test_run_eval_set_sanitizes_log_and_database_error(monkeypatch, caplog):
+    sentinel = "https://run:password@provider.test run-user-text"
+    finished = []
+
+    async def fail_case(*_args, **_kwargs):
+        raise EvalRunError(sentinel)
+
+    async def finish_run(*args, **kwargs):
+        finished.append((args, kwargs))
+
+    monkeypatch.setattr(eval_runner, "_init_clients", lambda: None)
+    monkeypatch.setattr(eval_runner, "run_case", fail_case)
+    monkeypatch.setattr(eval_runner.evdb, "finish_run", finish_run)
+
+    with caplog.at_level(logging.ERROR, logger=eval_runner.logger.name):
+        await eval_runner.run_eval_set(29, cases=[{"id": 31}])
+
+    assert finished == [
+        ((29, 0, 0), {"status": "error", "error_message": "EvalRunError"})
+    ]
+    assert "eval_run_failed run_id=29 error_type=EvalRunError" in caplog.text
+    assert sentinel not in caplog.text
+    assert sentinel not in repr(finished)
