@@ -8,6 +8,7 @@ services:
       dockerfile: Dockerfile.test
     env_file: ../.env
     environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL outside Git}
       RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL outside Git}
     volumes:
       - .:/workspace:ro
@@ -21,11 +22,11 @@ services:
     profiles: ["migration"]
     build:
       context: .
-      dockerfile: Dockerfile.test
+      dockerfile: migrate/Dockerfile
     env_file: ../.env
-    command: ["alembic", "-c", "/workspace/alembic.ini", "upgrade", "head"]
-    volumes:
-      - .:/workspace:ro
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL outside Git}
+    command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,12 +35,12 @@ services:
     profiles: ["migration"]
     build:
       context: .
-      dockerfile: Dockerfile.test
+      dockerfile: migrate/Dockerfile
     env_file: ../.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL outside Git}
     command:
-      ["python", "/workspace/migrations/audit_existing_schema.py", "--config", "/workspace/alembic.ini"]
-    volumes:
-      - .:/workspace:ro
+      ["python", "/app/migrations/audit_existing_schema.py", "--config", "/app/alembic.ini"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,6 +96,9 @@ services:
       dockerfile: llm/Dockerfile
     restart: unless-stopped
     env_file: ../.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL outside Git}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
     stop_grace_period: 30s
     volumes:
       - ./llm/prompts:/app/prompts:rw
@@ -123,12 +127,15 @@ services:
       dockerfile: admin/Dockerfile
     restart: unless-stopped
     env_file: ../.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL outside Git}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
     stop_grace_period: 30s
     volumes:
       - ./llm/prompts:/app/prompts:rw
       - ./logs:/app/logs:ro
     ports:
-      - "8080:8080"
+      - "${ADMIN_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,6 +157,8 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     env_file: ../.env
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD outside Git}
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
@@ -174,6 +183,10 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file: ../.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER outside Git}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
     volumes:
       - pgdata:/var/lib/postgresql/data
     logging:

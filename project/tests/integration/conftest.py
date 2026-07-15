@@ -25,16 +25,18 @@ async def disposable_database_url():
     )
 
     admin = await asyncpg.connect(admin_url)
-    await admin.execute(f'CREATE DATABASE "{database_name}"')
     try:
-        yield test_url
+        await admin.execute(f'CREATE DATABASE "{database_name}"')
+        try:
+            yield test_url
+        finally:
+            await admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = $1 AND pid <> pg_backend_pid()",
+                database_name,
+            )
+            await admin.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
     finally:
-        await admin.execute(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            "WHERE datname = $1 AND pid <> pg_backend_pid()",
-            database_name,
-        )
-        await admin.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
         await admin.close()
 
 

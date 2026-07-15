@@ -16,7 +16,6 @@ RUN pip install --no-cache-dir \
 COPY llm /app/llm
 COPY admin /app/admin
 COPY worker /app/worker
-COPY scheduler /app/scheduler
 COPY src /app/src
 COPY tests /app/tests
 

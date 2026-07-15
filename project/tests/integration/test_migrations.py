@@ -4,7 +4,7 @@ import subprocess
 import asyncpg
 import pytest
 
-from conftest import RedactedDatabaseURL
+from conftest import RedactedDatabaseURL, disposable_database_url as database_fixture
 
 
 pytestmark = pytest.mark.asyncio
@@ -190,6 +190,44 @@ async def test_database_url_repr_is_redacted():
     assert "sensitive-value" not in repr(value)
 
 
+@pytest.mark.parametrize("failure", ["create", "terminate", "drop"])
+async def test_disposable_database_closes_admin_when_database_operation_fails(
+    monkeypatch, failure
+):
+    class FailingAdmin:
+        closed = False
+
+        async def execute(self, statement, *args):
+            operation = (
+                "create" if statement.startswith("CREATE DATABASE")
+                else "terminate" if statement.startswith("SELECT pg_terminate_backend")
+                else "drop" if statement.startswith("DROP DATABASE")
+                else "other"
+            )
+            if operation == failure:
+                raise RuntimeError(f"{failure} failed")
+
+        async def close(self):
+            self.closed = True
+
+    admin = FailingAdmin()
+
+    async def connect(_url):
+        return admin
+
+    monkeypatch.setattr("conftest.asyncpg.connect", connect)
+    fixture = database_fixture.__wrapped__()
+    if failure == "create":
+        with pytest.raises(RuntimeError, match="create failed"):
+            await anext(fixture)
+    else:
+        await anext(fixture)
+        with pytest.raises(RuntimeError, match=f"{failure} failed"):
+            await fixture.aclose()
+
+    assert admin.closed
+
+
 async def test_alembic_creates_exact_existing_schema(migrated_database_url):
     conn = await asyncpg.connect(migrated_database_url)
     try:
@@ -282,6 +320,37 @@ async def test_cutover_audits_and_stamps_exact_unversioned_schema(
 async def test_cutover_is_idempotent_for_versioned_baseline(migrated_database_url):
     result = run_cutover(migrated_database_url)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("version_state", ["empty", "unexpected"])
+async def test_cutover_fails_closed_and_preserves_invalid_version_state(
+    migrated_database_url, version_state
+):
+    conn = await asyncpg.connect(migrated_database_url)
+    try:
+        if version_state == "empty":
+            await conn.execute("DELETE FROM alembic_version")
+            expected = []
+        else:
+            await conn.execute(
+                "UPDATE alembic_version SET version_num = 'unexpected_revision'"
+            )
+            expected = ["unexpected_revision"]
+    finally:
+        await conn.close()
+
+    result = run_cutover(migrated_database_url)
+
+    assert result.returncode != 0
+    assert "Schema audit failed" in result.stderr
+    conn = await asyncpg.connect(migrated_database_url)
+    try:
+        assert [
+            row["version_num"]
+            for row in await conn.fetch("SELECT version_num FROM alembic_version")
+        ] == expected
+    finally:
+        await conn.close()
 
 
 @pytest.mark.parametrize("schema_state", ["fresh", "partial", "mismatch"])
