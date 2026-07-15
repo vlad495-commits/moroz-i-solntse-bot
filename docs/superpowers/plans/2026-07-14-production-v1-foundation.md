@@ -366,3 +366,49 @@ Mark foundation tasks complete in `Дорожная карта.md`; add commands
 git add "Дорожная карта.md" changelog.md
 git commit -m "docs: зафиксирован production foundation checkpoint"
 ```
+
+### Task 6: Whole-branch review fixes
+
+**Files:**
+- Modify: `project/migrations/versions/0001_existing_schema.py`
+- Modify: `project/migrations/audit_existing_schema.py`
+- Modify: `project/migrations/env.py`
+- Create: `project/migrations/database_url.py`
+- Modify: `project/src/moroz/common/config.py`
+- Modify: `project/llm/config.py`
+- Modify: `project/admin/database.py`
+- Modify: `project/src/moroz/common/queue.py`
+- Modify: `project/worker/main.py`
+- Create: `project/worker/requirements.txt`
+- Modify: `project/worker/Dockerfile`
+- Modify: `project/scheduler/main.py`
+- Modify: `project/docker-compose.yml`
+- Modify: Foundation unit/integration/ops tests and operator documentation.
+
+**Interfaces and safety contracts:**
+- Baseline downgrade is fail-closed and cannot drop historical tables.
+- Cutover audits the full catalog even when `alembic_version` is already at the baseline revision.
+- PostgreSQL fallback DSNs percent-encode reserved characters in user/password/database parts; explicit `DATABASE_URL` remains unchanged and preferred.
+- Worker, Redis and PostgreSQL receive only their required environment variables; worker depends only on aio-pika and reads only `RABBITMQ_URL`.
+- Rabbit consumer tracks callback tasks, propagates fatal delivery errors, stops new deliveries before shutdown, drains in-flight work to a bounded timeout and then cancels safely. Worker readiness reflects an active consumer; scheduler health reflects a fresh heartbeat.
+- Retry attempts use increasing delays before the first real producer/handler is introduced. Tests inject zero/fake delays; production defaults remain non-zero and increasing.
+
+- [ ] **Step 1: Add meaningful RED regressions for all branch-review findings**
+
+Cover destructive downgrade, stamped-schema drift, reserved-character PostgreSQL password, runtime env allowlists, worker dependency boundary, callback fatal propagation, bounded in-flight drain/cancel, consumer readiness, scheduler heartbeat freshness and increasing retry delays. Update the canonical gate regression to force a fresh test-image build.
+
+- [ ] **Step 2: Implement migration, DSN and least-privilege fixes**
+
+Use only standard-library URL encoding in shared runtime code and a tiny migration-local helper so the migration image stays minimal. Make baseline downgrade raise without DDL. Audit both stamped and unstamped schemas before returning success/stamping. Remove runtime store/worker `env_file` entries and use explicit allowlists.
+
+- [ ] **Step 3: Implement queue supervision, drain, health and backoff**
+
+Keep at-least-once semantics: stop intake, wait for in-flight callbacks up to a bounded timeout, cancel remaining callbacks and close the connection so unacked messages are redelivered. Any fatal callback error must end `consume()` and the worker process. Health must go false if consumer readiness disappears or scheduler heartbeat becomes stale.
+
+- [ ] **Step 4: Close branch-review Minor notes**
+
+Make the Docker gate build the test image, correct the first AGENTS command working directory, split the Alembic roadmap checkpoint, give worker a minimal requirements file, and document `QueueTask` as a frozen envelope with shallow/mutable JSON payload semantics unless a compatible deep-freeze is demonstrably simpler.
+
+- [ ] **Step 5: Run safe full regression gate and independent re-review**
+
+Run focused RED/GREEN plus the complete Docker suite with an isolated Compose project, no bot polling, shell-only test credentials, migration/cutover checks, Rabbit callback/backoff tests, runtime health/graceful shutdown, image/env/dependency/scans and cleanup `0/0/0`. Then request whole-branch re-review from merge base before marking Foundation complete again.
