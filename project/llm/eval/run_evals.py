@@ -16,8 +16,6 @@ from pathlib import Path
 # Добавляем родительскую папку (llm/) в sys.path чтобы импорты работали
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import GUARDRAILS_INPUT_CATEGORIES, GUARDRAILS_INPUT_ENABLED  # noqa: E402
-from guardrails import check_input  # noqa: E402
 from llm import init_llm, generate_response  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
@@ -40,13 +38,26 @@ def _safe_case_id(case: dict, ordinal: int) -> int:
     return ordinal
 
 
+def _load_guardrail_checker():
+    """Вернуть guardrail-проверку, если она доступна на текущей ступени."""
+    try:
+        from config import GUARDRAILS_INPUT_CATEGORIES, GUARDRAILS_INPUT_ENABLED
+        from guardrails import check_input
+    except ImportError:
+        return None
+
+    if not GUARDRAILS_INPUT_ENABLED or not GUARDRAILS_INPUT_CATEGORIES:
+        return None
+    return check_input
+
+
 async def _run_dataset() -> tuple[int, int]:
     """Прогнать общий тестовый датасет (smoke + категории)."""
     try:
         cases = _load_dataset("dataset")
     except Exception as error:
         print(f"[dataset] status=error error_type={type(error).__name__}")
-        return 0, 0
+        return 0, 1
     if not cases:
         print("[dataset] dataset.json пустой — пропуск")
         return 0, 0
@@ -91,16 +102,16 @@ async def _run_dataset() -> tuple[int, int]:
 
 async def _run_adversarial() -> tuple[int, int]:
     """Прогнать jailbreak-атаки: проверяем что guardrails ловит."""
-    if not GUARDRAILS_INPUT_ENABLED or not GUARDRAILS_INPUT_CATEGORIES:
-        print("[adversarial] Guardrails выключены — прогон бессмыслен. "
-              "Включи через /guardrails и попробуй ещё раз.")
+    checker = _load_guardrail_checker()
+    if checker is None:
+        print("[adversarial] status=unavailable")
         return 0, 0
 
     try:
         cases = _load_dataset("adversarial_dataset")
     except Exception as error:
         print(f"[adversarial] status=error error_type={type(error).__name__}")
-        return 0, 0
+        return 0, 1
     if not cases:
         print("[adversarial] adversarial_dataset.json пустой — пропуск")
         return 0, 0
@@ -114,7 +125,7 @@ async def _run_adversarial() -> tuple[int, int]:
         expected = case.get("expected", "input_blocked")
 
         try:
-            ok, _reason = check_input(input_text)
+            ok, _reason = checker(input_text)
         except Exception as error:
             print(
                 f"[adv] case={case_id} status=error "

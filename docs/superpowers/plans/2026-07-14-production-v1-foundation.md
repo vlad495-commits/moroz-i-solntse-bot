@@ -409,7 +409,7 @@ git commit -m "docs: зафиксирован production foundation checkpoint"
 - Worker, Redis and PostgreSQL receive only their required environment variables; worker depends only on aio-pika and reads only `RABBITMQ_URL`.
 - Rabbit consumer tracks the actual aio-pika callback tasks, propagates fatal delivery errors, clears readiness before broker I/O, bounds broker subscription cancellation separately, then performs bounded in-flight drain/cancel. A callback or broker cancel that ignores cancellation is detached safely; Docker `stop_grace_period: 30s` remains the final process-level bound. Worker readiness is published synchronously with the consumer lifecycle; scheduler health reflects a fresh heartbeat.
 - Retry attempts use increasing delays before the first real producer/handler is introduced. Tests inject zero/fake delays; production defaults remain non-zero and increasing.
-- Runtime logging has a tracked AST policy: no traceback logging, `exc_info`, raw exception values or credential URLs. Redis clients/pubsub close in `finally`; UI errors are generic. Eval CLI emits only safe IDs/counts/status, background tasks are owned and retrieve completion, and persisted eval `error_message` stores only the exception type.
+- Runtime logging has a tracked AST policy: no traceback logging, `exc_info`, raw exception values or credential URLs. Redis clients/pubsub close in `finally`; UI errors are generic. Eval CLI emits only safe IDs/counts/status, imports without the later guardrails module, reports unavailable adversarial checks as an explicit safe no-op, and exits non-zero on dataset load or LLM initialization failures; background tasks are owned and retrieve completion, and persisted eval `error_message` stores only the exception type.
 
 - [x] **Step 1: Add meaningful RED regressions for all branch-review findings**
 
@@ -434,3 +434,5 @@ Run focused RED/GREEN plus the complete Docker suite with an isolated Compose pr
 - [x] **Step 6: Close final whole-branch lifecycle and privacy findings**
 
 Clear worker readiness before broker cancellation I/O and bound `queue.cancel()` itself. Sanitize all runtime exception paths and guarantee Redis client closure. Remove raw provider exception, user input and invalid regex text from eval output/logs; own background eval tasks and retrieve failures safely. Re-run the fresh Docker gate, then request final whole-branch re-review.
+
+The Foundation eval runner must not import future guardrails at module load. Load them lazily for adversarial mode, return a safe `status=unavailable` no-op while absent, preserve empty datasets as an explicit success no-op, and make unreadable/malformed datasets or LLM initialization failures produce a non-zero CLI exit without exposing raw exception text.

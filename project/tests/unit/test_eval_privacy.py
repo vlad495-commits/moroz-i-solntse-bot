@@ -1,7 +1,7 @@
 import asyncio
-import importlib.util
+import json
 import logging
-from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -9,35 +9,7 @@ import pytest
 
 import eval_routes
 import eval_runner
-
-
-def _load_run_evals_module():
-    stubs = {
-        "config": SimpleNamespace(
-            GUARDRAILS_INPUT_CATEGORIES=["configured"],
-            GUARDRAILS_INPUT_ENABLED=True,
-        ),
-        "guardrails": SimpleNamespace(check_input=lambda _text: (True, "")),
-        "llm": SimpleNamespace(init_llm=lambda: None, generate_response=None),
-    }
-    originals = {name: sys.modules.get(name) for name in stubs}
-    sys.modules.update(stubs)
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "run_evals_under_test", Path("/app/llm/eval/run_evals.py")
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        for name, original in originals.items():
-            if original is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = original
-
-
-run_evals = _load_run_evals_module()
+from eval import run_evals
 
 
 class EvalInitError(RuntimeError):
@@ -53,6 +25,10 @@ class EvalBackgroundError(RuntimeError):
 
 
 class CliProviderError(RuntimeError):
+    pass
+
+
+class CliDatasetError(RuntimeError):
     pass
 
 
@@ -209,8 +185,11 @@ async def test_eval_cli_adversarial_output_hides_dataset_and_guardrail_values(
     input_sentinel = "adversarial-input-sentinel"
     technique_sentinel = "technique-sentinel"
     reason_sentinel = "guardrail-reason-sentinel"
-    monkeypatch.setattr(run_evals, "GUARDRAILS_INPUT_ENABLED", True)
-    monkeypatch.setattr(run_evals, "GUARDRAILS_INPUT_CATEGORIES", ["configured"])
+    monkeypatch.setattr(
+        run_evals,
+        "_load_guardrail_checker",
+        lambda: lambda _text: (False, reason_sentinel),
+    )
     monkeypatch.setattr(
         run_evals,
         "_load_dataset",
@@ -223,8 +202,6 @@ async def test_eval_cli_adversarial_output_hides_dataset_and_guardrail_values(
             }
         ],
     )
-    monkeypatch.setattr(run_evals, "check_input", lambda _text: (False, reason_sentinel))
-
     assert await run_evals._run_adversarial() == (1, 0)
     output = capsys.readouterr().out
 
@@ -232,3 +209,131 @@ async def test_eval_cli_adversarial_output_hides_dataset_and_guardrail_values(
     assert input_sentinel not in output
     assert technique_sentinel not in output
     assert reason_sentinel not in output
+
+
+@pytest.mark.parametrize(
+    ("error", "sentinel"),
+    [
+        (OSError("unreadable-dataset-sentinel"), "unreadable-dataset-sentinel"),
+        (
+            json.JSONDecodeError("malformed", "malformed-dataset-sentinel", 0),
+            "malformed-dataset-sentinel",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_eval_cli_dataset_load_error_is_nonzero_and_redacted(
+    monkeypatch, capsys, error, sentinel
+):
+    def fail_load(_name):
+        raise error
+
+    monkeypatch.setattr(run_evals, "_load_dataset", fail_load)
+
+    assert await run_evals._run_dataset() == (0, 1)
+    output = capsys.readouterr().out
+    assert f"status=error error_type={type(error).__name__}" in output
+    assert sentinel not in output
+
+
+@pytest.mark.asyncio
+async def test_eval_cli_adversarial_load_error_is_nonzero_and_redacted(
+    monkeypatch, capsys
+):
+    sentinel = "C:/private/adversarial.json malformed-user-sentinel"
+    monkeypatch.setattr(
+        run_evals, "_load_guardrail_checker", lambda: lambda _text: (True, "")
+    )
+
+    def fail_load(_name):
+        raise CliDatasetError(sentinel)
+
+    monkeypatch.setattr(run_evals, "_load_dataset", fail_load)
+
+    assert await run_evals._run_adversarial() == (0, 1)
+    output = capsys.readouterr().out
+    assert "status=error error_type=CliDatasetError" in output
+    assert sentinel not in output
+
+
+@pytest.mark.asyncio
+async def test_eval_cli_init_failure_is_nonzero_and_redacted(monkeypatch, capsys):
+    sentinel = "https://user:password@provider init-user-sentinel"
+    monkeypatch.setattr(
+        run_evals,
+        "_load_dataset",
+        lambda _name: [{"id": 1, "input": "safe", "expected_contains": []}],
+    )
+
+    def fail_init():
+        raise CliProviderError(sentinel)
+
+    monkeypatch.setattr(run_evals, "init_llm", fail_init)
+
+    assert await run_evals._run_dataset() == (0, 1)
+    output = capsys.readouterr().out
+    assert "status=error error_type=CliProviderError" in output
+    assert sentinel not in output
+
+
+def test_eval_cli_real_foundation_module_imports_without_stubs():
+    result = subprocess.run(
+        [sys.executable, "-c", "import eval.run_evals"],
+        cwd="/app/llm",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_eval_cli_real_adversarial_mode_skips_safely_without_guardrails():
+    result = subprocess.run(
+        [sys.executable, "-m", "eval.run_evals", "--only", "adversarial"],
+        cwd="/app/llm",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "status=unavailable" in result.stdout
+    assert "ImportError" not in result.stderr
+
+
+def test_eval_cli_real_dataset_error_exits_nonzero_without_raw_exception():
+    sentinel = "C:/private/dataset.json subprocess-user-sentinel"
+    code = f"""
+import asyncio
+import sys
+from eval import run_evals
+
+class DatasetError(RuntimeError):
+    pass
+
+def fail_load(_name):
+    raise DatasetError({sentinel!r})
+
+run_evals._load_dataset = fail_load
+sys.argv = ["run_evals", "--only", "dataset"]
+raise SystemExit(asyncio.run(run_evals.main()))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd="/app/llm",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "status=error error_type=DatasetError" in result.stdout
+    assert sentinel not in result.stdout
+    assert sentinel not in result.stderr
+
+
+@pytest.mark.asyncio
+async def test_eval_cli_empty_dataset_is_explicit_noop(monkeypatch, capsys):
+    monkeypatch.setattr(run_evals, "_load_dataset", lambda _name: [])
+
+    assert await run_evals._run_dataset() == (0, 0)
+    assert "пустой" in capsys.readouterr().out
