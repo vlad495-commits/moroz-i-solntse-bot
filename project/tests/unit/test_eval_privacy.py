@@ -300,6 +300,74 @@ def test_eval_cli_real_adversarial_mode_skips_safely_without_guardrails():
     assert "ImportError" not in result.stderr
 
 
+def test_eval_cli_enabled_but_missing_guardrails_is_safely_unavailable():
+    code = """
+import asyncio
+import config
+import sys
+
+config.GUARDRAILS_INPUT_ENABLED = True
+config.GUARDRAILS_INPUT_CATEGORIES = ["configured"]
+from eval import run_evals
+
+sys.argv = ["run_evals", "--only", "adversarial"]
+raise SystemExit(asyncio.run(run_evals.main()))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd="/app/llm",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "status=unavailable" in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("guardrails_source", "error_type"),
+    [
+        ("import missing_guardrail_dependency_sentinel\n", "ModuleNotFoundError"),
+        ("BROKEN_GUARDRAILS = True\n", "ImportError"),
+    ],
+)
+def test_eval_cli_existing_broken_guardrails_is_nonzero_and_redacted(
+    tmp_path, guardrails_source, error_type
+):
+    sentinel = "missing_guardrail_dependency_sentinel"
+    (tmp_path / "guardrails.py").write_text(guardrails_source, encoding="utf-8")
+    code = f"""
+import asyncio
+import config
+import sys
+
+config.GUARDRAILS_INPUT_ENABLED = True
+config.GUARDRAILS_INPUT_CATEGORIES = ["configured"]
+sys.path.insert(0, {str(tmp_path)!r})
+from eval import run_evals
+
+sys.argv = ["run_evals", "--only", "adversarial"]
+raise SystemExit(asyncio.run(run_evals.main()))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd="/app/llm",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert f"status=error error_type={error_type}" in result.stdout
+    assert sentinel not in result.stdout
+    assert sentinel not in result.stderr
+    assert str(tmp_path) not in result.stdout
+    assert str(tmp_path) not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_eval_cli_real_dataset_error_exits_nonzero_without_raw_exception():
     sentinel = "C:/private/dataset.json subprocess-user-sentinel"
     code = f"""

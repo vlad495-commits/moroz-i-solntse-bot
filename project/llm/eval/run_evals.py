@@ -40,14 +40,20 @@ def _safe_case_id(case: dict, ordinal: int) -> int:
 
 def _load_guardrail_checker():
     """Вернуть guardrail-проверку, если она доступна на текущей ступени."""
-    try:
-        from config import GUARDRAILS_INPUT_CATEGORIES, GUARDRAILS_INPUT_ENABLED
-        from guardrails import check_input
-    except ImportError:
+    import config
+
+    enabled = getattr(config, "GUARDRAILS_INPUT_ENABLED", False)
+    categories = getattr(config, "GUARDRAILS_INPUT_CATEGORIES", ())
+    if not enabled or not categories:
         return None
 
-    if not GUARDRAILS_INPUT_ENABLED or not GUARDRAILS_INPUT_CATEGORIES:
-        return None
+    try:
+        from guardrails import check_input
+    except ModuleNotFoundError as error:
+        if error.name == "guardrails":
+            return None
+        raise
+
     return check_input
 
 
@@ -102,7 +108,11 @@ async def _run_dataset() -> tuple[int, int]:
 
 async def _run_adversarial() -> tuple[int, int]:
     """Прогнать jailbreak-атаки: проверяем что guardrails ловит."""
-    checker = _load_guardrail_checker()
+    try:
+        checker = _load_guardrail_checker()
+    except ImportError as error:
+        print(f"[adversarial] status=error error_type={type(error).__name__}")
+        return 0, 1
     if checker is None:
         print("[adversarial] status=unavailable")
         return 0, 0
