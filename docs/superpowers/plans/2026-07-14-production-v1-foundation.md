@@ -346,7 +346,9 @@ Expected: all tests pass.
 
 Use an isolated `COMPOSE_PROJECT_NAME` plus shell-only generated PostgreSQL, Redis and RabbitMQ test credentials; never print or persist their values. Run normal/test/migration `docker compose --env-file ../.env config --quiet`, then `docker compose --env-file ../.env --profile migration run --rm migrate`. Build the bot image and run compile/import smoke without starting Telegram polling. Start only `postgres redis rabbitmq admin worker scheduler` and inspect `docker compose --env-file ../.env ps`.
 
-Expected: exit 0; the immutable migration image upgrades successfully; admin/worker/scheduler and stores are healthy; bot image compiles/imports but no Telegram polling process starts. A live Telegram E2E remains a launch gate until a separate test token exists.
+Also run the sanitized Compose regression with `DATABASE_URL` absent/empty: PostgreSQL parts come from the external env file, while RabbitMQ credentials remain shell-only. `DATABASE_URL` stays the preferred override; Compose never constructs a database URI. Rendered profile allowlists are exact: `test` receives `DATABASE_URL`, the three PostgreSQL parts and `RABBITMQ_URL`; `migrate`/`cutover` receive only `DATABASE_URL` and the three PostgreSQL parts.
+
+Expected: exit 0; the immutable migration image upgrades successfully through both URL override and PostgreSQL-parts fallback; admin/worker/scheduler and stores are healthy; bot image compiles/imports but no Telegram polling process starts. A live Telegram E2E remains a launch gate until a separate test token exists.
 
 - [x] **Step 4: Inspect fresh logs and production boundaries**
 

@@ -141,6 +141,10 @@ docker compose --env-file ../.env down
 
 Удалённый `guest` запрещён. Production-запуск блокируется, пока для RabbitMQ не создан и не записан в `RABBITMQ_URL` отдельный стойкий уникальный пароль; пароль ротируется вне Git перед релизом и при любом подозрении на утечку.
 
+### PostgreSQL connection settings
+
+`DATABASE_URL` — предпочтительный, но необязательный override. Если он отсутствует или пуст, приложение, Alembic и cutover используют совместимый набор `POSTGRES_USER`, `POSTGRES_PASSWORD` и `POSTGRES_DB`; Compose не собирает URL сам. Профильные сервисы получают только эти поля базы, а `test` дополнительно получает `RABBITMQ_URL`. Telegram-, LLM-, Redis- и остальные секреты в `test`, `migrate` и `cutover` не передаются.
+
 ---
 
 ## ЖЕЛЕЗНОЕ ПРАВИЛО: временные файлы

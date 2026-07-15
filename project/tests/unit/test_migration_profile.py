@@ -107,17 +107,30 @@ def test_compose_process_environment_overrides_external_test_credentials():
     assert services["redis"]["environment"] == {
         "REDIS_PASSWORD": "${REDIS_PASSWORD:?set REDIS_PASSWORD outside Git}",
     }
+    database_keys = {
+        "DATABASE_URL",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+    }
     allowed = {
-        "test": {"DATABASE_URL", "RABBITMQ_URL"},
-        "migrate": {"DATABASE_URL"},
-        "cutover": {"DATABASE_URL"},
+        "test": database_keys | {"RABBITMQ_URL"},
+        "migrate": database_keys,
+        "cutover": database_keys,
     }
     for name, keys in allowed.items():
         assert "env_file" not in services[name]
         assert set(services[name]["environment"]) == keys
+        assert services[name]["environment"]["DATABASE_URL"] == (
+            "${DATABASE_URL:-}"
+        )
+        for key in ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"):
+            assert services[name]["environment"][key] == (
+                f"${{{key}:?set {key} outside Git}}"
+            )
     for name in ("bot", "admin"):
         assert services[name]["environment"] == {
-            "DATABASE_URL": "${DATABASE_URL:?set DATABASE_URL outside Git}",
+            "DATABASE_URL": "${DATABASE_URL:-}",
             "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
         }
 
