@@ -414,6 +414,6 @@ Keep at-least-once semantics: stop intake, wait for actual in-flight callback ta
 
 Make the Docker gate build the test image, correct the first AGENTS command working directory, split the Alembic roadmap checkpoint, give worker a minimal requirements file, document `QueueTask` as a frozen envelope with shallow/mutable JSON payload semantics, and redact legacy Redis/judge error logs without adding a logging framework.
 
-- [ ] **Step 5: Run safe full regression gate and independent re-review**
+- [x] **Step 5: Run safe full regression gate and independent re-review**
 
 Run focused RED/GREEN plus the complete Docker suite with an isolated Compose project, no bot polling, shell-only test credentials, migration/cutover checks, Rabbit callback/backoff tests, runtime health/graceful shutdown, image/env/dependency/scans and cleanup `0/0/0`. Then request whole-branch re-review from merge base before marking Foundation complete again.
