@@ -38,8 +38,8 @@ def _read_tail(path: Path, lines: int) -> list[str]:
     try:
         with path.open("r", encoding="utf-8", errors="replace") as f:
             return list(deque(f, maxlen=lines))
-    except OSError:
-        logger.exception("Не удалось прочитать %s", path)
+    except OSError as error:
+        logger.error("admin_log_read_failed error_type=%s", type(error).__name__)
         return []
 
 

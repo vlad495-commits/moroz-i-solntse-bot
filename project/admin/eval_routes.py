@@ -19,6 +19,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/eval")
 _BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=_BASE_DIR / "templates")
+_eval_tasks: set[asyncio.Task] = set()
+
+
+def _eval_task_done(task: asyncio.Task, run_id: int) -> None:
+    _eval_tasks.discard(task)
+    safe_run_id = (
+        run_id
+        if isinstance(run_id, int) and not isinstance(run_id, bool)
+        else "unknown"
+    )
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.info("eval_background_cancelled run_id=%s", safe_run_id)
+    except Exception as error:
+        logger.error(
+            "eval_background_failed run_id=%s error_type=%s",
+            safe_run_id,
+            type(error).__name__,
+        )
+
+
+def _start_eval_task(run_id: int, coroutine) -> None:
+    task = asyncio.create_task(coroutine)
+    _eval_tasks.add(task)
+    task.add_done_callback(lambda done: _eval_task_done(done, run_id))
 
 
 def _split_keywords(text: str) -> list[str]:
@@ -122,8 +148,7 @@ async def eval_run_start(request: Request, background_tasks: BackgroundTasks):
         total=len(cases),
         judge_model=eval_runner.JUDGE_MODEL,
     )
-    # Запускаем фоновую задачу — отдельный asyncio task
-    asyncio.create_task(eval_runner.run_eval_set(run_id))
+    _start_eval_task(run_id, eval_runner.run_eval_set(run_id))
     return RedirectResponse(url=f"/eval/runs/{run_id}", status_code=302)
 
 
@@ -138,7 +163,7 @@ async def eval_problem_run_start(request: Request):
         total=len(cases),
         judge_model=eval_runner.JUDGE_MODEL,
     )
-    asyncio.create_task(eval_runner.run_eval_set(run_id, cases=cases))
+    _start_eval_task(run_id, eval_runner.run_eval_set(run_id, cases=cases))
     return RedirectResponse(url=f"/eval/runs/{run_id}", status_code=302)
 
 

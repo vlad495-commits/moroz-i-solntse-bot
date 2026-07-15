@@ -108,7 +108,7 @@ def _matches_keyword(text: str, kw: str) -> bool:
         try:
             return bool(re.search(kw[2:], text, re.IGNORECASE))
         except re.error:
-            logger.warning("Невалидный regex: %s", kw)
+            logger.warning("invalid_eval_regex pattern_length=%s", len(kw) - 2)
             return False
     return kw.lower() in text_lower
 
@@ -224,8 +224,12 @@ async def llm_judge(question: str, expected: str, actual: str) -> tuple[float, s
         reasoning = str(data.get("reasoning", "")).strip()
         return max(0.0, min(1.0, score)), reasoning
     except (json.JSONDecodeError, ValueError, TypeError) as e:
-        logger.warning("Judge вернул невалидный JSON: %s | %s", content, e)
-        return 0.0, f"Judge parse error: {e}"
+        logger.warning(
+            "judge_invalid_json content_length=%s error_type=%s",
+            len(content),
+            type(e).__name__,
+        )
+        return 0.0, "Judge parse error"
 
 
 # --- Прогон одного кейса ---
@@ -239,14 +243,18 @@ async def _generate_bot_response(question: str, system_prompt: str) -> str:
 
     try:
         return await _invoke_llm(_primary, _primary_kind, LLM_MODEL, messages)
-    except Exception as e:
-        # Fallback на резервный провайдер если основной упал
+    except Exception as primary_error:
+        logger.warning(
+            "primary_llm_failed error_type=%s", type(primary_error).__name__
+        )
         if _reserve:
-            logger.warning("Основной LLM упал, fallback на резервный: %s", e)
             try:
                 return await _invoke_llm(_reserve, _reserve_kind, RESERVE_MODEL, messages)
-            except Exception:
-                logger.exception("Резервный fallback тоже упал")
+            except Exception as reserve_error:
+                logger.error(
+                    "reserve_llm_failed error_type=%s",
+                    type(reserve_error).__name__,
+                )
         raise
 
 
@@ -306,9 +314,19 @@ async def run_case(case: dict, run_id: int) -> dict:
                 verdict = "fail"
                 reasoning = "Нет expected_answer — нечего сравнивать"
 
-    except Exception as e:
-        logger.exception("Ошибка в кейсе #%s", case.get("id"))
-        error_message = str(e)
+    except Exception as error:
+        case_id = case.get("id")
+        safe_case_id = (
+            case_id
+            if isinstance(case_id, int) and not isinstance(case_id, bool)
+            else "unknown"
+        )
+        error_message = type(error).__name__
+        logger.error(
+            "eval_case_failed case_id=%s error_type=%s",
+            safe_case_id,
+            error_message,
+        )
         verdict = "error"
 
     duration_ms = int((time.time() - started) * 1000)
@@ -340,20 +358,22 @@ async def run_case(case: dict, run_id: int) -> dict:
 
 async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
     """Прогнать все кейсы. Идёт последовательно, чтобы прогресс-бар был стабилен."""
-    _init_clients()
-
-    if cases is None:
-        cases = await evdb.list_cases()
-    total = len(cases)
-
-    if total == 0:
-        await evdb.finish_run(run_id, 0, 0, status="finished")
-        return
-
     passed = 0
     failed = 0
+    safe_run_id = (
+        run_id
+        if isinstance(run_id, int) and not isinstance(run_id, bool)
+        else "unknown"
+    )
 
     try:
+        _init_clients()
+        if cases is None:
+            cases = await evdb.list_cases()
+        if not cases:
+            await evdb.finish_run(run_id, 0, 0, status="finished")
+            return
+
         for case in cases:
             res = await run_case(case, run_id)
             if res["verdict"] == "pass":
@@ -363,8 +383,20 @@ async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
             await evdb.update_run_progress(run_id, passed, failed)
 
         await evdb.finish_run(run_id, passed, failed, status="finished")
-    except Exception as e:
-        logger.exception("Прогон #%s упал", run_id)
-        await evdb.finish_run(
-            run_id, passed, failed, status="error", error_message=str(e)
+    except Exception as error:
+        error_message = type(error).__name__
+        logger.error(
+            "eval_run_failed run_id=%s error_type=%s",
+            safe_run_id,
+            error_message,
         )
+        try:
+            await evdb.finish_run(
+                run_id, passed, failed, status="error", error_message=error_message
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "eval_run_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )

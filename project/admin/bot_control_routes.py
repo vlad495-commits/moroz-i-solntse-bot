@@ -34,13 +34,25 @@ async def bot_control_page(request: Request):
     user = get_current_user(request)
     paused = False
     error = ""
+    client = None
     try:
         client = await _redis_client()
         paused = bool(await client.get(BOT_PAUSE_KEY))
-        await client.aclose()
-    except Exception as e:
-        logger.exception("Не удалось проверить bot:paused")
-        error = str(e)
+    except Exception as redis_error:
+        logger.error(
+            "bot_control_read_failed error_type=%s",
+            type(redis_error).__name__,
+        )
+        error = "Сервис временно недоступен"
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception as close_error:
+                logger.error(
+                    "bot_control_close_failed error_type=%s",
+                    type(close_error).__name__,
+                )
     return templates.TemplateResponse(
         request, "bot_control.html",
         {"user": user, "paused": paused, "error": error},
@@ -50,13 +62,25 @@ async def bot_control_page(request: Request):
 @router.post("/toggle")
 async def bot_control_toggle(request: Request):
     get_current_user(request)
+    client = None
     try:
         client = await _redis_client()
         if await client.get(BOT_PAUSE_KEY):
             await client.delete(BOT_PAUSE_KEY)
         else:
             await client.set(BOT_PAUSE_KEY, "1")
-        await client.aclose()
-    except Exception:
-        logger.exception("Не удалось переключить тумблер")
+    except Exception as redis_error:
+        logger.error(
+            "bot_control_toggle_failed error_type=%s",
+            type(redis_error).__name__,
+        )
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception as close_error:
+                logger.error(
+                    "bot_control_close_failed error_type=%s",
+                    type(close_error).__name__,
+                )
     return RedirectResponse(url="/bot-control/", status_code=302)

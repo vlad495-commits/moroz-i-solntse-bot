@@ -50,7 +50,7 @@ moroz-i-solntse-bot/
 ```
 
 **Контейнеры в `docker-compose.yml` (3 шт):**
-1. `llm` — бот + LLM (build из `./llm`)
+1. `bot` — бот + LLM (код и entrypoint остаются в `./llm`)
 2. `redis` — `redis:7-alpine` (кэш контекста)
 3. `postgres` — `postgres:16-alpine` (история сообщений)
 
@@ -76,7 +76,7 @@ moroz-i-solntse-bot/
     │
     ▼
 ┌─────────────────────────────────────────────────┐
-│ КОНТЕЙНЕР llm                                   │
+│ КОНТЕЙНЕР bot                                   │
 │                                                 │
 │  bot.py (long-polling aiogram)                  │
 │    │                                            │
@@ -114,20 +114,36 @@ moroz-i-solntse-bot/
 **Проект ВСЕГДА запускается через Docker.** Никогда напрямую `python bot.py`. Даже локально.
 
 ```bash
-# Локальный запуск:
-cd project && docker compose up --build
+# Один раз перед первым запуском после переименования сервиса llm → bot:
+cd project && docker compose --env-file ../.env down --remove-orphans
+
+# Безопасный локальный запуск инфраструктуры без Telegram polling:
+cd project && docker compose --env-file ../.env up --build postgres redis rabbitmq admin worker scheduler
+
+# Bot запускать отдельно только с выделенным test/production Telegram token:
+docker compose --env-file ../.env up --build bot
 
 # Логи:
-docker compose logs -f llm
+docker compose --env-file ../.env logs -f bot
 
 # Перезапуск контейнера (после изменения кода или .env):
-docker compose restart llm
+docker compose --env-file ../.env restart bot
 
 # Остановить всё:
-docker compose down
+docker compose --env-file ../.env down
 ```
 
 **Почему:** код полагается на хосты Redis/Postgres из docker-сети (`redis://redis:6379`, `postgres://postgres:5432`). При запуске напрямую — не подключится.
+
+### RabbitMQ credentials
+
+Для RabbitMQ обязательны переменные `RABBITMQ_USER`, `RABBITMQ_PASSWORD` и `RABBITMQ_URL`. Значения хранятся только во внешнем `.env`, не попадают в Git/образ/логи и перед production-запуском передаются Compose через `docker compose --env-file ../.env ...`.
+
+Удалённый `guest` запрещён. Production-запуск блокируется, пока для RabbitMQ не создан и не записан в `RABBITMQ_URL` отдельный стойкий уникальный пароль; пароль ротируется вне Git перед релизом и при любом подозрении на утечку.
+
+### PostgreSQL connection settings
+
+`DATABASE_URL` — предпочтительный, но необязательный override. Если он отсутствует или пуст, приложение, Alembic и cutover используют совместимый набор `POSTGRES_USER`, `POSTGRES_PASSWORD` и `POSTGRES_DB`; Compose не собирает URL сам. Профильные сервисы получают только эти поля базы, а `test` дополнительно получает `RABBITMQ_URL`. Telegram-, LLM-, Redis- и остальные секреты в `test`, `migrate` и `cutover` не передаются.
 
 ---
 

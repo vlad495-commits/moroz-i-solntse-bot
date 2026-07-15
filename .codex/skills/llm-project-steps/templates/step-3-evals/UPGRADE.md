@@ -140,7 +140,7 @@ JUDGE_PASS_THRESHOLD=0.8
 ## 4. Миграция БД
 
 ```bash
-cd <root>/project && docker compose exec llm python -c "import asyncio, db; asyncio.run(db.init_db())"
+cd <root>/project && docker compose exec bot python -c "import asyncio, db; asyncio.run(db.init_db())"
 ```
 
 (Можно пропустить — таблицы создадутся автоматически при следующем рестарте `llm`.)
@@ -163,7 +163,7 @@ cd <root>/project && docker compose exec llm python -c "import asyncio, db; asyn
 - Двухступенчатая проверка: regex/keywords → LLM-as-judge при необходимости
 - Прогресс прогона через Server-Sent Events (живой прогресс-бар)
 - Adversarial-датасет (jailbreak-тесты) — отдельно через CLI:
-  docker compose exec llm python -m eval.run_evals --only adversarial
+  docker compose exec bot python -m eval.run_evals --only adversarial
 
 Локальный скилл /evals — настройка judge-модели и наполнение dataset.json
 (вручную или из реальной истории чатов).

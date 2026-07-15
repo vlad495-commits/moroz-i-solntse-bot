@@ -6,96 +6,25 @@ import logging
 import os
 from typing import Any
 
-import asyncpg
+from moroz.common.db import Database
+from moroz.common.config import database_url_from_env
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-if not DATABASE_URL:
-    _pg_user = os.getenv("POSTGRES_USER", "")
-    _pg_pass = os.getenv("POSTGRES_PASSWORD", "")
-    _pg_db = os.getenv("POSTGRES_DB", "")
-    if _pg_user and _pg_pass and _pg_db:
-        DATABASE_URL = f"postgresql://{_pg_user}:{_pg_pass}@postgres:5432/{_pg_db}"
+DATABASE_URL = database_url_from_env(os.environ, required=False)
 
-_pool: asyncpg.Pool | None = None
+_pool: Database | None = None
 
 
 async def init_db() -> None:
     global _pool
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL не задан")
-    _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-    async with _pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS eval_cases (
-                id BIGSERIAL PRIMARY KEY,
-                category VARCHAR(64) NOT NULL DEFAULT 'general',
-                question TEXT NOT NULL,
-                expected_keywords TEXT[] NOT NULL DEFAULT '{}',
-                forbidden_keywords TEXT[] NOT NULL DEFAULT '{}',
-                expected_answer TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS eval_runs (
-                id BIGSERIAL PRIMARY KEY,
-                started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                finished_at TIMESTAMPTZ,
-                total INTEGER NOT NULL DEFAULT 0,
-                passed INTEGER NOT NULL DEFAULT 0,
-                failed INTEGER NOT NULL DEFAULT 0,
-                status VARCHAR(16) NOT NULL DEFAULT 'running',
-                judge_model VARCHAR(64),
-                error_message TEXT
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS eval_results (
-                id BIGSERIAL PRIMARY KEY,
-                run_id BIGINT NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
-                case_id BIGINT REFERENCES eval_cases(id) ON DELETE SET NULL,
-                question TEXT NOT NULL,
-                expected_answer TEXT NOT NULL,
-                actual_answer TEXT,
-                verdict VARCHAR(32) NOT NULL,
-                check_layer VARCHAR(16),
-                score REAL,
-                judge_reasoning TEXT,
-                duration_ms INTEGER,
-                error_message TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_eval_results_run
-            ON eval_results (run_id, id)
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS eval_case_reviews (
-                id BIGSERIAL PRIMARY KEY,
-                case_id BIGINT REFERENCES eval_cases(id) ON DELETE CASCADE,
-                status VARCHAR(32) NOT NULL DEFAULT 'pending',
-                reviewer VARCHAR(64),
-                comment TEXT NOT NULL DEFAULT '',
-                proposed_question TEXT,
-                proposed_answer TEXT,
-                category VARCHAR(64),
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        await conn.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_eval_case_reviews_case_id
-            ON eval_case_reviews (case_id)
-            WHERE case_id IS NOT NULL
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_eval_case_reviews_status
-            ON eval_case_reviews (status, updated_at DESC)
-        """)
+    if _pool is not None:
+        return
+    database = Database(DATABASE_URL, min_size=1, max_size=5)
+    await database.connect()
+    _pool = database
     logger.info("Админка: пул подключений к БД создан")
 
 

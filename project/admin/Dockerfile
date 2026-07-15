@@ -8,12 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV TZ=Europe/Moscow \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src
 
-COPY requirements.txt .
+COPY admin/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY admin/ .
+COPY src/ /app/src/
 
 # Папка для логов (volume :ro)
 RUN mkdir -p /app/logs

@@ -9,4 +9,4 @@ itsdangerous==2.2.0
 python-dotenv==1.2.2
 openai==2.33.0
 anthropic==0.97.0
-redis==6.4.0
+redis[hiredis]==7.4.0

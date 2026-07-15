@@ -25,7 +25,7 @@
 - [ ] Test rejection of default admin password, short session secret, missing webhook secret/YCLIENTS keys and HTTP public URL.
 - [ ] Run red.
 - [ ] Implement allowlisted production env validation and Caddy routes `/telegram/webhook` → bot, `/admin/*` → admin; do not expose stores/queues publicly.
-- [ ] Run test and `docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet`; expect pass with test env.
+- [ ] Run test and `docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml config --quiet`; expect pass with test env.
 - [ ] Commit `ops: добавлены production compose TLS и проверка секретов`.
 
 ### Task 2: Metrics and alert routing

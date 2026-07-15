@@ -93,12 +93,12 @@ LLM
 > Проект готов к сдаче клиенту. Финальные шаги:
 > - Запусти /deploy (если ещё не задеплоен)
 > - Передай клиенту: URL админки, логин/пароль, имя бота, контакты для поддержки
-> - Сделай тестовый прогон эвалов: `docker compose exec llm python -m eval.run_evals` (опц.)
+> - Сделай тестовый прогон эвалов: `docker compose exec bot python -m eval.run_evals` (опц.)
 
 ### 4. Применение
 
 ```bash
-cd project && docker compose restart llm admin
+cd project && docker compose restart bot admin
 ```
 ~10 секунд простоя.
 

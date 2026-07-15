@@ -20,6 +20,7 @@ PROVIDERS = ("main", "reserve")
 async def get_llm_status() -> dict[str, dict]:
     """Вернуть статусы main/reserve. Если ключа нет — status='unknown'."""
     result: dict[str, dict] = {}
+    client = None
     try:
         client = aioredis.from_url(REDIS_URL, decode_responses=True)
         for provider in PROVIDERS:
@@ -31,11 +32,21 @@ async def get_llm_status() -> dict[str, dict]:
                     result[provider] = {"status": "unknown"}
             else:
                 result[provider] = {"status": "unknown"}
-        await client.aclose()
-    except Exception:
-        logger.exception("Не смог прочитать статус LLM из Redis")
+    except Exception as error:
+        logger.error(
+            "llm_status_redis_failed error_type=%s", type(error).__name__
+        )
         for provider in PROVIDERS:
             result.setdefault(provider, {"status": "unknown"})
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception as error:
+                logger.error(
+                    "llm_status_redis_close_failed error_type=%s",
+                    type(error).__name__,
+                )
 
     # Признак, настроен ли резерв вообще
     result["reserve_configured"] = bool(

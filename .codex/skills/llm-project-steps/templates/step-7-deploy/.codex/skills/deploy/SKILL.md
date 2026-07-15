@@ -156,6 +156,12 @@ ssh -F <root>/ssh/config {{PROJECT_SLUG}} "
 
 #### 2Б.2 — Пересобрать и поднять
 
+При первом обновлении после переименования Compose-сервиса `llm` → `bot` один раз останови прежний стек с удалением orphan-контейнера. На следующих обновлениях эту команду пропускай:
+
+```bash
+ssh -F <root>/ssh/config {{PROJECT_SLUG}} "cd ${DEPLOY_PATH}/project && docker compose down --remove-orphans"
+```
+
 ```bash
 ssh -F <root>/ssh/config {{PROJECT_SLUG}} "
   cd ${DEPLOY_PATH}/project
@@ -169,7 +175,7 @@ ssh -F <root>/ssh/config {{PROJECT_SLUG}} "
 ssh -F <root>/ssh/config {{PROJECT_SLUG}} "
   cd ${DEPLOY_PATH}/project
   docker compose ps
-  docker compose logs llm --tail 30
+  docker compose logs bot --tail 30
 "
 ```
 
@@ -204,13 +210,13 @@ ssh -F <root>/ssh/config {{PROJECT_SLUG}} "
 **Первый деплой:**
 ```
 Готово. Развернул проект на сервере <host>:<DEPLOY_PATH>.
-- Стек: docker compose ps на сервере покажет llm, admin, redis, postgres, postgres-backup
+- Стек: docker compose ps на сервере покажет bot, admin, redis, postgres, postgres-backup
 - Админка пока не доступна снаружи (висит на 127.0.0.1:8080). Чтобы посмотреть локально:
   ssh -F ssh/config -L 8080:127.0.0.1:8080 {{PROJECT_SLUG}}
   → потом открой http://localhost:8080 в браузере
 - Если нужен публичный домен — настрой Caddy/Nginx с TLS (см. скилл /server-hardening, раздел про Caddy)
 
-Бот должен начать отвечать в Telegram. Если нет — ssh -F ssh/config {{PROJECT_SLUG}} 'cd <DEPLOY_PATH>/project && docker compose logs llm --tail 50'.
+Бот должен начать отвечать в Telegram. Если нет — ssh -F ssh/config {{PROJECT_SLUG}} 'cd <DEPLOY_PATH>/project && docker compose logs bot --tail 50'.
 ```
 
 **Обновление:**
@@ -228,5 +234,5 @@ ssh -F <root>/ssh/config {{PROJECT_SLUG}} "
 - Перед первым деплоем — **обязательно** пройди `/server-hardening`. Не деплой на голый сервер с открытым root и парольным SSH.
 - На сервере секреты в `.env` должны быть с правами 600 (только владелец).
 - НЕ коммить `.env` — он передаётся через SCP отдельно.
-- Если на сервере поменяли `.env` руками — `docker compose restart llm admin` чтобы применить.
+- Если на сервере поменяли `.env` руками — `docker compose restart bot admin` чтобы применить.
 - При первом деплое спроси клиента, нужны ли публичный домен и HTTPS — если да, после деплоя направь к скиллу `/server-hardening` (раздел Caddy).

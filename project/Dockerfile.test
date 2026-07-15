@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app:/app/src:/app/llm:/app/admin \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY llm/requirements.txt /tmp/requirements-llm.txt
+COPY admin/requirements.txt /tmp/requirements-admin.txt
+COPY requirements-dev.txt /tmp/requirements-dev.txt
+RUN pip install --no-cache-dir \
+    -r /tmp/requirements-llm.txt \
+    -r /tmp/requirements-admin.txt \
+    -r /tmp/requirements-dev.txt
+
+COPY llm /app/llm
+COPY admin /app/admin
+COPY worker /app/worker
+COPY src /app/src
+COPY tests /app/tests
+
+CMD ["pytest", "-q"]

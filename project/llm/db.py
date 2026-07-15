@@ -1,14 +1,15 @@
 """PostgreSQL: история сообщений диалога."""
 
+import asyncio
 import logging
 
-import asyncpg
-
 from config import DATABASE_URL, CONTEXT_MESSAGES_LIMIT, DATA_RETENTION_DAYS
+from moroz.common.db import Database
 
 logger = logging.getLogger(__name__)
 
-_pool: asyncpg.Pool | None = None
+_pool: Database | None = None
+_pool_lock = asyncio.Lock()
 
 
 async def init_db() -> None:
@@ -16,117 +17,21 @@ async def init_db() -> None:
     if not DATABASE_URL:
         logger.warning("DATABASE_URL не задан — без БД")
         return
-    _pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
-    async with _pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id BIGSERIAL PRIMARY KEY,
-                chat_id BIGINT NOT NULL,
-                user_id BIGINT,
-                username VARCHAR(255),
-                role VARCHAR(16) NOT NULL CHECK (role IN ('user', 'assistant')),
-                content TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                answered BOOLEAN NOT NULL DEFAULT FALSE
-            )
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_chat_created
-            ON messages (chat_id, created_at DESC)
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS token_usage (
-                id BIGSERIAL PRIMARY KEY,
-                chat_id BIGINT NOT NULL,
-                user_id BIGINT,
-                prompt_tokens INTEGER NOT NULL DEFAULT 0,
-                completion_tokens INTEGER NOT NULL DEFAULT 0,
-                cached_tokens INTEGER NOT NULL DEFAULT 0,
-                total_tokens INTEGER NOT NULL DEFAULT 0,
-                model VARCHAR(64) NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_token_usage_chat_created
-            ON token_usage (chat_id, created_at DESC)
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS prompt_versions (
-                id BIGSERIAL PRIMARY KEY,
-                content TEXT NOT NULL,
-                author VARCHAR(64),
-                comment TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_prompt_versions_created
-            ON prompt_versions (created_at DESC)
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS eval_cases (
-                id BIGSERIAL PRIMARY KEY,
-                category VARCHAR(64) NOT NULL DEFAULT 'general',
-                question TEXT NOT NULL,
-                expected_keywords TEXT[] NOT NULL DEFAULT '{}',
-                forbidden_keywords TEXT[] NOT NULL DEFAULT '{}',
-                expected_answer TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS eval_runs (
-                id BIGSERIAL PRIMARY KEY,
-                started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                finished_at TIMESTAMPTZ,
-                total INTEGER NOT NULL DEFAULT 0,
-                passed INTEGER NOT NULL DEFAULT 0,
-                failed INTEGER NOT NULL DEFAULT 0,
-                status VARCHAR(16) NOT NULL DEFAULT 'running',
-                judge_model VARCHAR(64),
-                error_message TEXT
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS eval_results (
-                id BIGSERIAL PRIMARY KEY,
-                run_id BIGINT NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
-                case_id BIGINT REFERENCES eval_cases(id) ON DELETE SET NULL,
-                question TEXT NOT NULL,
-                expected_answer TEXT NOT NULL,
-                actual_answer TEXT,
-                verdict VARCHAR(32) NOT NULL,
-                check_layer VARCHAR(16),
-                score REAL,
-                judge_reasoning TEXT,
-                duration_ms INTEGER,
-                error_message TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_eval_results_run
-            ON eval_results (run_id, id)
-        """)
-
-        # --- Миграции существующих таблиц ---
-        # Правило: новую колонку добавляй И в CREATE TABLE выше (для новых БД),
-        # И сюда через ADD COLUMN IF NOT EXISTS (для уже работающих прод-БД,
-        # где таблица создана раньше — CREATE TABLE IF NOT EXISTS её не тронет).
-        await conn.execute(
-            "ALTER TABLE messages "
-            "ADD COLUMN IF NOT EXISTS answered BOOLEAN NOT NULL DEFAULT FALSE"
-        )
-    logger.info("БД инициализирована")
+    async with _pool_lock:
+        if _pool is not None:
+            return
+        database = Database(DATABASE_URL, min_size=2, max_size=10)
+        await database.connect()
+        _pool = database
+        logger.info("Пул подключений к БД создан")
 
 
 async def close_db() -> None:
     global _pool
-    if _pool:
-        await _pool.close()
-        _pool = None
+    async with _pool_lock:
+        pool, _pool = _pool, None
+        if pool:
+            await pool.close()
 
 
 async def _ensure_pool() -> bool:
@@ -135,13 +40,17 @@ async def _ensure_pool() -> bool:
         return True
     if not DATABASE_URL:
         return False
-    try:
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+    async with _pool_lock:
+        if _pool:
+            return True
+        try:
+            database = Database(DATABASE_URL, min_size=2, max_size=10)
+            await database.connect()
+        except Exception as error:
+            logger.error("db_connect_failed error_type=%s", type(error).__name__)
+            return False
+        _pool = database
         return True
-    except Exception:
-        logger.exception("PostgreSQL недоступен")
-        _pool = None
-        return False
 
 
 async def save_message(
@@ -160,8 +69,8 @@ async def save_message(
                 "VALUES ($1, $2, $3, $4, $5)",
                 chat_id, user_id, username, role, content,
             )
-    except Exception:
-        logger.exception("Ошибка сохранения сообщения")
+    except Exception as error:
+        logger.error("db_message_save_failed error_type=%s", type(error).__name__)
 
 
 async def get_context(chat_id: int) -> list[dict[str, str]]:
@@ -175,8 +84,8 @@ async def get_context(chat_id: int) -> list[dict[str, str]]:
                 chat_id, CONTEXT_MESSAGES_LIMIT,
             )
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
-    except Exception:
-        logger.exception("Ошибка чтения контекста")
+    except Exception as error:
+        logger.error("db_context_read_failed error_type=%s", type(error).__name__)
         return []
 
 
@@ -201,8 +110,10 @@ async def save_token_usage(
                 chat_id, user_id, prompt_tokens, completion_tokens,
                 cached_tokens, total_tokens, model,
             )
-    except Exception:
-        logger.exception("Ошибка сохранения token_usage")
+    except Exception as error:
+        logger.error(
+            "db_token_usage_save_failed error_type=%s", type(error).__name__
+        )
 
 
 async def cleanup_old_records() -> dict[str, int]:
@@ -228,6 +139,6 @@ async def cleanup_old_records() -> dict[str, int]:
                 )
                 result[table] = int(status.split()[-1])
         return result
-    except Exception:
-        logger.exception("Ошибка автоочистки")
+    except Exception as error:
+        logger.error("db_cleanup_failed error_type=%s", type(error).__name__)
         return {}

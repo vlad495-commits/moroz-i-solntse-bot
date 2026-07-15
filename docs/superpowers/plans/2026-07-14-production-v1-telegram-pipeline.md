@@ -38,7 +38,7 @@ async def test_accept_same_message_once(message_repo, incoming_message):
 
 - [ ] **Step 2: Run red**
 
-Run: `docker compose --profile test run --rm test pytest tests/integration/messaging/test_repository.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/integration/messaging/test_repository.py -q`
 
 Expected: FAIL because migration/repository are absent.
 
@@ -72,7 +72,7 @@ Use `INSERT ... ON CONFLICT DO NOTHING RETURNING id` in `accept`.
 
 - [ ] **Step 4: Run migration and test**
 
-Run: `docker compose run --rm migrate && docker compose --profile test run --rm test pytest tests/integration/messaging/test_repository.py -q`
+Run: `docker compose --env-file ../.env --profile migration run --rm migrate && docker compose --env-file ../.env --profile test run --rm test pytest tests/integration/messaging/test_repository.py -q`
 
 Expected: tests pass.
 
@@ -108,7 +108,7 @@ async def test_message_without_consent_is_not_persisted(client, db):
 
 - [ ] **Step 2: Run red**
 
-Run: `docker compose --profile test run --rm test pytest tests/e2e/test_privacy_gate.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/e2e/test_privacy_gate.py -q`
 
 Expected: FAIL because webhook/consent service are absent.
 
@@ -129,7 +129,7 @@ Handle consent callback separately and store consent version/time. Switch bot co
 
 - [ ] **Step 4: Run E2E test**
 
-Run: `docker compose --profile test run --rm test pytest tests/e2e/test_privacy_gate.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/e2e/test_privacy_gate.py -q`
 
 Expected: no-consent content absent; consent callback persists only the consent record.
 
@@ -165,7 +165,7 @@ async def test_buffer_joins_fast_messages(buffer, clock):
 
 - [ ] **Step 2: Run red**
 
-Run: `docker compose --profile test run --rm test pytest tests/integration/messaging/test_buffer.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/integration/messaging/test_buffer.py -q`
 
 Expected: FAIL because buffer is absent.
 
@@ -185,7 +185,7 @@ On flush, acquire `lock:buffer:{chat_id}`, atomically read/delete list, persist 
 
 - [ ] **Step 4: Run test including concurrent flush**
 
-Run: `docker compose --profile test run --rm test pytest tests/integration/messaging/test_buffer.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/integration/messaging/test_buffer.py -q`
 
 Expected: joined text once; second concurrent flush returns `None`.
 
@@ -220,7 +220,7 @@ async def test_worker_does_not_send_sent_outbound_twice(outbound_repo, worker, f
 
 - [ ] **Step 2: Run red**
 
-Run: `docker compose --profile test run --rm test pytest tests/e2e/test_message_delivery.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/e2e/test_message_delivery.py -q`
 
 Expected: FAIL because sender/handler are absent.
 
@@ -238,7 +238,7 @@ If network result is unknown, set `delivery_unknown` and alert; do not create a 
 
 - [ ] **Step 4: Run E2E and queue retry tests**
 
-Run: `docker compose --profile test run --rm test pytest tests/e2e/test_message_delivery.py tests/integration/test_queue.py -q`
+Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/e2e/test_message_delivery.py tests/integration/test_queue.py -q`
 
 Expected: all pass; one external send.
 
@@ -255,8 +255,8 @@ git commit -m "feat: добавлена идемпотентная достав�
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`
 
-- [ ] **Step 1:** Run `docker compose --profile test run --rm test pytest tests/unit tests/integration/messaging tests/e2e/test_privacy_gate.py tests/e2e/test_message_delivery.py -q`; expect all pass.
-- [ ] **Step 2:** Run `docker compose up -d --build && docker compose ps`; expect required services running.
+- [ ] **Step 1:** Run `docker compose --env-file ../.env --profile test run --rm test pytest tests/unit tests/integration/messaging tests/e2e/test_privacy_gate.py tests/e2e/test_message_delivery.py -q`; expect all pass.
+- [ ] **Step 2:** Run `docker compose --env-file ../.env build bot`, `docker compose --env-file ../.env run --rm --no-deps --entrypoint python bot -m compileall -q /app` and `docker compose --env-file ../.env run --rm --no-deps --entrypoint python bot -c "import cache, config, db, handlers, llm"`; then run `docker compose --env-file ../.env up -d --build postgres redis rabbitmq admin worker scheduler` and `docker compose --env-file ../.env ps`. Expect smoke success and required non-bot services running. Live bot E2E remains blocked until a separate Telegram test token exists.
 - [ ] **Step 3:** Send one consented test update twice; expect one inbox row and one outbound send.
 - [ ] **Step 4:** Record evidence in roadmap/changelog.
 - [ ] **Step 5:** Commit with `git commit -m "docs: зафиксирован reliable pipeline checkpoint"`.
