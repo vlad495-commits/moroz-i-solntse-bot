@@ -217,12 +217,18 @@ git commit -m "feat: добавлен буфер быстрых Telegram-соо�
 **Files:**
 - Create: `project/src/moroz/messaging/telegram.py`
 - Test: `project/tests/e2e/test_message_delivery.py`
+- Modify: `project/src/moroz/messaging/buffer.py`
+- Modify: `project/llm/webhook.py`
 - Modify: `project/worker/main.py`
+- Modify: `project/worker/Dockerfile`
+- Modify: `project/worker/requirements.txt`
+- Modify: `project/docker-compose.yml`
 
 **Interfaces:**
 - Consumes: `OutboxRelay.publish_pending(limit: int = 100) -> int` from Task 3.
 - Produces: `TelegramSender.send(outbound_id: UUID) -> DeliveryResult`.
 - Produces: worker handlers for `process_message` and `send_outbound` tasks.
+- Runtime owner: the worker runs one bounded periodic pump that discovers due Redis buffers, calls `MessageBuffer.flush(...)`, then calls `OutboxRelay.publish_pending(...)`. This is the explicit restart-safe runtime bridge required by Task 3; do not add another service or use the future scheduler phase.
 
 - [ ] **Step 1: Write failing duplicate-delivery test**
 
@@ -250,7 +256,9 @@ result = await telegram.send_message(row.chat_id, row.text)
 await repo.mark_sent(row.id, result.message_id)
 ```
 
-For `process_message`, lock one chat in PostgreSQL, load the buffered inbox request, call the existing LLM adapter once, and atomically create `outbound_messages` plus a `send_outbound` task. Do not add guardrails, a reserve provider or a scenario router in this phase. For `send_outbound`, use claim/send/finalize as above. If network result is unknown, set `delivery_unknown` and emit a safe structured error event; do not create a fresh send task. A definitive rate-limit error may be scheduled with Telegram-provided delay.
+For `process_message`, lock one chat in PostgreSQL, reject an already-materialized reply before calling the LLM, load the existing PostgreSQL conversation context, call the existing `project/llm/llm.py` adapter once, and atomically create `outbound_messages` plus a `send_outbound` task. Keep the existing message/token history behavior, but do not add guardrails, a reserve provider or a scenario router in this phase. For `send_outbound`, move the generic durable claim/send/finalize helper out of the webhook into `moroz.messaging.telegram` and reuse it from both webhook and worker. If network result is unknown, set `delivery_unknown` and emit a safe structured error event; do not create a fresh send task. A definitive rate-limit error may be scheduled with Telegram-provided delay.
+
+The worker runtime must connect only the dependencies it now owns (PostgreSQL, Redis, RabbitMQ, Telegram and the existing LLM adapter), start the due-buffer/outbox pump alongside the RabbitMQ consumer, and cancel/close both paths on shutdown. Redis discovery failure must not prevent publishing already-durable database tasks. Tests must prove restart recovery by creating a due Redis buffer and a pending task before a fresh pump instance starts.
 
 - [ ] **Step 4: Run E2E and queue retry tests**
 
@@ -261,7 +269,7 @@ Expected: all pass; one accepted buffered request produces one saved outbound an
 - [ ] **Step 5: Commit**
 
 ```bash
-git add project/src/moroz/messaging project/tests/e2e/test_message_delivery.py project/worker/main.py
+git add project/src/moroz/messaging project/llm/webhook.py project/tests/e2e/test_message_delivery.py project/worker project/docker-compose.yml
 git commit -m "feat: добавлена идемпотентная доставка Telegram"
 ```
 
