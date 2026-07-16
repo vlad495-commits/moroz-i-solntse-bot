@@ -85,3 +85,46 @@ class MessageRepository:
                     f"send_outbound:{outbound_id}",
                 )
         return outbound_id
+
+    async def claim_outbound_delivery(self, outbound_id: UUID) -> bool:
+        async with self._database.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                UPDATE outbound_messages
+                SET status = 'sending'
+                WHERE id = $1 AND status = 'pending'
+                RETURNING id
+                """,
+                outbound_id,
+            )
+        return row is not None
+
+    async def mark_outbound_sent(
+        self,
+        outbound_id: UUID,
+        external_message_id: str,
+    ) -> None:
+        async with self._database.acquire() as connection:
+            await connection.execute(
+                """
+                UPDATE outbound_messages
+                SET status = 'sent', external_message_id = $2
+                WHERE id = $1 AND status = 'sending'
+                """,
+                outbound_id,
+                external_message_id,
+            )
+
+    async def mark_outbound_delivery_unknown(
+        self,
+        outbound_id: UUID,
+    ) -> None:
+        async with self._database.acquire() as connection:
+            await connection.execute(
+                """
+                UPDATE outbound_messages
+                SET status = 'delivery_unknown'
+                WHERE id = $1 AND status = 'sending'
+                """,
+                outbound_id,
+            )

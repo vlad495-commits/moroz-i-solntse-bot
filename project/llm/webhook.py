@@ -5,7 +5,7 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from fastapi import FastAPI, Response
 
-from config import DATABASE_URL, TELEGRAM_BOT_TOKEN
+from config import DATABASE_URL, NON_TEXT_REPLY, TELEGRAM_BOT_TOKEN
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.repository import MessageRepository
@@ -52,6 +52,39 @@ def create_app(*, database_url=None, bot=None) -> FastAPI:
 
     webhook_app = FastAPI(lifespan=lifespan)
 
+    async def send_static_reply(
+        *,
+        update_id: int,
+        chat_id: int,
+        text: str,
+        reply_kind: str,
+        reply_markup=None,
+    ) -> None:
+        repository = webhook_app.state.message_repository
+        outbound_id = await repository.enqueue_outbound(
+            channel="telegram",
+            chat_id=str(chat_id),
+            text=text,
+            idempotency_key=f"telegram:{reply_kind}:{update_id}",
+        )
+        if not await repository.claim_outbound_delivery(outbound_id):
+            return
+
+        send_arguments = {"chat_id": chat_id, "text": text}
+        if reply_markup is not None:
+            send_arguments["reply_markup"] = reply_markup
+        try:
+            sent_message = await webhook_app.state.telegram.send_message(
+                **send_arguments
+            )
+        except Exception:
+            await repository.mark_outbound_delivery_unknown(outbound_id)
+            return
+        await repository.mark_outbound_sent(
+            outbound_id,
+            str(sent_message.message_id),
+        )
+
     @webhook_app.post("/telegram/webhook")
     async def telegram_webhook(payload: dict) -> Response:
         telegram = webhook_app.state.telegram
@@ -67,16 +100,28 @@ def create_app(*, database_url=None, bot=None) -> FastAPI:
             return Response(status_code=200)
 
         message = update.message
-        if not message or message.text is None or message.from_user is None:
+        if not message:
+            return Response(status_code=200)
+        if message.text is None:
+            await send_static_reply(
+                update_id=update.update_id,
+                chat_id=message.chat.id,
+                text=NON_TEXT_REPLY,
+                reply_kind="non_text",
+            )
+            return Response(status_code=200)
+        if message.from_user is None:
             return Response(status_code=200)
 
         user_id = str(message.from_user.id)
         if not await webhook_app.state.consent_service.has_processing_consent(
             "telegram", user_id
         ):
-            await telegram.send_message(
+            await send_static_reply(
+                update_id=update.update_id,
                 chat_id=message.chat.id,
                 text=CONSENT_PROMPT,
+                reply_kind="consent_prompt",
                 reply_markup=CONSENT_KEYBOARD,
             )
             return Response(status_code=200)
