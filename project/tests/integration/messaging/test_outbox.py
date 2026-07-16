@@ -48,7 +48,6 @@ async def test_relay_publishes_pending_task_then_marks_it_published(database):
         database,
         chat_id="42",
         update_ids=("10", "11"),
-        text="Два сообщения",
     )
     queue = RecordingQueue()
 
@@ -71,7 +70,6 @@ async def test_relay_leaves_task_pending_when_publish_fails(database):
         database,
         chat_id="42",
         update_ids=("12",),
-        text="Повторить",
     )
     relay = OutboxRelay(database, RecordingQueue(RuntimeError("broker down")))
 
@@ -90,7 +88,6 @@ async def test_concurrent_relays_do_not_publish_same_pending_row(database):
         database,
         chat_id="42",
         update_ids=("13",),
-        text="Один publish",
     )
     queue = BlockingQueue()
     first = asyncio.create_task(OutboxRelay(database, queue).publish_pending())

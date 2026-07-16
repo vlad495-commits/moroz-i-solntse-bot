@@ -10,7 +10,14 @@ import redis.asyncio as redis
 from aiogram.types import InlineKeyboardMarkup
 from httpx import ASGITransport, AsyncClient
 
-from config import NON_TEXT_REPLY
+from config import (
+    BOT_PAUSE_KEY,
+    BOT_PAUSED_REPLY,
+    INPUT_TOO_LONG_REPLY,
+    MAX_INPUT_LENGTH,
+    NON_TEXT_REPLY,
+    START_REPLY,
+)
 from moroz.common.db import Database
 from moroz.messaging.repository import MessageRepository
 from webhook import create_app
@@ -21,6 +28,7 @@ pytestmark = pytest.mark.asyncio
 
 CONSENT_CALLBACK_DATA = "processing_consent:v1"
 CONSENT_PROMPT = "Чтобы продолжить, подтвердите обработку данных."
+WEBHOOK_SECRET = "test-webhook-secret"
 
 
 class FakeSession:
@@ -163,14 +171,43 @@ async def client(migrated_database_url, fake_telegram, redis_client):
     app = create_app(
         database_url=migrated_database_url,
         bot=fake_telegram,
+        webhook_secret=WEBHOOK_SECRET,
+    )
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Telegram-Bot-Api-Secret-Token": WEBHOOK_SECRET},
+        ) as http_client:
+            yield http_client
+    assert fake_telegram.session.closed is True
+
+
+async def test_webhook_rejects_missing_or_wrong_secret_before_json_parsing(
+    migrated_database_url, fake_telegram
+):
+    app = create_app(
+        database_url=migrated_database_url,
+        bot=fake_telegram,
+        webhook_secret=WEBHOOK_SECRET,
     )
     async with app.router.lifespan_context(app):
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
         ) as http_client:
-            yield http_client
-    assert fake_telegram.session.closed is True
+            missing = await http_client.post(
+                "/telegram/webhook",
+                content=b"not-json",
+            )
+            wrong = await http_client.post(
+                "/telegram/webhook",
+                content=b"not-json",
+                headers={"X-Telegram-Bot-Api-Secret-Token": "wrong"},
+            )
+
+    assert missing.status_code == wrong.status_code == 403
+    assert fake_telegram.sent_messages == []
 
 
 async def test_message_without_consent_is_not_persisted(
@@ -291,11 +328,13 @@ async def test_redis_failure_after_consent_creates_single_message_task(
         database_url=migrated_database_url,
         bot=fake_telegram,
         redis_url="redis://127.0.0.1:1/0",
+        webhook_secret=WEBHOOK_SECRET,
     )
     async with app.router.lifespan_context(app):
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
+            headers={"X-Telegram-Bot-Api-Secret-Token": WEBHOOK_SECRET},
         ) as http_client:
             assert (
                 await http_client.post(
@@ -322,9 +361,67 @@ async def test_redis_failure_after_consent_creates_single_message_task(
     assert json.loads(task["payload"]) == {
         "chat_id": "42",
         "update_ids": ["910"],
-        "text": "Не потерять",
     }
     assert tuple(task.values())[2:] == ("process_message:910", "pending")
+
+
+async def test_start_reply_is_durable_and_idempotent(client, db, fake_telegram):
+    update = telegram_text_update("/start", update_id=911)
+
+    first = await client.post("/telegram/webhook", json=update)
+    duplicate = await client.post("/telegram/webhook", json=update)
+
+    assert first.status_code == duplicate.status_code == 200
+    assert [message["text"] for message in fake_telegram.sent_messages] == [
+        START_REPLY
+    ]
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert await db.fetchval(
+        "SELECT idempotency_key FROM outbound_messages"
+    ) == "telegram:start:911"
+
+
+async def test_paused_reply_is_durable_and_precedes_consent(
+    client, db, redis_client, fake_telegram
+):
+    await redis_client.set(BOT_PAUSE_KEY, "1")
+    update = telegram_text_update("Не сохранять", update_id=912)
+
+    first = await client.post("/telegram/webhook", json=update)
+    duplicate = await client.post("/telegram/webhook", json=update)
+
+    assert first.status_code == duplicate.status_code == 200
+    assert [message["text"] for message in fake_telegram.sent_messages] == [
+        BOT_PAUSED_REPLY
+    ]
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert await db.fetchval(
+        "SELECT idempotency_key FROM outbound_messages"
+    ) == "telegram:paused:912"
+
+
+async def test_overlength_reply_is_durable_after_consent_without_persisting_text(
+    client, db, fake_telegram
+):
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(update_id=913),
+        )
+    ).status_code == 200
+    update = telegram_text_update("я" * (MAX_INPUT_LENGTH + 1), update_id=914)
+
+    first = await client.post("/telegram/webhook", json=update)
+    duplicate = await client.post("/telegram/webhook", json=update)
+
+    assert first.status_code == duplicate.status_code == 200
+    assert [message["text"] for message in fake_telegram.sent_messages] == [
+        INPUT_TOO_LONG_REPLY.format(limit=MAX_INPUT_LENGTH)
+    ]
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert await db.fetchval(
+        "SELECT idempotency_key FROM outbound_messages"
+    ) == "telegram:too_long:914"
 
 
 async def test_duplicate_no_consent_update_sends_one_durable_prompt(
@@ -355,7 +452,7 @@ async def test_duplicate_no_consent_update_sends_one_durable_prompt(
 async def test_unknown_prompt_result_is_not_retried(
     client, db, fake_telegram
 ):
-    fake_telegram.send_error = RuntimeError("sensitive external failure")
+    fake_telegram.send_error = TimeoutError("sensitive external failure")
     update = telegram_text_update(update_id=905)
 
     first = await client.post("/telegram/webhook", json=update)

@@ -94,7 +94,6 @@ class MessageBuffer:
                 self._database,
                 chat_id=buffered.chat_id,
                 update_ids=buffered.update_ids,
-                text=buffered.text,
             )
             async with self._redis.pipeline(transaction=True) as pipe:
                 pipe.delete(key)

@@ -16,6 +16,14 @@ class CleanupFailure(RuntimeError):
     pass
 
 
+async def _fake_lock():
+    return object()
+
+
+async def _fake_close():
+    return None
+
+
 def test_worker_reads_explicit_pipeline_settings_without_aggregate_settings():
     source = Path("/workspace/worker/main.py").read_text(encoding="utf-8")
 
@@ -351,7 +359,7 @@ async def test_startup_failure_closes_every_created_runtime_resource(
 
     class RuntimeRedis:
         async def ping(self):
-            pass
+            raise AssertionError("Redis must not gate worker startup")
 
         async def aclose(self):
             closed.append("redis")
@@ -401,6 +409,12 @@ async def test_startup_failure_closes_every_created_runtime_resource(
         lambda *args, **kwargs: RuntimeRepository(),
     )
     monkeypatch.setattr(
+        worker_main, "_acquire_worker_lock", lambda _database: _fake_lock()
+    )
+    monkeypatch.setattr(
+        worker_main, "_release_worker_lock", lambda _lock: _fake_close()
+    )
+    monkeypatch.setattr(
         worker_main,
         "init_llm",
         lambda: (_ for _ in ()).throw(RuntimeError("LLM startup failed")),
@@ -410,6 +424,29 @@ async def test_startup_failure_closes_every_created_runtime_resource(
         await worker_main.run()
 
     assert set(closed) == {"queue", "database", "redis", "telegram"}
+
+
+@pytest.mark.asyncio
+async def test_outer_resource_cleanup_honors_existing_shutdown_deadline():
+    release = asyncio.Event()
+
+    async def stubborn_close():
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            await release.wait()
+
+    deadline = asyncio.get_running_loop().time() + 0.02
+    started_at = asyncio.get_running_loop().time()
+    with pytest.raises(TimeoutError, match="resource cleanup exceeded"):
+        await worker_main._cleanup_all(
+            stubborn_close(),
+            deadline=deadline,
+        )
+
+    assert asyncio.get_running_loop().time() - started_at < 0.1
+    release.set()
+    await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -481,6 +518,12 @@ async def test_run_attempts_all_cleanup_and_preserves_error_precedence(
         worker_main,
         "MessageRepository",
         lambda *args, **kwargs: RuntimeRepository(),
+    )
+    monkeypatch.setattr(
+        worker_main, "_acquire_worker_lock", lambda _database: _fake_lock()
+    )
+    monkeypatch.setattr(
+        worker_main, "_release_worker_lock", lambda _lock: _fake_close()
     )
     monkeypatch.setattr(worker_main, "_supervise", supervise)
     monkeypatch.setattr(

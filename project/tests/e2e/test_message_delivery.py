@@ -10,21 +10,35 @@ import pytest_asyncio
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 from httpx import ASGITransport, AsyncClient
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+)
 
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask
 from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.outbox import OutboxRelay, enqueue_process_message
-from moroz.messaging.repository import MessageRepository
+from moroz.messaging.repository import (
+    MessageRepository,
+    OutboundDeliveryBlocked,
+)
 from moroz.messaging.telegram import DeliveryResult, TelegramSender
 from moroz.security.consent import ConsentService, PROCESSING_CONSENT_VERSION
 from webhook import create_app
-from worker.main import MessageTaskHandler, PipelinePump
+from worker.main import (
+    MessageTaskHandler,
+    PipelinePump,
+    _acquire_worker_lock,
+    _release_worker_lock,
+)
 
 
 pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
+WEBHOOK_SECRET = "test-webhook-secret"
 
 
 class FakeSession:
@@ -138,7 +152,7 @@ async def test_worker_does_not_send_sent_outbound_twice(database):
         ) == "sent"
 
 
-async def test_unknown_send_result_is_terminal_and_safe(
+async def test_network_send_result_is_terminal_and_safe(
     database, caplog
 ):
     repository = MessageRepository(database)
@@ -148,7 +162,9 @@ async def test_unknown_send_result_is_terminal_and_safe(
         text="Секретный ответ",
         idempotency_key="reply:unknown",
     )
-    telegram = FakeTelegram(RuntimeError("sensitive failure detail"))
+    telegram = FakeTelegram(
+        TelegramNetworkError(SimpleNamespace(), "sensitive failure detail")
+    )
     sender = TelegramSender(telegram, repository)
 
     assert await sender.send(outbound_id) == DeliveryResult.DELIVERY_UNKNOWN
@@ -164,6 +180,109 @@ async def test_unknown_send_result_is_terminal_and_safe(
         assert await connection.fetchval(
             "SELECT count(*) FROM task_outbox WHERE kind = 'send_outbound'"
         ) == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TelegramRetryAfter(SimpleNamespace(), "retry later", 5),
+        TelegramBadRequest(SimpleNamespace(), "invalid request"),
+        RuntimeError("failed before send"),
+    ],
+)
+async def test_definite_send_failure_is_released_for_queue_retry(database, error):
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Ответ",
+        idempotency_key=f"reply:definite:{type(error).__name__}",
+    )
+
+    with pytest.raises(type(error)):
+        await TelegramSender(FakeTelegram(error), repository).send(outbound_id)
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+        ) == "pending"
+
+
+async def test_pre_send_validation_failure_releases_delivery(database):
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="not-an-integer",
+        text="Ответ",
+        idempotency_key="reply:invalid-chat-id",
+    )
+
+    with pytest.raises(ValueError):
+        await TelegramSender(FakeTelegram(), repository).send(outbound_id)
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+        ) == "pending"
+
+
+async def test_second_worker_cannot_reconcile_while_first_is_active(
+    database, migrated_database_url
+):
+    second_database = Database(migrated_database_url, min_size=1, max_size=1)
+    await second_database.connect()
+    first_lock = await _acquire_worker_lock(database)
+    try:
+        with pytest.raises(RuntimeError, match="worker is already active"):
+            await _acquire_worker_lock(second_database)
+    finally:
+        await _release_worker_lock(first_lock)
+
+    second_lock = await _acquire_worker_lock(second_database)
+    await _release_worker_lock(second_lock)
+    await second_database.close()
+
+
+async def test_concurrent_outbound_delivery_preserves_order_per_chat(database):
+    repository = MessageRepository(database)
+    first_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Первый",
+        idempotency_key="reply:ordered:first",
+    )
+    second_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Второй",
+        idempotency_key="reply:ordered:second",
+    )
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    class OrderedTelegram(FakeTelegram):
+        async def send_message(self, **kwargs):
+            self.sent_messages.append(kwargs)
+            if kwargs["text"] == "Первый":
+                first_started.set()
+                await release_first.wait()
+            return SimpleNamespace(message_id=700 + len(self.sent_messages))
+
+    telegram = OrderedTelegram()
+    sender = TelegramSender(telegram, repository)
+    first_delivery = asyncio.create_task(sender.send(first_id))
+    await first_started.wait()
+
+    with pytest.raises(OutboundDeliveryBlocked):
+        await sender.send(second_id)
+
+    release_first.set()
+    assert await first_delivery == DeliveryResult.SENT
+    assert await sender.send(second_id) == DeliveryResult.SENT
+    assert [message["text"] for message in telegram.sent_messages] == [
+        "Первый",
+        "Второй",
+    ]
 
 
 async def test_cancelled_send_is_marked_unknown_before_cancellation_propagates(
@@ -494,7 +613,6 @@ async def test_fresh_pump_flushes_existing_due_buffer_and_publishes_all_pending(
         database,
         chat_id="7",
         update_ids=("already-durable",),
-        text="Уже в БД",
     )
     clock.advance(5)
     queue = RecordingQueue()
@@ -518,7 +636,6 @@ async def test_pump_publishes_database_tasks_when_redis_scan_fails(database):
         database,
         chat_id="42",
         update_ids=("durable",),
-        text="Уже сохранено",
     )
     queue = RecordingQueue()
 
@@ -570,7 +687,6 @@ async def test_fresh_pump_recovers_expired_inbox_with_due_redis_orphan(
     assert queue.tasks[0].payload == {
         "chat_id": "42",
         "update_ids": ["601"],
-        "text": "Из сохранённого inbox",
     }
     assert await redis_client.zscore("buffer:deadlines", "42") is None
 
@@ -716,6 +832,7 @@ async def test_duplicate_consented_webhook_update_crosses_pipeline_once(
         database_url=migrated_database_url,
         redis_url=os.environ["REDIS_URL"],
         bot=telegram,
+        webhook_secret=WEBHOOK_SECRET,
     )
     update = {
         "update_id": 990,
@@ -734,7 +851,9 @@ async def test_duplicate_consented_webhook_update_crosses_pipeline_once(
 
     async with app.router.lifespan_context(app):
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Telegram-Bot-Api-Secret-Token": WEBHOOK_SECRET},
         ) as client:
             first = await client.post("/telegram/webhook", json=update)
             duplicate = await client.post("/telegram/webhook", json=update)

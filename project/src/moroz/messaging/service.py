@@ -32,6 +32,5 @@ class MessageService:
                 self._database,
                 chat_id=message.chat_id,
                 update_ids=(message.update_id,),
-                text=message.text,
             )
         return True

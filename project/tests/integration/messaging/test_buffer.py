@@ -103,7 +103,6 @@ async def test_buffer_joins_fast_messages_after_deadline(
     assert json.loads(task["payload"]) == {
         "chat_id": "42",
         "update_ids": ["1", "2"],
-        "text": "Хочу\nна крио",
     }
     assert task["idempotency_key"] == "process_message:1,2"
     assert task["status"] == "pending"
@@ -136,7 +135,6 @@ async def test_flush_reuses_committed_task_after_redis_delete_gap(
         database,
         chat_id=buffered.chat_id,
         update_ids=buffered.update_ids,
-        text=buffered.text,
     )
     clock.advance(seconds=5)
 
@@ -238,7 +236,6 @@ async def test_service_falls_back_to_single_durable_task_when_redis_is_down(
     assert json.loads(task["payload"]) == {
         "chat_id": "42",
         "update_ids": ["6"],
-        "text": "Не потерять",
     }
     assert task["idempotency_key"] == "process_message:6"
 

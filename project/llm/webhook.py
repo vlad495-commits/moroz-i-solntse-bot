@@ -1,13 +1,26 @@
 from contextlib import asynccontextmanager
+import secrets
 from uuid import uuid4
 
 from aiogram import Bot
 from aiogram.enums import ChatType
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 import redis.asyncio as redis
+from redis.exceptions import RedisError
 
-from config import DATABASE_URL, NON_TEXT_REPLY, REDIS_URL, TELEGRAM_BOT_TOKEN
+from config import (
+    BOT_PAUSE_KEY,
+    BOT_PAUSED_REPLY,
+    DATABASE_URL,
+    INPUT_TOO_LONG_REPLY,
+    MAX_INPUT_LENGTH,
+    NON_TEXT_REPLY,
+    REDIS_URL,
+    START_REPLY,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_WEBHOOK_SECRET,
+)
 from moroz.common.db import Database
 from moroz.messaging.buffer import MessageBuffer
 from moroz.messaging.models import IncomingMessage
@@ -34,7 +47,11 @@ CONSENT_KEYBOARD = InlineKeyboardMarkup(
 )
 
 
-def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
+def create_app(
+    *, database_url=None, redis_url=None, bot=None, webhook_secret=None
+) -> FastAPI:
+    resolved_webhook_secret = webhook_secret or TELEGRAM_WEBHOOK_SECRET
+
     @asynccontextmanager
     async def lifespan(webhook_app: FastAPI):
         resolved_database_url = database_url or DATABASE_URL
@@ -42,6 +59,8 @@ def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
             raise RuntimeError("DATABASE_URL не задан")
         if bot is None and not TELEGRAM_BOT_TOKEN:
             raise RuntimeError("TELEGRAM_BOT_TOKEN не задан")
+        if not resolved_webhook_secret:
+            raise RuntimeError("TELEGRAM_WEBHOOK_SECRET не задан")
 
         telegram = bot or Bot(token=TELEGRAM_BOT_TOKEN)
         database = Database(resolved_database_url, min_size=1, max_size=5)
@@ -52,6 +71,7 @@ def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
         try:
             await database.connect()
             webhook_app.state.telegram = telegram
+            webhook_app.state.redis = redis_client
             webhook_app.state.consent_service = ConsentService(database)
             webhook_app.state.message_repository = MessageRepository(database)
             webhook_app.state.message_service = MessageService(
@@ -66,6 +86,12 @@ def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
             await telegram.session.close()
 
     webhook_app = FastAPI(lifespan=lifespan)
+
+    async def is_bot_paused() -> bool:
+        try:
+            return bool(await webhook_app.state.redis.get(BOT_PAUSE_KEY))
+        except RedisError:
+            return False
 
     async def send_static_reply(
         *,
@@ -93,8 +119,17 @@ def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
         )
 
     @webhook_app.post("/telegram/webhook")
-    async def telegram_webhook(payload: dict) -> Response:
+    async def telegram_webhook(request: Request) -> Response:
+        supplied_secret = request.headers.get(
+            "X-Telegram-Bot-Api-Secret-Token"
+        )
+        if supplied_secret is None or not secrets.compare_digest(
+            supplied_secret, resolved_webhook_secret
+        ):
+            return Response(status_code=403)
+
         telegram = webhook_app.state.telegram
+        payload = await request.json()
         update = Update.model_validate(payload, context={"bot": telegram})
 
         callback = update.callback_query
@@ -117,6 +152,14 @@ def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
             return Response(status_code=200)
         if message.chat.type != ChatType.PRIVATE:
             return Response(status_code=200)
+        if await is_bot_paused():
+            await send_static_reply(
+                update_id=update.update_id,
+                chat_id=message.chat.id,
+                text=BOT_PAUSED_REPLY,
+                reply_kind="paused",
+            )
+            return Response(status_code=200)
         if message.text is None:
             await send_static_reply(
                 update_id=update.update_id,
@@ -126,6 +169,15 @@ def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
             )
             return Response(status_code=200)
         if message.from_user is None:
+            return Response(status_code=200)
+        command = message.text.split(maxsplit=1)[0].split("@", 1)[0]
+        if command == "/start":
+            await send_static_reply(
+                update_id=update.update_id,
+                chat_id=message.chat.id,
+                text=START_REPLY,
+                reply_kind="start",
+            )
             return Response(status_code=200)
 
         user_id = str(message.from_user.id)
@@ -140,6 +192,14 @@ def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
                 delivery_options={
                     "reply_markup": CONSENT_KEYBOARD.model_dump(mode="json")
                 },
+            )
+            return Response(status_code=200)
+        if len(message.text) > MAX_INPUT_LENGTH:
+            await send_static_reply(
+                update_id=update.update_id,
+                chat_id=message.chat.id,
+                text=INPUT_TOO_LONG_REPLY.format(limit=MAX_INPUT_LENGTH),
+                reply_kind="too_long",
             )
             return Response(status_code=200)
 

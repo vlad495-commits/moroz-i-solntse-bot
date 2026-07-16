@@ -13,6 +13,7 @@ if _ROOT_ENV.exists():
 
 # --- Telegram ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 
 # --- LLM (универсальное подключение к любому провайдеру) ---
 # LLM_API_KEY — ключ для основного провайдера (OpenAI / Anthropic / OpenRouter / DeepSeek / любой OpenAI-совместимый)

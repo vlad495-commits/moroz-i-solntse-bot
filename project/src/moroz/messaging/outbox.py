@@ -15,14 +15,12 @@ async def enqueue_process_message(
     *,
     chat_id: str,
     update_ids: Sequence[str],
-    text: str,
 ) -> str:
     idempotency_key = process_message_key(update_ids)
     payload = json.dumps(
         {
             "chat_id": chat_id,
             "update_ids": list(update_ids),
-            "text": text,
         },
         ensure_ascii=False,
     )

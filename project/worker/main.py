@@ -28,7 +28,9 @@ logging.basicConfig(
 logger = logging.getLogger("worker")
 READINESS_PATH = Path("/tmp/worker-ready")
 PUMP_INTERVAL_SECONDS = 0.5
+REDIS_RETRY_INTERVAL_SECONDS = 5.0
 SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS = 24.0
+WORKER_LOCK_NAME = "moroz:worker:singleton"
 
 
 async def handle(task: QueueTask) -> None:
@@ -59,14 +61,12 @@ class MessageTaskHandler:
     async def _process_message(self, task: QueueTask) -> None:
         chat_id = task.payload.get("chat_id")
         update_ids = task.payload.get("update_ids")
-        text = task.payload.get("text")
         if (
             not isinstance(chat_id, str)
             or not isinstance(update_ids, list)
             or not update_ids
             or any(not isinstance(value, str) for value in update_ids)
             or len(set(update_ids)) != len(update_ids)
-            or not isinstance(text, str)
         ):
             raise ValueError("invalid process_message payload")
         if task.idempotency_key != process_message_key(update_ids):
@@ -227,12 +227,15 @@ class PipelinePump:
         self._buffer = buffer
         self._relay = relay
         self._repository = repository
+        self._redis_available = True
 
     async def run_once(self) -> int:
         try:
             for chat_id in await self._buffer.due_chat_ids():
                 await self._buffer.flush(chat_id)
+            self._redis_available = True
         except RedisError as error:
+            self._redis_available = False
             logger.warning(
                 "pipeline_buffer_unavailable error_type=%s",
                 type(error).__name__,
@@ -248,6 +251,8 @@ class PipelinePump:
             try:
                 await asyncio.wait_for(
                     stop.wait(), timeout=PUMP_INTERVAL_SECONDS
+                    if self._redis_available
+                    else REDIS_RETRY_INTERVAL_SECONDS
                 )
             except TimeoutError:
                 pass
@@ -293,9 +298,69 @@ async def _cleanup_all(
     *operations,
     primary_error: BaseException | None = None,
     prior_results=(),
+    deadline: float | None = None,
 ) -> None:
-    results = await asyncio.gather(*operations, return_exceptions=True)
+    tasks = tuple(asyncio.create_task(operation) for operation in operations)
+    if deadline is None:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        _raise_after_cleanup(primary_error, (*prior_results, *results))
+        return
+    remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+    done, pending = await asyncio.wait(tasks, timeout=remaining)
+    results = []
+    for task in tasks:
+        if task not in done:
+            continue
+        try:
+            results.append(task.result())
+        except BaseException as error:
+            results.append(error)
+    if pending:
+        for task in pending:
+            task.cancel()
+            task.add_done_callback(_consume_task_result)
+        results.append(TimeoutError("resource cleanup exceeded shutdown deadline"))
     _raise_after_cleanup(primary_error, (*prior_results, *results))
+
+
+async def _acquire_worker_lock(database: Database):
+    context = database.acquire()
+    connection = await context.__aenter__()
+    try:
+        acquired = await connection.fetchval(
+            "SELECT pg_try_advisory_lock(hashtextextended($1, 0))",
+            WORKER_LOCK_NAME,
+        )
+        if not acquired:
+            raise RuntimeError("another worker is already active")
+    except BaseException:
+        await context.__aexit__(None, None, None)
+        raise
+    return context, connection
+
+
+async def _release_worker_lock(lock) -> None:
+    context, connection = lock
+    try:
+        await connection.execute(
+            "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+            WORKER_LOCK_NAME,
+        )
+    finally:
+        await context.__aexit__(None, None, None)
+
+
+class ShutdownBudget:
+    def __init__(self):
+        self._deadline = None
+
+    def deadline(self) -> float:
+        if self._deadline is None:
+            self._deadline = (
+                asyncio.get_running_loop().time()
+                + SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS
+            )
+        return self._deadline
 
 
 async def _stop_background_tasks(
@@ -334,7 +399,9 @@ async def _supervise(
     handler=handle,
     pump: PipelinePump | None = None,
     prompt_listener=None,
+    shutdown_budget: ShutdownBudget | None = None,
 ) -> None:
+    shutdown_budget = shutdown_budget or ShutdownBudget()
     _remove_readiness(readiness_path)
     consumer = asyncio.create_task(
         queue.consume(
@@ -378,8 +445,7 @@ async def _supervise(
             _remove_readiness(readiness_path)
         except BaseException as error:
             cleanup_results.append(error)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS
+        deadline = shutdown_budget.deadline()
         close_reserve = min(
             2.0, SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS / 10
         )
@@ -415,16 +481,18 @@ async def run() -> None:
     database = Database(database_url, min_size=1, max_size=5)
     redis_client = redis.from_url(redis_url, decode_responses=True)
     telegram = Bot(token=telegram_token)
+    shutdown_budget = ShutdownBudget()
+    worker_lock = None
     primary_error = None
     try:
         await database.connect()
+        worker_lock = await _acquire_worker_lock(database)
         repository = MessageRepository(database)
         reconciled = await repository.reconcile_stale_outbound_deliveries()
         if reconciled:
             logger.warning(
                 "stale_outbound_deliveries_terminalized count=%d", reconciled
             )
-        await redis_client.ping()
         await queue.connect()
         init_llm()
         task_handler = MessageTaskHandler(
@@ -444,6 +512,7 @@ async def run() -> None:
             handler=task_handler.handle,
             pump=pump,
             prompt_listener=prompt_reload_listener,
+            shutdown_budget=shutdown_budget,
         )
     except BaseException as error:
         primary_error = error
@@ -453,13 +522,22 @@ async def run() -> None:
             _remove_readiness(READINESS_PATH)
         except BaseException as error:
             readiness_error = error
+
+        async def close_database():
+            try:
+                if worker_lock is not None:
+                    await _release_worker_lock(worker_lock)
+            finally:
+                await database.close()
+
         await _cleanup_all(
             queue.close(),
             telegram.session.close(),
             redis_client.aclose(),
-            database.close(),
+            close_database(),
             primary_error=primary_error,
             prior_results=(readiness_error,),
+            deadline=shutdown_budget.deadline(),
         )
         logger.info("Worker stopped")
 

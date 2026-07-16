@@ -6,6 +6,10 @@ from moroz.messaging.models import IncomingMessage, OutboundMessage
 from moroz.messaging.outbox import enqueue_process_message
 
 
+class OutboundDeliveryBlocked(Exception):
+    """An earlier delivery for the same chat is still non-terminal."""
+
+
 class MessageRepository:
     def __init__(self, database: Database):
         self._database = database
@@ -111,16 +115,54 @@ class MessageRepository:
         outbound_id: UUID,
     ) -> OutboundMessage | None:
         async with self._database.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                UPDATE outbound_messages
-                SET status = 'sending', claimed_at = now()
-                WHERE id = $1 AND status = 'pending'
-                RETURNING id, channel, chat_id, text, delivery_options,
-                          idempotency_key
-                """,
-                outbound_id,
-            )
+            async with connection.transaction():
+                target = await connection.fetchrow(
+                    """
+                    SELECT channel, chat_id, status, created_at
+                    FROM outbound_messages
+                    WHERE id = $1
+                    """,
+                    outbound_id,
+                )
+                if target is None or target["status"] != "pending":
+                    return None
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    f'{target["channel"]}:{target["chat_id"]}',
+                )
+                row = await connection.fetchrow(
+                    """
+                    UPDATE outbound_messages AS target
+                    SET status = 'sending', claimed_at = now()
+                    WHERE target.id = $1
+                      AND target.status = 'pending'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM outbound_messages AS earlier
+                          WHERE earlier.channel = target.channel
+                            AND earlier.chat_id = target.chat_id
+                            AND earlier.status IN ('pending', 'sending')
+                            AND (
+                                earlier.created_at < target.created_at
+                                OR (
+                                    earlier.created_at = target.created_at
+                                    AND earlier.id < target.id
+                                )
+                            )
+                      )
+                    RETURNING target.id, target.channel, target.chat_id,
+                              target.text, target.delivery_options,
+                              target.idempotency_key
+                    """,
+                    outbound_id,
+                )
+                if row is None:
+                    status = await connection.fetchval(
+                        "SELECT status FROM outbound_messages WHERE id = $1",
+                        outbound_id,
+                    )
+                    if status == "pending":
+                        raise OutboundDeliveryBlocked
         if row is None:
             return None
         options = row["delivery_options"]
@@ -160,6 +202,17 @@ class MessageRepository:
                 """
                 UPDATE outbound_messages
                 SET status = 'delivery_unknown'
+                WHERE id = $1 AND status = 'sending'
+                """,
+                outbound_id,
+            )
+
+    async def release_outbound_delivery(self, outbound_id: UUID) -> None:
+        async with self._database.acquire() as connection:
+            await connection.execute(
+                """
+                UPDATE outbound_messages
+                SET status = 'pending', claimed_at = NULL
                 WHERE id = $1 AND status = 'sending'
                 """,
                 outbound_id,
@@ -222,6 +275,5 @@ class MessageRepository:
                 self._database,
                 chat_id=payload["chat_id"],
                 update_ids=(payload["update_id"],),
-                text=payload["text"],
             )
         return len(rows)

@@ -129,11 +129,19 @@ def test_compose_process_environment_overrides_external_test_credentials():
             assert services[name]["environment"][key] == (
                 f"${{{key}:?set {key} outside Git}}"
             )
-    for name in ("bot", "admin"):
-        assert services[name]["environment"] == {
-            "DATABASE_URL": "${DATABASE_URL:-}",
-            "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
-        }
+    assert services["admin"]["environment"] == {
+        "DATABASE_URL": "${DATABASE_URL:-}",
+        "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
+    }
+    assert services["bot"]["environment"] == {
+        "DATABASE_URL": "${DATABASE_URL:-}",
+        "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
+        "TELEGRAM_WEBHOOK_SECRET": (
+            "${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET outside Git}"
+        ),
+    }
+    for name in ("bot", "worker"):
+        assert "redis" not in services[name]["depends_on"]
 
     assert services["worker"]["environment"] == {
         "RABBITMQ_URL": "${RABBITMQ_URL:?set RABBITMQ_URL outside Git}",
