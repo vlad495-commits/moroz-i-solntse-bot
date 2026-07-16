@@ -51,6 +51,23 @@ class MessageBuffer:
         finally:
             await lock.release()
 
+    async def due_chat_ids(self, limit: int = 100) -> tuple[str, ...]:
+        due = []
+        async for deadline_key in self._redis.scan_iter(
+            match="buffer:*:deadline",
+            count=limit,
+        ):
+            deadline = await self._redis.get(deadline_key)
+            if deadline is not None and self._now().timestamp() >= float(deadline):
+                due.append(
+                    deadline_key.removeprefix("buffer:").removesuffix(
+                        ":deadline"
+                    )
+                )
+                if len(due) >= limit:
+                    break
+        return tuple(due)
+
     async def flush(self, chat_id: str) -> BufferedMessage | None:
         key = f"buffer:{chat_id}"
         lock = self._redis.lock(

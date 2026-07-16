@@ -66,9 +66,27 @@ services:
     restart: unless-stopped
     environment:
       RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL outside Git}
+      DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER outside Git}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.3}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-2000}
+      LLM_REQUEST_TIMEOUT_SEC: ${LLM_REQUEST_TIMEOUT_SEC:-30}
+      CONTEXT_MESSAGES_LIMIT: ${CONTEXT_MESSAGES_LIMIT:-20}
     stop_grace_period: 30s
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     logging:
       driver: "json-file"

@@ -9,9 +9,10 @@ import redis.asyncio as redis
 from config import DATABASE_URL, NON_TEXT_REPLY, REDIS_URL, TELEGRAM_BOT_TOKEN
 from moroz.common.db import Database
 from moroz.messaging.buffer import MessageBuffer
-from moroz.messaging.models import IncomingMessage, OutboundMessage
+from moroz.messaging.models import IncomingMessage
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.service import MessageService
+from moroz.messaging.telegram import deliver_claimed_outbound
 from moroz.security.consent import (
     PROCESSING_CONSENT_VERSION,
     ConsentService,
@@ -30,31 +31,6 @@ CONSENT_KEYBOARD = InlineKeyboardMarkup(
         ]
     ]
 )
-
-
-async def deliver_claimed_outbound(
-    telegram,
-    repository: MessageRepository,
-    outbound: OutboundMessage,
-) -> None:
-    send_arguments = {
-        "chat_id": int(outbound.chat_id),
-        "text": outbound.text,
-    }
-    reply_markup = outbound.delivery_options.get("reply_markup")
-    if reply_markup is not None:
-        send_arguments["reply_markup"] = InlineKeyboardMarkup.model_validate(
-            reply_markup
-        )
-    try:
-        sent_message = await telegram.send_message(**send_arguments)
-    except Exception:
-        await repository.mark_outbound_delivery_unknown(outbound.id)
-        return
-    await repository.mark_outbound_sent(
-        outbound.id,
-        str(sent_message.message_id),
-    )
 
 
 def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:

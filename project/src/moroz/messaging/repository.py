@@ -52,41 +52,57 @@ class MessageRepository:
         idempotency_key: str,
         delivery_options: dict[str, object] | None = None,
     ) -> UUID:
-        outbound_id = uuid4()
         async with self._database.acquire() as connection:
             async with connection.transaction():
-                row = await connection.fetchrow(
-                    """
-                    INSERT INTO outbound_messages
-                        (id, channel, chat_id, text, delivery_options,
-                         idempotency_key)
-                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                    ON CONFLICT (idempotency_key) DO NOTHING
-                    RETURNING id
-                    """,
-                    outbound_id,
-                    channel,
-                    chat_id,
-                    text,
-                    json.dumps(delivery_options or {}, ensure_ascii=False),
-                    idempotency_key,
+                return await self.enqueue_outbound_in_transaction(
+                    connection,
+                    channel=channel,
+                    chat_id=chat_id,
+                    text=text,
+                    idempotency_key=idempotency_key,
+                    delivery_options=delivery_options,
                 )
-                if row is None:
-                    return await connection.fetchval(
-                        "SELECT id FROM outbound_messages WHERE idempotency_key = $1",
-                        idempotency_key,
-                    )
 
-                await connection.execute(
-                    """
-                    INSERT INTO task_outbox
-                        (id, kind, payload, idempotency_key)
-                    VALUES ($1, 'send_outbound', $2::jsonb, $3)
-                    """,
-                    uuid4(),
-                    json.dumps({"outbound_id": str(outbound_id)}),
-                    f"send_outbound:{outbound_id}",
-                )
+    async def enqueue_outbound_in_transaction(
+        self,
+        connection,
+        *,
+        channel: str,
+        chat_id: str,
+        text: str,
+        idempotency_key: str,
+        delivery_options: dict[str, object] | None = None,
+    ) -> UUID:
+        outbound_id = uuid4()
+        row = await connection.fetchrow(
+            """
+            INSERT INTO outbound_messages
+                (id, channel, chat_id, text, delivery_options, idempotency_key)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+            ON CONFLICT (idempotency_key) DO NOTHING
+            RETURNING id
+            """,
+            outbound_id,
+            channel,
+            chat_id,
+            text,
+            json.dumps(delivery_options or {}, ensure_ascii=False),
+            idempotency_key,
+        )
+        if row is None:
+            return await connection.fetchval(
+                "SELECT id FROM outbound_messages WHERE idempotency_key = $1",
+                idempotency_key,
+            )
+        await connection.execute(
+            """
+            INSERT INTO task_outbox (id, kind, payload, idempotency_key)
+            VALUES ($1, 'send_outbound', $2::jsonb, $3)
+            """,
+            uuid4(),
+            json.dumps({"outbound_id": str(outbound_id)}),
+            f"send_outbound:{outbound_id}",
+        )
         return outbound_id
 
     async def claim_outbound_delivery(

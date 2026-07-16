@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,11 +12,17 @@ class ConsumerFailure(RuntimeError):
     pass
 
 
-def test_worker_reads_only_rabbitmq_url_without_aggregate_settings():
+def test_worker_reads_explicit_pipeline_settings_without_aggregate_settings():
     source = Path("/workspace/worker/main.py").read_text(encoding="utf-8")
 
     assert "Settings" not in source
-    assert 'os.environ["RABBITMQ_URL"]' in source
+    for name in (
+        "RABBITMQ_URL",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "TELEGRAM_BOT_TOKEN",
+    ):
+        assert f'os.environ["{name}"]' in source
     assert "os.getenv" not in source
 
 
@@ -48,6 +55,20 @@ class FakeQueue:
 
     async def close(self):
         self.close_calls += 1
+
+
+class FakePump:
+    def __init__(self, error=None):
+        self.error = error
+        self.started = asyncio.Event()
+        self.stopped = False
+
+    async def run(self, stop):
+        self.started.set()
+        if self.error:
+            raise self.error
+        await stop.wait()
+        self.stopped = True
 
 
 @pytest.mark.asyncio
@@ -97,6 +118,102 @@ async def test_stop_cancels_consumer_and_closes_queue_once():
 
     assert queue.cancelled
     assert queue.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_supervisor_runs_and_stops_pipeline_pump():
+    queue = FakeQueue("wait")
+    pump = FakePump()
+    stop = asyncio.Event()
+    supervised = asyncio.create_task(
+        worker_main._supervise(queue, stop, pump=pump)
+    )
+    await asyncio.wait_for(pump.started.wait(), timeout=1)
+
+    stop.set()
+    await supervised
+
+    assert pump.stopped
+    assert queue.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_supervisor_propagates_pipeline_pump_failure():
+    queue = FakeQueue("wait")
+    pump = FakePump(ConsumerFailure("pump failed"))
+
+    with pytest.raises(ConsumerFailure, match="pump failed"):
+        await worker_main._supervise(queue, asyncio.Event(), pump=pump)
+
+    assert queue.cancelled
+    assert queue.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_failure_closes_every_created_runtime_resource(
+    monkeypatch,
+):
+    closed = []
+
+    class RuntimeDatabase:
+        async def connect(self):
+            pass
+
+        async def close(self):
+            closed.append("database")
+
+    class RuntimeRedis:
+        async def ping(self):
+            pass
+
+        async def aclose(self):
+            closed.append("redis")
+
+    class RuntimeQueue:
+        async def connect(self):
+            pass
+
+        async def close(self):
+            closed.append("queue")
+
+    class RuntimeSession:
+        async def close(self):
+            closed.append("telegram")
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("REDIS_URL", "redis://unused")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:test-token")
+    monkeypatch.setenv("RABBITMQ_URL", "amqp://unused")
+    monkeypatch.setattr(
+        worker_main,
+        "Database",
+        lambda *args, **kwargs: RuntimeDatabase(),
+    )
+    monkeypatch.setattr(
+        worker_main.redis,
+        "from_url",
+        lambda *args, **kwargs: RuntimeRedis(),
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "RabbitQueue",
+        lambda *args, **kwargs: RuntimeQueue(),
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "Bot",
+        lambda *args, **kwargs: SimpleNamespace(session=RuntimeSession()),
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "init_llm",
+        lambda: (_ for _ in ()).throw(RuntimeError("LLM startup failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="LLM startup failed"):
+        await worker_main.run()
+
+    assert set(closed) == {"queue", "database", "redis", "telegram"}
 
 
 @pytest.mark.asyncio

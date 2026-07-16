@@ -136,18 +136,40 @@ def test_compose_process_environment_overrides_external_test_credentials():
 
     assert services["worker"]["environment"] == {
         "RABBITMQ_URL": "${RABBITMQ_URL:?set RABBITMQ_URL outside Git}",
+        "DATABASE_URL": "${DATABASE_URL:-}",
+        "POSTGRES_USER": "${POSTGRES_USER:?set POSTGRES_USER outside Git}",
+        "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}",
+        "POSTGRES_DB": "${POSTGRES_DB:?set POSTGRES_DB outside Git}",
+        "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
+        "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN:-}",
+        "LLM_API_KEY": "${LLM_API_KEY:-}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
+        "LLM_BASE_URL": "${LLM_BASE_URL:-}",
+        "LLM_MODEL": "${LLM_MODEL:-gpt-4.1-mini}",
+        "LLM_TEMPERATURE": "${LLM_TEMPERATURE:-0.3}",
+        "LLM_MAX_TOKENS": "${LLM_MAX_TOKENS:-2000}",
+        "LLM_REQUEST_TIMEOUT_SEC": "${LLM_REQUEST_TIMEOUT_SEC:-30}",
+        "CONTEXT_MESSAGES_LIMIT": "${CONTEXT_MESSAGES_LIMIT:-20}",
     }
     for name in ("worker", "redis", "postgres"):
         assert "env_file" not in services[name]
 
 
-def test_worker_image_installs_only_exact_queue_dependency():
+def test_worker_image_installs_only_exact_pipeline_dependencies():
     dockerfile = (ROOT / "worker/Dockerfile").read_text(encoding="utf-8")
     requirements = (ROOT / "worker/requirements.txt").read_text(encoding="utf-8")
 
-    assert requirements.splitlines() == ["aio-pika==9.6.2"]
+    assert requirements.splitlines() == [
+        "aio-pika==9.6.2",
+        "aiogram==3.27.0",
+        "asyncpg==0.31.0",
+        "openai==2.33.0",
+        "python-dotenv==1.2.2",
+        "redis[hiredis]==7.4.0",
+    ]
     assert "COPY worker/requirements.txt" in dockerfile
     assert "llm/requirements.txt" not in dockerfile
+    assert "COPY llm/llm.py llm/config.py" in dockerfile
 
 
 def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
