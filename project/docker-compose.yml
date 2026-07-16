@@ -81,6 +81,8 @@ services:
       LLM_REQUEST_TIMEOUT_SEC: ${LLM_REQUEST_TIMEOUT_SEC:-30}
       CONTEXT_MESSAGES_LIMIT: ${CONTEXT_MESSAGES_LIMIT:-20}
     stop_grace_period: 30s
+    volumes:
+      - ./llm/prompts:/app/llm/prompts:ro
     depends_on:
       rabbitmq:
         condition: service_healthy

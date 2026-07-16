@@ -113,7 +113,7 @@ class MessageRepository:
             row = await connection.fetchrow(
                 """
                 UPDATE outbound_messages
-                SET status = 'sending'
+                SET status = 'sending', claimed_at = now()
                 WHERE id = $1 AND status = 'pending'
                 RETURNING id, channel, chat_id, text, delivery_options,
                           idempotency_key
@@ -163,3 +163,14 @@ class MessageRepository:
                 """,
                 outbound_id,
             )
+
+    async def reconcile_stale_outbound_deliveries(self) -> int:
+        async with self._database.acquire() as connection:
+            result = await connection.execute(
+                """
+                UPDATE outbound_messages
+                SET status = 'delivery_unknown'
+                WHERE status = 'sending'
+                """
+            )
+        return int(result.rsplit(" ", 1)[-1])

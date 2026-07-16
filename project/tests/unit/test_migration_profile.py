@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import yaml
 
@@ -162,6 +163,7 @@ def test_worker_image_installs_only_exact_pipeline_dependencies():
     assert requirements.splitlines() == [
         "aio-pika==9.6.2",
         "aiogram==3.27.0",
+        "anthropic==0.116.0",
         "asyncpg==0.31.0",
         "openai==2.33.0",
         "python-dotenv==1.2.2",
@@ -170,6 +172,16 @@ def test_worker_image_installs_only_exact_pipeline_dependencies():
     assert "COPY worker/requirements.txt" in dockerfile
     assert "llm/requirements.txt" not in dockerfile
     assert "COPY llm/llm.py llm/config.py" in dockerfile
+
+
+def test_all_python_services_pin_same_native_anthropic_runtime():
+    bot = (ROOT / "llm/requirements.txt").read_text(encoding="utf-8")
+    worker = (ROOT / "worker/requirements.txt").read_text(encoding="utf-8")
+    admin = (ROOT / "admin/requirements.txt").read_text(encoding="utf-8")
+
+    assert "anthropic==0.116.0" in bot.splitlines()
+    assert "anthropic==0.116.0" in worker.splitlines()
+    assert "anthropic==0.116.0" in admin.splitlines()
 
 
 def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
@@ -197,7 +209,10 @@ def test_host_ops_regression_checks_rendered_compose_environment_allowlists():
 
     assert "config --format json" in script
     assert '$expectedEnvironment = @{' in script
-    assert 'worker = @("RABBITMQ_URL")' in script
+    worker_literal = re.search(r"worker = @\(([^)]*)\)", script)
+    assert worker_literal
+    scripted_worker_keys = set(re.findall(r'"([A-Z_]+)"', worker_literal.group(1)))
+    assert scripted_worker_keys == set(compose_services()["worker"]["environment"])
     assert 'redis = @("REDIS_PASSWORD")' in script
     assert 'postgres = @("POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")' in script
     assert 'env_file' in script

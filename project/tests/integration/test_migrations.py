@@ -446,10 +446,91 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0003_processing_consents"
+            "0004_pipeline_order_claim"
         )
     finally:
         await conn.close()
+
+
+async def test_pipeline_order_migration_backfills_and_downgrades_cleanly(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "0003_processing_consents")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        await conn.execute(
+            """
+            INSERT INTO message_inbox
+                (id, channel, external_message_id, chat_id, payload,
+                 correlation_id)
+            VALUES
+                (gen_random_uuid(), 'telegram', 'old-1', '42', '{}',
+                 gen_random_uuid()),
+                (gen_random_uuid(), 'telegram', 'old-2', '42', '{}',
+                 gen_random_uuid())
+            """
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        rows = await conn.fetch(
+            "SELECT external_message_id, ingress_sequence "
+            "FROM message_inbox ORDER BY ingress_sequence"
+        )
+        assert {row["external_message_id"] for row in rows} == {"old-1", "old-2"}
+        assert rows[0]["ingress_sequence"] < rows[1]["ingress_sequence"]
+        new_sequence = await conn.fetchval(
+            """
+            INSERT INTO message_inbox
+                (id, channel, external_message_id, chat_id, payload,
+                 correlation_id)
+            VALUES
+                (gen_random_uuid(), 'telegram', 'new-3', '42', '{}',
+                 gen_random_uuid())
+            RETURNING ingress_sequence
+            """
+        )
+        assert new_sequence > rows[1]["ingress_sequence"]
+        assert await conn.fetchval(
+            """
+            SELECT is_nullable = 'NO'
+            FROM information_schema.columns
+            WHERE table_name = 'message_inbox'
+              AND column_name = 'ingress_sequence'
+            """
+        )
+        assert await conn.fetchval(
+            """
+            SELECT count(*)
+            FROM information_schema.columns
+            WHERE table_name = 'outbound_messages'
+              AND column_name = 'claimed_at'
+            """
+        ) == 1
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "downgrade", "0003_processing_consents")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            """
+            SELECT count(*)
+            FROM information_schema.columns
+            WHERE (table_name, column_name) IN (
+                ('message_inbox', 'ingress_sequence'),
+                ('outbound_messages', 'claimed_at')
+            )
+            """
+        ) == 0
+        assert await conn.fetchval("SELECT count(*) FROM message_inbox") == 3
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
 
 
 async def test_cutover_audits_and_stamps_exact_unversioned_schema(

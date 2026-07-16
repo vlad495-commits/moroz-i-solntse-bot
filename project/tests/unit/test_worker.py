@@ -71,6 +71,21 @@ class FakePump:
         self.stopped = True
 
 
+class StubbornPump:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def run(self, _stop):
+        self.started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            await self.release.wait()
+
+
 @pytest.mark.asyncio
 async def test_unknown_task_fails_closed_without_logging_payload_or_identifiers(caplog):
     task = QueueTask(
@@ -150,6 +165,57 @@ async def test_supervisor_propagates_pipeline_pump_failure():
 
 
 @pytest.mark.asyncio
+async def test_stop_cancels_stubborn_pump_with_bounded_wait(monkeypatch):
+    queue = FakeQueue("wait")
+    pump = StubbornPump()
+    stop = asyncio.Event()
+    monkeypatch.setattr(worker_main, "PUMP_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
+    supervised = asyncio.create_task(
+        worker_main._supervise(queue, stop, pump=pump)
+    )
+    await pump.started.wait()
+
+    stop.set()
+    await asyncio.wait_for(supervised, timeout=0.5)
+
+    assert pump.cancelled.is_set()
+    assert queue.close_calls == 1
+    pump.release.set()
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_supervisor_owns_and_cancels_prompt_reload_listener():
+    queue = FakeQueue("wait")
+    stop = asyncio.Event()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def prompt_listener():
+        started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    supervised = asyncio.create_task(
+        worker_main._supervise(
+            queue,
+            stop,
+            prompt_listener=prompt_listener,
+        )
+    )
+    await started.wait()
+
+    stop.set()
+    await supervised
+
+    assert cancelled.is_set()
+    assert queue.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_startup_failure_closes_every_created_runtime_resource(
     monkeypatch,
 ):
@@ -180,6 +246,10 @@ async def test_startup_failure_closes_every_created_runtime_resource(
         async def close(self):
             closed.append("telegram")
 
+    class RuntimeRepository:
+        async def reconcile_stale_outbound_deliveries(self):
+            return 0
+
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("REDIS_URL", "redis://unused")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:test-token")
@@ -203,6 +273,11 @@ async def test_startup_failure_closes_every_created_runtime_resource(
         worker_main,
         "Bot",
         lambda *args, **kwargs: SimpleNamespace(session=RuntimeSession()),
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "MessageRepository",
+        lambda *args, **kwargs: RuntimeRepository(),
     )
     monkeypatch.setattr(
         worker_main,

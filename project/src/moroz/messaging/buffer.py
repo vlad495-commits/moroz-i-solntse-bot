@@ -10,6 +10,7 @@ from moroz.messaging.outbox import enqueue_process_message
 
 BUFFER_SECONDS = 5
 BUFFER_TTL_SECONDS = 30
+DEADLINE_INDEX_KEY = "buffer:deadlines"
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,31 +43,26 @@ class MessageBuffer:
                     ),
                 )
                 pipe.expire(key, BUFFER_TTL_SECONDS)
-                pipe.set(
-                    f"{key}:deadline",
-                    self._now().timestamp() + BUFFER_SECONDS,
-                    ex=BUFFER_TTL_SECONDS,
+                pipe.zadd(
+                    DEADLINE_INDEX_KEY,
+                    {chat_id: self._now().timestamp() + BUFFER_SECONDS},
                 )
                 await pipe.execute()
         finally:
             await lock.release()
 
     async def due_chat_ids(self, limit: int = 100) -> tuple[str, ...]:
-        due = []
-        async for deadline_key in self._redis.scan_iter(
-            match="buffer:*:deadline",
-            count=limit,
-        ):
-            deadline = await self._redis.get(deadline_key)
-            if deadline is not None and self._now().timestamp() >= float(deadline):
-                due.append(
-                    deadline_key.removeprefix("buffer:").removesuffix(
-                        ":deadline"
-                    )
-                )
-                if len(due) >= limit:
-                    break
-        return tuple(due)
+        if limit <= 0:
+            return ()
+        return tuple(
+            await self._redis.zrangebyscore(
+                DEADLINE_INDEX_KEY,
+                "-inf",
+                self._now().timestamp(),
+                start=0,
+                num=limit,
+            )
+        )
 
     async def flush(self, chat_id: str) -> BufferedMessage | None:
         key = f"buffer:{chat_id}"
@@ -78,9 +74,12 @@ class MessageBuffer:
         try:
             async with self._redis.pipeline(transaction=True) as pipe:
                 pipe.lrange(key, 0, -1)
-                pipe.get(f"{key}:deadline")
+                pipe.zscore(DEADLINE_INDEX_KEY, chat_id)
                 entries, deadline = await pipe.execute()
-            if not entries or deadline is None:
+            if not entries:
+                await self._redis.zrem(DEADLINE_INDEX_KEY, chat_id)
+                return None
+            if deadline is None:
                 return None
             if self._now().timestamp() < float(deadline):
                 return None
@@ -99,7 +98,7 @@ class MessageBuffer:
             )
             async with self._redis.pipeline(transaction=True) as pipe:
                 pipe.delete(key)
-                pipe.delete(f"{key}:deadline")
+                pipe.zrem(DEADLINE_INDEX_KEY, chat_id)
                 await pipe.execute()
             return buffered
         finally:

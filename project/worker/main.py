@@ -11,12 +11,12 @@ import redis.asyncio as redis
 from redis.exceptions import RedisError
 
 from config import CONTEXT_MESSAGES_LIMIT
-from llm import generate_response, init_llm
+from llm import generate_response, init_llm, prompt_reload_listener
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask, RabbitQueue
 from moroz.messaging.buffer import MessageBuffer
-from moroz.messaging.outbox import OutboxRelay
+from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
 
@@ -28,6 +28,8 @@ logging.basicConfig(
 logger = logging.getLogger("worker")
 READINESS_PATH = Path("/tmp/worker-ready")
 PUMP_INTERVAL_SECONDS = 0.5
+PUMP_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+PROMPT_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
 async def handle(task: QueueTask) -> None:
@@ -64,9 +66,12 @@ class MessageTaskHandler:
             or not isinstance(update_ids, list)
             or not update_ids
             or any(not isinstance(value, str) for value in update_ids)
+            or len(set(update_ids)) != len(update_ids)
             or not isinstance(text, str)
         ):
             raise ValueError("invalid process_message payload")
+        if task.idempotency_key != process_message_key(update_ids):
+            raise ValueError("process_message idempotency key does not match updates")
         numeric_chat_id = int(chat_id)
         reply_key = f"reply:{task.idempotency_key}"
 
@@ -76,29 +81,81 @@ class MessageTaskHandler:
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     chat_id,
                 )
-                if await connection.fetchval(
-                    "SELECT id FROM outbound_messages WHERE idempotency_key = $1",
-                    reply_key,
-                ):
-                    return
-
                 inbox_rows = await connection.fetch(
                     """
-                    SELECT payload
+                    SELECT external_message_id, payload, status, ingress_sequence
                     FROM message_inbox
                     WHERE channel = 'telegram'
                       AND chat_id = $1
-                      AND external_message_id = ANY($2::text[])
+                      AND (
+                          status = 'accepted'
+                          OR external_message_id = ANY($2::text[])
+                      )
+                    ORDER BY ingress_sequence
+                    FOR UPDATE
                     """,
                     chat_id,
                     update_ids,
                 )
-                if len(inbox_rows) != len(set(update_ids)):
+                requested = {
+                    row["external_message_id"]: row
+                    for row in inbox_rows
+                    if row["external_message_id"] in update_ids
+                }
+                if len(requested) != len(update_ids):
                     raise ValueError("process_message inbox rows are missing")
-                payload = inbox_rows[0]["payload"]
-                if isinstance(payload, str):
-                    payload = json.loads(payload)
-                user_id = int(payload["user_id"])
+                if [
+                    row["external_message_id"]
+                    for row in inbox_rows
+                    if row["external_message_id"] in requested
+                ] != update_ids:
+                    raise ValueError(
+                        "process_message update ids are outside ingress order"
+                    )
+                if any(
+                    row["status"] not in {"accepted", "processed"}
+                    for row in requested.values()
+                ):
+                    raise ValueError("process_message inbox status is invalid")
+
+                accepted = [
+                    row
+                    for row in inbox_rows
+                    if row["status"] == "accepted"
+                    and row["external_message_id"] in requested
+                ]
+                if not accepted:
+                    return
+                all_accepted = [
+                    row for row in inbox_rows if row["status"] == "accepted"
+                ]
+                if [
+                    row["external_message_id"]
+                    for row in all_accepted[: len(accepted)]
+                ] != [row["external_message_id"] for row in accepted]:
+                    raise ValueError(
+                        "process_message has an earlier accepted inbox row"
+                    )
+
+                payloads = []
+                for row in accepted:
+                    payload = row["payload"]
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    if (
+                        not isinstance(payload, dict)
+                        or payload.get("update_id") != row["external_message_id"]
+                        or payload.get("chat_id") != chat_id
+                        or not isinstance(payload.get("text"), str)
+                        or not isinstance(payload.get("user_id"), str)
+                    ):
+                        raise ValueError("process_message persisted payload is invalid")
+                    payloads.append(payload)
+                user_ids = {payload["user_id"] for payload in payloads}
+                if len(user_ids) != 1:
+                    raise ValueError("process_message spans multiple users")
+                user_id = int(user_ids.pop())
+                persisted_text = "\n".join(payload["text"] for payload in payloads)
 
                 rows = await connection.fetch(
                     """
@@ -115,7 +172,7 @@ class MessageTaskHandler:
                     {"role": row["role"], "content": row["content"]}
                     for row in reversed(rows)
                 ]
-                result = await self._llm(text, context)
+                result = await self._llm(persisted_text, context)
 
                 await connection.execute(
                     """
@@ -125,7 +182,7 @@ class MessageTaskHandler:
                     """,
                     numeric_chat_id,
                     user_id,
-                    text,
+                    persisted_text,
                     result.text,
                 )
                 await connection.execute(
@@ -157,7 +214,7 @@ class MessageTaskHandler:
                     WHERE channel = 'telegram'
                       AND external_message_id = ANY($1::text[])
                     """,
-                    update_ids,
+                    [row["external_message_id"] for row in accepted],
                 )
 
 
@@ -199,6 +256,24 @@ def _publish_readiness(path: Path, active: bool) -> None:
         _remove_readiness(path)
 
 
+def _consume_task_result(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+async def _stop_background_task(task: asyncio.Task, timeout: float) -> None:
+    await asyncio.sleep(0)
+    if not task.done():
+        task.cancel()
+    done, _ = await asyncio.wait((task,), timeout=timeout)
+    if done:
+        _consume_task_result(task)
+    else:
+        task.add_done_callback(_consume_task_result)
+
+
 async def _supervise(
     queue: RabbitQueue,
     stop: asyncio.Event,
@@ -206,6 +281,7 @@ async def _supervise(
     *,
     handler=handle,
     pump: PipelinePump | None = None,
+    prompt_listener=None,
 ) -> None:
     _remove_readiness(readiness_path)
     consumer = asyncio.create_task(
@@ -216,10 +292,15 @@ async def _supervise(
     )
     waiter = asyncio.create_task(stop.wait())
     pump_task = asyncio.create_task(pump.run(stop)) if pump else None
+    prompt_task = (
+        asyncio.create_task(prompt_listener()) if prompt_listener else None
+    )
     try:
         watched = {consumer, waiter}
         if pump_task:
             watched.add(pump_task)
+        if prompt_task:
+            watched.add(prompt_task)
         done, _ = await asyncio.wait(
             watched,
             return_when=asyncio.FIRST_COMPLETED,
@@ -232,6 +313,9 @@ async def _supervise(
         if pump_task in done:
             await pump_task
             raise RuntimeError("Pipeline pump stopped unexpectedly")
+        if prompt_task in done:
+            await prompt_task
+            raise RuntimeError("Prompt reload listener stopped unexpectedly")
     finally:
         stop.set()
         _remove_readiness(readiness_path)
@@ -239,7 +323,13 @@ async def _supervise(
         waiter.cancel()
         await asyncio.gather(consumer, waiter, return_exceptions=True)
         if pump_task:
-            await asyncio.gather(pump_task, return_exceptions=True)
+            await _stop_background_task(
+                pump_task, PUMP_SHUTDOWN_TIMEOUT_SECONDS
+            )
+        if prompt_task:
+            await _stop_background_task(
+                prompt_task, PROMPT_SHUTDOWN_TIMEOUT_SECONDS
+            )
         await queue.close()
 
 
@@ -261,10 +351,15 @@ async def run() -> None:
     telegram = Bot(token=telegram_token)
     try:
         await database.connect()
+        repository = MessageRepository(database)
+        reconciled = await repository.reconcile_stale_outbound_deliveries()
+        if reconciled:
+            logger.warning(
+                "stale_outbound_deliveries_terminalized count=%d", reconciled
+            )
         await redis_client.ping()
         await queue.connect()
         init_llm()
-        repository = MessageRepository(database)
         task_handler = MessageTaskHandler(
             database,
             generate_response,
@@ -275,7 +370,13 @@ async def run() -> None:
             OutboxRelay(database, queue),
         )
         logger.info("Worker started")
-        await _supervise(queue, stop, handler=task_handler.handle, pump=pump)
+        await _supervise(
+            queue,
+            stop,
+            handler=task_handler.handle,
+            pump=pump,
+            prompt_listener=prompt_reload_listener,
+        )
     finally:
         _remove_readiness(READINESS_PATH)
         await queue.close()

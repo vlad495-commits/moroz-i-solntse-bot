@@ -20,7 +20,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 $services = ($renderedConfig -join "`n" | ConvertFrom-Json).services
 $expectedEnvironment = @{
-    worker = @("RABBITMQ_URL")
+    worker = @(
+        "CONTEXT_MESSAGES_LIMIT",
+        "DATABASE_URL",
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "LLM_MAX_TOKENS",
+        "LLM_MODEL",
+        "LLM_REQUEST_TIMEOUT_SEC",
+        "LLM_TEMPERATURE",
+        "OPENAI_API_KEY",
+        "POSTGRES_DB",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_USER",
+        "RABBITMQ_URL",
+        "REDIS_URL",
+        "TELEGRAM_BOT_TOKEN"
+    )
     redis = @("REDIS_PASSWORD")
     postgres = @("POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")
 }

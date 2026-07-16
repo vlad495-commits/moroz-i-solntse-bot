@@ -184,6 +184,37 @@ async def test_cancelled_send_is_marked_unknown_before_cancellation_propagates(
         ) == "delivery_unknown"
 
 
+async def test_fresh_worker_reconciles_stale_sending_without_resend(database):
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Не повторять вслепую",
+        idempotency_key="reply:stale-sending",
+    )
+    assert await repository.claim_outbound_delivery(outbound_id) is not None
+    telegram = FakeTelegram()
+
+    assert await MessageRepository(
+        database
+    ).reconcile_stale_outbound_deliveries() == 1
+    assert await TelegramSender(
+        telegram, MessageRepository(database)
+    ).send(outbound_id) == DeliveryResult.SKIPPED
+
+    assert telegram.sent_messages == []
+    async with database.acquire() as connection:
+        row = await connection.fetchrow(
+            "SELECT status, claimed_at FROM outbound_messages WHERE id = $1",
+            outbound_id,
+        )
+        assert tuple(row.values())[0] == "delivery_unknown"
+        assert row["claimed_at"] is not None
+        assert await connection.fetchval(
+            "SELECT count(*) FROM task_outbox WHERE kind = 'send_outbound'"
+        ) == 1
+
+
 async def test_process_message_materializes_reply_and_history_once(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming())
@@ -244,6 +275,156 @@ async def test_process_message_materializes_reply_and_history_once(database):
         "pending",
     )
     assert [tuple(row.values()) for row in tasks] == [("send_outbound", "pending")]
+
+
+async def test_later_task_retries_until_earlier_accepted_update_is_processed(
+    database,
+):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("201", "Первый"))
+    assert await repository.accept(incoming("202", "Второй"))
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database, llm, TelegramSender(FakeTelegram(), repository)
+    )
+    first = QueueTask(
+        "process_message",
+        {"chat_id": "42", "update_ids": ["201"], "text": "tampered"},
+        "process_message:201",
+    )
+    second = QueueTask(
+        "process_message",
+        {"chat_id": "42", "update_ids": ["202"], "text": "tampered"},
+        "process_message:202",
+    )
+
+    with pytest.raises(ValueError, match="earlier accepted"):
+        await handler.handle(second)
+    await handler.handle(first)
+    await handler.handle(second)
+
+    assert [call[0] for call in llm.calls] == ["Первый", "Второй"]
+
+
+@pytest.mark.parametrize("overlap_first", [False, True])
+async def test_overlapping_tasks_feed_each_inbox_row_to_llm_once(
+    database, overlap_first
+):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("203", "Один"))
+    assert await repository.accept(incoming("204", "Два"))
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database, llm, TelegramSender(FakeTelegram(), repository)
+    )
+    single = QueueTask(
+        "process_message",
+        {"chat_id": "42", "update_ids": ["203"], "text": "ignored"},
+        "process_message:203",
+    )
+    overlap = QueueTask(
+        "process_message",
+        {"chat_id": "42", "update_ids": ["203", "204"], "text": "ignored"},
+        "process_message:203,204",
+    )
+
+    for task in ((overlap, single) if overlap_first else (single, overlap)):
+        await handler.handle(task)
+
+    assert [call[0] for call in llm.calls] == (
+        ["Один\nДва"] if overlap_first else ["Один", "Два"]
+    )
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM message_inbox WHERE status = 'processed'"
+        ) == 2
+
+
+async def test_process_message_uses_persisted_text_and_rejects_tampered_identity(
+    database,
+):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("205", "Текст из inbox"))
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database, llm, TelegramSender(FakeTelegram(), repository)
+    )
+
+    with pytest.raises(ValueError, match="idempotency key"):
+        await handler.handle(
+            QueueTask(
+                "process_message",
+                {"chat_id": "42", "update_ids": ["205"], "text": "Подмена"},
+                "process_message:wrong",
+            )
+        )
+    with pytest.raises(ValueError, match="inbox rows"):
+        await handler.handle(
+            QueueTask(
+                "process_message",
+                {"chat_id": "99", "update_ids": ["205"], "text": "Подмена"},
+                "process_message:205",
+            )
+        )
+    await handler.handle(
+        QueueTask(
+            "process_message",
+            {"chat_id": "42", "update_ids": ["205"], "text": "Подмена"},
+            "process_message:205",
+        )
+    )
+
+    assert llm.calls[0][0] == "Текст из inbox"
+
+
+async def test_process_message_rejects_update_ids_outside_ingress_order(database):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("207", "Раньше"))
+    assert await repository.accept(incoming("208", "Позже"))
+    handler = MessageTaskHandler(
+        database,
+        FakeLLM(),
+        TelegramSender(FakeTelegram(), repository),
+    )
+
+    with pytest.raises(ValueError, match="ingress order"):
+        await handler.handle(
+            QueueTask(
+                "process_message",
+                {
+                    "chat_id": "42",
+                    "update_ids": ["208", "207"],
+                    "text": "ignored",
+                },
+                "process_message:208,207",
+            )
+        )
+
+
+async def test_fully_processed_group_is_success_without_llm_or_outbound(database):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("206", "Уже обработано"))
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE message_inbox SET status = 'processed' "
+            "WHERE external_message_id = '206'"
+        )
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database, llm, TelegramSender(FakeTelegram(), repository)
+    )
+
+    await handler.handle(
+        QueueTask(
+            "process_message",
+            {"chat_id": "42", "update_ids": ["206"], "text": "ignored"},
+            "process_message:206",
+        )
+    )
+
+    assert llm.calls == []
+    async with database.acquire() as connection:
+        assert await connection.fetchval("SELECT count(*) FROM outbound_messages") == 0
 
 
 async def test_same_chat_process_tasks_are_serialized_by_postgres(database):

@@ -128,7 +128,7 @@ async def test_concurrent_flush_claims_batch_once(buffer, clock, database):
 
 
 async def test_flush_reuses_committed_task_after_redis_delete_gap(
-    buffer, clock, database
+    buffer, clock, database, redis_client
 ):
     await buffer.append("42", "4", "Сохранено")
     buffered = BufferedMessage("42", ("4",), "Сохранено")
@@ -148,6 +148,41 @@ async def test_flush_reuses_committed_task_after_redis_delete_gap(
         )
     assert flushed == buffered
     assert [row["idempotency_key"] for row in rows] == [committed_key]
+    assert await redis_client.zscore("buffer:deadlines", "42") is None
+
+
+async def test_due_chat_discovery_has_hard_limit_and_ignores_future(
+    redis_client, database, clock
+):
+    now = clock.now().timestamp()
+    await redis_client.zadd(
+        "buffer:deadlines",
+        {
+            **{f"due-{index:03d}": now - 1 for index in range(250)},
+            **{f"future-{index:03d}": now + 60 for index in range(250)},
+        },
+    )
+
+    due = await MessageBuffer(
+        redis_client, database, clock=clock
+    ).due_chat_ids(limit=7)
+
+    assert len(due) == 7
+    assert all(chat_id.startswith("due-") for chat_id in due)
+
+
+async def test_flush_removes_due_orphan_from_deadline_index(
+    redis_client, database, clock
+):
+    await redis_client.zadd(
+        "buffer:deadlines", {"orphan": clock.now().timestamp() - 1}
+    )
+    buffer = MessageBuffer(redis_client, database, clock=clock)
+
+    assert await buffer.due_chat_ids() == ("orphan",)
+    assert await buffer.flush("orphan") is None
+
+    assert await redis_client.zscore("buffer:deadlines", "orphan") is None
 
 
 async def test_service_buffers_only_new_update(
