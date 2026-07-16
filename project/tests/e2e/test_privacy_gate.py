@@ -5,9 +5,12 @@ from types import SimpleNamespace
 import asyncpg
 import pytest
 import pytest_asyncio
+from aiogram.types import InlineKeyboardMarkup
 from httpx import ASGITransport, AsyncClient
 
 from config import NON_TEXT_REPLY
+from moroz.common.db import Database
+from moroz.messaging.repository import MessageRepository
 from webhook import create_app
 
 
@@ -112,6 +115,16 @@ async def db(migrated_database_url):
         yield connection
     finally:
         await connection.close()
+
+
+@pytest_asyncio.fixture
+async def message_database(migrated_database_url):
+    database = Database(migrated_database_url, min_size=1, max_size=1)
+    await database.connect()
+    try:
+        yield database
+    finally:
+        await database.close()
 
 
 @pytest_asyncio.fixture
@@ -270,3 +283,89 @@ async def test_non_text_update_sends_one_durable_static_reply(
     )
     assert await db.fetchval("SELECT count(*) FROM task_outbox") == 1
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+
+
+async def test_claimed_consent_outbound_rebuilds_keyboard_from_database(
+    message_database, db, fake_telegram
+):
+    delivery_options = {
+        "reply_markup": {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "Подтвердить",
+                        "callback_data": CONSENT_CALLBACK_DATA,
+                    }
+                ]
+            ]
+        }
+    }
+    enqueue_repository = MessageRepository(message_database)
+    outbound_id = await enqueue_repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text=CONSENT_PROMPT,
+        idempotency_key="telegram:consent_prompt:907",
+        delivery_options=delivery_options,
+    )
+    delivery_options["reply_markup"]["inline_keyboard"][0][0]["text"] = (
+        "Изменено после enqueue"
+    )
+
+    claimed = await MessageRepository(
+        message_database
+    ).claim_outbound_delivery(outbound_id)
+    from webhook import deliver_claimed_outbound
+
+    await deliver_claimed_outbound(
+        fake_telegram,
+        MessageRepository(message_database),
+        claimed,
+    )
+
+    markup = fake_telegram.sent_messages[0]["reply_markup"]
+    stored_options = await db.fetchval(
+        "SELECT delivery_options FROM outbound_messages WHERE id = $1",
+        outbound_id,
+    )
+    assert claimed.delivery_options["reply_markup"]["inline_keyboard"][0][0] == {
+        "text": "Подтвердить",
+        "callback_data": CONSENT_CALLBACK_DATA,
+    }
+    assert isinstance(markup, InlineKeyboardMarkup)
+    assert markup.inline_keyboard[0][0].callback_data == CONSENT_CALLBACK_DATA
+    assert json.loads(stored_options) == claimed.delivery_options
+    assert await db.fetchval(
+        "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+    ) == "sent"
+
+
+async def test_claimed_outbound_with_empty_options_sends_without_markup(
+    message_database, db, fake_telegram
+):
+    repository = MessageRepository(message_database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text=NON_TEXT_REPLY,
+        idempotency_key="telegram:non_text:908",
+    )
+
+    claimed = await MessageRepository(
+        message_database
+    ).claim_outbound_delivery(outbound_id)
+    from webhook import deliver_claimed_outbound
+
+    await deliver_claimed_outbound(
+        fake_telegram,
+        MessageRepository(message_database),
+        claimed,
+    )
+
+    assert claimed.delivery_options == {}
+    assert fake_telegram.sent_messages == [
+        {"chat_id": 42, "text": NON_TEXT_REPLY}
+    ]
+    assert await db.fetchval(
+        "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+    ) == "sent"

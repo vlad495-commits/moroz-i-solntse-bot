@@ -7,7 +7,7 @@ from fastapi import FastAPI, Response
 
 from config import DATABASE_URL, NON_TEXT_REPLY, TELEGRAM_BOT_TOKEN
 from moroz.common.db import Database
-from moroz.messaging.models import IncomingMessage
+from moroz.messaging.models import IncomingMessage, OutboundMessage
 from moroz.messaging.repository import MessageRepository
 from moroz.security.consent import (
     PROCESSING_CONSENT_VERSION,
@@ -27,6 +27,31 @@ CONSENT_KEYBOARD = InlineKeyboardMarkup(
         ]
     ]
 )
+
+
+async def deliver_claimed_outbound(
+    telegram,
+    repository: MessageRepository,
+    outbound: OutboundMessage,
+) -> None:
+    send_arguments = {
+        "chat_id": int(outbound.chat_id),
+        "text": outbound.text,
+    }
+    reply_markup = outbound.delivery_options.get("reply_markup")
+    if reply_markup is not None:
+        send_arguments["reply_markup"] = InlineKeyboardMarkup.model_validate(
+            reply_markup
+        )
+    try:
+        sent_message = await telegram.send_message(**send_arguments)
+    except Exception:
+        await repository.mark_outbound_delivery_unknown(outbound.id)
+        return
+    await repository.mark_outbound_sent(
+        outbound.id,
+        str(sent_message.message_id),
+    )
 
 
 def create_app(*, database_url=None, bot=None) -> FastAPI:
@@ -58,7 +83,7 @@ def create_app(*, database_url=None, bot=None) -> FastAPI:
         chat_id: int,
         text: str,
         reply_kind: str,
-        reply_markup=None,
+        delivery_options: dict[str, object] | None = None,
     ) -> None:
         repository = webhook_app.state.message_repository
         outbound_id = await repository.enqueue_outbound(
@@ -66,23 +91,15 @@ def create_app(*, database_url=None, bot=None) -> FastAPI:
             chat_id=str(chat_id),
             text=text,
             idempotency_key=f"telegram:{reply_kind}:{update_id}",
+            delivery_options=delivery_options,
         )
-        if not await repository.claim_outbound_delivery(outbound_id):
+        outbound = await repository.claim_outbound_delivery(outbound_id)
+        if outbound is None:
             return
-
-        send_arguments = {"chat_id": chat_id, "text": text}
-        if reply_markup is not None:
-            send_arguments["reply_markup"] = reply_markup
-        try:
-            sent_message = await webhook_app.state.telegram.send_message(
-                **send_arguments
-            )
-        except Exception:
-            await repository.mark_outbound_delivery_unknown(outbound_id)
-            return
-        await repository.mark_outbound_sent(
-            outbound_id,
-            str(sent_message.message_id),
+        await deliver_claimed_outbound(
+            webhook_app.state.telegram,
+            repository,
+            outbound,
         )
 
     @webhook_app.post("/telegram/webhook")
@@ -122,7 +139,9 @@ def create_app(*, database_url=None, bot=None) -> FastAPI:
                 chat_id=message.chat.id,
                 text=CONSENT_PROMPT,
                 reply_kind="consent_prompt",
-                reply_markup=CONSENT_KEYBOARD,
+                delivery_options={
+                    "reply_markup": CONSENT_KEYBOARD.model_dump(mode="json")
+                },
             )
             return Response(status_code=200)
 

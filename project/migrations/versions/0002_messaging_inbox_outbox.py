@@ -42,6 +42,12 @@ def upgrade() -> None:
         sa.Column("channel", sa.Text(), nullable=False),
         sa.Column("chat_id", sa.Text(), nullable=False),
         sa.Column("text", sa.Text(), nullable=False),
+        sa.Column(
+            "delivery_options",
+            postgresql.JSONB(),
+            server_default=sa.text("'{}'::jsonb"),
+            nullable=False,
+        ),
         sa.Column("idempotency_key", sa.Text(), nullable=False, unique=True),
         sa.Column(
             "status",

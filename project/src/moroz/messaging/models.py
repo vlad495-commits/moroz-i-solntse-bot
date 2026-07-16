@@ -17,6 +17,16 @@ class IncomingMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class OutboundMessage:
+    id: UUID
+    channel: str
+    chat_id: str
+    text: str
+    delivery_options: dict[str, object]
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class ScenarioResult:
     status: Literal["ok", "needs_input", "escalated", "failed"]
     message: str

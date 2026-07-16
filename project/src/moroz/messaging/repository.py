@@ -2,7 +2,7 @@ import json
 from uuid import UUID, uuid4
 
 from moroz.common.db import Database
-from moroz.messaging.models import IncomingMessage
+from moroz.messaging.models import IncomingMessage, OutboundMessage
 
 
 class MessageRepository:
@@ -50,6 +50,7 @@ class MessageRepository:
         chat_id: str,
         text: str,
         idempotency_key: str,
+        delivery_options: dict[str, object] | None = None,
     ) -> UUID:
         outbound_id = uuid4()
         async with self._database.acquire() as connection:
@@ -57,8 +58,9 @@ class MessageRepository:
                 row = await connection.fetchrow(
                     """
                     INSERT INTO outbound_messages
-                        (id, channel, chat_id, text, idempotency_key)
-                    VALUES ($1, $2, $3, $4, $5)
+                        (id, channel, chat_id, text, delivery_options,
+                         idempotency_key)
+                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id
                     """,
@@ -66,6 +68,7 @@ class MessageRepository:
                     channel,
                     chat_id,
                     text,
+                    json.dumps(delivery_options or {}, ensure_ascii=False),
                     idempotency_key,
                 )
                 if row is None:
@@ -86,18 +89,34 @@ class MessageRepository:
                 )
         return outbound_id
 
-    async def claim_outbound_delivery(self, outbound_id: UUID) -> bool:
+    async def claim_outbound_delivery(
+        self,
+        outbound_id: UUID,
+    ) -> OutboundMessage | None:
         async with self._database.acquire() as connection:
             row = await connection.fetchrow(
                 """
                 UPDATE outbound_messages
                 SET status = 'sending'
                 WHERE id = $1 AND status = 'pending'
-                RETURNING id
+                RETURNING id, channel, chat_id, text, delivery_options,
+                          idempotency_key
                 """,
                 outbound_id,
             )
-        return row is not None
+        if row is None:
+            return None
+        options = row["delivery_options"]
+        return OutboundMessage(
+            id=row["id"],
+            channel=row["channel"],
+            chat_id=row["chat_id"],
+            text=row["text"],
+            delivery_options=(
+                json.loads(options) if isinstance(options, str) else options
+            ),
+            idempotency_key=row["idempotency_key"],
+        )
 
     async def mark_outbound_sent(
         self,
