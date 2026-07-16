@@ -185,7 +185,7 @@ def run_cutover(database_url):
 
 
 async def make_unversioned_schema(database_url):
-    run_alembic(database_url, "upgrade", "head")
+    run_alembic(database_url, "upgrade", "0001_existing_schema")
     conn = await asyncpg.connect(database_url)
     try:
         await conn.execute("DROP TABLE alembic_version")
@@ -327,8 +327,8 @@ async def test_disposable_database_attempts_drop_but_preserves_terminate_error(
     assert admin.close_calls == 1
 
 
-async def test_alembic_creates_exact_existing_schema(migrated_database_url):
-    conn = await asyncpg.connect(migrated_database_url)
+async def test_alembic_creates_exact_existing_schema(baseline_database_url):
+    conn = await asyncpg.connect(baseline_database_url)
     try:
         tables = {
             row["tablename"]
@@ -416,15 +416,15 @@ async def test_cutover_audits_and_stamps_exact_unversioned_schema(
         await conn.close()
 
 
-async def test_cutover_is_idempotent_for_versioned_baseline(migrated_database_url):
-    result = run_cutover(migrated_database_url)
+async def test_cutover_is_idempotent_for_versioned_baseline(baseline_database_url):
+    result = run_cutover(baseline_database_url)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 async def test_baseline_downgrade_is_rejected_without_changing_schema_or_data(
-    migrated_database_url,
+    baseline_database_url,
 ):
-    conn = await asyncpg.connect(migrated_database_url)
+    conn = await asyncpg.connect(baseline_database_url)
     try:
         message_id = await conn.fetchval(
             """
@@ -459,10 +459,10 @@ async def test_baseline_downgrade_is_rejected_without_changing_schema_or_data(
     finally:
         await conn.close()
 
-    result = run_alembic_result(migrated_database_url, "downgrade", "base")
+    result = run_alembic_result(baseline_database_url, "downgrade", "base")
 
     assert result.returncode != 0
-    conn = await asyncpg.connect(migrated_database_url)
+    conn = await asyncpg.connect(baseline_database_url)
     try:
         catalog_after = await snapshot_application_catalog(conn)
         assert catalog_after == catalog_before
@@ -490,9 +490,9 @@ async def test_baseline_downgrade_is_rejected_without_changing_schema_or_data(
 
 @pytest.mark.parametrize("drift", ["column", "index", "constraint"])
 async def test_cutover_rejects_drift_in_already_stamped_schema(
-    migrated_database_url, drift
+    baseline_database_url, drift
 ):
-    conn = await asyncpg.connect(migrated_database_url)
+    conn = await asyncpg.connect(baseline_database_url)
     try:
         if drift == "column":
             await conn.execute(
@@ -505,11 +505,11 @@ async def test_cutover_rejects_drift_in_already_stamped_schema(
     finally:
         await conn.close()
 
-    result = run_cutover(migrated_database_url)
+    result = run_cutover(baseline_database_url)
 
     assert result.returncode != 0
     assert "Schema audit failed" in result.stderr
-    conn = await asyncpg.connect(migrated_database_url)
+    conn = await asyncpg.connect(baseline_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
             "0001_existing_schema"

@@ -58,3 +58,19 @@ async def migrated_database_url(disposable_database_url):
         env={**os.environ, "DATABASE_URL": disposable_database_url},
     )
     return disposable_database_url
+
+
+@pytest_asyncio.fixture
+async def baseline_database_url(disposable_database_url):
+    subprocess.run(
+        [
+            "alembic",
+            "-c",
+            "/workspace/alembic.ini",
+            "upgrade",
+            "0001_existing_schema",
+        ],
+        check=True,
+        env={**os.environ, "DATABASE_URL": disposable_database_url},
+    )
+    return disposable_database_url
