@@ -159,11 +159,14 @@ git commit -m "feat: добавлен Telegram webhook и privacy gate"
 - Create: `project/src/moroz/messaging/outbox.py`
 - Test: `project/tests/integration/messaging/test_buffer.py`
 - Test: `project/tests/integration/messaging/test_outbox.py`
+- Modify: `project/llm/webhook.py`
+- Modify: `project/tests/e2e/test_privacy_gate.py`
 
 **Interfaces:**
 - Produces: `MessageBuffer.append(chat_id, update_id, text) -> None`; Telegram `message_id` remains payload metadata and never replaces the globally unique `update_id`.
 - Produces: `MessageBuffer.flush(chat_id) -> BufferedMessage | None`.
 - Consumes: `QueuePort.publish(task: QueueTask) -> None` through the transactional outbox relay.
+- Wires: after consent, webhook calls `MessageService.accept(envelope)`; the service first persists through `MessageRepository.accept()`, buffers only a newly accepted `update_id`, and creates a durable single-message task when Redis is unavailable.
 
 - [ ] **Step 1: Write failing virtual-time test**
 
@@ -194,7 +197,7 @@ async def append(self, chat_id: str, update_id: str, text: str) -> None:
         await pipe.execute()
 ```
 
-On flush, acquire `lock:buffer:{chat_id}`, atomically read/delete the Redis list and create one durable `process_message` row in `task_outbox` for the already persisted inbox `update_id` values. `OutboxRelay.publish_pending()` publishes pending task rows through `QueuePort.publish()` and marks them published only after publisher confirmation. If Redis is unavailable after the inbox insert, bypass batching and create a single-message task-outbox row so the accepted message is not lost.
+On flush, acquire `lock:buffer:{chat_id}`, atomically read/delete the Redis list and create one durable `process_message` row in `task_outbox` for the already persisted inbox `update_id` values. `OutboxRelay.publish_pending()` publishes pending task rows through `QueuePort.publish()` and marks them published only after publisher confirmation. If Redis is unavailable after the inbox insert, bypass batching and create a single-message task-outbox row so the accepted message is not lost. A duplicate `update_id` returns before Redis append or task creation.
 
 - [ ] **Step 4: Run test including concurrent flush**
 
@@ -205,7 +208,7 @@ Expected: joined text once; second concurrent flush returns `None`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add project/src/moroz/messaging/buffer.py project/src/moroz/messaging/service.py project/src/moroz/messaging/outbox.py project/tests/integration/messaging/test_buffer.py project/tests/integration/messaging/test_outbox.py
+git add project/src/moroz/messaging/buffer.py project/src/moroz/messaging/service.py project/src/moroz/messaging/outbox.py project/llm/webhook.py project/tests/integration/messaging/test_buffer.py project/tests/integration/messaging/test_outbox.py project/tests/e2e/test_privacy_gate.py
 git commit -m "feat: добавлен буфер быстрых Telegram-сообщений"
 ```
 
