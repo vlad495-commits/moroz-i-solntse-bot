@@ -4,11 +4,14 @@ from uuid import uuid4
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from fastapi import FastAPI, Response
+import redis.asyncio as redis
 
-from config import DATABASE_URL, NON_TEXT_REPLY, TELEGRAM_BOT_TOKEN
+from config import DATABASE_URL, NON_TEXT_REPLY, REDIS_URL, TELEGRAM_BOT_TOKEN
 from moroz.common.db import Database
+from moroz.messaging.buffer import MessageBuffer
 from moroz.messaging.models import IncomingMessage, OutboundMessage
 from moroz.messaging.repository import MessageRepository
+from moroz.messaging.service import MessageService
 from moroz.security.consent import (
     PROCESSING_CONSENT_VERSION,
     ConsentService,
@@ -54,7 +57,7 @@ async def deliver_claimed_outbound(
     )
 
 
-def create_app(*, database_url=None, bot=None) -> FastAPI:
+def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(webhook_app: FastAPI):
         resolved_database_url = database_url or DATABASE_URL
@@ -65,13 +68,23 @@ def create_app(*, database_url=None, bot=None) -> FastAPI:
 
         telegram = bot or Bot(token=TELEGRAM_BOT_TOKEN)
         database = Database(resolved_database_url, min_size=1, max_size=5)
+        redis_client = redis.from_url(
+            redis_url or REDIS_URL,
+            decode_responses=True,
+        )
         try:
             await database.connect()
             webhook_app.state.telegram = telegram
             webhook_app.state.consent_service = ConsentService(database)
             webhook_app.state.message_repository = MessageRepository(database)
+            webhook_app.state.message_service = MessageService(
+                webhook_app.state.message_repository,
+                MessageBuffer(redis_client, database),
+                database,
+            )
             yield
         finally:
+            await redis_client.aclose()
             await database.close()
             await telegram.session.close()
 
@@ -145,7 +158,7 @@ def create_app(*, database_url=None, bot=None) -> FastAPI:
             )
             return Response(status_code=200)
 
-        await webhook_app.state.message_repository.accept(
+        await webhook_app.state.message_service.accept(
             IncomingMessage(
                 update_id=str(update.update_id),
                 message_id=str(message.message_id),

@@ -114,7 +114,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "POSTGRES_DB",
     }
     allowed = {
-        "test": database_keys | {"RABBITMQ_URL"},
+        "test": database_keys | {"RABBITMQ_URL", "REDIS_URL"},
         "migrate": database_keys,
         "cutover": database_keys,
     }

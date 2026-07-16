@@ -12,6 +12,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
       RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL outside Git}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
     volumes:
       - .:/workspace:ro
       - ../AGENTS.md:/repo/AGENTS.md:ro
@@ -21,6 +22,8 @@ services:
       postgres:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   migrate:

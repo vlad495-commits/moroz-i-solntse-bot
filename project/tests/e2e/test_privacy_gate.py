@@ -1,10 +1,12 @@
 import json
+import os
 from datetime import datetime
 from types import SimpleNamespace
 
 import asyncpg
 import pytest
 import pytest_asyncio
+import redis.asyncio as redis
 from aiogram.types import InlineKeyboardMarkup
 from httpx import ASGITransport, AsyncClient
 
@@ -128,7 +130,18 @@ async def message_database(migrated_database_url):
 
 
 @pytest_asyncio.fixture
-async def client(migrated_database_url, fake_telegram):
+async def redis_client():
+    client = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    await client.flushdb()
+    try:
+        yield client
+    finally:
+        await client.flushdb()
+        await client.aclose()
+
+
+@pytest_asyncio.fixture
+async def client(migrated_database_url, fake_telegram, redis_client):
     app = create_app(
         database_url=migrated_database_url,
         bot=fake_telegram,
@@ -182,7 +195,7 @@ async def test_consent_callback_persists_only_versioned_consent(
 
 
 async def test_consented_update_is_persisted_once_by_update_id(
-    client, db
+    client, db, redis_client
 ):
     assert (
         await client.post(
@@ -205,6 +218,54 @@ async def test_consented_update_is_persisted_once_by_update_id(
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 1
     assert tuple(message.values())[:3] == ("telegram", "902", "42")
     assert json.loads(message["payload"])["text"] == "Можно сохранить"
+    entries = await redis_client.lrange("buffer:42", 0, -1)
+    assert [json.loads(entry)["update_id"] for entry in entries] == ["902"]
+    assert await db.fetchval(
+        "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
+    ) == 0
+
+
+async def test_redis_failure_after_consent_creates_single_message_task(
+    migrated_database_url, db, fake_telegram
+):
+    app = create_app(
+        database_url=migrated_database_url,
+        bot=fake_telegram,
+        redis_url="redis://127.0.0.1:1/0",
+    )
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as http_client:
+            assert (
+                await http_client.post(
+                    "/telegram/webhook",
+                    json=telegram_consent_callback(update_id=909),
+                )
+            ).status_code == 200
+            assert (
+                await http_client.post(
+                    "/telegram/webhook",
+                    json=telegram_text_update("Не потерять", update_id=910),
+                )
+            ).status_code == 200
+
+    task = await db.fetchrow(
+        """
+        SELECT kind, payload, idempotency_key, status
+        FROM task_outbox
+        WHERE kind = 'process_message'
+        """
+    )
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == 1
+    assert task["kind"] == "process_message"
+    assert json.loads(task["payload"]) == {
+        "chat_id": "42",
+        "update_ids": ["910"],
+        "text": "Не потерять",
+    }
+    assert tuple(task.values())[2:] == ("process_message:910", "pending")
 
 
 async def test_duplicate_no_consent_update_sends_one_durable_prompt(
