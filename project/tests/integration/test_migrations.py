@@ -411,7 +411,12 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     finally:
         await conn.close()
 
-    new_tables = {"message_inbox", "outbound_messages", "task_outbox"}
+    new_tables = {
+        "message_inbox",
+        "outbound_messages",
+        "processing_consents",
+        "task_outbox",
+    }
     try:
         run_alembic(disposable_database_url, "upgrade", "head")
         conn = await asyncpg.connect(disposable_database_url)
@@ -441,7 +446,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0002_messaging_inbox_outbox"
+            "0003_processing_consents"
         )
     finally:
         await conn.close()

@@ -29,4 +29,4 @@ RUN groupadd --system appuser && \
     chown -R appuser:appuser /app
 USER appuser
 
-CMD ["python", "bot.py"]
+CMD ["sh", "-c", "if [ \"${TELEGRAM_MODE:-webhook}\" = polling ]; then exec python bot.py; else exec uvicorn webhook:app --host 0.0.0.0 --port 8081; fi"]

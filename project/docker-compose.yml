@@ -125,7 +125,7 @@ services:
         max-size: "10m"
         max-file: "5"
     healthcheck:
-      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q 'python bot.py'"]
+      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -Eq 'uvicorn webhook:app|python bot.py'"]
       interval: 30s
       timeout: 10s
       retries: 3
