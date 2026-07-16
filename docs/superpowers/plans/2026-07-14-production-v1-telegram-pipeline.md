@@ -263,6 +263,8 @@ The worker runtime must connect only the dependencies it now owns (PostgreSQL, R
 
 Review gate: PostgreSQL is the source of truth for task identity, persisted text and monotonic ingress order. Under the chat lock the worker may process only the earliest still-accepted inbox rows represented by the task; overlapping or fully processed groups must never feed the same update to the LLM twice. Redis deadline discovery must have a hard per-tick bound. Worker restart must converge stale `sending` rows to terminal `delivery_unknown` without blind resend, preserve the existing prompt hot-reload behavior, and support every provider advertised by the existing LLM adapter.
 
+Outage gate: Redis TTL expiry or total Redis loss must not strand an `accepted` inbox row. The worker owns a bounded PostgreSQL recovery sweep for expired accepted rows and can enqueue deterministic single-message tasks without Redis. Telegram V1 accepts only private chats until multi-user context semantics are designed. Shutdown cancels consumer, pump and prompt listener together under one deadline shorter than Compose `stop_grace_period`; every resource close is attempted and the original runtime error wins over cleanup errors.
+
 - [ ] **Step 4: Run E2E and queue retry tests**
 
 Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/e2e/test_message_delivery.py tests/integration/test_queue.py -q`
