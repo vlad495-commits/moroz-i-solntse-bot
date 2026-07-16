@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 import redis.asyncio as redis
 from redis.exceptions import RedisError
+from httpx import ASGITransport, AsyncClient
 
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask
@@ -17,6 +18,8 @@ from moroz.messaging.models import IncomingMessage
 from moroz.messaging.outbox import OutboxRelay, enqueue_process_message
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import DeliveryResult, TelegramSender
+from moroz.security.consent import ConsentService, PROCESSING_CONSENT_VERSION
+from webhook import create_app
 from worker.main import MessageTaskHandler, PipelinePump
 
 
@@ -699,3 +702,75 @@ async def test_handler_rejects_unknown_task_without_logging_data(
         )
 
     assert private not in caplog.text
+
+
+async def test_duplicate_consented_webhook_update_crosses_pipeline_once(
+    database, redis_client, migrated_database_url
+):
+    telegram = FakeTelegram()
+    llm = FakeLLM()
+    await ConsentService(database).grant_processing_consent(
+        "telegram", "7", PROCESSING_CONSENT_VERSION
+    )
+    app = create_app(
+        database_url=migrated_database_url,
+        redis_url=os.environ["REDIS_URL"],
+        bot=telegram,
+    )
+    update = {
+        "update_id": 990,
+        "message": {
+            "message_id": 100,
+            "date": 1_768_478_400,
+            "chat": {"id": 42, "type": "private"},
+            "from": {
+                "id": 7,
+                "is_bot": False,
+                "first_name": "Тест",
+            },
+            "text": "Один вопрос",
+        },
+    }
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            first = await client.post("/telegram/webhook", json=update)
+            duplicate = await client.post("/telegram/webhook", json=update)
+
+        await redis_client.zadd("buffer:deadlines", {"42": 0})
+        queue = RecordingQueue()
+        repository = MessageRepository(database)
+        pump = PipelinePump(
+            MessageBuffer(redis_client, database),
+            OutboxRelay(database, queue),
+            repository,
+        )
+        handler = MessageTaskHandler(
+            database, llm, TelegramSender(telegram, repository)
+        )
+
+        await pump.run_once()
+        process_task = next(
+            task for task in queue.tasks if task.kind == "process_message"
+        )
+        await handler.handle(process_task)
+        await handler.handle(process_task)
+        await pump.run_once()
+        send_task = next(
+            task for task in queue.tasks if task.kind == "send_outbound"
+        )
+        await handler.handle(send_task)
+        await handler.handle(send_task)
+
+    async with database.acquire() as connection:
+        inbox_count = await connection.fetchval("SELECT count(*) FROM message_inbox")
+        outbound_count = await connection.fetchval(
+            "SELECT count(*) FROM outbound_messages"
+        )
+
+    assert first.status_code == duplicate.status_code == 200
+    assert inbox_count == outbound_count == 1
+    assert len(llm.calls) == 1
+    assert len(telegram.sent_messages) == 1
