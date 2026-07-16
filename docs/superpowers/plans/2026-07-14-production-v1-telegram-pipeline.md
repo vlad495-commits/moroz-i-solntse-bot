@@ -231,7 +231,7 @@ git commit -m "feat: добавлен буфер быстрых Telegram-соо�
 - Produces: worker handlers for `process_message` and `send_outbound` tasks.
 - Runtime owner: the worker runs one bounded periodic pump that discovers due Redis buffers, calls `MessageBuffer.flush(...)`, then calls `OutboxRelay.publish_pending(...)`. This is the explicit restart-safe runtime bridge required by Task 3; do not add another service or use the future scheduler phase.
 
-- [ ] **Step 1: Write failing duplicate-delivery test**
+- [x] **Step 1: Write failing duplicate-delivery test**
 
 ```python
 async def test_worker_does_not_send_sent_outbound_twice(outbound_repo, worker, fake_telegram):
@@ -241,13 +241,13 @@ async def test_worker_does_not_send_sent_outbound_twice(outbound_repo, worker, f
     assert fake_telegram.sent == [("42", "Ответ")]
 ```
 
-- [ ] **Step 2: Run red**
+- [x] **Step 2: Run red**
 
 Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/e2e/test_message_delivery.py -q`
 
 Expected: FAIL because sender/handler are absent.
 
-- [ ] **Step 3: Implement claim/send/finalize**
+- [x] **Step 3: Implement claim/send/finalize**
 
 ```python
 row = await repo.claim(outbound_id)  # pending -> sending, SELECT FOR UPDATE SKIP LOCKED
@@ -265,13 +265,13 @@ Review gate: PostgreSQL is the source of truth for task identity, persisted text
 
 Outage gate: Redis TTL expiry or total Redis loss must not strand an `accepted` inbox row. The worker owns a bounded PostgreSQL recovery sweep for expired accepted rows and can enqueue deterministic single-message tasks without Redis. Telegram V1 accepts only private chats until multi-user context semantics are designed. Shutdown cancels consumer, pump and prompt listener together under one deadline shorter than Compose `stop_grace_period`; every resource close is attempted and the original runtime error wins over cleanup errors.
 
-- [ ] **Step 4: Run E2E and queue retry tests**
+- [x] **Step 4: Run E2E and queue retry tests**
 
 Run: `docker compose --env-file ../.env --profile test run --rm test pytest tests/e2e/test_message_delivery.py tests/integration/test_queue.py -q`
 
 Expected: all pass; one accepted buffered request produces one saved outbound and one external send, while duplicate task delivery does not call either the LLM or Telegram twice.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add project/src/moroz/messaging project/llm/webhook.py project/tests/e2e/test_message_delivery.py project/worker project/docker-compose.yml
