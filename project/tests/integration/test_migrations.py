@@ -401,6 +401,52 @@ async def test_alembic_creates_exact_existing_schema(baseline_database_url):
     assert indexes == EXPECTED_INDEXES
 
 
+async def test_messaging_migration_downgrade_preserves_baseline_schema(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "0001_existing_schema")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        baseline_catalog = await snapshot_application_catalog(conn)
+    finally:
+        await conn.close()
+
+    new_tables = {"message_inbox", "outbound_messages", "task_outbox"}
+    try:
+        run_alembic(disposable_database_url, "upgrade", "head")
+        conn = await asyncpg.connect(disposable_database_url)
+        try:
+            head_catalog = await snapshot_application_catalog(conn)
+        finally:
+            await conn.close()
+
+        assert set(head_catalog[0]) - set(baseline_catalog[0]) == new_tables
+
+        run_alembic(
+            disposable_database_url,
+            "downgrade",
+            "0001_existing_schema",
+        )
+        conn = await asyncpg.connect(disposable_database_url)
+        try:
+            downgraded_catalog = await snapshot_application_catalog(conn)
+        finally:
+            await conn.close()
+
+        assert downgraded_catalog == baseline_catalog
+        assert new_tables.isdisjoint(downgraded_catalog[0])
+    finally:
+        run_alembic(disposable_database_url, "upgrade", "head")
+
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0002_messaging_inbox_outbox"
+        )
+    finally:
+        await conn.close()
+
+
 async def test_cutover_audits_and_stamps_exact_unversioned_schema(
     disposable_database_url,
 ):

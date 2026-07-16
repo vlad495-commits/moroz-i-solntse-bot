@@ -1,14 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, TypeAlias
+from typing import Literal
 from uuid import UUID
-
-
-DomainEvent: TypeAlias = object
 
 
 @dataclass(frozen=True, slots=True)
 class IncomingMessage:
+    update_id: str
     message_id: str
     channel: str
     chat_id: str
@@ -23,5 +21,5 @@ class ScenarioResult:
     status: Literal["ok", "needs_input", "escalated", "failed"]
     message: str
     next_action: str | None
-    events: tuple[DomainEvent, ...]
+    events: tuple[object, ...]
     error_code: str | None = None

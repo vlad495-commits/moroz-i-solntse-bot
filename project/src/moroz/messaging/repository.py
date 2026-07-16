@@ -10,8 +10,10 @@ class MessageRepository:
         self._database = database
 
     async def accept(self, message: IncomingMessage) -> bool:
+        """Persist an update after the caller has verified processing consent."""
         payload = json.dumps(
             {
+                "update_id": message.update_id,
                 "message_id": message.message_id,
                 "channel": message.channel,
                 "chat_id": message.chat_id,
@@ -34,7 +36,7 @@ class MessageRepository:
                 """,
                 uuid4(),
                 message.channel,
-                message.message_id,
+                message.update_id,
                 message.chat_id,
                 payload,
                 message.correlation_id,

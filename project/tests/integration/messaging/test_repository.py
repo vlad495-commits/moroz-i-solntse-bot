@@ -1,7 +1,9 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import asyncpg
 import pytest
 import pytest_asyncio
 
@@ -31,6 +33,7 @@ def message_repo(database):
 @pytest.fixture
 def incoming_message():
     return IncomingMessage(
+        update_id="900",
         message_id="100",
         channel="telegram",
         chat_id="42",
@@ -44,6 +47,21 @@ def incoming_message():
 async def test_accept_same_message_once(message_repo, incoming_message):
     assert await message_repo.accept(incoming_message) is True
     assert await message_repo.accept(incoming_message) is False
+
+
+@pytest.mark.parametrize("second_chat_id", ["42", "43"])
+async def test_accept_distinct_updates_with_same_message_id(
+    message_repo, incoming_message, second_chat_id
+):
+    second_update = replace(
+        incoming_message,
+        update_id="901",
+        chat_id=second_chat_id,
+        correlation_id=uuid4(),
+    )
+
+    assert await message_repo.accept(incoming_message) is True
+    assert await message_repo.accept(second_update) is True
 
 
 async def test_enqueue_outbound_creates_one_message_and_separate_task(
@@ -84,3 +102,41 @@ async def test_enqueue_outbound_creates_one_message_and_separate_task(
     assert json.loads(task["payload"]) == {"outbound_id": str(outbound_id)}
     assert task["status"] == "pending"
     assert tuple(counts.values()) == (1, 1)
+
+
+async def test_enqueue_outbound_rolls_back_when_task_insert_fails(
+    database, message_repo
+):
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            CREATE FUNCTION reject_task_outbox() RETURNS trigger
+            LANGUAGE plpgsql AS $$
+            BEGIN
+                RAISE EXCEPTION 'forced task_outbox failure';
+            END;
+            $$;
+            CREATE TRIGGER reject_task_outbox_insert
+            BEFORE INSERT ON task_outbox
+            FOR EACH ROW EXECUTE FUNCTION reject_task_outbox();
+            """
+        )
+
+    with pytest.raises(asyncpg.PostgresError, match="forced task_outbox failure"):
+        await message_repo.enqueue_outbound(
+            channel="telegram",
+            chat_id="42",
+            text="Ответ",
+            idempotency_key="reply:rollback",
+        )
+
+    async with database.acquire() as connection:
+        counts = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT count(*) FROM outbound_messages) AS outbound_count,
+                (SELECT count(*) FROM task_outbox) AS task_count
+            """
+        )
+
+    assert tuple(counts.values()) == (0, 0)
