@@ -161,7 +161,7 @@ git commit -m "feat: добавлен Telegram webhook и privacy gate"
 - Test: `project/tests/integration/messaging/test_outbox.py`
 
 **Interfaces:**
-- Produces: `MessageBuffer.append(chat_id, message_id, text) -> None`.
+- Produces: `MessageBuffer.append(chat_id, update_id, text) -> None`; Telegram `message_id` remains payload metadata and never replaces the globally unique `update_id`.
 - Produces: `MessageBuffer.flush(chat_id) -> BufferedMessage | None`.
 - Consumes: `QueuePort.publish(task: QueueTask) -> None` through the transactional outbox relay.
 
@@ -185,16 +185,16 @@ Expected: FAIL because buffer is absent.
 - [ ] **Step 3: Implement Redis list + deadline**
 
 ```python
-async def append(self, chat_id: str, message_id: str, text: str) -> None:
+async def append(self, chat_id: str, update_id: str, text: str) -> None:
     key = f"buffer:{chat_id}"
     async with self.redis.pipeline(transaction=True) as pipe:
-        pipe.rpush(key, json.dumps({"id": message_id, "text": text}))
+        pipe.rpush(key, json.dumps({"update_id": update_id, "text": text}))
         pipe.expire(key, 30)
         pipe.set(f"{key}:deadline", self.clock.now().timestamp() + 5, ex=30)
         await pipe.execute()
 ```
 
-On flush, acquire `lock:buffer:{chat_id}`, atomically read/delete the Redis list and create one durable `process_message` row in `task_outbox` for the already persisted inbox IDs. `OutboxRelay.publish_pending()` publishes pending task rows through `QueuePort.publish()` and marks them published only after publisher confirmation. If Redis is unavailable after the inbox insert, bypass batching and create a single-message task-outbox row so the accepted message is not lost.
+On flush, acquire `lock:buffer:{chat_id}`, atomically read/delete the Redis list and create one durable `process_message` row in `task_outbox` for the already persisted inbox `update_id` values. `OutboxRelay.publish_pending()` publishes pending task rows through `QueuePort.publish()` and marks them published only after publisher confirmation. If Redis is unavailable after the inbox insert, bypass batching and create a single-message task-outbox row so the accepted message is not lost.
 
 - [ ] **Step 4: Run test including concurrent flush**
 
