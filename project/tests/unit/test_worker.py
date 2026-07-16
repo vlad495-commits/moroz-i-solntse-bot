@@ -12,6 +12,10 @@ class ConsumerFailure(RuntimeError):
     pass
 
 
+class CleanupFailure(RuntimeError):
+    pass
+
+
 def test_worker_reads_explicit_pipeline_settings_without_aggregate_settings():
     source = Path("/workspace/worker/main.py").read_text(encoding="utf-8")
 
@@ -27,8 +31,9 @@ def test_worker_reads_explicit_pipeline_settings_without_aggregate_settings():
 
 
 class FakeQueue:
-    def __init__(self, result):
+    def __init__(self, result, *, close_error=None):
         self.result = result
+        self.close_error = close_error
         self.started = asyncio.Event()
         self.cancelled = False
         self.close_calls = 0
@@ -55,6 +60,8 @@ class FakeQueue:
 
     async def close(self):
         self.close_calls += 1
+        if self.close_error:
+            raise self.close_error
 
 
 class FakePump:
@@ -84,6 +91,25 @@ class StubbornPump:
         except asyncio.CancelledError:
             self.cancelled.set()
             await self.release.wait()
+
+
+class StubbornCleanupQueue(FakeQueue):
+    def __init__(self):
+        super().__init__("wait")
+        self.release = asyncio.Event()
+
+    async def consume(self, _handler, readiness=None):
+        self.started.set()
+        if readiness:
+            readiness(True)
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            await self.release.wait()
+        finally:
+            if readiness:
+                readiness(False)
 
 
 @pytest.mark.asyncio
@@ -136,6 +162,36 @@ async def test_stop_cancels_consumer_and_closes_queue_once():
 
 
 @pytest.mark.asyncio
+async def test_consumer_failure_wins_over_queue_close_failure():
+    primary = ConsumerFailure("consumer failed")
+    queue = FakeQueue(
+        primary,
+        close_error=CleanupFailure("queue close failed"),
+    )
+
+    with pytest.raises(ConsumerFailure) as raised:
+        await worker_main._supervise(queue, asyncio.Event())
+
+    assert raised.value is primary
+    assert queue.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_supervisor_cleanup_only_error_surfaces():
+    cleanup_error = CleanupFailure("queue close failed")
+    queue = FakeQueue("wait", close_error=cleanup_error)
+    stop = asyncio.Event()
+    supervised = asyncio.create_task(worker_main._supervise(queue, stop))
+    await queue.started.wait()
+
+    stop.set()
+    with pytest.raises(CleanupFailure) as raised:
+        await supervised
+
+    assert raised.value is cleanup_error
+
+
+@pytest.mark.asyncio
 async def test_supervisor_runs_and_stops_pipeline_pump():
     queue = FakeQueue("wait")
     pump = FakePump()
@@ -169,7 +225,9 @@ async def test_stop_cancels_stubborn_pump_with_bounded_wait(monkeypatch):
     queue = FakeQueue("wait")
     pump = StubbornPump()
     stop = asyncio.Event()
-    monkeypatch.setattr(worker_main, "PUMP_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        worker_main, "SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS", 0.01
+    )
     supervised = asyncio.create_task(
         worker_main._supervise(queue, stop, pump=pump)
     )
@@ -213,6 +271,69 @@ async def test_supervisor_owns_and_cancels_prompt_reload_listener():
 
     assert cancelled.is_set()
     assert queue.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_supervisor_uses_one_deadline_for_all_stubborn_tasks(
+    monkeypatch, tmp_path
+):
+    queue = StubbornCleanupQueue()
+    pump = StubbornPump()
+    prompt_started = asyncio.Event()
+    prompt_cancelled = asyncio.Event()
+    prompt_release = asyncio.Event()
+    readiness = tmp_path / "worker-ready"
+
+    async def stubborn_prompt():
+        prompt_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            prompt_cancelled.set()
+            await prompt_release.wait()
+
+    async def release_later():
+        await asyncio.sleep(0.2)
+        queue.release.set()
+        pump.release.set()
+        prompt_release.set()
+
+    monkeypatch.setattr(
+        worker_main,
+        "SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS",
+        0.05,
+        raising=False,
+    )
+    stop = asyncio.Event()
+    supervised = asyncio.create_task(
+        worker_main._supervise(
+            queue,
+            stop,
+            readiness,
+            pump=pump,
+            prompt_listener=stubborn_prompt,
+        )
+    )
+    await asyncio.gather(
+        queue.started.wait(),
+        pump.started.wait(),
+        prompt_started.wait(),
+    )
+    release_task = asyncio.create_task(release_later())
+    started_at = asyncio.get_running_loop().time()
+
+    stop.set()
+    await supervised
+
+    elapsed = asyncio.get_running_loop().time() - started_at
+    assert elapsed < 0.15
+    assert queue.cancelled
+    assert pump.cancelled.is_set()
+    assert prompt_cancelled.is_set()
+    assert queue.close_calls == 1
+    assert not readiness.exists()
+    await release_task
+    await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -289,6 +410,95 @@ async def test_startup_failure_closes_every_created_runtime_resource(
         await worker_main.run()
 
     assert set(closed) == {"queue", "database", "redis", "telegram"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_primary", [True, False])
+async def test_run_attempts_all_cleanup_and_preserves_error_precedence(
+    monkeypatch, with_primary
+):
+    closed = []
+    primary = ConsumerFailure("runtime primary")
+    queue_cleanup = CleanupFailure("queue cleanup")
+    telegram_cleanup = CleanupFailure("telegram cleanup")
+
+    class RuntimeDatabase:
+        async def connect(self):
+            pass
+
+        async def close(self):
+            closed.append("database")
+
+    class RuntimeRedis:
+        async def ping(self):
+            pass
+
+        async def aclose(self):
+            closed.append("redis")
+
+    class RuntimeQueue:
+        async def connect(self):
+            pass
+
+        async def close(self):
+            closed.append("queue")
+            if not with_primary:
+                raise queue_cleanup
+
+    class RuntimeSession:
+        async def close(self):
+            closed.append("telegram")
+            raise telegram_cleanup
+
+    class RuntimeRepository:
+        async def reconcile_stale_outbound_deliveries(self):
+            return 0
+
+    async def supervise(*args, **kwargs):
+        return None
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("REDIS_URL", "redis://unused")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:test-token")
+    monkeypatch.setenv("RABBITMQ_URL", "amqp://unused")
+    monkeypatch.setattr(
+        worker_main, "Database", lambda *args, **kwargs: RuntimeDatabase()
+    )
+    monkeypatch.setattr(
+        worker_main.redis,
+        "from_url",
+        lambda *args, **kwargs: RuntimeRedis(),
+    )
+    monkeypatch.setattr(
+        worker_main, "RabbitQueue", lambda *args, **kwargs: RuntimeQueue()
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "Bot",
+        lambda *args, **kwargs: SimpleNamespace(session=RuntimeSession()),
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "MessageRepository",
+        lambda *args, **kwargs: RuntimeRepository(),
+    )
+    monkeypatch.setattr(worker_main, "_supervise", supervise)
+    monkeypatch.setattr(
+        worker_main,
+        "init_llm",
+        (
+            (lambda: (_ for _ in ()).throw(primary))
+            if with_primary
+            else (lambda: None)
+        ),
+    )
+
+    expected = primary if with_primary else queue_cleanup
+    with pytest.raises(type(expected)) as raised:
+        await worker_main.run()
+
+    assert raised.value is expected
+    assert set(closed) == {"queue", "telegram", "redis", "database"}
 
 
 @pytest.mark.asyncio

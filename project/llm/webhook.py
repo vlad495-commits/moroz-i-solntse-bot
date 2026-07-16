@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from aiogram import Bot
+from aiogram.enums import ChatType
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from fastapi import FastAPI, Response
 import redis.asyncio as redis
@@ -97,16 +98,24 @@ def create_app(*, database_url=None, redis_url=None, bot=None) -> FastAPI:
         update = Update.model_validate(payload, context={"bot": telegram})
 
         callback = update.callback_query
-        if callback and callback.data == CONSENT_CALLBACK_DATA:
-            await webhook_app.state.consent_service.grant_processing_consent(
-                "telegram",
-                str(callback.from_user.id),
-                PROCESSING_CONSENT_VERSION,
-            )
+        if callback:
+            if (
+                callback.message is None
+                or callback.message.chat.type != ChatType.PRIVATE
+            ):
+                return Response(status_code=200)
+            if callback.data == CONSENT_CALLBACK_DATA:
+                await webhook_app.state.consent_service.grant_processing_consent(
+                    "telegram",
+                    str(callback.from_user.id),
+                    PROCESSING_CONSENT_VERSION,
+                )
             return Response(status_code=200)
 
         message = update.message
         if not message:
+            return Response(status_code=200)
+        if message.chat.type != ChatType.PRIVATE:
             return Response(status_code=200)
         if message.text is None:
             await send_static_reply(

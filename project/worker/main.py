@@ -15,7 +15,7 @@ from llm import generate_response, init_llm, prompt_reload_listener
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask, RabbitQueue
-from moroz.messaging.buffer import MessageBuffer
+from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
@@ -28,8 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger("worker")
 READINESS_PATH = Path("/tmp/worker-ready")
 PUMP_INTERVAL_SECONDS = 0.5
-PUMP_SHUTDOWN_TIMEOUT_SECONDS = 5.0
-PROMPT_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS = 24.0
 
 
 async def handle(task: QueueTask) -> None:
@@ -219,9 +218,15 @@ class MessageTaskHandler:
 
 
 class PipelinePump:
-    def __init__(self, buffer: MessageBuffer, relay: OutboxRelay):
+    def __init__(
+        self,
+        buffer: MessageBuffer,
+        relay: OutboxRelay,
+        repository: MessageRepository,
+    ):
         self._buffer = buffer
         self._relay = relay
+        self._repository = repository
 
     async def run_once(self) -> int:
         try:
@@ -232,6 +237,9 @@ class PipelinePump:
                 "pipeline_buffer_unavailable error_type=%s",
                 type(error).__name__,
             )
+        await self._repository.enqueue_stale_accepted_messages(
+            older_than_seconds=BUFFER_TTL_SECONDS
+        )
         return await self._relay.publish_pending()
 
     async def run(self, stop: asyncio.Event) -> None:
@@ -263,15 +271,59 @@ def _consume_task_result(task: asyncio.Task) -> None:
         pass
 
 
-async def _stop_background_task(task: asyncio.Task, timeout: float) -> None:
-    await asyncio.sleep(0)
-    if not task.done():
-        task.cancel()
-    done, _ = await asyncio.wait((task,), timeout=timeout)
-    if done:
+def _raise_after_cleanup(
+    primary_error: BaseException | None,
+    results,
+) -> None:
+    cleanup_error = None
+    for result in results:
+        if isinstance(result, BaseException):
+            logger.warning(
+                "cleanup_failed error_type=%s", type(result).__name__
+            )
+            if cleanup_error is None:
+                cleanup_error = result
+    if primary_error is not None:
+        raise primary_error
+    if cleanup_error is not None:
+        raise cleanup_error
+
+
+async def _cleanup_all(
+    *operations,
+    primary_error: BaseException | None = None,
+    prior_results=(),
+) -> None:
+    results = await asyncio.gather(*operations, return_exceptions=True)
+    _raise_after_cleanup(primary_error, (*prior_results, *results))
+
+
+async def _stop_background_tasks(
+    tasks: tuple[asyncio.Task, ...],
+    deadline: float,
+) -> None:
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+    done, pending = await asyncio.wait(tasks, timeout=remaining)
+    for task in done:
         _consume_task_result(task)
-    else:
+    for task in pending:
         task.add_done_callback(_consume_task_result)
+
+
+async def _close_queue_before(queue: RabbitQueue, deadline: float) -> None:
+    task = asyncio.create_task(queue.close())
+    await asyncio.sleep(0)
+    remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+    done, pending = await asyncio.wait((task,), timeout=remaining)
+    if done:
+        task.result()
+    else:
+        task.cancel()
+        task.add_done_callback(_consume_task_result)
+        raise TimeoutError("queue close exceeded supervisor deadline")
 
 
 async def _supervise(
@@ -295,6 +347,7 @@ async def _supervise(
     prompt_task = (
         asyncio.create_task(prompt_listener()) if prompt_listener else None
     )
+    primary_error = None
     try:
         watched = {consumer, waiter}
         if pump_task:
@@ -306,31 +359,44 @@ async def _supervise(
             return_when=asyncio.FIRST_COMPLETED,
         )
         if waiter in done:
-            return
-        if consumer in done:
+            pass
+        elif consumer in done:
             await consumer
             raise RuntimeError("Consumer stopped unexpectedly")
-        if pump_task in done:
+        elif pump_task in done:
             await pump_task
             raise RuntimeError("Pipeline pump stopped unexpectedly")
-        if prompt_task in done:
+        elif prompt_task in done:
             await prompt_task
             raise RuntimeError("Prompt reload listener stopped unexpectedly")
+    except BaseException as error:
+        primary_error = error
     finally:
         stop.set()
-        _remove_readiness(readiness_path)
-        consumer.cancel()
-        waiter.cancel()
-        await asyncio.gather(consumer, waiter, return_exceptions=True)
-        if pump_task:
-            await _stop_background_task(
-                pump_task, PUMP_SHUTDOWN_TIMEOUT_SECONDS
-            )
-        if prompt_task:
-            await _stop_background_task(
-                prompt_task, PROMPT_SHUTDOWN_TIMEOUT_SECONDS
-            )
-        await queue.close()
+        cleanup_results = []
+        try:
+            _remove_readiness(readiness_path)
+        except BaseException as error:
+            cleanup_results.append(error)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS
+        close_reserve = min(
+            2.0, SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS / 10
+        )
+        tasks = tuple(
+            task
+            for task in (consumer, waiter, pump_task, prompt_task)
+            if task is not None
+        )
+        try:
+            await _stop_background_tasks(tasks, deadline - close_reserve)
+        except BaseException as error:
+            cleanup_results.append(error)
+        try:
+            await _close_queue_before(queue, deadline)
+        except BaseException as error:
+            cleanup_results.append(error)
+        _raise_after_cleanup(primary_error, cleanup_results)
 
 
 async def run() -> None:
@@ -349,6 +415,7 @@ async def run() -> None:
     database = Database(database_url, min_size=1, max_size=5)
     redis_client = redis.from_url(redis_url, decode_responses=True)
     telegram = Bot(token=telegram_token)
+    primary_error = None
     try:
         await database.connect()
         repository = MessageRepository(database)
@@ -368,6 +435,7 @@ async def run() -> None:
         pump = PipelinePump(
             MessageBuffer(redis_client, database),
             OutboxRelay(database, queue),
+            repository,
         )
         logger.info("Worker started")
         await _supervise(
@@ -377,12 +445,22 @@ async def run() -> None:
             pump=pump,
             prompt_listener=prompt_reload_listener,
         )
+    except BaseException as error:
+        primary_error = error
     finally:
-        _remove_readiness(READINESS_PATH)
-        await queue.close()
-        await telegram.session.close()
-        await redis_client.aclose()
-        await database.close()
+        readiness_error = None
+        try:
+            _remove_readiness(READINESS_PATH)
+        except BaseException as error:
+            readiness_error = error
+        await _cleanup_all(
+            queue.close(),
+            telegram.session.close(),
+            redis_client.aclose(),
+            database.close(),
+            primary_error=primary_error,
+            prior_results=(readiness_error,),
+        )
         logger.info("Worker stopped")
 
 

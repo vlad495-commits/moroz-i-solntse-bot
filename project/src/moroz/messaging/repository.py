@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage, OutboundMessage
+from moroz.messaging.outbox import enqueue_process_message
 
 
 class MessageRepository:
@@ -174,3 +175,53 @@ class MessageRepository:
                 """
             )
         return int(result.rsplit(" ", 1)[-1])
+
+    async def enqueue_stale_accepted_messages(
+        self,
+        *,
+        older_than_seconds: float,
+        limit: int = 100,
+    ) -> int:
+        if limit <= 0:
+            return 0
+        async with self._database.acquire() as connection:
+            rows = await connection.fetch(
+                """
+                SELECT inbox.external_message_id, inbox.chat_id, inbox.payload
+                FROM message_inbox AS inbox
+                WHERE inbox.channel = 'telegram'
+                  AND inbox.status = 'accepted'
+                  AND inbox.created_at <= now() - make_interval(
+                      secs => $1::double precision
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM task_outbox AS task
+                      WHERE task.kind = 'process_message'
+                        AND task.payload->'update_ids'
+                            ? inbox.external_message_id
+                  )
+                ORDER BY inbox.ingress_sequence
+                LIMIT $2
+                """,
+                older_than_seconds,
+                limit,
+            )
+        for row in rows:
+            payload = row["payload"]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if (
+                not isinstance(payload, dict)
+                or payload.get("update_id") != row["external_message_id"]
+                or payload.get("chat_id") != row["chat_id"]
+                or not isinstance(payload.get("text"), str)
+            ):
+                raise ValueError("stale accepted inbox payload is invalid")
+            await enqueue_process_message(
+                self._database,
+                chat_id=payload["chat_id"],
+                update_ids=(payload["update_id"],),
+                text=payload["text"],
+            )
+        return len(rows)

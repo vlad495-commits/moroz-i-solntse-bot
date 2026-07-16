@@ -12,7 +12,7 @@ from redis.exceptions import RedisError
 
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask
-from moroz.messaging.buffer import MessageBuffer
+from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.outbox import OutboxRelay, enqueue_process_message
 from moroz.messaging.repository import MessageRepository
@@ -498,6 +498,7 @@ async def test_fresh_pump_flushes_existing_due_buffer_and_publishes_all_pending(
     fresh_pump = PipelinePump(
         MessageBuffer(redis_client, database, clock=clock),
         OutboxRelay(database, queue),
+        MessageRepository(database),
     )
 
     await fresh_pump.run_once()
@@ -522,11 +523,164 @@ async def test_pump_publishes_database_tasks_when_redis_scan_fails(database):
         async def due_chat_ids(self):
             raise RedisError("redis unavailable")
 
-    await PipelinePump(BrokenBuffer(), OutboxRelay(database, queue)).run_once()
+    await PipelinePump(
+        BrokenBuffer(),
+        OutboxRelay(database, queue),
+        MessageRepository(database),
+    ).run_once()
 
     assert [task.idempotency_key for task in queue.tasks] == [
         "process_message:durable"
     ]
+
+
+async def age_accepted(database, update_id, *, seconds=BUFFER_TTL_SECONDS + 1):
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE message_inbox "
+            "SET created_at = now() - ($2 * interval '1 second') "
+            "WHERE external_message_id = $1",
+            update_id,
+            seconds,
+        )
+
+
+async def test_fresh_pump_recovers_expired_inbox_with_due_redis_orphan(
+    database, redis_client
+):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("601", "Из сохранённого inbox"))
+    await age_accepted(database, "601")
+    await redis_client.zadd("buffer:deadlines", {"42": 0})
+    queue = RecordingQueue()
+    pump = PipelinePump(
+        MessageBuffer(redis_client, database),
+        OutboxRelay(database, queue),
+        repository,
+    )
+
+    await pump.run_once()
+
+    assert [task.idempotency_key for task in queue.tasks] == [
+        "process_message:601"
+    ]
+    assert queue.tasks[0].payload == {
+        "chat_id": "42",
+        "update_ids": ["601"],
+        "text": "Из сохранённого inbox",
+    }
+    assert await redis_client.zscore("buffer:deadlines", "42") is None
+
+
+async def test_fresh_pump_recovers_expired_inbox_after_full_redis_loss(
+    database, redis_client
+):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("602", "Redis всё потерял"))
+    await age_accepted(database, "602")
+    await redis_client.flushdb()
+    queue = RecordingQueue()
+
+    await PipelinePump(
+        MessageBuffer(redis_client, database),
+        OutboxRelay(database, queue),
+        repository,
+    ).run_once()
+
+    assert [task.idempotency_key for task in queue.tasks] == [
+        "process_message:602"
+    ]
+
+
+async def test_recovery_sweep_is_idempotent_and_bounded(
+    database, redis_client
+):
+    repository = MessageRepository(database)
+    for index in range(101):
+        assert await repository.accept(
+            incoming(str(700 + index), f"Сообщение {index}")
+        )
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE message_inbox "
+            "SET created_at = now() - interval '31 seconds'"
+        )
+    queue = RecordingQueue()
+    pump = PipelinePump(
+        MessageBuffer(redis_client, database),
+        OutboxRelay(database, queue),
+        repository,
+    )
+
+    await pump.run_once()
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM task_outbox "
+            "WHERE kind = 'process_message'"
+        ) == 100
+    await pump.run_once()
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM task_outbox "
+            "WHERE kind = 'process_message'"
+        ) == 101
+    assert len({task.idempotency_key for task in queue.tasks}) == 101
+
+
+async def test_recovery_sweep_does_not_steal_active_buffer_row(
+    database, redis_client
+):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("901", "Ещё в активном буфере"))
+    queue = RecordingQueue()
+
+    await PipelinePump(
+        MessageBuffer(redis_client, database),
+        OutboxRelay(database, queue),
+        repository,
+    ).run_once()
+
+    assert queue.tasks == []
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM task_outbox "
+            "WHERE kind = 'process_message'"
+        ) == 0
+
+
+async def test_redis_loss_recovery_processes_persisted_message_once(
+    database, redis_client
+):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("902", "Только один LLM вызов"))
+    await age_accepted(database, "902")
+    await redis_client.flushdb()
+    queue = RecordingQueue()
+    await PipelinePump(
+        MessageBuffer(redis_client, database),
+        OutboxRelay(database, queue),
+        repository,
+    ).run_once()
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+    )
+
+    await handler.handle(queue.tasks[0])
+    await handler.handle(queue.tasks[0])
+
+    assert [call[0] for call in llm.calls] == ["Только один LLM вызов"]
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM outbound_messages"
+        ) == 1
+        assert await connection.fetchval(
+            "SELECT status FROM message_inbox "
+            "WHERE external_message_id = '902'"
+        ) == "processed"
 
 
 async def test_handler_rejects_unknown_task_without_logging_data(

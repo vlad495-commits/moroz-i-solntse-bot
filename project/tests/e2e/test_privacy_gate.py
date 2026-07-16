@@ -48,15 +48,22 @@ class FakeTelegram:
         return SimpleNamespace(message_id=700 + len(self.sent_messages))
 
 
-def telegram_text_update(text="Секретный текст", *, update_id=900):
+def telegram_text_update(
+    text="Секретный текст",
+    *,
+    update_id=900,
+    chat_id=42,
+    chat_type="private",
+    user_id=7,
+):
     return {
         "update_id": update_id,
         "message": {
             "message_id": 100,
             "date": 1_768_478_400,
-            "chat": {"id": 42, "type": "private"},
+            "chat": {"id": chat_id, "type": chat_type},
             "from": {
-                "id": 7,
+                "id": user_id,
                 "is_bot": False,
                 "first_name": "Тест",
             },
@@ -65,18 +72,29 @@ def telegram_text_update(text="Секретный текст", *, update_id=900)
     }
 
 
-def telegram_consent_callback(*, update_id=901):
+def telegram_consent_callback(
+    *,
+    update_id=901,
+    chat_id=42,
+    chat_type="private",
+    user_id=7,
+):
     return {
         "update_id": update_id,
         "callback_query": {
             "id": "callback-1",
             "from": {
-                "id": 7,
+                "id": user_id,
                 "is_bot": False,
                 "first_name": "Тест",
             },
             "chat_instance": "test-chat",
             "data": CONSENT_CALLBACK_DATA,
+            "message": {
+                "message_id": 99,
+                "date": 1_768_478_400,
+                "chat": {"id": chat_id, "type": chat_type},
+            },
         },
     }
 
@@ -192,6 +210,47 @@ async def test_consent_callback_persists_only_versioned_consent(
     assert tuple(consent.values())[:3] == ("telegram", "7", "v1")
     assert isinstance(consent["granted_at"], datetime)
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+
+
+async def test_group_messages_and_callbacks_are_ignored_before_any_durable_work(
+    client, db, redis_client, fake_telegram
+):
+    responses = []
+    for offset, user_id in enumerate((7, 8)):
+        responses.append(
+            await client.post(
+                "/telegram/webhook",
+                json=telegram_consent_callback(
+                    update_id=920 + offset * 2,
+                    chat_id=-10042,
+                    chat_type="group",
+                    user_id=user_id,
+                ),
+            )
+        )
+        responses.append(
+            await client.post(
+                "/telegram/webhook",
+                json=telegram_text_update(
+                    f"Групповой текст {user_id}",
+                    update_id=921 + offset * 2,
+                    chat_id=-10042,
+                    chat_type="group",
+                    user_id=user_id,
+                ),
+            )
+        )
+
+    assert all(response.status_code == 200 for response in responses)
+    for table in (
+        "processing_consents",
+        "message_inbox",
+        "outbound_messages",
+        "task_outbox",
+    ):
+        assert await db.fetchval(f"SELECT count(*) FROM {table}") == 0
+    assert await redis_client.dbsize() == 0
+    assert fake_telegram.sent_messages == []
 
 
 async def test_consented_update_is_persisted_once_by_update_id(
