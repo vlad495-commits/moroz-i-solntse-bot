@@ -760,3 +760,26 @@ def test_evidence_delta_requires_exactly_one_each():
         "sent_delta": 1,
     }
     assert staging.evidence_delta(before, staging.Counts(5, 5, 3))["ok"] is False
+
+
+def test_staging_runbook_uses_exact_project_and_never_destroys_data():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    prefix = (
+        "docker compose --env-file ../.env -p moroz-staging "
+        "-f docker-compose.yml -f docker-compose.staging.yml"
+    )
+    assert prefix in text
+    assert "setWebhook" in text
+    assert "getWebhookInfo" in text
+    assert "deleteWebhook" in text
+    assert "alembic upgrade head" in text
+    assert "worker-restart" in text
+    assert "redis-loss" in text
+    assert "STAGING_PREVIOUS_IMAGE_TAG" in text
+    for forbidden in (
+        "alembic downgrade",
+        "down --volumes",
+        "docker volume rm",
+        "drop_pending_updates=true",
+    ):
+        assert forbidden not in text

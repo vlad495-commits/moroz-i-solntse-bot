@@ -6,6 +6,7 @@ REPO = Path("/repo")
 DOCUMENTS = [
     REPO / "AGENTS.md",
     REPO / "План реализации.md",
+    Path("/workspace/ops/staging-runbook.md"),
     *sorted((REPO / "docs/superpowers/plans").glob("*.md")),
 ]
 
