@@ -471,12 +471,16 @@ async def test_verify_timeout_covers_blocked_query_and_closes_connection(
 
     class FakeConnection:
         closed = False
+        terminated = False
 
         async def fetchrow(self, *_args):
             await asyncio.Event().wait()
 
         async def close(self):
             self.closed = True
+
+        def terminate(self):
+            self.terminated = True
 
     connection = FakeConnection()
 
@@ -502,7 +506,8 @@ async def test_verify_timeout_covers_blocked_query_and_closes_connection(
         "label": "live",
         "timed_out": True,
     }
-    assert connection.closed is True
+    assert connection.closed is False
+    assert connection.terminated is True
 
 
 @pytest.mark.asyncio
@@ -533,9 +538,131 @@ async def test_verify_timeout_covers_blocked_connect(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_verify_total_timeout_terminates_when_close_blocks(monkeypatch):
+    staging = load_staging_module()
+
+    class FakeConnection:
+        close_calls = 0
+        terminate_calls = 0
+
+        async def fetchrow(self, query, *_args):
+            if "count(*)" in query:
+                return {"inbox": 1, "llm": 1, "sent": 1}
+            return {
+                "payload": {
+                    "update_id": "1",
+                    "message_id": "1",
+                    "chat_id": "1",
+                    "user_id": "1",
+                    "text": staging.CANARY_TEXT,
+                    "received_at": "2026-07-18T09:00:00+00:00",
+                }
+            }
+
+        async def close(self):
+            self.close_calls += 1
+            await asyncio.Event().wait()
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+    connection = FakeConnection()
+
+    async def connect(_database_url):
+        return connection
+
+    monkeypatch.setattr(staging.asyncpg, "connect", connect)
+    monkeypatch.setattr(
+        staging,
+        "read_snapshot",
+        lambda _label: staging.Snapshot(
+            staging.Counts(0, 0, 0),
+            staging.datetime.fromisoformat("2026-07-18T09:00:00+00:00"),
+        ),
+    )
+
+    started = asyncio.get_running_loop().time()
+    result = await asyncio.wait_for(
+        staging.verify_command("live", "unused", timeout_seconds=0.02),
+        timeout=0.2,
+    )
+    elapsed = asyncio.get_running_loop().time() - started
+    assert result == {
+        "action": "verify",
+        "label": "live",
+        "ok": True,
+        "inbox_delta": 1,
+        "llm_delta": 1,
+        "sent_delta": 1,
+    }
+    assert elapsed < 0.2
+    assert connection.close_calls == 1
+    assert connection.terminate_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_verify_success_closes_gracefully_without_terminate(monkeypatch):
+    staging = load_staging_module()
+
+    class FakeConnection:
+        close_calls = 0
+        terminate_calls = 0
+
+        async def fetchrow(self, query, *_args):
+            if "count(*)" in query:
+                return {"inbox": 1, "llm": 1, "sent": 1}
+            return {
+                "payload": {
+                    "update_id": "1",
+                    "message_id": "1",
+                    "chat_id": "1",
+                    "user_id": "1",
+                    "text": staging.CANARY_TEXT,
+                    "received_at": "2026-07-18T09:00:00+00:00",
+                }
+            }
+
+        async def close(self):
+            self.close_calls += 1
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+    connection = FakeConnection()
+
+    async def connect(_database_url):
+        return connection
+
+    monkeypatch.setattr(staging.asyncpg, "connect", connect)
+    monkeypatch.setattr(
+        staging,
+        "read_snapshot",
+        lambda _label: staging.Snapshot(
+            staging.Counts(0, 0, 0),
+            staging.datetime.fromisoformat("2026-07-18T09:00:00+00:00"),
+        ),
+    )
+
+    result = await staging.verify_command(
+        "live", "unused", timeout_seconds=0.1
+    )
+    assert result["ok"] is True
+    assert connection.close_calls == 1
+    assert connection.terminate_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_post_update_rejects_redirect_without_calling_target(monkeypatch):
     staging = load_staging_module()
     calls = {"source": 0, "target": 0}
+
+    class RedirectResponse:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    redirect_response = RedirectResponse()
 
     class RedirectingOpener:
         def __init__(self, handler):
@@ -545,7 +672,7 @@ async def test_post_update_rejects_redirect_without_calling_target(monkeypatch):
             calls["source"] += 1
             redirected = self.handler.redirect_request(
                 req,
-                None,
+                redirect_response,
                 302,
                 "Found",
                 {},
@@ -576,6 +703,7 @@ async def test_post_update_rejects_redirect_without_calling_target(monkeypatch):
             {"update_id": -1},
         )
     assert calls == {"source": 1, "target": 0}
+    assert redirect_response.closed is True
 
 
 @pytest.mark.asyncio

@@ -69,7 +69,11 @@ class SafeArgumentParser(argparse.ArgumentParser):
 
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise RuntimeError("staging_webhook_rejected")
+        try:
+            if fp is not None:
+                fp.close()
+        finally:
+            raise RuntimeError("staging_webhook_rejected")
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,11 +311,13 @@ async def verify_command(
     *,
     timeout_seconds: float = 120,
 ) -> dict[str, object]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
     snapshot = read_snapshot(label)
     connection = None
     try:
         try:
-            async with asyncio.timeout(timeout_seconds):
+            async with asyncio.timeout_at(deadline):
                 connection = await asyncpg.connect(database_url)
                 while True:
                     result = evidence_delta(
@@ -330,7 +336,14 @@ async def verify_command(
             }
     finally:
         if connection is not None:
-            await connection.close()
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                connection.terminate()
+            else:
+                try:
+                    await asyncio.wait_for(connection.close(), timeout=remaining)
+                except TimeoutError:
+                    connection.terminate()
 
 
 async def replay_live(
