@@ -43,6 +43,21 @@ services:
     volumes:
       - ./ops:/app/ops:ro
 
+  staging-smoke:
+    profiles: ["staging-tools"]
+    image: "moroz-staging-bot:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
+    entrypoint: ["python", "/app/ops/staging.py", "smoke"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      STAGING_PUBLIC_URL: ${STAGING_PUBLIC_URL:?set STAGING_PUBLIC_URL}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET}
+    volumes:
+      - ./ops:/app/ops:ro
+      - ../tmp:/state:rw
+
   caddy:
     profiles: ["staging-ingress"]
     image: caddy:2.11.4

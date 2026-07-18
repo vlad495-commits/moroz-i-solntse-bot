@@ -2,17 +2,30 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 import json
 import os
+from pathlib import Path
 import re
+import sys
 from typing import Mapping
+from urllib import request
 from urllib.parse import urlsplit
 
+import asyncpg
 from aiogram import Bot
+
+from moroz.common.config import database_url_from_env
 
 
 WEBHOOK_SECRET = re.compile(r"[A-Za-z0-9_-]{32,64}\Z")
+CANARY_TEXT = "staging canary: проверка ответа"
+SYNTHETIC = {
+    "worker-restart": (-1000000001, "staging synthetic: worker restart"),
+    "redis-loss": (-1000000002, "staging synthetic: redis loss"),
+}
+LABELS = {"live", *SYNTHETIC}
 
 
 def validated_public_url(value: str) -> str:
@@ -79,6 +92,264 @@ class WebhookConfig:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class Counts:
+    inbox: int
+    llm: int
+    sent: int
+
+
+@dataclass(frozen=True, slots=True)
+class Snapshot:
+    counts: Counts
+    started_at: datetime
+
+
+def write_snapshot(
+    label: str,
+    counts: Counts,
+    *,
+    started_at: str | None = None,
+    state_dir=Path("/state"),
+) -> Path:
+    if label not in LABELS:
+        raise ValueError("evidence_label_invalid")
+    path = state_dir / f"staging-{label}.json"
+    started = started_at or datetime.now(UTC).isoformat()
+    path.write_text(
+        json.dumps(
+            {
+                "counts": asdict(counts),
+                "label": label,
+                "started_at": started,
+                "version": 1,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def read_snapshot(label: str, *, state_dir=Path("/state")) -> Snapshot:
+    if label not in LABELS:
+        raise ValueError("evidence_label_invalid")
+    data = json.loads((state_dir / f"staging-{label}.json").read_text("utf-8"))
+    if data.get("version") != 1 or data.get("label") != label:
+        raise ValueError("evidence_state_invalid")
+    return Snapshot(
+        counts=Counts(**data["counts"]),
+        started_at=datetime.fromisoformat(data["started_at"]),
+    )
+
+
+def evidence_delta(before: Counts, after: Counts) -> dict[str, object]:
+    result = {
+        "inbox_delta": after.inbox - before.inbox,
+        "llm_delta": after.llm - before.llm,
+        "sent_delta": after.sent - before.sent,
+    }
+    return {"ok": set(result.values()) == {1}, **result}
+
+
+async def collect_counts(connection) -> Counts:
+    row = await connection.fetchrow(
+        """
+        SELECT
+          (SELECT count(*) FROM message_inbox) AS inbox,
+          (SELECT count(*) FROM token_usage) AS llm,
+          (SELECT count(*) FROM outbound_messages WHERE status = 'sent') AS sent
+        """
+    )
+    return Counts(row["inbox"], row["llm"], row["sent"])
+
+
+def build_update(payload: dict[str, str], *, update_id=None, text=None) -> dict:
+    received = datetime.fromisoformat(payload["received_at"])
+    return {
+        "update_id": int(payload["update_id"] if update_id is None else update_id),
+        "message": {
+            "message_id": int(payload["message_id"]),
+            "date": int(received.timestamp()),
+            "chat": {"id": int(payload["chat_id"]), "type": "private"},
+            "from": {
+                "id": int(payload["user_id"]),
+                "is_bot": False,
+                "first_name": "Staging",
+            },
+            "text": payload["text"] if text is None else text,
+        },
+    }
+
+
+def scan_log_lines(lines) -> dict[str, object]:
+    secret = re.compile(
+        r"bot\d+:[A-Za-z0-9_-]+|"
+        r"(?:postgresql|redis|amqp)s?://[^\s@]+:[^\s@]+@|"
+        r"(?:Authorization|X-Telegram-Bot-Api-Secret-Token)\s*[:=]"
+    )
+    secret_count = 0
+    traceback_count = 0
+    for line in lines:
+        secret_count += bool(secret.search(line))
+        traceback_count += "Traceback (most recent call last)" in line
+    return {
+        "ok": secret_count == 0 and traceback_count == 0,
+        "secret_shaped_lines": secret_count,
+        "traceback_lines": traceback_count,
+    }
+
+
+async def post_update(public_url: str, secret: str, update: dict) -> None:
+    body = json.dumps(update, ensure_ascii=False).encode("utf-8")
+    req = request.Request(
+        f"{public_url.rstrip('/')}/telegram/webhook",
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Telegram-Bot-Api-Secret-Token": secret,
+        },
+    )
+
+    def send() -> int:
+        with request.urlopen(req, timeout=10) as response:
+            return response.status
+
+    if await asyncio.to_thread(send) != 200:
+        raise RuntimeError("staging_webhook_rejected")
+
+
+def smoke_config(env: Mapping[str, str]) -> tuple[str, str, str]:
+    return (
+        database_url_from_env(env),
+        validated_public_url(env.get("STAGING_PUBLIC_URL", "")),
+        validated_secret(env.get("TELEGRAM_WEBHOOK_SECRET", "")),
+    )
+
+
+async def find_payload(connection, label: str, snapshot: Snapshot) -> dict | None:
+    if label == "live":
+        row = await connection.fetchrow(
+            """
+            SELECT payload
+            FROM message_inbox
+            WHERE payload->>'text' = $1
+              AND created_at >= $2
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            CANARY_TEXT,
+            snapshot.started_at,
+        )
+    else:
+        row = await connection.fetchrow(
+            """
+            SELECT payload
+            FROM message_inbox
+            WHERE channel = 'telegram' AND external_message_id = $1
+            """,
+            str(SYNTHETIC[label][0]),
+        )
+    if row is None:
+        return None
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    required = {"update_id", "message_id", "chat_id", "user_id", "text", "received_at"}
+    if not isinstance(payload, dict) or not required <= payload.keys():
+        raise ValueError("staging_evidence_payload_invalid")
+    return payload
+
+
+async def snapshot_command(label: str, database_url: str) -> dict[str, object]:
+    connection = await asyncpg.connect(database_url)
+    try:
+        write_snapshot(label, await collect_counts(connection))
+    finally:
+        await connection.close()
+    return {"ok": True, "action": "snapshot", "label": label}
+
+
+async def verify_command(label: str, database_url: str) -> dict[str, object]:
+    snapshot = read_snapshot(label)
+    connection = await asyncpg.connect(database_url)
+    try:
+        deadline = asyncio.get_running_loop().time() + 120
+        while True:
+            result = evidence_delta(snapshot.counts, await collect_counts(connection))
+            target = await find_payload(connection, label, snapshot)
+            if result["ok"] and target is not None:
+                return {"action": "verify", "label": label, **result}
+            if asyncio.get_running_loop().time() >= deadline:
+                return {"action": "verify", "label": label, **result, "ok": False}
+            await asyncio.sleep(1)
+    finally:
+        await connection.close()
+
+
+async def replay_live(
+    database_url: str, public_url: str, secret: str
+) -> dict[str, object]:
+    snapshot = read_snapshot("live")
+    connection = await asyncpg.connect(database_url)
+    try:
+        payload = await find_payload(connection, "live", snapshot)
+    finally:
+        await connection.close()
+    if payload is None:
+        raise RuntimeError("staging_evidence_update_missing")
+    await post_update(public_url, secret, build_update(payload))
+    return await verify_command("live", database_url)
+
+
+async def inject_synthetic(
+    label: str,
+    database_url: str,
+    public_url: str,
+    secret: str,
+) -> dict[str, object]:
+    if label not in SYNTHETIC:
+        raise ValueError("synthetic_label_invalid")
+    await snapshot_command(label, database_url)
+    live_snapshot = read_snapshot("live")
+    connection = await asyncpg.connect(database_url)
+    try:
+        payload = await find_payload(connection, "live", live_snapshot)
+    finally:
+        await connection.close()
+    if payload is None:
+        raise RuntimeError("staging_evidence_update_missing")
+    payload = {
+        **payload,
+        "received_at": datetime.now(UTC).isoformat(),
+    }
+    update_id, text = SYNTHETIC[label]
+    await post_update(
+        public_url,
+        secret,
+        build_update(payload, update_id=update_id, text=text),
+    )
+    return {"ok": True, "action": "inject", "label": label}
+
+
+async def run_smoke(args: argparse.Namespace) -> dict[str, object]:
+    if args.action == "scan-logs":
+        return scan_log_lines(sys.stdin)
+    database_url, public_url, secret = smoke_config(os.environ)
+    if args.action == "snapshot":
+        return await snapshot_command(args.label, database_url)
+    if args.action == "verify":
+        return await verify_command(args.label, database_url)
+    if args.action == "replay-live":
+        return await replay_live(database_url, public_url, secret)
+    if args.action == "inject":
+        return await inject_synthetic(args.label, database_url, public_url, secret)
+    raise ValueError("smoke_action_invalid")
+
+
 async def manage_webhook(
     action: str,
     config: WebhookConfig,
@@ -131,16 +402,36 @@ def build_parser() -> argparse.ArgumentParser:
     webhook = groups.add_parser("webhook")
     webhook.add_argument("action", choices=("set", "status", "delete"))
     webhook.add_argument("--drop-pending-updates", action="store_true")
+    smoke = groups.add_parser("smoke")
+    smoke_actions = smoke.add_subparsers(dest="action", required=True)
+    snapshot = smoke_actions.add_parser("snapshot")
+    snapshot.add_argument("--label", choices=("live",), required=True)
+    verify = smoke_actions.add_parser("verify")
+    verify.add_argument(
+        "--label",
+        choices=("live", "worker-restart", "redis-loss"),
+        required=True,
+    )
+    smoke_actions.add_parser("replay-live")
+    inject = smoke_actions.add_parser("inject")
+    inject.add_argument(
+        "--label", choices=("worker-restart", "redis-loss"), required=True
+    )
+    smoke_actions.add_parser("scan-logs")
     return parser
 
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
     if args.group == "webhook":
+        if args.drop_pending_updates and args.action != "set":
+            raise ValueError("drop_pending_only_valid_for_set")
         return await manage_webhook(
             args.action,
             WebhookConfig.from_env(os.environ),
             drop_pending_updates=args.drop_pending_updates,
         )
+    if args.group == "smoke":
+        return await run_smoke(args)
     raise ValueError("command_group_invalid")
 
 

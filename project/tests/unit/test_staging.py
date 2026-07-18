@@ -143,6 +143,23 @@ def test_staging_webhook_receives_only_required_environment():
     }
 
 
+def test_staging_smoke_receives_only_required_environment():
+    smoke = load_staging()["services"]["staging-smoke"]
+    assert "env_file" not in smoke
+    assert set(smoke["environment"]) == {
+        "DATABASE_URL",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+        "STAGING_PUBLIC_URL",
+        "TELEGRAM_WEBHOOK_SECRET",
+    }
+    assert "TELEGRAM_BOT_TOKEN" not in smoke["environment"]
+    assert "LLM_API_KEY" not in smoke["environment"]
+    assert "REDIS_URL" not in smoke["environment"]
+    assert "RABBITMQ_URL" not in smoke["environment"]
+
+
 def test_webhook_config_rejects_http_and_invalid_secret():
     staging = load_staging_module()
     with pytest.raises(ValueError, match="staging_public_url_invalid"):
@@ -361,3 +378,60 @@ def test_cli_invalid_action_uses_only_safe_json_error(monkeypatch, capsys):
     assert captured.err == ""
     assert sentinel not in captured.out + captured.err
     assert "usage:" not in captured.out + captured.err
+
+
+def test_evidence_state_contains_only_safe_aggregates(tmp_path):
+    staging = load_staging_module()
+    path = staging.write_snapshot(
+        "live",
+        staging.Counts(inbox=4, llm=3, sent=2),
+        started_at="2026-07-18T09:00:00+00:00",
+        state_dir=tmp_path,
+    )
+    assert path.read_text(encoding="utf-8") == (
+        '{"counts":{"inbox":4,"llm":3,"sent":2},'
+        '"label":"live","started_at":"2026-07-18T09:00:00+00:00",'
+        '"version":1}'
+    )
+
+
+def test_build_replay_update_uses_persisted_fields_without_logging_them():
+    staging = load_staging_module()
+    update = staging.build_update({
+        "update_id": "902",
+        "message_id": "17",
+        "chat_id": "42",
+        "user_id": "7",
+        "text": staging.CANARY_TEXT,
+        "received_at": "2026-07-18T09:00:00+00:00",
+    })
+    assert update["update_id"] == 902
+    assert update["message"]["chat"] == {"id": 42, "type": "private"}
+    assert update["message"]["from"]["id"] == 7
+    assert update["message"]["text"] == staging.CANARY_TEXT
+
+
+def test_safe_log_scan_returns_counts_not_matching_lines():
+    staging = load_staging_module()
+    private = "bot123456:secret-token private-user-text"
+    result = staging.scan_log_lines(
+        [private, "Traceback (most recent call last)"]
+    )
+    assert result == {
+        "ok": False,
+        "secret_shaped_lines": 1,
+        "traceback_lines": 1,
+    }
+    assert private not in repr(result)
+
+
+def test_evidence_delta_requires_exactly_one_each():
+    staging = load_staging_module()
+    before = staging.Counts(inbox=4, llm=3, sent=2)
+    assert staging.evidence_delta(before, staging.Counts(5, 4, 3)) == {
+        "ok": True,
+        "inbox_delta": 1,
+        "llm_delta": 1,
+        "sent_delta": 1,
+    }
+    assert staging.evidence_delta(before, staging.Counts(5, 5, 3))["ok"] is False
