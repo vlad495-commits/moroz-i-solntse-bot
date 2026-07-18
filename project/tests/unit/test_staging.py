@@ -1,5 +1,10 @@
+import importlib.util
+import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
+import pytest
 import yaml
 
 
@@ -24,6 +29,27 @@ def load_compose(path):
 
 def load_staging():
     return load_compose(STAGING)
+
+
+def load_staging_module():
+    spec = importlib.util.spec_from_file_location(
+        "staging_ops", ROOT / "ops/staging.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def webhook_env(**overrides):
+    values = {
+        "TELEGRAM_BOT_TOKEN": "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        "STAGING_TELEGRAM_BOT_ID": "123456",
+        "STAGING_PUBLIC_URL": "https://staging.example.test",
+        "TELEGRAM_WEBHOOK_SECRET": "A" * 32,
+    }
+    values.update(overrides)
+    return values
 
 
 def test_staging_override_tags_apps_and_never_publishes_stores():
@@ -104,3 +130,108 @@ def test_merged_staging_disables_admin_and_scheduler_and_resets_admin_ports():
     assert merged["admin"]["profiles"] == ["disabled-in-staging"]
     assert merged["scheduler"]["profiles"] == ["disabled-in-staging"]
     assert merged["admin"]["ports"] == []
+
+
+def test_staging_webhook_receives_only_required_environment():
+    webhook = load_staging()["services"]["staging-webhook"]
+    assert "env_file" not in webhook
+    assert set(webhook["environment"]) == {
+        "TELEGRAM_BOT_TOKEN",
+        "STAGING_TELEGRAM_BOT_ID",
+        "STAGING_PUBLIC_URL",
+        "TELEGRAM_WEBHOOK_SECRET",
+    }
+
+
+def test_webhook_config_rejects_http_and_invalid_secret():
+    staging = load_staging_module()
+    with pytest.raises(ValueError, match="staging_public_url_invalid"):
+        staging.WebhookConfig.from_env(
+            webhook_env(STAGING_PUBLIC_URL="http://staging.example.test")
+        )
+    with pytest.raises(ValueError, match="webhook_secret_invalid"):
+        staging.WebhookConfig.from_env(
+            webhook_env(TELEGRAM_WEBHOOK_SECRET="secret with spaces")
+        )
+
+
+@pytest.mark.asyncio
+async def test_identity_mismatch_stops_before_set_webhook():
+    staging = load_staging_module()
+
+    class FakeBot:
+        def __init__(self, token):
+            self.set_calls = []
+            self.session = SimpleNamespace(close=self.close)
+
+        async def close(self):
+            return None
+
+        async def get_me(self):
+            return SimpleNamespace(id=999999)
+
+        async def set_webhook(self, **kwargs):
+            self.set_calls.append(kwargs)
+
+    created = []
+    with pytest.raises(RuntimeError, match="staging_bot_identity_mismatch"):
+        await staging.manage_webhook(
+            "set",
+            staging.WebhookConfig.from_env(webhook_env()),
+            bot_factory=lambda token: created.append(FakeBot(token)) or created[-1],
+        )
+    assert created[0].set_calls == []
+
+
+@pytest.mark.asyncio
+async def test_set_webhook_uses_exact_safe_contract():
+    staging = load_staging_module()
+
+    class FakeBot:
+        def __init__(self, token):
+            self.set_calls = []
+            self.session = SimpleNamespace(close=self.close)
+
+        async def close(self):
+            return None
+
+        async def get_me(self):
+            return SimpleNamespace(id=123456)
+
+        async def set_webhook(self, **kwargs):
+            self.set_calls.append(kwargs)
+            return True
+
+    bot = FakeBot("unused")
+    result = await staging.manage_webhook(
+        "set",
+        staging.WebhookConfig.from_env(webhook_env()),
+        bot_factory=lambda _token: bot,
+    )
+    assert result == {"ok": True, "action": "set"}
+    assert bot.set_calls == [{
+        "url": "https://staging.example.test/telegram/webhook",
+        "secret_token": "A" * 32,
+        "allowed_updates": ["message", "callback_query"],
+        "max_connections": 5,
+        "drop_pending_updates": False,
+    }]
+
+
+def test_cli_failure_prints_only_error_type(monkeypatch, capsys):
+    staging = load_staging_module()
+    sentinel = "https://user:password@provider.test private-user-text"
+
+    async def fail(_args):
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setattr(staging, "run", fail)
+    monkeypatch.setattr(
+        staging,
+        "build_parser",
+        lambda: SimpleNamespace(parse_args=lambda: SimpleNamespace()),
+    )
+    assert staging.main() == 1
+    output = capsys.readouterr().out
+    assert json.loads(output) == {"ok": False, "error_type": "RuntimeError"}
+    assert sentinel not in output
