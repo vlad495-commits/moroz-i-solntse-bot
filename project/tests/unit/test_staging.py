@@ -783,3 +783,66 @@ def test_staging_runbook_uses_exact_project_and_never_destroys_data():
         "drop_pending_updates=true",
     ):
         assert forbidden not in text
+
+
+def test_staging_runbook_defers_compose_until_env_then_revalidates():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    prefix = (
+        "docker compose --env-file ../.env -p moroz-staging "
+        "-f docker-compose.yml -f docker-compose.staging.yml"
+    )
+    inventory = text.split("## 2. Read-only inventory", 1)[1].split(
+        "## 3. Protected secrets", 1
+    )[0]
+    assert (
+        "if test -f ../.env; then\n"
+        f"{prefix} ls\n"
+        "fi"
+    ) in inventory
+
+    configured = text.split("## 4. Config, build", 1)[1].split(
+        "## 5. Stores", 1
+    )[0]
+    rerun = f"{prefix} ls"
+    validation = f"{prefix} config --quiet"
+    assert configured.index(rerun) < configured.index(validation)
+
+
+def test_staging_runbook_accepts_only_safe_initial_status_mismatch():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    webhook = text.split("## 8. Telegram webhook lifecycle", 1)[1].split(
+        "## 9. Consent", 1
+    )[0]
+    assert 'webhook_status_json="$(' in webhook
+    assert "webhook_status_rc=$?" in webhook
+    assert 'test "$webhook_status_rc" -ne 0' in webhook
+    assert 'test "$webhook_status_rc" -ne 1' in webhook
+    assert '\'"action": "status"\'' in webhook
+    assert '\'"error_type"\'' in webhook
+    assert "ok:false" in webhook
+    assert "не выводить `webhook_status_json`" in webhook.lower()
+    assert 'echo "$webhook_status_json"' not in webhook
+    assert 'printf "$webhook_status_json"' not in webhook
+    set_command = "run --rm staging-webhook set"
+    status_command = "run --rm staging-webhook status"
+    assert webhook.index("set -e") < webhook.index(set_command)
+    assert webhook.index(set_command) < webhook.rindex(status_command)
+    assert "pending count" in webhook
+    assert "has_last_error:true" in webhook
+
+
+def test_staging_runbook_log_scan_propagates_producer_failure():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    logs = text.split("## 12. Safe logs", 1)[1].split(
+        "## 13. Image-only rollback", 1
+    )[0]
+    prefix = (
+        "docker compose --env-file ../.env -p moroz-staging "
+        "-f docker-compose.yml -f docker-compose.staging.yml"
+    )
+    assert (
+        "set -o pipefail\n"
+        f"{prefix} logs --no-color --since=10m bot worker caddy | "
+        f"{prefix} --profile staging-tools run -T --rm "
+        "staging-smoke scan-logs"
+    ) in logs
