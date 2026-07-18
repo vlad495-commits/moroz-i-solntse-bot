@@ -4,12 +4,26 @@ import yaml
 
 
 ROOT = Path("/workspace")
+BASE = ROOT / "docker-compose.yml"
 STAGING = ROOT / "docker-compose.staging.yml"
 CADDYFILE = ROOT / "ops/staging/Caddyfile"
 
 
+class ComposeLoader(yaml.SafeLoader):
+    pass
+
+
+ComposeLoader.add_constructor(
+    "!reset", lambda loader, node: loader.construct_sequence(node)
+)
+
+
+def load_compose(path):
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=ComposeLoader)
+
+
 def load_staging():
-    return yaml.safe_load(STAGING.read_text(encoding="utf-8"))
+    return load_compose(STAGING)
 
 
 def test_staging_override_tags_apps_and_never_publishes_stores():
@@ -77,3 +91,16 @@ def test_caddy_volumes_preserve_image_writable_storage_directories():
     assert "staging_caddy_config:/config/caddy" in volumes
     assert "staging_caddy_data:/data" not in volumes
     assert "staging_caddy_config:/config" not in volumes
+
+
+def test_merged_staging_disables_admin_and_scheduler_and_resets_admin_ports():
+    base = load_compose(BASE)["services"]
+    override = load_staging()["services"]
+    merged = {
+        name: base.get(name, {}) | override.get(name, {})
+        for name in base.keys() | override.keys()
+    }
+
+    assert merged["admin"]["profiles"] == ["disabled-in-staging"]
+    assert merged["scheduler"]["profiles"] == ["disabled-in-staging"]
+    assert merged["admin"]["ports"] == []

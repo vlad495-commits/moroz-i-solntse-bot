@@ -24,6 +24,13 @@ services:
   cutover:
     image: "moroz-staging-migrate:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
 
+  admin:
+    profiles: ["disabled-in-staging"]
+    ports: !reset []
+
+  scheduler:
+    profiles: ["disabled-in-staging"]
+
   caddy:
     profiles: ["staging-ingress"]
     image: caddy:2.11.4
