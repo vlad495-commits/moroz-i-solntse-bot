@@ -16,8 +16,19 @@ WEBHOOK_SECRET = re.compile(r"[A-Za-z0-9_-]{32,64}\Z")
 
 
 def validated_public_url(value: str) -> str:
+    if (
+        any(char.isspace() or not char.isprintable() for char in value)
+        or "\\" in value
+        or "?" in value
+        or "#" in value
+    ):
+        raise ValueError("staging_public_url_invalid")
     public_url = value.rstrip("/")
-    parsed = urlsplit(public_url)
+    try:
+        parsed = urlsplit(public_url)
+        _ = parsed.port
+    except ValueError:
+        raise ValueError("staging_public_url_invalid") from None
     if (
         parsed.scheme != "https"
         or not parsed.hostname
@@ -35,6 +46,11 @@ def validated_secret(value: str) -> str:
     if WEBHOOK_SECRET.fullmatch(value) is None:
         raise ValueError("webhook_secret_invalid")
     return value
+
+
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, _message):
+        raise ValueError("cli_arguments_invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +125,7 @@ async def manage_webhook(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+    parser = SafeArgumentParser()
     groups = parser.add_subparsers(dest="group", required=True)
     webhook = groups.add_parser("webhook")
     webhook.add_argument("action", choices=("set", "status", "delete"))

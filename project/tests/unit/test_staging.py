@@ -155,6 +155,32 @@ def test_webhook_config_rejects_http_and_invalid_secret():
         )
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.test:notaport",
+        "https://example.test:70000",
+        "https://example.test\\@evil.test",
+        " https://example.test",
+        "https://example.test\n",
+        "https://example.test?",
+        "https://example.test#",
+    ],
+)
+def test_validated_public_url_rejects_malformed_origins(value):
+    staging = load_staging_module()
+    with pytest.raises(ValueError, match="^staging_public_url_invalid$"):
+        staging.validated_public_url(value)
+
+
+def test_validated_public_url_accepts_numeric_port():
+    staging = load_staging_module()
+    assert (
+        staging.validated_public_url("https://example.test:8443/")
+        == "https://example.test:8443"
+    )
+
+
 @pytest.mark.asyncio
 async def test_identity_mismatch_stops_before_set_webhook():
     staging = load_staging_module()
@@ -218,6 +244,72 @@ async def test_set_webhook_uses_exact_safe_contract():
     }]
 
 
+@pytest.mark.asyncio
+async def test_status_returns_only_safe_webhook_aggregates():
+    staging = load_staging_module()
+
+    class FakeBot:
+        def __init__(self, token):
+            self.session = SimpleNamespace(close=self.close)
+
+        async def close(self):
+            return None
+
+        async def get_me(self):
+            return SimpleNamespace(id=123456)
+
+        async def get_webhook_info(self):
+            return SimpleNamespace(
+                url="https://staging.example.test/telegram/webhook",
+                allowed_updates=["callback_query", "message"],
+                max_connections=5,
+                pending_update_count=7,
+                last_error_date=None,
+            )
+
+    result = await staging.manage_webhook(
+        "status",
+        staging.WebhookConfig.from_env(webhook_env()),
+        bot_factory=FakeBot,
+    )
+    assert result == {
+        "ok": True,
+        "action": "status",
+        "pending_update_count": 7,
+        "has_last_error": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_webhook_never_drops_pending_updates():
+    staging = load_staging_module()
+
+    class FakeBot:
+        def __init__(self, token):
+            self.delete_calls = []
+            self.session = SimpleNamespace(close=self.close)
+
+        async def close(self):
+            return None
+
+        async def get_me(self):
+            return SimpleNamespace(id=123456)
+
+        async def delete_webhook(self, **kwargs):
+            self.delete_calls.append(kwargs)
+            return True
+
+    bot = FakeBot("unused")
+    result = await staging.manage_webhook(
+        "delete",
+        staging.WebhookConfig.from_env(webhook_env()),
+        drop_pending_updates=True,
+        bot_factory=lambda _token: bot,
+    )
+    assert result == {"ok": True, "action": "delete"}
+    assert bot.delete_calls == [{"drop_pending_updates": False}]
+
+
 def test_cli_failure_prints_only_error_type(monkeypatch, capsys):
     staging = load_staging_module()
     sentinel = "https://user:password@provider.test private-user-text"
@@ -235,3 +327,23 @@ def test_cli_failure_prints_only_error_type(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert json.loads(output) == {"ok": False, "error_type": "RuntimeError"}
     assert sentinel not in output
+
+
+def test_cli_invalid_action_uses_only_safe_json_error(monkeypatch, capsys):
+    staging = load_staging_module()
+    sentinel = "invalid-action-with-private-text"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["staging.py", "webhook", sentinel],
+    )
+
+    assert staging.main() == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "error_type": "ValueError",
+    }
+    assert captured.err == ""
+    assert sentinel not in captured.out + captured.err
+    assert "usage:" not in captured.out + captured.err
