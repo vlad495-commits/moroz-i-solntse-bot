@@ -165,6 +165,22 @@ case "$webhook_status_json" in
     exit 1
     ;;
 esac
+case "$webhook_status_json" in
+  *'"pending_update_count": 0'*) ;;
+  *)
+    unset webhook_status_json webhook_status_rc
+    printf '%s\n' 'staging webhook initial status blocker' >&2
+    exit 1
+    ;;
+esac
+case "$webhook_status_json" in
+  *'"has_last_error": false'*) ;;
+  *)
+    unset webhook_status_json webhook_status_rc
+    printf '%s\n' 'staging webhook initial status blocker' >&2
+    exit 1
+    ;;
+esac
 unset webhook_status_json webhook_status_rc
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook set
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status

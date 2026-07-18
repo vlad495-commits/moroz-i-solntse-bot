@@ -827,8 +827,24 @@ def test_staging_runbook_accepts_only_safe_initial_status_mismatch():
     status_command = "run --rm staging-webhook status"
     assert webhook.index("set -e") < webhook.index(set_command)
     assert webhook.index(set_command) < webhook.rindex(status_command)
-    assert "pending count" in webhook
-    assert "has_last_error:true" in webhook
+    success_unset = webhook.rindex("unset webhook_status_json webhook_status_rc")
+    blocker_output = (
+        "printf '%s\\n' 'staging webhook initial status blocker' >&2"
+    )
+    for marker in (
+        "*'\"pending_update_count\": 0'*) ;;",
+        "*'\"has_last_error\": false'*) ;;",
+    ):
+        start = webhook.index(marker)
+        end = webhook.index("esac", start)
+        assert start < success_unset
+        assert "\n  *)\n" in webhook[start:end]
+        assert blocker_output in webhook[start:end]
+    assert {
+        line.strip()
+        for line in webhook.splitlines()
+        if line.lstrip().startswith("printf ")
+    } == {blocker_output}
 
 
 def test_staging_runbook_log_scan_propagates_producer_failure():
