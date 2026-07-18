@@ -160,6 +160,7 @@ def test_webhook_config_rejects_http_and_invalid_secret():
     [
         "https://example.test:notaport",
         "https://example.test:70000",
+        "https://example.test:",
         "https://example.test\\@evil.test",
         " https://example.test",
         "https://example.test\n",
@@ -244,8 +245,19 @@ async def test_set_webhook_uses_exact_safe_contract():
     }]
 
 
+@pytest.mark.parametrize(
+    ("webhook_overrides", "expected_ok"),
+    [
+        ({}, True),
+        ({"url": "https://other.example.test/telegram/webhook"}, False),
+        ({"allowed_updates": ["message"]}, False),
+        ({"max_connections": 6}, False),
+    ],
+)
 @pytest.mark.asyncio
-async def test_status_returns_only_safe_webhook_aggregates():
+async def test_status_returns_only_safe_webhook_aggregates(
+    webhook_overrides, expected_ok
+):
     staging = load_staging_module()
 
     class FakeBot:
@@ -259,13 +271,15 @@ async def test_status_returns_only_safe_webhook_aggregates():
             return SimpleNamespace(id=123456)
 
         async def get_webhook_info(self):
-            return SimpleNamespace(
-                url="https://staging.example.test/telegram/webhook",
-                allowed_updates=["callback_query", "message"],
-                max_connections=5,
-                pending_update_count=7,
-                last_error_date=None,
-            )
+            values = {
+                "url": "https://staging.example.test/telegram/webhook",
+                "allowed_updates": ["callback_query", "message"],
+                "max_connections": 5,
+                "pending_update_count": 7,
+                "last_error_date": None,
+            }
+            values.update(webhook_overrides)
+            return SimpleNamespace(**values)
 
     result = await staging.manage_webhook(
         "status",
@@ -273,7 +287,7 @@ async def test_status_returns_only_safe_webhook_aggregates():
         bot_factory=FakeBot,
     )
     assert result == {
-        "ok": True,
+        "ok": expected_ok,
         "action": "status",
         "pending_update_count": 7,
         "has_last_error": False,

@@ -32,6 +32,7 @@ def validated_public_url(value: str) -> str:
     if (
         parsed.scheme != "https"
         or not parsed.hostname
+        or parsed.netloc.endswith(":")
         or parsed.username is not None
         or parsed.password is not None
         or parsed.path not in {"", "/"}
