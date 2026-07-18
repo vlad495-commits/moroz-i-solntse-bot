@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Mapping
-from urllib import request
+from urllib import error, request
 from urllib.parse import urlsplit
 
 import asyncpg
@@ -65,6 +65,11 @@ def validated_secret(value: str) -> str:
 class SafeArgumentParser(argparse.ArgumentParser):
     def error(self, _message):
         raise ValueError("cli_arguments_invalid")
+
+
+class NoRedirect(request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("staging_webhook_rejected")
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,15 +195,31 @@ def scan_log_lines(lines) -> dict[str, object]:
         r"(?:postgresql|redis|amqp)s?://[^\s@]+:[^\s@]+@|"
         r"(?:Authorization|X-Telegram-Bot-Api-Secret-Token)\s*[:=]"
     )
+    pii = re.compile(
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|"
+        r"(?<!\w)(?:\+7|8)[\s-]*\(?\d{3}\)?(?:[\s-]*\d){7}(?!\d)"
+    )
+    raw = re.compile(r'"text"|\b(?:chat_id|user_id|update_id|message_id)\b')
+    private_texts = (CANARY_TEXT, *(text for _update_id, text in SYNTHETIC.values()))
     secret_count = 0
     traceback_count = 0
+    pii_count = 0
+    raw_text_count = 0
     for line in lines:
         secret_count += bool(secret.search(line))
         traceback_count += "Traceback (most recent call last)" in line
+        pii_count += bool(pii.search(line))
+        raw_text_count += bool(
+            raw.search(line) or any(text in line for text in private_texts)
+        )
     return {
-        "ok": secret_count == 0 and traceback_count == 0,
+        "ok": not any(
+            (secret_count, traceback_count, pii_count, raw_text_count)
+        ),
         "secret_shaped_lines": secret_count,
         "traceback_lines": traceback_count,
+        "pii_shaped_lines": pii_count,
+        "raw_text_lines": raw_text_count,
     }
 
 
@@ -214,9 +235,16 @@ async def post_update(public_url: str, secret: str, update: dict) -> None:
         },
     )
 
+    opener = request.build_opener(NoRedirect())
+
     def send() -> int:
-        with request.urlopen(req, timeout=10) as response:
-            return response.status
+        try:
+            with opener.open(req, timeout=10) as response:
+                return response.status
+        except error.HTTPError as exc:
+            if 300 <= exc.code < 400:
+                raise RuntimeError("staging_webhook_rejected") from None
+            raise
 
     if await asyncio.to_thread(send) != 200:
         raise RuntimeError("staging_webhook_rejected")
@@ -273,21 +301,36 @@ async def snapshot_command(label: str, database_url: str) -> dict[str, object]:
     return {"ok": True, "action": "snapshot", "label": label}
 
 
-async def verify_command(label: str, database_url: str) -> dict[str, object]:
+async def verify_command(
+    label: str,
+    database_url: str,
+    *,
+    timeout_seconds: float = 120,
+) -> dict[str, object]:
     snapshot = read_snapshot(label)
-    connection = await asyncpg.connect(database_url)
+    connection = None
     try:
-        deadline = asyncio.get_running_loop().time() + 120
-        while True:
-            result = evidence_delta(snapshot.counts, await collect_counts(connection))
-            target = await find_payload(connection, label, snapshot)
-            if result["ok"] and target is not None:
-                return {"action": "verify", "label": label, **result}
-            if asyncio.get_running_loop().time() >= deadline:
-                return {"action": "verify", "label": label, **result, "ok": False}
-            await asyncio.sleep(1)
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                connection = await asyncpg.connect(database_url)
+                while True:
+                    result = evidence_delta(
+                        snapshot.counts, await collect_counts(connection)
+                    )
+                    target = await find_payload(connection, label, snapshot)
+                    if result["ok"] and target is not None:
+                        return {"action": "verify", "label": label, **result}
+                    await asyncio.sleep(1)
+        except TimeoutError:
+            return {
+                "ok": False,
+                "action": "verify",
+                "label": label,
+                "timed_out": True,
+            }
     finally:
-        await connection.close()
+        if connection is not None:
+            await connection.close()
 
 
 async def replay_live(

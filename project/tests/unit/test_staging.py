@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 from pathlib import Path
@@ -421,8 +422,204 @@ def test_safe_log_scan_returns_counts_not_matching_lines():
         "ok": False,
         "secret_shaped_lines": 1,
         "traceback_lines": 1,
+        "pii_shaped_lines": 0,
+        "raw_text_lines": 0,
     }
     assert private not in repr(result)
+
+
+def test_safe_log_scan_counts_pii_and_raw_markers_without_returning_matches():
+    staging = load_staging_module()
+    private_lines = [
+        "contact qa-person@example.test",
+        "phone +7 (900) 000-00-00",
+        staging.CANARY_TEXT,
+        *(text for _update_id, text in staging.SYNTHETIC.values()),
+        'raw marker "text"',
+        "chat_id=private",
+        "user_id=private",
+        "update_id=private",
+        "message_id=private",
+    ]
+    result = staging.scan_log_lines(private_lines)
+    assert result == {
+        "ok": False,
+        "secret_shaped_lines": 0,
+        "traceback_lines": 0,
+        "pii_shaped_lines": 2,
+        "raw_text_lines": 8,
+    }
+    assert all(line not in repr(result) for line in private_lines)
+
+
+def test_safe_log_scan_does_not_flag_ordinary_prose():
+    staging = load_staging_module()
+    assert staging.scan_log_lines(["worker completed one aggregate check"]) == {
+        "ok": True,
+        "secret_shaped_lines": 0,
+        "traceback_lines": 0,
+        "pii_shaped_lines": 0,
+        "raw_text_lines": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_verify_timeout_covers_blocked_query_and_closes_connection(
+    monkeypatch,
+):
+    staging = load_staging_module()
+
+    class FakeConnection:
+        closed = False
+
+        async def fetchrow(self, *_args):
+            await asyncio.Event().wait()
+
+        async def close(self):
+            self.closed = True
+
+    connection = FakeConnection()
+
+    async def connect(_database_url):
+        return connection
+
+    monkeypatch.setattr(staging.asyncpg, "connect", connect)
+    monkeypatch.setattr(
+        staging,
+        "read_snapshot",
+        lambda _label: staging.Snapshot(
+            staging.Counts(0, 0, 0),
+            staging.datetime.fromisoformat("2026-07-18T09:00:00+00:00"),
+        ),
+    )
+
+    result = await staging.verify_command(
+        "live", "unused", timeout_seconds=0.01
+    )
+    assert result == {
+        "ok": False,
+        "action": "verify",
+        "label": "live",
+        "timed_out": True,
+    }
+    assert connection.closed is True
+
+
+@pytest.mark.asyncio
+async def test_verify_timeout_covers_blocked_connect(monkeypatch):
+    staging = load_staging_module()
+
+    async def connect(_database_url):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(staging.asyncpg, "connect", connect)
+    monkeypatch.setattr(
+        staging,
+        "read_snapshot",
+        lambda _label: staging.Snapshot(
+            staging.Counts(0, 0, 0),
+            staging.datetime.fromisoformat("2026-07-18T09:00:00+00:00"),
+        ),
+    )
+
+    assert await staging.verify_command(
+        "live", "unused", timeout_seconds=0.01
+    ) == {
+        "ok": False,
+        "action": "verify",
+        "label": "live",
+        "timed_out": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_post_update_rejects_redirect_without_calling_target(monkeypatch):
+    staging = load_staging_module()
+    calls = {"source": 0, "target": 0}
+
+    class RedirectingOpener:
+        def __init__(self, handler):
+            self.handler = handler
+
+        def open(self, req, timeout):
+            calls["source"] += 1
+            redirected = self.handler.redirect_request(
+                req,
+                None,
+                302,
+                "Found",
+                {},
+                "https://redirect-target.example.test/telegram/webhook",
+            )
+            if redirected is not None:
+                calls["target"] += 1
+            return SimpleNamespace(
+                status=302,
+                __enter__=lambda self: self,
+                __exit__=lambda *_args: None,
+            )
+
+    def build_opener(handler):
+        return RedirectingOpener(handler)
+
+    monkeypatch.setattr(staging.request, "build_opener", build_opener)
+    monkeypatch.setattr(
+        staging.request,
+        "urlopen",
+        lambda *_args, **_kwargs: pytest.fail("global redirecting opener used"),
+    )
+
+    with pytest.raises(RuntimeError, match="^staging_webhook_rejected$"):
+        await staging.post_update(
+            "https://staging.example.test",
+            "A" * 32,
+            {"update_id": -1},
+        )
+    assert calls == {"source": 1, "target": 0}
+
+
+@pytest.mark.asyncio
+async def test_post_update_preserves_exact_request_and_closes_response(monkeypatch):
+    staging = load_staging_module()
+
+    class FakeResponse:
+        status = 200
+        closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.closed = True
+
+    response = FakeResponse()
+    calls = []
+
+    class FakeOpener:
+        def open(self, req, timeout):
+            calls.append((req, timeout))
+            return response
+
+    monkeypatch.setattr(
+        staging.request,
+        "build_opener",
+        lambda handler: FakeOpener(),
+    )
+
+    await staging.post_update(
+        "https://staging.example.test",
+        "A" * 32,
+        {"update_id": -1},
+    )
+    req, timeout = calls[0]
+    assert req.get_method() == "POST"
+    assert req.full_url == "https://staging.example.test/telegram/webhook"
+    assert dict(req.header_items()) == {
+        "Content-type": "application/json",
+        "X-telegram-bot-api-secret-token": "A" * 32,
+    }
+    assert timeout == 10
+    assert response.closed is True
 
 
 def test_evidence_delta_requires_exactly_one_each():
