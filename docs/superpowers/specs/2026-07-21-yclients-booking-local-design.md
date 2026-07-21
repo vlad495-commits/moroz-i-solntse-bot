@@ -75,18 +75,18 @@ Repository выполняет checkpoint и event insert в одной тран�
 Общий порядок:
 
 1. Без явного подтверждения внешний mutating call запрещён.
-2. Для переноса/отмены проверяется подтверждённая identity и совпадение `customer_id`.
-3. Поздний перенос/отмена менее чем за три часа эскалируется до внешнего вызова.
+2. Для переноса/отмены подтверждённая identity сверяется и со scenario, и с владельцем актуального local booking snapshot; forged/stale scenario не получает детали и не вызывает port.
+3. Все change-scenario одного `external_id` дополнительно сериализуются одним namespaced PostgreSQL advisory lock. Под этим lock перечитываются актуальные status, owner и start; правило трёх часов считается от актуального snapshot, а stale status/start fail-closed эскалируется до внешнего вызова.
 4. Перед create/reschedule scenario checkpoint переводится в `executing`, после чего слот повторно проверяется через `list_slots`.
 5. Потерянный слот переводит scenario в `collecting`, сохраняет событие и возвращает до трёх актуальных альтернатив без потери остальных данных.
 6. Успешный вызов атомарно сохраняет local booking snapshot и terminal phase `confirmed`.
 7. `BookingTemporaryError` и `BookingOutcomeUnknown` переводят scenario в `escalated`, добавляют `admin_attention_required` и не обещают слот.
 8. Scenario, найденный в `executing` после перезапуска, не повторяет mutating call: результат считается неопределённым и эскалируется.
-9. Повторная обработка terminal scenario возвращает сохранённый результат без нового внешнего вызова.
+9. Повторная обработка terminal scenario возвращает сохранённый результат без нового внешнего вызова. Summary создаётся только из immutable terminal state самого scenario, поэтому более поздний перенос/отмена общего snapshot его не меняет.
 
 ## Идемпотентность
 
-Локальный `idempotency_key` уникален в `booking_scenarios`. PostgreSQL сериализует один сценарий через row lock. Mock adapter также кеширует результаты по ключу.
+Локальный `idempotency_key` уникален в `booking_scenarios`. PostgreSQL сериализует один сценарий и отдельно aggregate одной внешней записи (`external_id`) через namespaced advisory locks; durable checkpoints остаются короткими транзакциями. Mock adapter также кеширует результаты по ключу.
 
 Это не выдаётся за provider-side exactly-once. Crash после отправки запроса, но до сохранения ответа, остаётся outcome-unknown окном. Без документированной идемпотентности или однозначной provider reconciliation такой сценарий только эскалируется; автоматический повтор запрещён.
 

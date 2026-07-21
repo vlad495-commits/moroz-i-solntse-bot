@@ -423,3 +423,30 @@ Run fresh verification for documentation changes and commit:
 ```text
 docs: зафиксирован локальный YCLIENTS checkpoint
 ```
+
+---
+
+### Whole-phase review fix loop: external booking aggregate
+
+**Files:**
+- Modify: `project/src/moroz/booking/models.py`
+- Modify: `project/src/moroz/booking/repository.py`
+- Modify: `project/src/moroz/booking/service.py`
+- Modify: `project/tests/unit/booking/test_mock_adapter.py`
+- Modify: `project/tests/e2e/booking/test_create_booking.py`
+- Modify: `project/tests/e2e/booking/test_change_booking.py`
+- Optional minimal fixture consolidation: `project/tests/e2e/booking/conftest.py`
+- Modify: `changelog.md`
+- Modify: `Дорожная карта.md`
+
+**Required corrections:**
+
+1. Normalize `SlotQuery.service_ids` and `Slot.service_ids` to tuple in `__post_init__`; frozen models must not retain a caller-owned mutable list.
+2. Keep the scenario advisory lock and add a nested namespaced session advisory lock for every change-flow `external_id`. On the same held connection, reread the current local booking before any change port call.
+3. A change is authorized only when identity matches both `scenario.customer_id` and the current snapshot owner. The current snapshot must be `confirmed`, and its `starts_at` must equal the collected scenario start. The three-hour rule uses the current snapshot time. Owner mismatch returns `booking_identity_unconfirmed`; stale status/time uses the existing `booking_temporarily_unavailable`; neither path calls the port.
+4. Identity protects every non-create phase. Invalid identity on an already `confirmed`, `escalated`, or recovered `executing` scenario returns a generic non-leaking result without port or database mutation. Awaiting change keeps the durable identity escalation.
+5. At create success, persist original `starts_at` and status in terminal scenario state. Every create terminal repeat is reconstructed from that state, not the mutable latest `bookings` row, so a later reschedule/cancel cannot change it or produce false success.
+6. Add RED→GREEN tests for a forged-owner scenario, two independent repository instances running distinct reschedule/cancel scenarios for one external ID, stale status/start, protected escalated/executing identity paths, and create → reschedule/cancel → repeat of the original create.
+7. Consolidate duplicated E2E disposable-PostgreSQL setup only if the existing integration fixture can be reused without changing pytest import semantics; do not add a new framework or global pytest config.
+
+Run focused RED, all booking/migration tests, then the canonical Docker suite. Repeat independent review until `0 Critical / 0 Important / 0 Minor`.
