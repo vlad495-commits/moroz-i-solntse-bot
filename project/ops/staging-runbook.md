@@ -67,6 +67,13 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml build bot worker migrate
 docker image inspect --format '{{.Config.User}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
 docker image inspect --format '{{.Id}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
+set -o pipefail
+{
+  docker image inspect --format '{{json .Config.Env}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
+  docker history --no-trunc --format '{{.CreatedBy}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}"
+  docker history --no-trunc --format '{{.CreatedBy}}' "moroz-staging-worker:${STAGING_IMAGE_TAG}"
+  docker history --no-trunc --format '{{.CreatedBy}}' "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
+} | docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run -T --rm staging-smoke scan-logs
 ```
 
 Сохранить commit, три image ID/digest и `.Config.User`, но не полный inspect. Пустой/неожиданный user, config failure или build failure — blocker.
@@ -130,6 +137,7 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ```bash
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://${STAGING_DOMAIN}/staging-unrelated-sentinel")" = 404
+test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' "https://${STAGING_DOMAIN}/telegram/webhook")" = 403
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'X-Telegram-Bot-Api-Secret-Token: staging-invalid-sentinel' --data '{}' "https://${STAGING_DOMAIN}/telegram/webhook")" = 403
 ```
 
@@ -212,13 +220,18 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ## 10. Worker recovery
 
-Остановить и запустить только exact staging container; stores и другие services не трогать.
+Остановить и запустить только worker из exact staging Compose project; stores и другие services не трогать.
 
 ```bash
-docker stop --timeout 30 moroz-staging-worker-1
 cd /opt/moroz-staging/project
+test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' moroz-staging-worker-1)" = moroz-staging
+worker_stop_started=$(date +%s)
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml stop --timeout 30 worker
+worker_stop_seconds=$(( $(date +%s) - worker_stop_started ))
+test "$worker_stop_seconds" -le 30
+printf 'worker_stop_seconds=%s\n' "$worker_stop_seconds"
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke inject --label worker-restart
-docker start moroz-staging-worker-1
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml start worker
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke verify --label worker-restart
 ```
 
@@ -227,14 +240,18 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 ## 11. Redis recovery
 
 ```bash
-redis_container=moroz-staging-redis-1
-restore_redis() { docker start "$redis_container" >/dev/null 2>&1 || true; }
-trap restore_redis EXIT HUP INT TERM
-docker stop --timeout 30 moroz-staging-redis-1
 cd /opt/moroz-staging/project
+redis_container=moroz-staging-redis-1
+redis_service=redis
+test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$redis_container")" = moroz-staging
+restore_redis() {
+  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml start "$redis_service" >/dev/null 2>&1 || true
+}
+trap restore_redis EXIT HUP INT TERM
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml stop --timeout 30 redis
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke inject --label redis-loss
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke verify --label redis-loss
-docker start moroz-staging-redis-1
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml start redis
 trap - EXIT HUP INT TERM
 for attempt in $(seq 1 30); do
   test "$(docker inspect -f '{{.State.Health.Status}}' moroz-staging-redis-1)" = healthy && break
@@ -263,8 +280,15 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ```bash
 cd /opt/moroz-staging/project
+export STAGING_CANDIDATE_IMAGE_TAG="${STAGING_IMAGE_TAG:?current tag required}"
 export STAGING_PREVIOUS_IMAGE_TAG='<previous-immutable-tag>'
 export STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"
+docker image inspect "moroz-staging-bot:$STAGING_IMAGE_TAG" "moroz-staging-worker:$STAGING_IMAGE_TAG" "moroz-staging-migrate:$STAGING_IMAGE_TAG" >/dev/null
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq
+curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status
+export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq
 curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null
@@ -279,7 +303,21 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ```bash
 cd /opt/moroz-staging/project
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status
+set -e
+stop_status_json="$(
+  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status
+)"
+for required in '"ok": true' '"pending_update_count": 0' '"has_last_error": false'; do
+  case "$stop_status_json" in
+    *"$required"*) ;;
+    *)
+      unset stop_status_json
+      printf '%s\n' 'staging webhook stop status blocker' >&2
+      exit 1
+      ;;
+  esac
+done
+unset stop_status_json
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook delete
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml stop --timeout 30 caddy bot worker rabbitmq redis postgres
 ```

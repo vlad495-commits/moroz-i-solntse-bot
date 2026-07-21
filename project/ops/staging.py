@@ -28,6 +28,12 @@ SYNTHETIC = {
 LABELS = {"live", *SYNTHETIC}
 
 
+def next_synthetic_update_id(preferred: int, used: set[str]) -> int:
+    while str(preferred) in used:
+        preferred -= 2
+    return preferred
+
+
 def validated_public_url(value: str) -> str:
     if (
         any(char.isspace() or not char.isprintable() for char in value)
@@ -197,13 +203,24 @@ def scan_log_lines(lines) -> dict[str, object]:
     secret = re.compile(
         r"bot\d+:[A-Za-z0-9_-]+|"
         r"(?:postgresql|redis|amqp)s?://[^\s@]+:[^\s@]+@|"
-        r"(?:Authorization|X-Telegram-Bot-Api-Secret-Token)\s*[:=]"
+        r"(?:Authorization|X-Telegram-Bot-Api-Secret-Token)\s*[:=]|"
+        r"\bBearer\s+\S+|"
+        r"\b[A-Za-z0-9_-]*(?:api[_-]?key|password|passwd|secret|token)"
+        r"\s*[:=]\s*\S+|"
+        r"\bsk-[A-Za-z0-9_-]{16,}",
+        re.IGNORECASE,
     )
     pii = re.compile(
         r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|"
         r"(?<!\w)(?:\+7|8)[\s-]*\(?\d{3}\)?(?:[\s-]*\d){7}(?!\d)"
     )
-    raw = re.compile(r'"text"|\b(?:chat_id|user_id|update_id|message_id)\b')
+    raw = re.compile(
+        r'"text"|"(?:content|prompt|messages?|provider_response|'
+        r'request_body|response_body)"\s*:|'
+        r"\b(?:chat_id|user_id|update_id|message_id|user_text|prompt|"
+        r"provider_response|request_body|response_body)\b\s*=",
+        re.IGNORECASE,
+    )
     private_texts = (CANARY_TEXT, *(text for _update_id, text in SYNTHETIC.values()))
     secret_count = 0
     traceback_count = 0
@@ -373,6 +390,17 @@ async def inject_synthetic(
     live_snapshot = read_snapshot("live")
     connection = await asyncpg.connect(database_url)
     try:
+        used_ids = {
+            row["external_message_id"]
+            for row in await connection.fetch(
+                """
+                SELECT external_message_id
+                FROM message_inbox
+                WHERE channel = 'telegram'
+                  AND external_message_id LIKE '-%'
+                """
+            )
+        }
         payload = await find_payload(connection, "live", live_snapshot)
     finally:
         await connection.close()
@@ -382,7 +410,8 @@ async def inject_synthetic(
         **payload,
         "received_at": datetime.now(UTC).isoformat(),
     }
-    update_id, text = SYNTHETIC[label]
+    preferred_update_id, text = SYNTHETIC[label]
+    update_id = next_synthetic_update_id(preferred_update_id, used_ids)
     await post_update(
         public_url,
         secret,
@@ -437,6 +466,7 @@ async def manage_webhook(
                     info.url == config.webhook_url
                     and allowed == ["callback_query", "message"]
                     and info.max_connections == 5
+                    and info.last_error_date is None
                 ),
                 "action": "status",
                 "pending_update_count": info.pending_update_count,

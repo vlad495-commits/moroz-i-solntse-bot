@@ -295,17 +295,18 @@ async def test_set_webhook_uses_exact_safe_contract():
 
 
 @pytest.mark.parametrize(
-    ("webhook_overrides", "expected_ok"),
+    ("webhook_overrides", "expected_ok", "expected_has_error"),
     [
-        ({}, True),
-        ({"url": "https://other.example.test/telegram/webhook"}, False),
-        ({"allowed_updates": ["message"]}, False),
-        ({"max_connections": 6}, False),
+        ({}, True, False),
+        ({"url": "https://other.example.test/telegram/webhook"}, False, False),
+        ({"allowed_updates": ["message"]}, False, False),
+        ({"max_connections": 6}, False, False),
+        ({"last_error_date": object()}, False, True),
     ],
 )
 @pytest.mark.asyncio
 async def test_status_returns_only_safe_webhook_aggregates(
-    webhook_overrides, expected_ok
+    webhook_overrides, expected_ok, expected_has_error
 ):
     staging = load_staging_module()
 
@@ -339,7 +340,7 @@ async def test_status_returns_only_safe_webhook_aggregates(
         "ok": expected_ok,
         "action": "status",
         "pending_update_count": 7,
-        "has_last_error": False,
+        "has_last_error": expected_has_error,
     }
 
 
@@ -443,6 +444,52 @@ def test_build_replay_update_uses_persisted_fields_without_logging_them():
     assert update["message"]["text"] == staging.CANARY_TEXT
 
 
+@pytest.mark.asyncio
+async def test_synthetic_inject_uses_next_unused_label_id(monkeypatch):
+    staging = load_staging_module()
+
+    class FakeConnection:
+        async def fetch(self, *_args):
+            return [{"external_message_id": "-1000000002"}]
+
+        async def close(self):
+            return None
+
+    async def snapshot_command(_label, _database_url):
+        return {"ok": True}
+
+    async def find_payload(_connection, _label, _snapshot):
+        return {
+            "update_id": "902",
+            "message_id": "17",
+            "chat_id": "42",
+            "user_id": "7",
+            "text": staging.CANARY_TEXT,
+            "received_at": "2026-07-18T09:00:00+00:00",
+        }
+
+    posted = []
+
+    async def post_update(_public_url, _secret, update):
+        posted.append(update)
+
+    async def connect(_database_url):
+        return FakeConnection()
+
+    monkeypatch.setattr(staging, "snapshot_command", snapshot_command)
+    monkeypatch.setattr(staging, "read_snapshot", lambda _label: object())
+    monkeypatch.setattr(staging, "find_payload", find_payload)
+    monkeypatch.setattr(staging, "post_update", post_update)
+    monkeypatch.setattr(staging.asyncpg, "connect", connect)
+
+    result = await staging.inject_synthetic(
+        "redis-loss", "postgresql://unused", "https://staging.example.test", "A" * 32
+    )
+
+    assert result == {"ok": True, "action": "inject", "label": "redis-loss"}
+    assert posted[0]["update_id"] == -1000000004
+
+
 def test_safe_log_scan_returns_counts_not_matching_lines():
     staging = load_staging_module()
     private = "bot123456:secret-token private-user-text"
@@ -479,6 +526,28 @@ def test_safe_log_scan_counts_pii_and_raw_markers_without_returning_matches():
         "traceback_lines": 0,
         "pii_shaped_lines": 2,
         "raw_text_lines": 8,
+    }
+    assert all(line not in repr(result) for line in private_lines)
+
+
+def test_safe_log_scan_rejects_common_secret_and_provider_payload_markers():
+    staging = load_staging_module()
+    private_lines = [
+        "LLM_API_KEY=" + "s" + "k-" + "x" * 24,
+        "pass" + "word=" + "private-value",
+        "Bearer " + "opaque-value",
+        '"prompt": "private-value"',
+        "provider_response=private-value",
+    ]
+
+    result = staging.scan_log_lines(private_lines)
+
+    assert result == {
+        "ok": False,
+        "secret_shaped_lines": 3,
+        "traceback_lines": 0,
+        "pii_shaped_lines": 0,
+        "raw_text_lines": 2,
     }
     assert all(line not in repr(result) for line in private_lines)
 
@@ -821,10 +890,15 @@ def test_staging_runbook_verifies_redis_degradation_before_restart():
     recovery = text.split("## 11. Redis recovery", 1)[1].split(
         "## 12. Safe logs", 1
     )[0]
-    stop = recovery.index("docker stop --timeout 30 moroz-staging-redis-1")
+    prefix = (
+        "docker compose --env-file ../.env -p moroz-staging "
+        "-f docker-compose.yml -f docker-compose.staging.yml"
+    )
+    assert "com.docker.compose.project" in recovery
+    stop = recovery.index(f"{prefix} stop --timeout 30 redis")
     inject = recovery.index("staging-smoke inject --label redis-loss")
     verify = recovery.index("staging-smoke verify --label redis-loss")
-    restart = recovery.index("docker start moroz-staging-redis-1")
+    restart = recovery.index(f"{prefix} start redis")
     assert stop < inject < verify < restart
 
 
@@ -833,10 +907,31 @@ def test_staging_runbook_waits_for_redis_health_after_restart():
     recovery = text.split("## 11. Redis recovery", 1)[1].split(
         "## 12. Safe logs", 1
     )[0]
-    restart = recovery.index("docker start moroz-staging-redis-1")
+    prefix = (
+        "docker compose --env-file ../.env -p moroz-staging "
+        "-f docker-compose.yml -f docker-compose.staging.yml"
+    )
+    restart = recovery.index(f"{prefix} start redis")
     wait = recovery.index("for attempt in $(seq 1 30); do")
     healthy = recovery.rindex("State.Health.Status")
     assert restart < wait < healthy
+
+
+def test_staging_runbook_uses_compose_boundary_and_measures_worker_stop():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    recovery = text.split("## 10. Worker recovery", 1)[1].split(
+        "## 11. Redis recovery", 1
+    )[0]
+    prefix = (
+        "docker compose --env-file ../.env -p moroz-staging "
+        "-f docker-compose.yml -f docker-compose.staging.yml"
+    )
+    assert "com.docker.compose.project" in recovery
+    assert f"{prefix} stop --timeout 30 worker" in recovery
+    assert f"{prefix} start worker" in recovery
+    assert "worker_stop_seconds" in recovery
+    assert "docker stop" not in recovery
+    assert "docker start" not in recovery
 
 
 def test_staging_runbook_defers_compose_until_env_then_revalidates():
@@ -860,6 +955,31 @@ def test_staging_runbook_defers_compose_until_env_then_revalidates():
     rerun = f"{prefix} ls"
     validation = f"{prefix} config --quiet"
     assert configured.index(rerun) < configured.index(validation)
+
+
+def test_staging_runbook_scans_image_metadata_without_printing_it():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    configured = text.split("## 4. Config, build", 1)[1].split(
+        "## 5. Stores", 1
+    )[0]
+    assert "docker history --no-trunc" in configured
+    assert "{{json .Config.Env}}" in configured
+    assert "staging-smoke scan-logs" in configured
+
+
+def test_staging_runbook_checks_webhook_without_secret_header():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    https = text.split("## 7. Apps, health и HTTPS", 1)[1].split(
+        "## 8. Telegram webhook lifecycle", 1
+    )[0]
+    webhook_checks = [
+        line for line in https.splitlines()
+        if "/telegram/webhook" in line and "curl" in line
+    ]
+    assert len(webhook_checks) == 2
+    assert any("X-Telegram-Bot-Api-Secret-Token" in line for line in webhook_checks)
+    assert any("X-Telegram-Bot-Api-Secret-Token" not in line for line in webhook_checks)
+    assert all(line.endswith('= 403') for line in webhook_checks)
 
 
 def test_staging_runbook_accepts_only_safe_initial_status_mismatch():
@@ -916,3 +1036,33 @@ def test_staging_runbook_log_scan_propagates_producer_failure():
         f"{prefix} --profile staging-tools run -T --rm "
         "staging-smoke scan-logs"
     ) in logs
+
+
+def test_staging_runbook_rollback_restores_and_verifies_candidate_images():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    rollback = text.split("## 13. Image-only rollback", 1)[1].split(
+        "## 14. Safe stop", 1
+    )[0]
+    up = "up -d --no-build --wait --wait-timeout 120 bot worker"
+    webhook = "run --rm staging-webhook status"
+    assert 'STAGING_CANDIDATE_IMAGE_TAG="${STAGING_IMAGE_TAG:?current tag required}"' in rollback
+    assert 'STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"' in rollback
+    assert 'STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"' in rollback
+    assert rollback.count(up) == 2
+    assert rollback.count(webhook) == 2
+
+
+def test_staging_runbook_safe_stop_requires_empty_error_free_webhook():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    stop = text.split("## 14. Safe stop", 1)[1].split(
+        "## 15. Evidence", 1
+    )[0]
+    status = "run --rm staging-webhook status"
+    delete = "run --rm staging-webhook delete"
+    assert 'stop_status_json="$(' in stop
+    assert '\'"ok": true\'' in stop
+    assert '\'"pending_update_count": 0\'' in stop
+    assert '\'"has_last_error": false\'' in stop
+    assert stop.index(status) < stop.index(delete)
+    assert 'echo "$stop_status_json"' not in stop
+    assert 'printf "$stop_status_json"' not in stop
