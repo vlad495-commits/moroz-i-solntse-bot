@@ -490,6 +490,35 @@ async def test_synthetic_inject_uses_next_unused_label_id(monkeypatch):
     assert posted[0]["update_id"] == -1000000004
 
 
+@pytest.mark.asyncio
+async def test_find_payload_correlates_repeated_synthetic_to_current_snapshot():
+    staging = load_staging_module()
+    started_at = staging.datetime.fromisoformat("2026-07-18T09:00:00+00:00")
+    calls = []
+
+    class FakeConnection:
+        async def fetchrow(self, query, *args):
+            calls.append((query, args))
+            return {"payload": {
+                "update_id": "-1000000004",
+                "message_id": "17",
+                "chat_id": "42",
+                "user_id": "7",
+                "text": staging.SYNTHETIC["redis-loss"][1],
+                "received_at": "2026-07-18T09:00:01+00:00",
+            }}
+
+    result = await staging.find_payload(
+        FakeConnection(),
+        "redis-loss",
+        staging.Snapshot(staging.Counts(1, 1, 1), started_at),
+    )
+
+    assert result["update_id"] == "-1000000004"
+    assert calls[0][1] == (staging.SYNTHETIC["redis-loss"][1], started_at)
+    assert "created_at >= $2" in calls[0][0]
+
+
 def test_safe_log_scan_returns_counts_not_matching_lines():
     staging = load_staging_module()
     private = "bot123456:secret-token private-user-text"
@@ -536,6 +565,8 @@ def test_safe_log_scan_rejects_common_secret_and_provider_payload_markers():
         "LLM_API_KEY=" + "s" + "k-" + "x" * 24,
         "pass" + "word=" + "private-value",
         "Bearer " + "opaque-value",
+        '"' + "token" + '":"' + "opaque-value" + '"',
+        '\\"' + "secret" + '\\":\\"' + "opaque-value" + '\\"',
         '"prompt": "private-value"',
         "provider_response=private-value",
     ]
@@ -544,7 +575,7 @@ def test_safe_log_scan_rejects_common_secret_and_provider_payload_markers():
 
     assert result == {
         "ok": False,
-        "secret_shaped_lines": 3,
+        "secret_shaped_lines": 5,
         "traceback_lines": 0,
         "pii_shaped_lines": 0,
         "raw_text_lines": 2,
@@ -927,8 +958,13 @@ def test_staging_runbook_uses_compose_boundary_and_measures_worker_stop():
         "-f docker-compose.yml -f docker-compose.staging.yml"
     )
     assert "com.docker.compose.project" in recovery
-    assert f"{prefix} stop --timeout 30 worker" in recovery
-    assert f"{prefix} start worker" in recovery
+    stop = recovery.index(f"{prefix} stop --timeout 30 worker")
+    start = recovery.index(f"{prefix} start worker")
+    trap = recovery.index("trap restore_worker EXIT HUP INT TERM")
+    wait = recovery.index("for attempt in $(seq 1 30); do")
+    healthy = recovery.rindex("State.Health.Status")
+    clear_trap = recovery.index("trap - EXIT HUP INT TERM")
+    assert trap < stop < start < wait < healthy < clear_trap
     assert "worker_stop_seconds" in recovery
     assert "docker stop" not in recovery
     assert "docker start" not in recovery
@@ -1050,6 +1086,12 @@ def test_staging_runbook_rollback_restores_and_verifies_candidate_images():
     assert 'STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"' in rollback
     assert rollback.count(up) == 2
     assert rollback.count(webhook) == 2
+    trap = rollback.index("trap restore_candidate EXIT HUP INT TERM")
+    previous = rollback.index('STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"')
+    result = rollback.index("rollback_result=$?")
+    restore = rollback.rindex("restore_candidate")
+    preserve_failure = rollback.index('test "$rollback_result" -eq 0')
+    assert trap < previous < result < restore < preserve_failure
 
 
 def test_staging_runbook_safe_stop_requires_empty_error_free_webhook():

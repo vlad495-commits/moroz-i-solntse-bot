@@ -224,7 +224,13 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ```bash
 cd /opt/moroz-staging/project
+set -e
+worker_service=worker
 test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' moroz-staging-worker-1)" = moroz-staging
+restore_worker() {
+  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml start "$worker_service" >/dev/null 2>&1 || true
+}
+trap restore_worker EXIT HUP INT TERM
 worker_stop_started=$(date +%s)
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml stop --timeout 30 worker
 worker_stop_seconds=$(( $(date +%s) - worker_stop_started ))
@@ -232,6 +238,12 @@ test "$worker_stop_seconds" -le 30
 printf 'worker_stop_seconds=%s\n' "$worker_stop_seconds"
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke inject --label worker-restart
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml start worker
+for attempt in $(seq 1 30); do
+  test "$(docker inspect -f '{{.State.Health.Status}}' moroz-staging-worker-1)" = healthy && break
+  sleep 1
+done
+test "$(docker inspect -f '{{.State.Health.Status}}' moroz-staging-worker-1)" = healthy
+trap - EXIT HUP INT TERM
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke verify --label worker-restart
 ```
 
@@ -280,19 +292,33 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ```bash
 cd /opt/moroz-staging/project
+set -e
 export STAGING_CANDIDATE_IMAGE_TAG="${STAGING_IMAGE_TAG:?current tag required}"
 export STAGING_PREVIOUS_IMAGE_TAG='<previous-immutable-tag>'
+restore_candidate() {
+  export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
+  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker &&
+  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq &&
+  curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null &&
+  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status
+}
+trap restore_candidate EXIT HUP INT TERM
 export STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"
-docker image inspect "moroz-staging-bot:$STAGING_IMAGE_TAG" "moroz-staging-worker:$STAGING_IMAGE_TAG" "moroz-staging-migrate:$STAGING_IMAGE_TAG" >/dev/null
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq
-curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null
+set +e
+docker image inspect "moroz-staging-bot:$STAGING_IMAGE_TAG" "moroz-staging-worker:$STAGING_IMAGE_TAG" "moroz-staging-migrate:$STAGING_IMAGE_TAG" >/dev/null &&
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker &&
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq &&
+curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null &&
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status
-export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq
-curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status
+rollback_result=$?
+set -e
+if ! restore_candidate; then
+  trap - EXIT HUP INT TERM
+  printf '%s\n' 'staging candidate restore blocker' >&2
+  exit 1
+fi
+trap - EXIT HUP INT TERM
+test "$rollback_result" -eq 0
 ```
 
 Неизвестный tag, missing image, unhealthy app или webhook mismatch — rollback blocker.

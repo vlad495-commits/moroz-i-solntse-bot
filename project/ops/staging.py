@@ -205,8 +205,9 @@ def scan_log_lines(lines) -> dict[str, object]:
         r"(?:postgresql|redis|amqp)s?://[^\s@]+:[^\s@]+@|"
         r"(?:Authorization|X-Telegram-Bot-Api-Secret-Token)\s*[:=]|"
         r"\bBearer\s+\S+|"
-        r"\b[A-Za-z0-9_-]*(?:api[_-]?key|password|passwd|secret|token)"
-        r"\s*[:=]\s*\S+|"
+        r"(?:\\?[\"'])?[A-Za-z0-9_-]*"
+        r"(?:api[_-]?key|password|passwd|secret|token)"
+        r"(?:\\?[\"'])?\s*[:=]\s*(?:\\?[\"'])?\S+|"
         r"\bsk-[A-Za-z0-9_-]{16,}",
         re.IGNORECASE,
     )
@@ -298,9 +299,14 @@ async def find_payload(connection, label: str, snapshot: Snapshot) -> dict | Non
             """
             SELECT payload
             FROM message_inbox
-            WHERE channel = 'telegram' AND external_message_id = $1
+            WHERE channel = 'telegram'
+              AND payload->>'text' = $1
+              AND created_at >= $2
+            ORDER BY created_at DESC
+            LIMIT 1
             """,
-            str(SYNTHETIC[label][0]),
+            SYNTHETIC[label][1],
+            snapshot.started_at,
         )
     if row is None:
         return None
