@@ -305,6 +305,26 @@ feat: реализована локальная state machine записи
 - Uses injectable `now: Callable[[], datetime]` with a timezone-aware default.
 - Durable error codes: `booking_identity_unconfirmed`, `late_booking_change`, `booking_temporarily_unavailable`, `booking_outcome_unknown`.
 
+The provider-neutral change states are JSON-safe:
+
+```python
+# reschedule
+{
+    "external_id": "booking-42",
+    "starts_at": "2026-07-25T14:00:00+00:00",
+    "slot_query": {...},
+    "selected_slot_id": "slot-new",
+}
+
+# cancel
+{
+    "external_id": "booking-42",
+    "starts_at": "2026-07-25T14:00:00+00:00",
+}
+```
+
+On reschedule success, preserve the old value as `previous_starts_at` and replace `starts_at` with the new snapshot time before `repository.confirm`; the stable terminal message must contain both values. Cancellation uses the existing local snapshot, calls `cancel_booking` once, changes that snapshot status to `cancelled`, and persists it with `complete_cancellation` without a second provider read. All three kinds use terminal scenario phase `confirmed`; the booking snapshot distinguishes `confirmed` from `cancelled`. A repeated `escalated` scenario reconstructs its stored error result without any port call.
+
 - [ ] **Step 1: Write failing change-flow E2E tests**
 
 Cover:
@@ -331,11 +351,11 @@ Before reschedule/cancel:
 ```python
 if identity is None or not identity.confirmed or identity.customer_id != scenario.customer_id:
     return await self._escalate(scenario, "booking_identity_unconfirmed")
-if scenario.starts_at - self._now() < timedelta(hours=3):
+if datetime.fromisoformat(str(scenario.state["starts_at"])) - self._now() < timedelta(hours=3):
     return await self._escalate(scenario, "late_booking_change")
 ```
 
-Reschedule repeats slot availability after the `executing` checkpoint. Cancellation performs no slot query. Map `BookingTemporaryError` to `booking_temporarily_unavailable` and `BookingOutcomeUnknown` to `booking_outcome_unknown`; both use repository escalation and never claim success.
+Reschedule repeats slot availability after the `executing` checkpoint and handles a mutation-time `SlotUnavailable` through the same fresh-list lost-slot transition as create. Cancellation performs no slot query. Map `BookingTemporaryError` to `booking_temporarily_unavailable` and `BookingOutcomeUnknown` to `booking_outcome_unknown`; both use repository escalation and never claim success. The existing PostgreSQL serialized scenario session covers each full change flow, so concurrent repeats wait and reconstruct the terminal result without another mutation.
 
 - [ ] **Step 4: Run GREEN and all booking tests**
 
