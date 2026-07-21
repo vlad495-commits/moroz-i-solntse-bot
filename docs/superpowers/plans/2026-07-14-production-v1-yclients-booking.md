@@ -118,7 +118,33 @@ feat: добавлен контракт и mock YCLIENTS
 
 **Interfaces:**
 - Consumes all Task 1 domain types.
-- Produces `BookingRepository.create_scenario`, `get_scenario`, `checkpoint`, `confirm`, `escalate`, `complete_cancellation`, `get_local_booking`, `list_events`.
+- Produces:
+
+```python
+async def create_scenario(self, scenario: BookingScenario) -> UUID: ...
+async def get_scenario(self, scenario_id: UUID) -> BookingScenario | None: ...
+async def checkpoint(
+    self,
+    scenario: BookingScenario,
+    event_type: str,
+    payload: Mapping[str, object] | None = None,
+) -> None: ...
+async def confirm(self, scenario: BookingScenario, booking: ExternalBooking) -> None: ...
+async def escalate(
+    self,
+    scenario: BookingScenario,
+    error_code: str,
+    payload: Mapping[str, object] | None = None,
+) -> None: ...
+async def complete_cancellation(
+    self,
+    scenario: BookingScenario,
+    booking: ExternalBooking,
+) -> None: ...
+async def get_local_booking(self, scenario_id: UUID) -> ExternalBooking | None: ...
+async def list_events(self, scenario_id: UUID) -> list[BookingEvent]: ...
+```
+
 - Every transition and its event insert is one PostgreSQL transaction.
 
 - [ ] **Step 1: Write failing migration and repository tests**
@@ -157,18 +183,18 @@ Create only:
 ```text
 booking_scenarios: id UUID PK, kind, phase, idempotency_key UNIQUE,
                    customer_id, state JSONB, error_code, created_at, updated_at
-bookings:          id UUID PK, scenario_id UNIQUE FK, external_id UNIQUE,
+bookings:          id UUID PK, last_scenario_id FK, external_id UNIQUE,
                    customer_id, slot_id, starts_at, status, snapshot JSONB,
                    created_at, updated_at
 booking_events:    id UUID PK, scenario_id FK, event_type, payload JSONB,
                    created_at
 ```
 
-Use check constraints for the approved kinds/phases/statuses and indexes on `booking_events(scenario_id, created_at)` and `bookings(customer_id, starts_at)`. Downgrade may remove only these three newly added tables for disposable migration testing; staging rollback never invokes it.
+Allowed scenario phases are `collecting`, `awaiting_confirmation`, `executing`, `confirmed`, `failed`, `escalated`; local booking statuses are `confirmed`, `cancelled`. Use check constraints and indexes on `booking_events(scenario_id, created_at)` and `bookings(customer_id, starts_at)`. One `bookings` row represents the latest snapshot of one external ID; `confirm`/`complete_cancellation` upsert it and set `last_scenario_id`. The terminal scenario state stores `external_id`, so `get_local_booking(scenario_id)` can resolve the snapshot even after a later scenario updates `last_scenario_id`. Downgrade may remove only these three newly added tables for disposable migration testing; staging rollback never invokes it.
 
 - [ ] **Step 4: Implement repository transactions**
 
-Use the existing `Database.acquire()` pattern and `SELECT ... FOR UPDATE` for state transitions. JSON serialization must preserve timezone-aware ISO datetimes and tuples. `create_scenario` uses `ON CONFLICT (idempotency_key)` and returns the existing ID without overwriting state.
+Use the existing `Database.acquire()` pattern and `SELECT ... FOR UPDATE` for state transitions. JSON serialization must thaw Task 1 `MappingProxyType`/tuple values to ordinary JSON objects/arrays, then restore immutable mappings/tuples through the dataclass constructors on read. `create_scenario` uses `ON CONFLICT (idempotency_key)` and returns the existing ID without overwriting state.
 
 - [ ] **Step 5: Run GREEN and migration regression tests**
 
