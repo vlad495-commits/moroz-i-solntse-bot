@@ -1,13 +1,17 @@
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from moroz.booking.models import (
     BookingIdentity,
+    BookingOutcomeUnknown,
     BookingScenario,
+    BookingTemporaryError,
+    CancelBooking,
     CreateBooking,
     ExternalBooking,
+    RescheduleBooking,
     Slot,
     SlotQuery,
     SlotUnavailable,
@@ -41,24 +45,63 @@ class BookingService:
         identity: BookingIdentity | None = None,
     ) -> ScenarioResult:
         async with self._repository.serialized_scenario(scenario_id) as session:
-            return await self._handle_serialized(session, confirmed=confirmed)
+            return await self._handle_serialized(
+                session,
+                confirmed=confirmed,
+                identity=identity,
+            )
 
     async def _handle_serialized(
         self,
         session: BookingScenarioSession,
         *,
         confirmed: bool,
+        identity: BookingIdentity | None,
     ) -> ScenarioResult:
         scenario = session.scenario
-        if scenario.kind != "create":
-            raise NotImplementedError(f"{scenario.kind} is not implemented")
         if scenario.phase == "confirmed":
+            if scenario.kind != "create":
+                if not self._owns_scenario(identity, scenario):
+                    return self._escalated_result("booking_identity_unconfirmed")
+                return self._change_terminal_result(scenario)
             booking = await session.get_local_booking()
             if booking is None:
                 raise RuntimeError("confirmed scenario has no local booking")
             return self._confirmed_result(booking)
+        if scenario.phase == "escalated":
+            if scenario.error_code is None:
+                raise RuntimeError("escalated scenario has no error code")
+            return self._escalated_result(scenario.error_code)
         if scenario.phase == "executing":
             return await self._escalate_unknown(session, scenario)
+        try:
+            if scenario.kind == "create":
+                return await self._handle_create(session, scenario, confirmed)
+            return await self._handle_change(
+                session,
+                scenario,
+                confirmed,
+                identity,
+            )
+        except BookingTemporaryError:
+            return await self._escalate(
+                session,
+                session.scenario,
+                "booking_temporarily_unavailable",
+            )
+        except BookingOutcomeUnknown:
+            return await self._escalate(
+                session,
+                session.scenario,
+                "booking_outcome_unknown",
+            )
+
+    async def _handle_create(
+        self,
+        session: BookingScenarioSession,
+        scenario: BookingScenario,
+        confirmed: bool,
+    ) -> ScenarioResult:
         if scenario.phase != "awaiting_confirmation":
             raise ValueError(f"unsupported create phase: {scenario.phase}")
         if not confirmed:
@@ -104,6 +147,96 @@ class BookingService:
         await session.confirm(terminal, booking)
         return self._confirmed_result(booking)
 
+    async def _handle_change(
+        self,
+        session: BookingScenarioSession,
+        scenario: BookingScenario,
+        confirmed: bool,
+        identity: BookingIdentity | None,
+    ) -> ScenarioResult:
+        if scenario.phase != "awaiting_confirmation":
+            raise ValueError(f"unsupported {scenario.kind} phase: {scenario.phase}")
+        if not self._owns_scenario(identity, scenario):
+            return await self._escalate(
+                session,
+                scenario,
+                "booking_identity_unconfirmed",
+            )
+        starts_at = datetime.fromisoformat(str(scenario.state["starts_at"]))
+        if starts_at - self._now() < timedelta(hours=3):
+            return await self._escalate(session, scenario, "late_booking_change")
+        if not confirmed:
+            return ScenarioResult(
+                status="needs_input",
+                message="Подтвердите изменение записи.",
+                next_action="confirm_booking",
+                events=(),
+            )
+
+        executing = replace(scenario, phase="executing", updated_at=self._now())
+        await session.checkpoint(executing, f"booking_{scenario.kind}_started")
+        if scenario.kind == "reschedule":
+            return await self._reschedule(session, executing)
+        if scenario.kind == "cancel":
+            return await self._cancel(session, executing)
+        raise ValueError(f"unsupported booking kind: {scenario.kind}")
+
+    async def _reschedule(
+        self,
+        session: BookingScenarioSession,
+        scenario: BookingScenario,
+    ) -> ScenarioResult:
+        query = self._slot_query(scenario.state)
+        selected_slot_id = str(scenario.state["selected_slot_id"])
+        slots = await self._port.list_slots(query)
+        if not any(slot.id == selected_slot_id for slot in slots):
+            return await self._slot_unavailable(
+                session, scenario, selected_slot_id, slots
+            )
+        try:
+            booking = await self._port.reschedule_booking(
+                RescheduleBooking(
+                    external_id=str(scenario.state["external_id"]),
+                    slot_id=selected_slot_id,
+                    idempotency_key=scenario.idempotency_key,
+                )
+            )
+        except SlotUnavailable:
+            fresh_slots = await self._port.list_slots(query)
+            return await self._slot_unavailable(
+                session, scenario, selected_slot_id, fresh_slots
+            )
+        state = dict(scenario.state)
+        state["previous_starts_at"] = str(scenario.state["starts_at"])
+        state["starts_at"] = booking.starts_at.isoformat()
+        terminal = replace(
+            scenario,
+            phase="confirmed",
+            state=state,
+            updated_at=self._now(),
+        )
+        await session.confirm(terminal, booking)
+        return self._change_terminal_result(terminal)
+
+    async def _cancel(
+        self,
+        session: BookingScenarioSession,
+        scenario: BookingScenario,
+    ) -> ScenarioResult:
+        booking = await session.get_local_booking()
+        if booking is None:
+            raise RuntimeError("cancel scenario has no local booking")
+        await self._port.cancel_booking(
+            CancelBooking(
+                external_id=str(scenario.state["external_id"]),
+                idempotency_key=scenario.idempotency_key,
+            )
+        )
+        cancelled = replace(booking, status="cancelled")
+        terminal = replace(scenario, phase="confirmed", updated_at=self._now())
+        await session.complete_cancellation(terminal, cancelled)
+        return self._change_terminal_result(terminal)
+
     async def _slot_unavailable(
         self,
         session: BookingScenarioSession,
@@ -134,13 +267,25 @@ class BookingService:
         session: BookingScenarioSession,
         scenario: BookingScenario,
     ) -> ScenarioResult:
-        error_code = "booking_outcome_unknown"
+        return await self._escalate(session, scenario, "booking_outcome_unknown")
+
+    async def _escalate(
+        self,
+        session: BookingScenarioSession,
+        scenario: BookingScenario,
+        error_code: str,
+    ) -> ScenarioResult:
         escalated = replace(
             scenario,
             phase="escalated",
+            error_code=error_code,
             updated_at=self._now(),
         )
         await session.escalate(escalated, error_code)
+        return self._escalated_result(error_code)
+
+    @staticmethod
+    def _escalated_result(error_code: str) -> ScenarioResult:
         return ScenarioResult(
             status="escalated",
             message="Статус записи проверит администратор.",
@@ -148,6 +293,41 @@ class BookingService:
             events=(),
             error_code=error_code,
         )
+
+    @staticmethod
+    def _owns_scenario(
+        identity: BookingIdentity | None,
+        scenario: BookingScenario,
+    ) -> bool:
+        return (
+            identity is not None
+            and identity.confirmed
+            and identity.customer_id == scenario.customer_id
+        )
+
+    @staticmethod
+    def _change_terminal_result(scenario: BookingScenario) -> ScenarioResult:
+        if scenario.kind == "reschedule":
+            previous = scenario.state.get("previous_starts_at")
+            if previous is None:
+                raise RuntimeError("confirmed reschedule has no previous start")
+            return ScenarioResult(
+                status="ok",
+                message=(
+                    f"Запись перенесена с {previous} "
+                    f"на {scenario.state['starts_at']}."
+                ),
+                next_action=None,
+                events=(),
+            )
+        if scenario.kind == "cancel":
+            return ScenarioResult(
+                status="ok",
+                message=f"Запись на {scenario.state['starts_at']} отменена.",
+                next_action=None,
+                events=(),
+            )
+        raise ValueError(f"unsupported change kind: {scenario.kind}")
 
     @staticmethod
     def _slot_query(state: Mapping[str, object]) -> SlotQuery:

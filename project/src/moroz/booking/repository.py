@@ -379,6 +379,18 @@ class BookingScenarioSession:
         self._connection = connection
         self.scenario = scenario
 
+    async def complete_cancellation(
+        self,
+        scenario: BookingScenario,
+        booking: ExternalBooking,
+    ) -> None:
+        async with self._connection.transaction():
+            await self._repository._lock_scenario(self._connection, scenario.id)
+            await self._repository._complete_with_connection(
+                self._connection, scenario, booking, "booking_cancelled"
+            )
+        self.scenario = scenario
+
     async def checkpoint(
         self,
         scenario: BookingScenario,
