@@ -1,10 +1,13 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 
 from moroz.booking.mock_yclients import MockYclientsAdapter
 from moroz.booking.models import (
     BookingNotFound,
+    BookingEvent,
+    BookingScenario,
     CancelBooking,
     CreateBooking,
     RescheduleBooking,
@@ -105,6 +108,18 @@ async def test_reschedule_checks_availability_and_is_idempotent():
 
 
 @pytest.mark.asyncio
+async def test_reschedule_to_occupied_slot_leaves_original_booking_unchanged():
+    adapter = _adapter()
+    booking = await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+    await adapter.create_booking(CreateBooking("customer-2", "slot-next", "create-2"))
+
+    with pytest.raises(SlotUnavailable):
+        await adapter.reschedule_booking(RescheduleBooking(booking.external_id, "slot-next", "reschedule-1"))
+
+    assert await adapter.get_booking(booking.external_id) == booking
+
+
+@pytest.mark.asyncio
 async def test_cancel_with_same_key_is_a_safe_repeat():
     adapter = _adapter()
     booking = await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
@@ -125,3 +140,36 @@ async def test_unknown_external_id_raises_booking_not_found():
 def test_slot_query_rejects_naive_datetimes():
     with pytest.raises(ValueError, match="timezone-aware"):
         SlotQuery(("service-1",), datetime(2026, 7, 22, 9))
+
+
+def test_booking_scenario_and_event_freeze_nested_json_values():
+    nested = {"preferences": {"services": ["service-1"]}}
+    scenario = BookingScenario(
+        id=uuid4(),
+        kind="create",
+        phase="collecting",
+        idempotency_key="scenario-1",
+        customer_id="customer-1",
+        state=nested,
+        error_code=None,
+        created_at=datetime(2026, 7, 22, 9, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 22, 9, tzinfo=UTC),
+    )
+    event = BookingEvent(
+        id=uuid4(),
+        scenario_id=scenario.id,
+        event_type="booking_scenario_created",
+        payload=nested,
+        created_at=datetime(2026, 7, 22, 9, tzinfo=UTC),
+    )
+
+    with pytest.raises(TypeError):
+        scenario.state["preferences"] = {}
+    with pytest.raises(TypeError):
+        event.payload["preferences"]["services"] = ()
+    with pytest.raises(AttributeError):
+        scenario.state["preferences"]["services"].append("service-2")
+    nested["preferences"]["services"].append("service-2")
+
+    assert scenario.state["preferences"]["services"] == ("service-1",)
+    assert event.payload["preferences"]["services"] == ("service-1",)

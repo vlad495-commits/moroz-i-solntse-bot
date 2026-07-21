@@ -1,5 +1,7 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from types import MappingProxyType
 from typing import Literal
 from uuid import UUID
 
@@ -7,6 +9,14 @@ from uuid import UUID
 def _require_aware(value: datetime) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("datetime must be timezone-aware")
+
+
+def _freeze_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +91,7 @@ class BookingScenario:
     phase: str
     idempotency_key: str
     customer_id: str
-    state: dict[str, object]
+    state: Mapping[str, object]
     error_code: str | None
     created_at: datetime
     updated_at: datetime
@@ -89,6 +99,7 @@ class BookingScenario:
     def __post_init__(self) -> None:
         _require_aware(self.created_at)
         _require_aware(self.updated_at)
+        object.__setattr__(self, "state", _freeze_json(self.state))
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,11 +107,12 @@ class BookingEvent:
     id: UUID
     scenario_id: UUID
     event_type: str
-    payload: dict[str, object]
+    payload: Mapping[str, object]
     created_at: datetime
 
     def __post_init__(self) -> None:
         _require_aware(self.created_at)
+        object.__setattr__(self, "payload", _freeze_json(self.payload))
 
 
 class SlotUnavailable(Exception):
