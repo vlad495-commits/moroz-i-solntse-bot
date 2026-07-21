@@ -222,6 +222,24 @@ feat: добавлены durable checkpoints записи
 - Consumes `BookingPort`, `BookingRepository`, Task 1 models.
 - Produces `BookingService.handle(scenario_id: UUID, *, confirmed: bool, identity: BookingIdentity | None = None) -> ScenarioResult`.
 - Uses `ScenarioResult` from `moroz.messaging.models`.
+- Construct with `BookingService(port, repository, now=...)`; `now` defaults to a timezone-aware UTC clock and is reused by Task 4.
+
+The durable create state uses only JSON-safe provider-neutral fields:
+
+```python
+{
+    "slot_query": {
+        "service_ids": ["service-1"],
+        "starts_after": "2026-07-25T00:00:00+00:00",
+        "starts_before": "2026-07-26T00:00:00+00:00",  # optional
+        "staff_id": "staff-1",  # optional
+    },
+    "selected_slot_id": "slot-9",
+    # any already-collected customer/service fields remain untouched
+}
+```
+
+`needs_input` before confirmation uses `next_action="confirm_booking"`. A lost slot uses `next_action="choose_slot"` and both the returned event and durable `slot_unavailable` event carry the same JSON-safe `alternatives` list (maximum three). Terminal success is reconstructed from the stored booking with a stable `ScenarioResult(status="ok", next_action=None, events=())`, so a repeat is value-equal without another port call.
 
 - [ ] **Step 1: Write failing create-flow E2E tests**
 
