@@ -72,7 +72,7 @@ Also cover: occupied slot excluded, different create key on occupied slot raises
 Run the exact target in a task-specific namespace with generated process-environment credentials:
 
 ```powershell
-docker compose -p codex-yclients-task1 --env-file ../tmp/yclients-baseline.env --profile test run --rm test pytest tests/unit/booking/test_mock_adapter.py -q
+docker compose --env-file ../.env -p codex-yclients-task1 --profile test run --rm test pytest tests/unit/booking/test_mock_adapter.py -q
 ```
 
 Expected: collection/import failure because `moroz.booking` does not exist. Record RED evidence in `changelog.md`.
@@ -323,9 +323,9 @@ feat: добавлены перенос отмена и fallback записи
 In a new namespace with new process-environment credentials run:
 
 ```powershell
-docker compose --env-file ../tmp/yclients-baseline.env --profile test build test
-docker compose --env-file ../tmp/yclients-baseline.env --profile test run --rm test pytest -q
-docker compose --env-file ../tmp/yclients-baseline.env config --quiet
+docker compose --env-file ../.env --profile test build test
+docker compose --env-file ../.env --profile test run --rm test pytest -q
+docker compose --env-file ../.env config --quiet
 ```
 
 Also run `alembic current` through the migration image and verify `0005_booking_state (head)`. Capture counts only; never output credentials/DSN.

@@ -1,0 +1,119 @@
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal
+from uuid import UUID
+
+
+def _require_aware(value: datetime) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("datetime must be timezone-aware")
+
+
+@dataclass(frozen=True, slots=True)
+class SlotQuery:
+    service_ids: tuple[str, ...]
+    starts_after: datetime
+    starts_before: datetime | None = None
+    staff_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_aware(self.starts_after)
+        if self.starts_before is not None:
+            _require_aware(self.starts_before)
+            if self.starts_before <= self.starts_after:
+                raise ValueError("starts_before must be after starts_after")
+
+
+@dataclass(frozen=True, slots=True)
+class Slot:
+    id: str
+    service_ids: tuple[str, ...]
+    staff_id: str
+    starts_at: datetime
+    duration_minutes: int
+
+    def __post_init__(self) -> None:
+        _require_aware(self.starts_at)
+
+
+@dataclass(frozen=True, slots=True)
+class CreateBooking:
+    customer_id: str
+    slot_id: str
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class RescheduleBooking:
+    external_id: str
+    slot_id: str
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class CancelBooking:
+    external_id: str
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalBooking:
+    external_id: str
+    customer_id: str
+    slot_id: str
+    starts_at: datetime
+    status: Literal["confirmed", "cancelled"]
+
+    def __post_init__(self) -> None:
+        _require_aware(self.starts_at)
+
+
+@dataclass(frozen=True, slots=True)
+class BookingIdentity:
+    customer_id: str
+    confirmed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BookingScenario:
+    id: UUID
+    kind: Literal["create", "reschedule", "cancel"]
+    phase: str
+    idempotency_key: str
+    customer_id: str
+    state: dict[str, object]
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    def __post_init__(self) -> None:
+        _require_aware(self.created_at)
+        _require_aware(self.updated_at)
+
+
+@dataclass(frozen=True, slots=True)
+class BookingEvent:
+    id: UUID
+    scenario_id: UUID
+    event_type: str
+    payload: dict[str, object]
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        _require_aware(self.created_at)
+
+
+class SlotUnavailable(Exception):
+    pass
+
+
+class BookingNotFound(Exception):
+    pass
+
+
+class BookingTemporaryError(Exception):
+    pass
+
+
+class BookingOutcomeUnknown(Exception):
+    pass

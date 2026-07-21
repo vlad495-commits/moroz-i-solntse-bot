@@ -1,0 +1,127 @@
+from datetime import UTC, datetime
+
+import pytest
+
+from moroz.booking.mock_yclients import MockYclientsAdapter
+from moroz.booking.models import (
+    BookingNotFound,
+    CancelBooking,
+    CreateBooking,
+    RescheduleBooking,
+    Slot,
+    SlotQuery,
+    SlotUnavailable,
+)
+
+
+def _slot(slot_id: str, hour: int, *, services: tuple[str, ...] = ("service-1",), staff_id: str = "staff-1") -> Slot:
+    return Slot(
+        id=slot_id,
+        service_ids=services,
+        staff_id=staff_id,
+        starts_at=datetime(2026, 7, 22, hour, tzinfo=UTC),
+        duration_minutes=60,
+    )
+
+
+def _adapter() -> MockYclientsAdapter:
+    return MockYclientsAdapter(
+        [
+            _slot("slot-before", 8),
+            _slot("slot-ok", 9, services=("service-1", "service-2")),
+            _slot("slot-next", 10),
+            _slot("slot-other-service", 11, services=("service-2",)),
+            _slot("slot-other-staff", 12, staff_id="staff-2"),
+            Slot(
+                id="slot-upper-bound",
+                service_ids=("service-1",),
+                staff_id="staff-1",
+                starts_at=datetime(2026, 7, 23, tzinfo=UTC),
+                duration_minutes=60,
+            ),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_slots_returns_only_matching_future_slots():
+    adapter = _adapter()
+    query = SlotQuery(
+        service_ids=("service-1",),
+        starts_after=datetime(2026, 7, 22, 9, tzinfo=UTC),
+        starts_before=datetime(2026, 7, 23, tzinfo=UTC),
+        staff_id="staff-1",
+    )
+
+    assert [slot.id for slot in await adapter.list_slots(query)] == ["slot-ok", "slot-next"]
+
+
+@pytest.mark.asyncio
+async def test_list_slots_excludes_occupied_slot():
+    adapter = _adapter()
+    await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+
+    slots = await adapter.list_slots(
+        SlotQuery(("service-1",), datetime(2026, 7, 22, 9, tzinfo=UTC), staff_id="staff-1")
+    )
+
+    assert "slot-ok" not in [slot.id for slot in slots]
+
+
+@pytest.mark.asyncio
+async def test_create_is_idempotent_for_same_key():
+    adapter = _adapter()
+    command = CreateBooking("customer-1", "slot-ok", "create-1")
+
+    first = await adapter.create_booking(command)
+    repeated = await adapter.create_booking(command)
+
+    assert repeated == first
+    assert await adapter.get_booking(first.external_id) == first
+
+
+@pytest.mark.asyncio
+async def test_create_with_different_key_on_occupied_slot_raises_slot_unavailable():
+    adapter = _adapter()
+    await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+
+    with pytest.raises(SlotUnavailable):
+        await adapter.create_booking(CreateBooking("customer-2", "slot-ok", "create-2"))
+
+
+@pytest.mark.asyncio
+async def test_reschedule_checks_availability_and_is_idempotent():
+    adapter = _adapter()
+    booking = await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+    command = RescheduleBooking(booking.external_id, "slot-next", "reschedule-1")
+
+    first = await adapter.reschedule_booking(command)
+    repeated = await adapter.reschedule_booking(command)
+
+    assert repeated == first
+    assert first.slot_id == "slot-next"
+    with pytest.raises(SlotUnavailable):
+        await adapter.create_booking(CreateBooking("customer-2", "slot-next", "create-2"))
+
+
+@pytest.mark.asyncio
+async def test_cancel_with_same_key_is_a_safe_repeat():
+    adapter = _adapter()
+    booking = await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+    command = CancelBooking(booking.external_id, "cancel-1")
+
+    await adapter.cancel_booking(command)
+    await adapter.cancel_booking(command)
+
+    assert (await adapter.get_booking(booking.external_id)).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_unknown_external_id_raises_booking_not_found():
+    with pytest.raises(BookingNotFound):
+        await _adapter().get_booking("unknown")
+
+
+def test_slot_query_rejects_naive_datetimes():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        SlotQuery(("service-1",), datetime(2026, 7, 22, 9))
