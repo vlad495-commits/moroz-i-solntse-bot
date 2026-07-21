@@ -35,7 +35,7 @@ class BookingRepository:
         scenario_id: UUID,
     ) -> AsyncIterator["BookingScenarioSession"]:
         async with self._database.acquire() as connection:
-            lock_key = str(scenario_id)
+            lock_key = f"booking:scenario:{scenario_id}"
             await connection.execute(
                 "SELECT pg_advisory_lock(hashtextextended($1, 0))",
                 lock_key,
@@ -193,6 +193,29 @@ class BookingRepository:
             slot_id=row["slot_id"],
             starts_at=row["starts_at"],
             status=row["status"],
+        )
+
+    @staticmethod
+    async def _has_unresolved_outcome_with_connection(
+        connection: asyncpg.Connection,
+        external_id: str,
+    ) -> bool:
+        return bool(
+            await connection.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM booking_scenarios
+                    WHERE state->>'external_id' = $1
+                      AND (
+                          phase = 'executing'
+                          OR (phase = 'escalated'
+                              AND error_code = 'booking_outcome_unknown')
+                      )
+                )
+                """,
+                external_id,
+            )
         )
 
     async def list_events(self, scenario_id: UUID) -> list[BookingEvent]:
@@ -379,6 +402,21 @@ class BookingScenarioSession:
         self._connection = connection
         self.scenario = scenario
 
+    @asynccontextmanager
+    async def serialized_booking(self, external_id: str) -> AsyncIterator[None]:
+        lock_key = f"booking:external:{external_id}"
+        await self._connection.execute(
+            "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+            lock_key,
+        )
+        try:
+            yield
+        finally:
+            await self._connection.execute(
+                "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+                lock_key,
+            )
+
     async def complete_cancellation(
         self,
         scenario: BookingScenario,
@@ -433,4 +471,10 @@ class BookingScenarioSession:
         return await self._repository._get_local_booking_with_connection(
             self._connection,
             self.scenario.id,
+        )
+
+    async def has_unresolved_outcome(self, external_id: str) -> bool:
+        return await self._repository._has_unresolved_outcome_with_connection(
+            self._connection,
+            external_id,
         )

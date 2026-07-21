@@ -1,15 +1,11 @@
+import asyncio
 import json
-import os
-import subprocess
-import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import asyncpg
 import pytest
-import pytest_asyncio
 
 from moroz.booking.mock_yclients import MockYclientsAdapter
 from moroz.booking.models import (
@@ -24,20 +20,12 @@ from moroz.booking.models import (
     SlotQuery,
     SlotUnavailable,
 )
-from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
-from moroz.common.config import Settings
-from moroz.common.db import Database
 
 
 pytestmark = pytest.mark.asyncio
 NOW = datetime(2026, 7, 25, 10, tzinfo=UTC)
 OLD_START = datetime(2026, 7, 25, 14, tzinfo=UTC)
-
-
-class RedactedDatabaseURL(str):
-    def __repr__(self):
-        return "'<redacted-database-url>'"
 
 
 class CountingChangeAdapter(MockYclientsAdapter):
@@ -92,37 +80,30 @@ class SlotDisappearsOnRescheduleAdapter(CountingChangeAdapter):
         raise SlotUnavailable(command.slot_id)
 
 
-@pytest_asyncio.fixture
-async def repo():
-    admin_url = Settings.from_env(os.environ).database_url
-    assert admin_url
-    database_name = f"test_change_booking_{uuid.uuid4().hex}"
-    parts = urlsplit(admin_url)
-    database_url = RedactedDatabaseURL(
-        urlunsplit(parts._replace(path=f"/{database_name}"))
-    )
-    admin = await asyncpg.connect(admin_url)
-    database = None
-    try:
-        await admin.execute(f'CREATE DATABASE "{database_name}"')
-        subprocess.run(
-            ["alembic", "-c", "/workspace/alembic.ini", "upgrade", "head"],
-            check=True,
-            env={**os.environ, "DATABASE_URL": database_url},
-        )
-        database = Database(database_url, min_size=1, max_size=1)
-        await database.connect()
-        yield BookingRepository(database)
-    finally:
-        if database is not None:
-            await database.close()
-        await admin.execute(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            "WHERE datname = $1 AND pid <> pg_backend_pid()",
-            database_name,
-        )
-        await admin.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
-        await admin.close()
+class BarrierRescheduleAdapter(CountingChangeAdapter):
+    def __init__(self, slots: list[Slot]) -> None:
+        super().__init__(slots)
+        self.reschedule_entered = asyncio.Event()
+        self.release_reschedule = asyncio.Event()
+
+    async def reschedule_booking(self, command: RescheduleBooking):
+        self.reschedule_calls += 1
+        self.reschedule_entered.set()
+        await self.release_reschedule.wait()
+        return await MockYclientsAdapter.reschedule_booking(self, command)
+
+
+class BarrierOutcomeUnknownAdapter(CountingChangeAdapter):
+    def __init__(self, slots: list[Slot]) -> None:
+        super().__init__(slots)
+        self.reschedule_entered = asyncio.Event()
+        self.release_reschedule = asyncio.Event()
+
+    async def reschedule_booking(self, command: RescheduleBooking):
+        self.reschedule_calls += 1
+        self.reschedule_entered.set()
+        await self.release_reschedule.wait()
+        raise BookingOutcomeUnknown("reschedule result is unknown")
 
 
 def _slot(slot_id: str, hour: int) -> Slot:
@@ -141,6 +122,9 @@ def _scenario(
     *,
     starts_at: datetime = OLD_START,
     selected_slot_id: str = "slot-new",
+    customer_id: str = "customer-7",
+    phase: str = "awaiting_confirmation",
+    error_code: str | None = None,
 ) -> BookingScenario:
     state: dict[str, object] = {
         "external_id": external_id,
@@ -161,26 +145,26 @@ def _scenario(
     return BookingScenario(
         id=uuid4(),
         kind=kind,
-        phase="awaiting_confirmation",
+        phase=phase,
         idempotency_key=f"{kind}:{uuid4()}",
-        customer_id="customer-7",
+        customer_id=customer_id,
         state=state,
-        error_code=None,
+        error_code=error_code,
         created_at=NOW - timedelta(days=1),
         updated_at=NOW - timedelta(days=1),
     )
 
 
-async def _seed_booking(repo, port: MockYclientsAdapter):
+async def _seed_booking(repo, port: MockYclientsAdapter, customer_id="customer-7"):
     booking = await port.create_booking(
-        CreateBooking("customer-7", "slot-old", f"seed:{uuid4()}")
+        CreateBooking(customer_id, "slot-old", f"seed:{uuid4()}")
     )
     seed = BookingScenario(
         id=uuid4(),
         kind="create",
         phase="confirmed",
         idempotency_key=f"seed-scenario:{uuid4()}",
-        customer_id="customer-7",
+        customer_id=customer_id,
         state={"external_id": booking.external_id},
         error_code=None,
         created_at=NOW - timedelta(days=2),
@@ -199,6 +183,31 @@ def _thaw(value):
     if isinstance(value, (list, tuple)):
         return [_thaw(item) for item in value]
     return value
+
+
+async def _wait_for_aggregate_lock(database_url, task) -> bool:
+    watcher = await asyncpg.connect(database_url)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 2
+    try:
+        while not task.done() and loop.time() < deadline:
+            waiting = await watcher.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND pid <> pg_backend_pid()
+                      AND wait_event_type = 'Lock'
+                      AND query LIKE '%pg_advisory_lock%'
+                )
+                """
+            )
+            if waiting:
+                return True
+            await asyncio.sleep(0.01)
+        return False
+    finally:
+        await watcher.close()
 
 
 @pytest.mark.parametrize(
@@ -292,8 +301,12 @@ async def test_cancel_at_exactly_three_hours_uses_local_snapshot_and_mutates_onc
 
 @pytest.mark.parametrize("kind", ["reschedule", "cancel"])
 async def test_change_under_three_hours_escalates_before_any_port_call(repo, kind):
+    original = await _seed_booking(
+        repo,
+        CountingChangeAdapter([_slot("slot-old", 14)]),
+    )
     port = CountingChangeAdapter([_slot("slot-new", 16)])
-    scenario = _scenario(kind, "booking-42")
+    scenario = _scenario(kind, original.external_id)
     await repo.create_scenario(scenario)
 
     result = await BookingService(
@@ -464,6 +477,263 @@ async def test_confirmed_change_repeat_rejects_unowned_identity_without_leaking(
         confirmed=True,
         identity=correct_identity,
     ) == initial
+
+
+async def test_forged_scenario_owner_cannot_mutate_another_customers_booking(repo):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    booking = await _seed_booking(repo, port, customer_id="customer-B")
+    forged = _scenario(
+        "reschedule",
+        booking.external_id,
+        customer_id="customer-A",
+    )
+    await repo.create_scenario(forged)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        forged.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-A", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_identity_unconfirmed",
+    )
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    stored = await repo.get_scenario(forged.id)
+    assert (stored.phase, stored.error_code) == (
+        "escalated",
+        "booking_identity_unconfirmed",
+    )
+    assert (await repo.list_events(forged.id))[-1].event_type == "admin_attention_required"
+
+
+@pytest.mark.parametrize("phase", ["confirmed", "escalated", "executing"])
+async def test_forged_owner_cannot_observe_or_mutate_terminal_or_recovery(repo, phase):
+    port = CountingChangeAdapter([_slot("slot-old", 14)])
+    booking = await _seed_booking(repo, port, customer_id="customer-B")
+    forged = _scenario(
+        "cancel",
+        booking.external_id,
+        customer_id="customer-A",
+        phase=phase,
+        error_code=("booking_temporarily_unavailable" if phase == "escalated" else None),
+    )
+    await repo.create_scenario(forged)
+    events_before = await repo.list_events(forged.id)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        forged.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-A", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_identity_unconfirmed",
+    )
+    assert result.message == "Статус записи проверит администратор."
+    assert OLD_START.isoformat() not in result.message
+    assert await repo.get_scenario(forged.id) == forged
+    assert await repo.list_events(forged.id) == events_before
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls, port.get_calls) == (
+        0,
+        0,
+        0,
+        0,
+    )
+
+
+async def test_distinct_change_scenarios_serialize_one_external_booking(
+    migrated_database_url,
+    repo_pair,
+):
+    first_repo, second_repo = repo_pair
+    port = BarrierRescheduleAdapter(
+        [_slot("slot-old", 14), _slot("slot-new", 16)]
+    )
+    booking = await _seed_booking(first_repo, port)
+    reschedule = _scenario("reschedule", booking.external_id)
+    cancel = _scenario("cancel", booking.external_id)
+    await first_repo.create_scenario(reschedule)
+    await first_repo.create_scenario(cancel)
+    identity = BookingIdentity("customer-7", confirmed=True)
+
+    first = asyncio.create_task(
+        BookingService(port, first_repo, now=lambda: NOW).handle(
+            reschedule.id, confirmed=True, identity=identity
+        )
+    )
+    await asyncio.wait_for(port.reschedule_entered.wait(), timeout=2)
+    second = asyncio.create_task(
+        BookingService(port, second_repo, now=lambda: NOW).handle(
+            cancel.id, confirmed=True, identity=identity
+        )
+    )
+    lock_waiting = await _wait_for_aggregate_lock(migrated_database_url, second)
+    port.release_reschedule.set()
+    first_result, second_result = await asyncio.gather(first, second)
+
+    assert lock_waiting
+    assert first_result.status == "ok"
+    assert (second_result.status, second_result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
+    assert (port.reschedule_calls, port.cancel_calls) == (1, 0)
+
+
+async def test_outcome_unknown_blocks_later_aggregate_mutation(
+    migrated_database_url,
+    repo_pair,
+):
+    first_repo, second_repo = repo_pair
+    port = BarrierOutcomeUnknownAdapter(
+        [_slot("slot-old", 14), _slot("slot-new", 16)]
+    )
+    booking = await _seed_booking(first_repo, port)
+    reschedule = _scenario("reschedule", booking.external_id)
+    cancel = _scenario("cancel", booking.external_id)
+    await first_repo.create_scenario(reschedule)
+    await first_repo.create_scenario(cancel)
+    identity = BookingIdentity("customer-7", confirmed=True)
+
+    first = asyncio.create_task(
+        BookingService(port, first_repo, now=lambda: NOW).handle(
+            reschedule.id, confirmed=True, identity=identity
+        )
+    )
+    await asyncio.wait_for(port.reschedule_entered.wait(), timeout=2)
+    second = asyncio.create_task(
+        BookingService(port, second_repo, now=lambda: NOW).handle(
+            cancel.id, confirmed=True, identity=identity
+        )
+    )
+    lock_waiting = await _wait_for_aggregate_lock(migrated_database_url, second)
+    port.release_reschedule.set()
+    first_result, second_result = await asyncio.gather(first, second)
+
+    assert lock_waiting
+    assert (first_result.status, first_result.error_code) == (
+        "escalated",
+        "booking_outcome_unknown",
+    )
+    assert (second_result.status, second_result.error_code) == (
+        "escalated",
+        "booking_outcome_unknown",
+    )
+    assert (port.reschedule_calls, port.cancel_calls) == (1, 0)
+    assert await first_repo.get_local_booking(reschedule.id) == booking
+    stored_second = await second_repo.get_scenario(cancel.id)
+    assert (stored_second.phase, stored_second.error_code) == (
+        "escalated",
+        "booking_outcome_unknown",
+    )
+
+
+async def test_abandoned_executing_sibling_blocks_aggregate_mutation(repo):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    booking = await _seed_booking(repo, port)
+    abandoned = _scenario(
+        "reschedule",
+        booking.external_id,
+        phase="executing",
+    )
+    current = _scenario("cancel", booking.external_id)
+    await repo.create_scenario(abandoned)
+    await repo.create_scenario(current)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        current.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-7", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_outcome_unknown",
+    )
+    assert (port.reschedule_calls, port.cancel_calls, port.list_calls) == (0, 0, 0)
+    assert await repo.get_local_booking(current.id) == booking
+    assert await repo.get_scenario(abandoned.id) == abandoned
+    stored_current = await repo.get_scenario(current.id)
+    assert (stored_current.phase, stored_current.error_code) == (
+        "escalated",
+        "booking_outcome_unknown",
+    )
+
+
+@pytest.mark.parametrize("first_kind", ["reschedule", "cancel"])
+async def test_sequential_stale_change_fails_before_second_port_mutation(repo, first_kind):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    booking = await _seed_booking(repo, port)
+    identity = BookingIdentity("customer-7", confirmed=True)
+    first = _scenario(first_kind, booking.external_id)
+    await repo.create_scenario(first)
+    first_result = await BookingService(port, repo, now=lambda: NOW).handle(
+        first.id, confirmed=True, identity=identity
+    )
+    stale_kind = "cancel" if first_kind == "reschedule" else "reschedule"
+    stale = _scenario(stale_kind, booking.external_id)
+    await repo.create_scenario(stale)
+    calls = (port.reschedule_calls, port.cancel_calls, port.list_calls)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        stale.id, confirmed=True, identity=identity
+    )
+
+    assert first_result.status == "ok"
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
+    assert (port.reschedule_calls, port.cancel_calls, port.list_calls) == calls
+
+
+@pytest.mark.parametrize("phase", ["escalated", "executing"])
+@pytest.mark.parametrize(
+    "identity",
+    [
+        None,
+        BookingIdentity("customer-7", confirmed=False),
+        BookingIdentity("other", confirmed=True),
+    ],
+)
+async def test_invalid_identity_cannot_observe_or_mutate_change_recovery(
+    repo,
+    phase,
+    identity,
+):
+    port = CountingChangeAdapter([_slot("slot-new", 16)])
+    error_code = "booking_temporarily_unavailable" if phase == "escalated" else None
+    scenario = _scenario(
+        "reschedule",
+        "booking-42",
+        phase=phase,
+        error_code=error_code,
+    )
+    await repo.create_scenario(scenario)
+    events_before = await repo.list_events(scenario.id)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        scenario.id,
+        confirmed=True,
+        identity=identity,
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_identity_unconfirmed",
+    )
+    assert result.message == "Статус записи проверит администратор."
+    assert await repo.get_scenario(scenario.id) == scenario
+    assert await repo.list_events(scenario.id) == events_before
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls, port.get_calls) == (
+        0,
+        0,
+        0,
+        0,
+    )
 
 
 async def test_reschedule_slot_disappearing_during_mutation_uses_fresh_alternatives(repo):

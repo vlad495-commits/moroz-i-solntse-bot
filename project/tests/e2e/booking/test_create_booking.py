@@ -1,38 +1,26 @@
 import asyncio
 import json
-import os
-import subprocess
-import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import asyncpg
 import pytest
-import pytest_asyncio
 
 from moroz.booking.mock_yclients import MockYclientsAdapter
 from moroz.booking.models import (
+    BookingIdentity,
     BookingScenario,
     CreateBooking,
     Slot,
     SlotQuery,
     SlotUnavailable,
 )
-from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
-from moroz.common.config import Settings
-from moroz.common.db import Database
 
 
 pytestmark = pytest.mark.asyncio
 NOW = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
-
-
-class RedactedDatabaseURL(str):
-    def __repr__(self):
-        return "'<redacted-database-url>'"
 
 
 class CountingMockYclientsAdapter(MockYclientsAdapter):
@@ -68,58 +56,6 @@ class SlotDisappearsOnCreateAdapter(CountingMockYclientsAdapter):
         self.create_calls += 1
         self._slots.pop(command.slot_id, None)
         raise SlotUnavailable(command.slot_id)
-
-
-@pytest_asyncio.fixture
-async def migrated_database_url():
-    admin_url = Settings.from_env(os.environ).database_url
-    assert admin_url
-    database_name = f"test_booking_{uuid.uuid4().hex}"
-    parts = urlsplit(admin_url)
-    test_url = RedactedDatabaseURL(
-        urlunsplit(parts._replace(path=f"/{database_name}"))
-    )
-
-    admin = await asyncpg.connect(admin_url)
-    try:
-        await admin.execute(f'CREATE DATABASE "{database_name}"')
-        subprocess.run(
-            ["alembic", "-c", "/workspace/alembic.ini", "upgrade", "head"],
-            check=True,
-            env={**os.environ, "DATABASE_URL": test_url},
-        )
-        yield test_url
-    finally:
-        await admin.execute(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            "WHERE datname = $1 AND pid <> pg_backend_pid()",
-            database_name,
-        )
-        await admin.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
-        await admin.close()
-
-
-@pytest_asyncio.fixture
-async def repo(migrated_database_url):
-    database = Database(migrated_database_url, min_size=1, max_size=1)
-    await database.connect()
-    try:
-        yield BookingRepository(database)
-    finally:
-        await database.close()
-
-
-@pytest_asyncio.fixture
-async def repo_pair(migrated_database_url):
-    databases = [
-        Database(migrated_database_url, min_size=1, max_size=1),
-        Database(migrated_database_url, min_size=1, max_size=1),
-    ]
-    await asyncio.gather(*(database.connect() for database in databases))
-    try:
-        yield tuple(BookingRepository(database) for database in databases)
-    finally:
-        await asyncio.gather(*(database.close() for database in databases))
 
 
 def _slot(slot_id: str, hour: int) -> Slot:
@@ -315,3 +251,66 @@ async def test_slot_disappearing_during_create_uses_fresh_alternatives(repo):
     assert events[-1].event_type == "slot_unavailable"
     assert _thaw(events[-1].payload["alternatives"]) == alternatives
     assert "admin_attention_required" not in [event.event_type for event in events]
+
+
+async def test_create_repeat_keeps_original_terminal_after_reschedule_and_cancel(repo):
+    port = CountingMockYclientsAdapter(
+        [_slot("slot-9", 14), _slot("slot-new", 16)]
+    )
+    create = _scenario()
+    await repo.create_scenario(create)
+    service = BookingService(port, repo, now=lambda: NOW)
+    initial = await service.handle(create.id, confirmed=True)
+    booking = await repo.get_local_booking(create.id)
+    identity = BookingIdentity("customer-7", confirmed=True)
+    reschedule = BookingScenario(
+        id=uuid4(),
+        kind="reschedule",
+        phase="awaiting_confirmation",
+        idempotency_key=f"reschedule:{uuid4()}",
+        customer_id="customer-7",
+        state={
+            "external_id": booking.external_id,
+            "starts_at": booking.starts_at.isoformat(),
+            "slot_query": {
+                "service_ids": ["service-1"],
+                "starts_after": "2026-07-25T15:00:00+00:00",
+                "starts_before": "2026-07-25T17:00:00+00:00",
+                "staff_id": "staff-1",
+            },
+            "selected_slot_id": "slot-new",
+        },
+        error_code=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    await repo.create_scenario(reschedule)
+    assert (
+        await service.handle(reschedule.id, confirmed=True, identity=identity)
+    ).status == "ok"
+    cancel = BookingScenario(
+        id=uuid4(),
+        kind="cancel",
+        phase="awaiting_confirmation",
+        idempotency_key=f"cancel:{uuid4()}",
+        customer_id="customer-7",
+        state={
+            "external_id": booking.external_id,
+            "starts_at": _slot("slot-new", 16).starts_at.isoformat(),
+        },
+        error_code=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    await repo.create_scenario(cancel)
+    assert (await service.handle(cancel.id, confirmed=True, identity=identity)).status == "ok"
+
+    repeated = await service.handle(create.id, confirmed=True)
+    stored = await repo.get_scenario(create.id)
+
+    assert repeated == initial
+    assert _slot("slot-9", 14).starts_at.isoformat() in repeated.message
+    assert _slot("slot-new", 16).starts_at.isoformat() not in repeated.message
+    assert stored.state["starts_at"] == _slot("slot-9", 14).starts_at.isoformat()
+    assert stored.state["status"] == "confirmed"
+    assert port.create_calls == 1

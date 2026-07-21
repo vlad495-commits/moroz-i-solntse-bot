@@ -27,6 +27,7 @@ class SlotQuery:
     staff_id: str | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "service_ids", tuple(self.service_ids))
         _require_aware(self.starts_after)
         if self.starts_before is not None:
             _require_aware(self.starts_before)
@@ -43,6 +44,7 @@ class Slot:
     duration_minutes: int
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "service_ids", tuple(self.service_ids))
         _require_aware(self.starts_at)
 
 

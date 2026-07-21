@@ -59,30 +59,57 @@ class BookingService:
         identity: BookingIdentity | None,
     ) -> ScenarioResult:
         scenario = session.scenario
-        if scenario.phase == "confirmed":
-            if scenario.kind != "create":
-                if not self._owns_scenario(identity, scenario):
-                    return self._escalated_result("booking_identity_unconfirmed")
-                return self._change_terminal_result(scenario)
-            booking = await session.get_local_booking()
-            if booking is None:
-                raise RuntimeError("confirmed scenario has no local booking")
-            return self._confirmed_result(booking)
-        if scenario.phase == "escalated":
-            if scenario.error_code is None:
-                raise RuntimeError("escalated scenario has no error code")
-            return self._escalated_result(scenario.error_code)
-        if scenario.phase == "executing":
-            return await self._escalate_unknown(session, scenario)
         try:
             if scenario.kind == "create":
+                if scenario.phase == "confirmed":
+                    return self._create_terminal_result(scenario)
+                if scenario.phase == "escalated":
+                    if scenario.error_code is None:
+                        raise RuntimeError("escalated scenario has no error code")
+                    return self._escalated_result(scenario.error_code)
+                if scenario.phase == "executing":
+                    return await self._escalate_unknown(session, scenario)
                 return await self._handle_create(session, scenario, confirmed)
-            return await self._handle_change(
-                session,
-                scenario,
-                confirmed,
-                identity,
-            )
+            if not self._owns_scenario(identity, scenario):
+                return await self._identity_failure(session, scenario)
+            external_id = str(scenario.state["external_id"])
+            async with session.serialized_booking(external_id):
+                try:
+                    booking = await session.get_local_booking()
+                    if booking is None:
+                        return await self._change_validation_failure(
+                            session, scenario, "booking_temporarily_unavailable"
+                        )
+                    if booking.customer_id != scenario.customer_id:
+                        return await self._identity_failure(session, scenario)
+                    if scenario.phase == "confirmed":
+                        return self._change_terminal_result(scenario)
+                    if scenario.phase == "escalated":
+                        if scenario.error_code is None:
+                            raise RuntimeError("escalated scenario has no error code")
+                        return self._escalated_result(scenario.error_code)
+                    if scenario.phase == "executing":
+                        return await self._escalate_unknown(session, scenario)
+                    if await session.has_unresolved_outcome(external_id):
+                        return await self._escalate_unknown(session, scenario)
+                    return await self._handle_change(
+                        session,
+                        scenario,
+                        confirmed,
+                        booking,
+                    )
+                except BookingTemporaryError:
+                    return await self._escalate(
+                        session,
+                        session.scenario,
+                        "booking_temporarily_unavailable",
+                    )
+                except BookingOutcomeUnknown:
+                    return await self._escalate(
+                        session,
+                        session.scenario,
+                        "booking_outcome_unknown",
+                    )
         except BookingTemporaryError:
             return await self._escalate(
                 session,
@@ -139,31 +166,33 @@ class BookingService:
             return await self._slot_unavailable(
                 session, executing, selected_slot_id, fresh_slots
             )
+        state = dict(executing.state)
+        state["starts_at"] = booking.starts_at.isoformat()
+        state["status"] = booking.status
         terminal = replace(
             executing,
             phase="confirmed",
+            state=state,
             updated_at=self._now(),
         )
         await session.confirm(terminal, booking)
-        return self._confirmed_result(booking)
+        return self._create_terminal_result(terminal)
 
     async def _handle_change(
         self,
         session: BookingScenarioSession,
         scenario: BookingScenario,
         confirmed: bool,
-        identity: BookingIdentity | None,
+        booking: ExternalBooking,
     ) -> ScenarioResult:
         if scenario.phase != "awaiting_confirmation":
             raise ValueError(f"unsupported {scenario.kind} phase: {scenario.phase}")
-        if not self._owns_scenario(identity, scenario):
+        collected_start = datetime.fromisoformat(str(scenario.state["starts_at"]))
+        if booking.status != "confirmed" or booking.starts_at != collected_start:
             return await self._escalate(
-                session,
-                scenario,
-                "booking_identity_unconfirmed",
+                session, scenario, "booking_temporarily_unavailable"
             )
-        starts_at = datetime.fromisoformat(str(scenario.state["starts_at"]))
-        if starts_at - self._now() < timedelta(hours=3):
+        if booking.starts_at - self._now() < timedelta(hours=3):
             return await self._escalate(session, scenario, "late_booking_change")
         if not confirmed:
             return ScenarioResult(
@@ -178,8 +207,29 @@ class BookingService:
         if scenario.kind == "reschedule":
             return await self._reschedule(session, executing)
         if scenario.kind == "cancel":
-            return await self._cancel(session, executing)
+            return await self._cancel(session, executing, booking)
         raise ValueError(f"unsupported booking kind: {scenario.kind}")
+
+    async def _identity_failure(
+        self,
+        session: BookingScenarioSession,
+        scenario: BookingScenario,
+    ) -> ScenarioResult:
+        if scenario.phase == "awaiting_confirmation":
+            return await self._escalate(
+                session, scenario, "booking_identity_unconfirmed"
+            )
+        return self._escalated_result("booking_identity_unconfirmed")
+
+    async def _change_validation_failure(
+        self,
+        session: BookingScenarioSession,
+        scenario: BookingScenario,
+        error_code: str,
+    ) -> ScenarioResult:
+        if scenario.phase == "awaiting_confirmation":
+            return await self._escalate(session, scenario, error_code)
+        return self._escalated_result(error_code)
 
     async def _reschedule(
         self,
@@ -222,10 +272,8 @@ class BookingService:
         self,
         session: BookingScenarioSession,
         scenario: BookingScenario,
+        booking: ExternalBooking,
     ) -> ScenarioResult:
-        booking = await session.get_local_booking()
-        if booking is None:
-            raise RuntimeError("cancel scenario has no local booking")
         await self._port.cancel_booking(
             CancelBooking(
                 external_id=str(scenario.state["external_id"]),
@@ -357,10 +405,12 @@ class BookingService:
         }
 
     @staticmethod
-    def _confirmed_result(booking: ExternalBooking) -> ScenarioResult:
+    def _create_terminal_result(scenario: BookingScenario) -> ScenarioResult:
+        if scenario.state.get("status") != "confirmed":
+            raise RuntimeError("confirmed create has invalid terminal status")
         return ScenarioResult(
             status="ok",
-            message=f"Запись подтверждена на {booking.starts_at.isoformat()}.",
+            message=f"Запись подтверждена на {scenario.state['starts_at']}.",
             next_action=None,
             events=(),
         )

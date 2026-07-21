@@ -142,6 +142,27 @@ def test_slot_query_rejects_naive_datetimes():
         SlotQuery(("service-1",), datetime(2026, 7, 22, 9))
 
 
+def test_slot_query_and_slot_freeze_caller_owned_service_lists():
+    query_services = ["service-1"]
+    slot_services = ["service-1"]
+    query = SlotQuery(query_services, datetime(2026, 7, 22, 9, tzinfo=UTC))
+    slot = Slot(
+        "slot-1",
+        slot_services,
+        "staff-1",
+        datetime(2026, 7, 22, 10, tzinfo=UTC),
+        60,
+    )
+
+    query_services.append("service-2")
+    slot_services.append("service-2")
+
+    assert query.service_ids == ("service-1",)
+    assert slot.service_ids == ("service-1",)
+    assert isinstance(query.service_ids, tuple)
+    assert isinstance(slot.service_ids, tuple)
+
+
 def test_booking_scenario_and_event_freeze_nested_json_values():
     nested = {"preferences": {"services": ["service-1"]}}
     scenario = BookingScenario(

@@ -83,6 +83,7 @@ Repository выполняет checkpoint и event insert в одной тран�
 7. `BookingTemporaryError` и `BookingOutcomeUnknown` переводят scenario в `escalated`, добавляют `admin_attention_required` и не обещают слот.
 8. Scenario, найденный в `executing` после перезапуска, не повторяет mutating call: результат считается неопределённым и эскалируется.
 9. Повторная обработка terminal scenario возвращает сохранённый результат без нового внешнего вызова. Summary создаётся только из immutable terminal state самого scenario, поэтому более поздний перенос/отмена общего snapshot его не меняет.
+10. Change-flow domain error коммитит эскалацию до снятия aggregate lock. Любой sibling change scenario того же `external_id` в `executing` или с explicit escalated `booking_outcome_unknown` считается unresolved и блокирует новые mutations до будущей reconciliation; reconciliation и admin tooling в этот локальный scope не входят.
 
 ## Идемпотентность
 
