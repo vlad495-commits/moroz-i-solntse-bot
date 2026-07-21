@@ -816,6 +816,29 @@ def test_staging_runbook_uses_exact_project_and_never_destroys_data():
         assert forbidden not in text
 
 
+def test_staging_runbook_verifies_redis_degradation_before_restart():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    recovery = text.split("## 11. Redis recovery", 1)[1].split(
+        "## 12. Safe logs", 1
+    )[0]
+    stop = recovery.index("docker stop --timeout 30 moroz-staging-redis-1")
+    inject = recovery.index("staging-smoke inject --label redis-loss")
+    verify = recovery.index("staging-smoke verify --label redis-loss")
+    restart = recovery.index("docker start moroz-staging-redis-1")
+    assert stop < inject < verify < restart
+
+
+def test_staging_runbook_waits_for_redis_health_after_restart():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    recovery = text.split("## 11. Redis recovery", 1)[1].split(
+        "## 12. Safe logs", 1
+    )[0]
+    restart = recovery.index("docker start moroz-staging-redis-1")
+    wait = recovery.index("for attempt in $(seq 1 30); do")
+    healthy = recovery.rindex("State.Health.Status")
+    assert restart < wait < healthy
+
+
 def test_staging_runbook_defers_compose_until_env_then_revalidates():
     text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
     prefix = (

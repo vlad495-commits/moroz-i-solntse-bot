@@ -215,7 +215,7 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 Остановить и запустить только exact staging container; stores и другие services не трогать.
 
 ```bash
-docker stop --time 30 moroz-staging-worker-1
+docker stop --timeout 30 moroz-staging-worker-1
 cd /opt/moroz-staging/project
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke inject --label worker-restart
 docker start moroz-staging-worker-1
@@ -227,14 +227,23 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 ## 11. Redis recovery
 
 ```bash
-docker stop --time 30 moroz-staging-redis-1
+redis_container=moroz-staging-redis-1
+restore_redis() { docker start "$redis_container" >/dev/null 2>&1 || true; }
+trap restore_redis EXIT HUP INT TERM
+docker stop --timeout 30 moroz-staging-redis-1
 cd /opt/moroz-staging/project
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke inject --label redis-loss
-docker start moroz-staging-redis-1
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke verify --label redis-loss
+docker start moroz-staging-redis-1
+trap - EXIT HUP INT TERM
+for attempt in $(seq 1 30); do
+  test "$(docker inspect -f '{{.State.Health.Status}}' moroz-staging-redis-1)" = healthy && break
+  sleep 1
+done
+test "$(docker inspect -f '{{.State.Health.Status}}' moroz-staging-redis-1)" = healthy
 ```
 
-Неожиданный container name, потеря persistent data или recovery timeout — blocker.
+`verify` обязан вернуть `1/1/1`, пока Redis ещё остановлен. Неожиданный container name, потеря persistent data или recovery timeout — blocker.
 
 ## 12. Safe logs
 
@@ -250,7 +259,7 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ## 13. Image-only rollback
 
-Выбрать ранее записанный immutable image tag. Stores сохраняются, schema command в rollback отсутствует.
+Выбрать ранее записанный immutable image tag полного комплекта bot/worker/migrate. На первом staging-релизе предыдущего комплекта нет: это явный rollback blocker до следующего app release, а не разрешение использовать текущий tag как фиктивный откат. Stores сохраняются, schema command в rollback отсутствует.
 
 ```bash
 cd /opt/moroz-staging/project
