@@ -374,6 +374,7 @@ feat: добавлены перенос отмена и fallback записи
 ### Task 5: Local booking checkpoint
 
 **Files:**
+- Rename: `project/tests/integration/booking/test_repository.py` → `project/tests/integration/booking/test_booking_repository.py`
 - Modify: `План реализации.md`
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`
@@ -382,7 +383,9 @@ feat: добавлены перенос отмена и fallback записи
 - No new runtime code.
 - Records local/fake completion separately from real YCLIENTS/live gate.
 
-- [ ] **Step 1: Run the complete isolated Docker verification**
+- [ ] **Step 1: Resolve the pytest collection blocker and run the complete isolated Docker verification**
+
+The first canonical `pytest -q` run is the RED evidence: default prepend import mode collides on the two tracked `test_repository.py` modules in `tests/integration/booking` and `tests/integration/messaging`. `--import-mode=importlib` is not retained because the established E2E plugin imports then double-register `tests/integration/conftest.py`. Keep default pytest behavior and rename only the new booking test to the unique basename `test_booking_repository.py`, without changing its content. Then rerun the canonical suite without flags or config overrides.
 
 In a new namespace with new process-environment credentials run:
 
