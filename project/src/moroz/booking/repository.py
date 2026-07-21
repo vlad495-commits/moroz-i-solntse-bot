@@ -1,6 +1,9 @@
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
+
+import asyncpg
 
 from moroz.booking.models import BookingEvent, BookingScenario, ExternalBooking
 from moroz.common.db import Database
@@ -25,6 +28,35 @@ def _load_json(value: object) -> object:
 class BookingRepository:
     def __init__(self, database: Database):
         self._database = database
+
+    @asynccontextmanager
+    async def serialized_scenario(
+        self,
+        scenario_id: UUID,
+    ) -> AsyncIterator["BookingScenarioSession"]:
+        async with self._database.acquire() as connection:
+            lock_key = str(scenario_id)
+            await connection.execute(
+                "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+                lock_key,
+            )
+            try:
+                row = await connection.fetchrow(
+                    "SELECT * FROM booking_scenarios WHERE id = $1",
+                    scenario_id,
+                )
+                if row is None:
+                    raise KeyError(f"booking scenario {scenario_id} not found")
+                yield BookingScenarioSession(
+                    self,
+                    connection,
+                    self._scenario_from_row(row),
+                )
+            finally:
+                await connection.execute(
+                    "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+                    lock_key,
+                )
 
     async def create_scenario(self, scenario: BookingScenario) -> UUID:
         async with self._database.acquire() as connection:
@@ -72,6 +104,10 @@ class BookingRepository:
             )
         if row is None:
             return None
+        return self._scenario_from_row(row)
+
+    @staticmethod
+    def _scenario_from_row(row) -> BookingScenario:
         return BookingScenario(
             id=row["id"],
             kind=row["kind"],
@@ -93,12 +129,8 @@ class BookingRepository:
         async with self._database.acquire() as connection:
             async with connection.transaction():
                 await self._lock_scenario(connection, scenario.id)
-                await self._update_scenario(connection, scenario)
-                await self._insert_event(
-                    connection,
-                    scenario.id,
-                    event_type,
-                    payload or {},
+                await self._checkpoint_with_connection(
+                    connection, scenario, event_type, payload
                 )
 
     async def confirm(
@@ -114,21 +146,11 @@ class BookingRepository:
         error_code: str,
         payload: Mapping[str, object] | None = None,
     ) -> None:
-        event_payload = dict(_thaw_json(payload or {}))
-        event_payload["error_code"] = error_code
         async with self._database.acquire() as connection:
             async with connection.transaction():
                 await self._lock_scenario(connection, scenario.id)
-                await self._update_scenario(
-                    connection,
-                    scenario,
-                    error_code=error_code,
-                )
-                await self._insert_event(
-                    connection,
-                    scenario.id,
-                    "admin_attention_required",
-                    event_payload,
+                await self._escalate_with_connection(
+                    connection, scenario, error_code, payload
                 )
 
     async def complete_cancellation(
@@ -143,17 +165,26 @@ class BookingRepository:
         scenario_id: UUID,
     ) -> ExternalBooking | None:
         async with self._database.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT b.external_id, b.customer_id, b.slot_id,
-                       b.starts_at, b.status
-                FROM booking_scenarios AS s
-                JOIN bookings AS b
-                  ON b.external_id = s.state->>'external_id'
-                WHERE s.id = $1
-                """,
-                scenario_id,
+            return await self._get_local_booking_with_connection(
+                connection, scenario_id
             )
+
+    @staticmethod
+    async def _get_local_booking_with_connection(
+        connection: asyncpg.Connection,
+        scenario_id: UUID,
+    ) -> ExternalBooking | None:
+        row = await connection.fetchrow(
+            """
+            SELECT b.external_id, b.customer_id, b.slot_id,
+                   b.starts_at, b.status
+            FROM booking_scenarios AS s
+            JOIN bookings AS b
+              ON b.external_id = s.state->>'external_id'
+            WHERE s.id = $1
+            """,
+            scenario_id,
+        )
         if row is None:
             return None
         return ExternalBooking(
@@ -192,6 +223,20 @@ class BookingRepository:
         booking: ExternalBooking,
         event_type: str,
     ) -> None:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._lock_scenario(connection, scenario.id)
+                await self._complete_with_connection(
+                    connection, scenario, booking, event_type
+                )
+
+    async def _complete_with_connection(
+        self,
+        connection: asyncpg.Connection,
+        scenario: BookingScenario,
+        booking: ExternalBooking,
+        event_type: str,
+    ) -> None:
         state = dict(_thaw_json(scenario.state))
         state["external_id"] = booking.external_id
         snapshot = {
@@ -201,43 +246,76 @@ class BookingRepository:
             "starts_at": booking.starts_at.isoformat(),
             "status": booking.status,
         }
-        async with self._database.acquire() as connection:
-            async with connection.transaction():
-                await self._lock_scenario(connection, scenario.id)
-                await self._update_scenario(connection, scenario, state=state)
-                await connection.execute(
-                    """
-                    INSERT INTO bookings
-                        (id, last_scenario_id, external_id, customer_id,
-                         slot_id, starts_at, status, snapshot)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-                    ON CONFLICT (external_id) DO UPDATE SET
-                        last_scenario_id = EXCLUDED.last_scenario_id,
-                        customer_id = EXCLUDED.customer_id,
-                        slot_id = EXCLUDED.slot_id,
-                        starts_at = EXCLUDED.starts_at,
-                        status = EXCLUDED.status,
-                        snapshot = EXCLUDED.snapshot,
-                        updated_at = now()
-                    """,
-                    uuid4(),
-                    scenario.id,
-                    booking.external_id,
-                    booking.customer_id,
-                    booking.slot_id,
-                    booking.starts_at,
-                    booking.status,
-                    _dump_json(snapshot),
-                )
-                await self._insert_event(
-                    connection,
-                    scenario.id,
-                    event_type,
-                    {
-                        "external_id": booking.external_id,
-                        "status": booking.status,
-                    },
-                )
+        await self._update_scenario(connection, scenario, state=state)
+        await connection.execute(
+            """
+            INSERT INTO bookings
+                (id, last_scenario_id, external_id, customer_id,
+                 slot_id, starts_at, status, snapshot)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+            ON CONFLICT (external_id) DO UPDATE SET
+                last_scenario_id = EXCLUDED.last_scenario_id,
+                customer_id = EXCLUDED.customer_id,
+                slot_id = EXCLUDED.slot_id,
+                starts_at = EXCLUDED.starts_at,
+                status = EXCLUDED.status,
+                snapshot = EXCLUDED.snapshot,
+                updated_at = now()
+            """,
+            uuid4(),
+            scenario.id,
+            booking.external_id,
+            booking.customer_id,
+            booking.slot_id,
+            booking.starts_at,
+            booking.status,
+            _dump_json(snapshot),
+        )
+        await self._insert_event(
+            connection,
+            scenario.id,
+            event_type,
+            {
+                "external_id": booking.external_id,
+                "status": booking.status,
+            },
+        )
+
+    async def _checkpoint_with_connection(
+        self,
+        connection: asyncpg.Connection,
+        scenario: BookingScenario,
+        event_type: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> None:
+        await self._update_scenario(connection, scenario)
+        await self._insert_event(
+            connection,
+            scenario.id,
+            event_type,
+            payload or {},
+        )
+
+    async def _escalate_with_connection(
+        self,
+        connection: asyncpg.Connection,
+        scenario: BookingScenario,
+        error_code: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> None:
+        event_payload = dict(_thaw_json(payload or {}))
+        event_payload["error_code"] = error_code
+        await self._update_scenario(
+            connection,
+            scenario,
+            error_code=error_code,
+        )
+        await self._insert_event(
+            connection,
+            scenario.id,
+            "admin_attention_required",
+            event_payload,
+        )
 
     @staticmethod
     async def _lock_scenario(connection, scenario_id: UUID) -> None:
@@ -287,4 +365,60 @@ class BookingRepository:
             scenario_id,
             event_type,
             _dump_json(payload),
+        )
+
+
+class BookingScenarioSession:
+    def __init__(
+        self,
+        repository: BookingRepository,
+        connection: asyncpg.Connection,
+        scenario: BookingScenario,
+    ) -> None:
+        self._repository = repository
+        self._connection = connection
+        self.scenario = scenario
+
+    async def checkpoint(
+        self,
+        scenario: BookingScenario,
+        event_type: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> None:
+        async with self._connection.transaction():
+            await self._repository._lock_scenario(self._connection, scenario.id)
+            await self._repository._checkpoint_with_connection(
+                self._connection, scenario, event_type, payload
+            )
+        self.scenario = scenario
+
+    async def confirm(
+        self,
+        scenario: BookingScenario,
+        booking: ExternalBooking,
+    ) -> None:
+        async with self._connection.transaction():
+            await self._repository._lock_scenario(self._connection, scenario.id)
+            await self._repository._complete_with_connection(
+                self._connection, scenario, booking, "booking_confirmed"
+            )
+        self.scenario = scenario
+
+    async def escalate(
+        self,
+        scenario: BookingScenario,
+        error_code: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> None:
+        async with self._connection.transaction():
+            await self._repository._lock_scenario(self._connection, scenario.id)
+            await self._repository._escalate_with_connection(
+                self._connection, scenario, error_code, payload
+            )
+        self.scenario = scenario
+
+    async def get_local_booking(self) -> ExternalBooking | None:
+        return await self._repository._get_local_booking_with_connection(
+            self._connection,
+            self.scenario.id,
         )
