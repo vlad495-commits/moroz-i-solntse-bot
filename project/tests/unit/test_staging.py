@@ -103,6 +103,14 @@ def test_caddy_runs_capability_free_copy_under_no_new_privileges():
     assert "cp /usr/bin/caddy /tmp/caddy" in entrypoint
     assert 'exec /tmp/caddy "$$@"' in entrypoint
     assert caddy["tmpfs"] == ["/tmp:exec"]
+    assert caddy["command"] == [
+        "caddy",
+        "run",
+        "--config",
+        "/etc/caddy/Caddyfile",
+        "--adapter",
+        "caddyfile",
+    ]
     assert caddy["healthcheck"]["test"] == [
         "CMD",
         "/tmp/caddy",

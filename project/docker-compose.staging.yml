@@ -87,6 +87,13 @@ services:
         if [ "$${1:-}" = caddy ]; then shift; fi;
         exec /tmp/caddy "$$@"
       - --
+    command:
+      - caddy
+      - run
+      - --config
+      - /etc/caddy/Caddyfile
+      - --adapter
+      - caddyfile
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
