@@ -198,12 +198,17 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ```bash
 cd /opt/moroz-staging/project
+app_uid="$(docker run --rm --entrypoint id "moroz-staging-bot:${STAGING_IMAGE_TAG}" -u)"
+app_gid="$(docker run --rm --entrypoint id "moroz-staging-bot:${STAGING_IMAGE_TAG}" -g)"
+test -n "$app_uid" && test -n "$app_gid"
+install -d -m 0700 -o "$app_uid" -g "$app_gid" /opt/moroz-staging/tmp
+unset app_uid app_gid
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke snapshot --label live
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke verify --label live
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-smoke replay-live
 ```
 
-Нет согласия, лишние сообщения или неверные safe deltas — blocker.
+Каталог evidence остаётся mode 0700 и принадлежит non-root UID/GID app image. Нет согласия, лишние сообщения или неверные safe deltas — blocker.
 
 ## 10. Worker recovery
 
