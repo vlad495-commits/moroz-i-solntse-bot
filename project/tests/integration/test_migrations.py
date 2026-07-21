@@ -412,6 +412,9 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
         await conn.close()
 
     new_tables = {
+        "booking_events",
+        "booking_scenarios",
+        "bookings",
         "message_inbox",
         "outbound_messages",
         "processing_consents",
@@ -446,7 +449,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0004_pipeline_order_claim"
+            "0005_booking_state"
         )
     finally:
         await conn.close()
@@ -531,6 +534,92 @@ async def test_pipeline_order_migration_backfills_and_downgrades_cleanly(
         await conn.close()
 
     run_alembic(disposable_database_url, "upgrade", "head")
+
+
+async def test_booking_migration_is_additive_and_downgrades_to_0004(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "0004_pipeline_order_claim")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        previous_catalog = await snapshot_application_catalog(conn)
+        previous_tables_and_columns = previous_catalog[:2]
+    finally:
+        await conn.close()
+
+    try:
+        run_alembic(disposable_database_url, "upgrade", "head")
+        conn = await asyncpg.connect(disposable_database_url)
+        try:
+            current_revision = await conn.fetchval(
+                "SELECT version_num FROM alembic_version"
+            )
+            tables = {
+                row["tablename"]
+                for row in await conn.fetch(
+                    "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+                )
+            }
+            constraints = {
+                row["definition"]
+                for row in await conn.fetch(
+                    """
+                    SELECT pg_get_constraintdef(con.oid, true) AS definition
+                    FROM pg_constraint con
+                    JOIN pg_class c ON c.oid = con.conrelid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public'
+                      AND c.relname IN ('booking_scenarios', 'bookings')
+                      AND con.contype = 'c'
+                    """
+                )
+            }
+            indexes = {
+                (row["tablename"], row["indexname"])
+                for row in await conn.fetch(
+                    """
+                    SELECT tablename, indexname
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND tablename IN ('booking_events', 'bookings')
+                    """
+                )
+            }
+        finally:
+            await conn.close()
+
+        assert current_revision == "0005_booking_state"
+        assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
+            tables
+        )
+        assert any(
+            "collecting" in definition and "escalated" in definition
+            for definition in constraints
+        )
+        assert any(
+            "confirmed" in definition and "cancelled" in definition
+            for definition in constraints
+        )
+        assert ("booking_events", "ix_booking_events_scenario_created") in indexes
+        assert ("bookings", "ix_bookings_customer_starts") in indexes
+
+        run_alembic(
+            disposable_database_url,
+            "downgrade",
+            "0004_pipeline_order_claim",
+        )
+        conn = await asyncpg.connect(disposable_database_url)
+        try:
+            catalog_after_downgrade_to_0004 = await snapshot_application_catalog(
+                conn
+            )
+        finally:
+            await conn.close()
+
+        assert previous_tables_and_columns == catalog_after_downgrade_to_0004[:2]
+        assert previous_catalog == catalog_after_downgrade_to_0004
+    finally:
+        run_alembic(disposable_database_url, "upgrade", "head")
 
 
 async def test_cutover_audits_and_stamps_exact_unversioned_schema(
