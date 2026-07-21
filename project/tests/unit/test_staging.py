@@ -926,11 +926,12 @@ def test_staging_runbook_verifies_redis_degradation_before_restart():
         "-f docker-compose.yml -f docker-compose.staging.yml"
     )
     assert "com.docker.compose.project" in recovery
+    fail_fast = recovery.index("set -e")
     stop = recovery.index(f"{prefix} stop --timeout 30 redis")
     inject = recovery.index("staging-smoke inject --label redis-loss")
     verify = recovery.index("staging-smoke verify --label redis-loss")
     restart = recovery.index(f"{prefix} start redis")
-    assert stop < inject < verify < restart
+    assert fail_fast < stop < inject < verify < restart
 
 
 def test_staging_runbook_waits_for_redis_health_after_restart():
@@ -1012,6 +1013,7 @@ def test_staging_runbook_checks_webhook_without_secret_header():
         line for line in https.splitlines()
         if "/telegram/webhook" in line and "curl" in line
     ]
+    assert https.index("set -e") < https.index(webhook_checks[0])
     assert len(webhook_checks) == 2
     assert any("X-Telegram-Bot-Api-Secret-Token" in line for line in webhook_checks)
     assert any("X-Telegram-Bot-Api-Secret-Token" not in line for line in webhook_checks)

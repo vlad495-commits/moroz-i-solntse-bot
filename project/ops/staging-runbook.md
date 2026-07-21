@@ -136,6 +136,7 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 Для собственного или существующего ingress проверить TLS, fallback `404` и webhook `403` с заведомо несекретным sentinel header:
 
 ```bash
+set -e
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://${STAGING_DOMAIN}/staging-unrelated-sentinel")" = 404
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' "https://${STAGING_DOMAIN}/telegram/webhook")" = 403
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'X-Telegram-Bot-Api-Secret-Token: staging-invalid-sentinel' --data '{}' "https://${STAGING_DOMAIN}/telegram/webhook")" = 403
@@ -253,6 +254,7 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ```bash
 cd /opt/moroz-staging/project
+set -e
 redis_container=moroz-staging-redis-1
 redis_service=redis
 test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$redis_container")" = moroz-staging
