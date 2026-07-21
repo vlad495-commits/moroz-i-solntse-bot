@@ -120,6 +120,29 @@ def test_caddy_volumes_preserve_image_writable_storage_directories():
     assert "staging_caddy_config:/config" not in volumes
 
 
+def test_caddy_storage_is_initialized_before_non_root_start():
+    services = load_staging()["services"]
+    init = services["caddy-init"]
+    caddy = services["caddy"]
+
+    assert init["image"] == caddy["image"] == "caddy:2.11.4"
+    assert init["profiles"] == ["staging-ingress"]
+    assert init["user"] == "0:0"
+    assert init["restart"] == "no"
+    assert init["network_mode"] == "none"
+    assert init["read_only"] is True
+    assert init["cap_drop"] == ["ALL"]
+    assert init["cap_add"] == ["CHOWN"]
+    assert init["security_opt"] == ["no-new-privileges:true"]
+    assert "environment" not in init
+    assert "ports" not in init
+    assert set(init["volumes"]) == set(caddy["volumes"][1:])
+    assert "chown -R 10001:10001 /data/caddy /config/caddy" in " ".join(
+        init["command"]
+    )
+    assert caddy["depends_on"]["caddy-init"]["condition"] == "service_completed_successfully"
+
+
 def test_merged_staging_disables_admin_and_scheduler_and_resets_admin_ports():
     base = load_compose(BASE)["services"]
     override = load_staging()["services"]

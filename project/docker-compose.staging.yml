@@ -58,6 +58,22 @@ services:
       - ./ops:/app/ops:ro
       - ../tmp:/state:rw
 
+  caddy-init:
+    profiles: ["staging-ingress"]
+    image: caddy:2.11.4
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R 10001:10001 /data/caddy /config/caddy"]
+    volumes:
+      - staging_caddy_data:/data/caddy
+      - staging_caddy_config:/config/caddy
+
   caddy:
     profiles: ["staging-ingress"]
     image: caddy:2.11.4
@@ -90,6 +106,8 @@ services:
     depends_on:
       bot:
         condition: service_healthy
+      caddy-init:
+        condition: service_completed_successfully
     stop_grace_period: 30s
     logging:
       driver: json-file
