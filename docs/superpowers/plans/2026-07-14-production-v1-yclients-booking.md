@@ -407,10 +407,10 @@ Run `python -m compileall` inside the test image, `git diff --check`, and scan t
 
 - [ ] **Step 4: Update phase evidence**
 
-Mark Tasks 1–5 local/fake complete. Keep both gates explicitly open:
+Tasks 1–5 local/fake и real-adapter local/fake gate завершены. Открытым остаётся внешний gate:
 
 ```text
-Real YCLIENTS adapter: blocked pending official contract and sandbox access.
+Real YCLIENTS adapter local/fake: complete; protected CRUD smoke tooling ready.
 YCLIENTS live/sandbox evidence: not run; phase is not live-complete.
 ```
 

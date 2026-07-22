@@ -600,7 +600,7 @@ On known failure before mutation, exit nonzero. On successful create followed by
 
 Compose profile uses the existing worker image and optional interpolation defaults so normal config rendering does not require tokens. It passes YCLIENTS values only to `worker` and `yclients-smoke`, never test/migrate/cutover.
 
-- [ ] **Step 4: Run GREEN and canonical local/fake verification**
+- [x] **Step 4: Run GREEN and canonical local/fake verification**
 
 With fresh process-only infra credentials and no YCLIENTS live tokens:
 
@@ -615,11 +615,11 @@ docker compose --env-file ../.env -p moroz-yclients-real-final run --rm --no-dep
 
 Expected: full pytest exit 0, config valid, worker image builds/imports as non-root, `0005_booking_state (head)`, secret/log/static gates clean. Remove only `moroz-yclients-real-*` containers/volumes/networks/images and confirm 0/0/0/0.
 
-- [ ] **Step 5: Independent whole-branch review/fix-loop**
+- [x] **Step 5: Independent whole-branch review/fix-loop**
 
 Generate a review package from `b42f031` to current HEAD. Reviewer checks the complete approved spec and reports Critical/Important/Minor plus readiness. Dispatch one fixer for the complete findings list, require covering Docker tests in its report, regenerate package and repeat until `0 Critical / 0 Important / 0 Minor` or an honest blocker remains.
 
-- [ ] **Step 6: Record local completion and commit**
+- [x] **Step 6: Record local completion and commit**
 
 Mark real adapter local/fake gate complete with exact test evidence. Keep sandbox/live and staging rollback gates open. Commit:
 
