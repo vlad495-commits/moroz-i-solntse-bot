@@ -641,7 +641,7 @@ docs: подтверждён local real YCLIENTS adapter
 - No runtime code unless the real sandbox exposes an official-contract mismatch reproduced first by a fake HTTP RED test.
 - Consumes credentials/fixture IDs only from user-populated ignored `.env`; they are never pasted into chat or command output.
 
-- [ ] **Step 1: External readiness gate after local completion**
+- [x] **Step 1: External readiness gate after local completion**
 
 Check only presence, never values, of:
 
@@ -658,6 +658,8 @@ YCLIENTS_SANDBOX_CONSENT=yes
 If any is absent, ask one concise question instructing the user to add missing values directly to ignored `.env` and confirm readiness without sharing them. This is the only legitimate external blocker before smoke.
 
 Readiness check 2026-07-22: `.env` exists, but all seven required sandbox keys are absent and explicit consent is not set. No values were printed or logged; this step remains open until the user populates the ignored file and confirms readiness.
+
+Repeated readiness check after user confirmation: all seven required keys are present and explicit consent equals `yes`. Only presence/count/consent status was emitted; values remain unprinted and unlogged.
 
 - [ ] **Step 2: Run smoke in a dedicated profile**
 
