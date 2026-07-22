@@ -1,6 +1,6 @@
 # Real YCLIENTS Booking Adapter Design
 
-Дата: 2026-07-22  
+Дата: 2026-07-22
 Статус: одобрен пользователем в исходном design gate
 
 ## Цель

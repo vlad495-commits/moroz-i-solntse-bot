@@ -522,6 +522,22 @@ async def test_malformed_create_success_is_outcome_unknown(server: ScriptedServe
 
 
 @pytest.mark.asyncio
+async def test_deleted_create_success_is_outcome_unknown(server: ScriptedServer) -> None:
+    slot_id = _slot_id(_config(server))
+    server.responses.extend([
+        (201, {"success": True, "data": {}}),
+        (201, {"success": True, "data": _record(deleted=True)}),
+    ])
+
+    with pytest.raises(BookingOutcomeUnknown):
+        await YclientsAdapter(_config(server)).create_booking(CreateBooking(
+            "customer-7", slot_id, "key", "Name", "+70000000000", True
+        ))
+
+    assert len(server.requests) == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("api_id", ["foreign", "moroz:v1:!!!", "moroz:v1:"])
 async def test_get_rejects_invalid_owner_marker(server: ScriptedServer, api_id: str) -> None:
     server.responses.append((200, {"success": True, "data": _record(api_id=api_id)}))

@@ -149,7 +149,11 @@ class YclientsAdapter(BookingPort):
             booking = _external_booking(record, self._timezone, self._config)
         except (BookingNotFound, BookingTemporaryError, ValueError, TypeError, KeyError) as error:
             raise BookingOutcomeUnknown() from error
-        if booking.customer_id != customer_id or booking.slot_id != command.slot_id:
+        if (
+            booking.customer_id != customer_id
+            or booking.slot_id != command.slot_id
+            or booking.status != "confirmed"
+        ):
             raise BookingOutcomeUnknown()
         return booking
 
