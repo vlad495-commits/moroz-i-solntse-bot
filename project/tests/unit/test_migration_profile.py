@@ -176,7 +176,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
 
 def test_yclients_environment_is_passed_only_to_worker_and_smoke():
     services = compose_services()
-    yclients_keys = {
+    runtime_keys = {
         "YCLIENTS_PARTNER_TOKEN",
         "YCLIENTS_USER_TOKEN",
         "YCLIENTS_COMPANY_ID",
@@ -184,19 +184,32 @@ def test_yclients_environment_is_passed_only_to_worker_and_smoke():
         "YCLIENTS_TIMEZONE",
         "YCLIENTS_TIMEOUT_SECONDS",
     }
+    smoke_only_keys = {
+        "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_TEST_NAME",
+        "YCLIENTS_TEST_PHONE",
+        "YCLIENTS_SANDBOX_CONSENT",
+    }
 
-    assert yclients_keys <= set(services["worker"]["environment"])
-    assert yclients_keys <= set(services["yclients-smoke"]["environment"])
+    assert runtime_keys <= set(services["worker"]["environment"])
+    assert not smoke_only_keys & set(services["worker"]["environment"])
+    assert runtime_keys | smoke_only_keys <= set(
+        services["yclients-smoke"]["environment"]
+    )
     for name, service in services.items():
         if name not in {"worker", "yclients-smoke"}:
-            assert not yclients_keys & set(service.get("environment", {}))
+            assert not (runtime_keys | smoke_only_keys) & set(
+                service.get("environment", {})
+            )
             assert "env_file" not in service
 
 
 def test_yclients_smoke_is_an_explicit_bounded_profile() -> None:
-    service = compose_services()["yclients-smoke"]
+    services = compose_services()
+    service = services["yclients-smoke"]
 
     assert service["profiles"] == ["yclients-smoke"]
+    assert service["image"] == services["worker"]["image"]
     assert service["build"] == {"context": ".", "dockerfile": "worker/Dockerfile"}
     assert service["command"] == [
         "python", "-m", "moroz.booking.yclients_sandbox_smoke"

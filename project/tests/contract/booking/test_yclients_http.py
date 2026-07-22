@@ -169,6 +169,10 @@ async def test_http_uses_exact_partner_and_partner_user_headers(
         request.headers["Accept"] == "application/vnd.yclients.v2+json"
         for request in fake_server.requests
     )
+    assert all(
+        request.headers["Content-Type"] == "application/json"
+        for request in fake_server.requests
+    )
 
 
 @pytest.mark.asyncio

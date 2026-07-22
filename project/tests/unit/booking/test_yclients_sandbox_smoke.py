@@ -65,6 +65,9 @@ class FakeBackend:
 
     async def list_slots(self, query):
         self._call("list_slots")
+        assert query.service_ids == ("331",)
+        assert query.starts_after == NOW + timedelta(days=1)
+        assert query.starts_before == NOW + timedelta(days=14)
         return self.slots
 
     async def create_booking(self, command):
@@ -225,6 +228,24 @@ async def test_unknown_outcome_aborts_without_blind_cleanup_and_redacts_output()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create_booking", "cancel_booking"])
+async def test_each_mutation_unknown_stops_without_another_mutation(operation: str) -> None:
+    backend = FakeBackend(failure=(operation, BookingOutcomeUnknown()))
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert backend.calls[-1] == operation
+    assert backend.calls.count(operation) == 1
+    assert result.summary["manual_review_required"] is True
+
+
+@pytest.mark.asyncio
 async def test_definite_failure_after_create_attempts_one_cleanup_cancel() -> None:
     backend = FakeBackend(failure=("get_booking", BookingTemporaryError()))
 
@@ -321,3 +342,40 @@ async def test_backend_service_or_records_malformed_response_fails_closed() -> N
 
     with pytest.raises(BookingTemporaryError):
         await backend.list_services("331")
+
+
+@pytest.mark.asyncio
+async def test_duplicate_scan_paginates_until_a_short_page() -> None:
+    marker = "moroz:v1:c21va2UtY29ycmVsYXRpb24"
+    http = FakeHttp([
+        HttpResponse(200, json.dumps({
+            "success": True,
+            "data": [{"api_id": marker}] * 100,
+        }).encode()),
+        HttpResponse(200, json.dumps({
+            "success": True,
+            "data": [{"api_id": marker}],
+        }).encode()),
+    ])
+    backend = YclientsSmokeBackend(YclientsConfig.from_env(_env()), http=http)
+
+    assert await backend.count_duplicate_marker(
+        "smoke-correlation", NOW, NOW + timedelta(days=1)
+    ) == 101
+    assert [request[2][0] for request in http.requests] == [("page", 1), ("page", 2)]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_scan_fails_closed_at_the_page_bound() -> None:
+    page = HttpResponse(200, json.dumps({
+        "success": True,
+        "data": [{"api_id": "foreign"}] * 100,
+    }).encode())
+    http = FakeHttp([page] * 20)
+    backend = YclientsSmokeBackend(YclientsConfig.from_env(_env()), http=http)
+
+    with pytest.raises(BookingTemporaryError):
+        await backend.count_duplicate_marker(
+            "smoke-correlation", NOW, NOW + timedelta(days=1)
+        )
+    assert len(http.requests) == 20

@@ -131,10 +131,10 @@ class YclientsHttpClient:
         headers = {
             "Accept": "application/vnd.yclients.v2+json",
             "Authorization": self._authorization(user_auth),
+            "Content-Type": "application/json",
         }
         if json_body is not None:
             body = json.dumps(json_body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=headers, method=method)
         try:
             with urlopen(request, timeout=self._config.timeout_seconds) as response:
