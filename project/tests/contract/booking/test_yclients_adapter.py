@@ -571,8 +571,7 @@ async def test_get_rejects_lossy_duration_and_date_only_datetime(
 
     with pytest.raises(BookingTemporaryError):
         await YclientsAdapter(_config(server)).get_booking("9001")
-    with pytest.raises(BookingTemporaryError):
-        await YclientsAdapter(_config(server)).get_booking("9001")
+    assert sum(item[0] == "GET" for item in server.requests) == 1
 
 
 @pytest.mark.asyncio
@@ -609,6 +608,9 @@ async def test_malformed_read_and_success_false_fail_closed(server: ScriptedServ
 
     with pytest.raises(BookingTemporaryError):
         await YclientsAdapter(_config(server)).get_booking("9001")
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).get_booking("9001")
+    assert sum(item[0] == "GET" for item in server.requests) == 2
 
 
 @pytest.mark.asyncio
@@ -678,6 +680,44 @@ async def test_reschedule_rejects_foreign_owner_before_check_or_put(server: Scri
 
 
 @pytest.mark.asyncio
+async def test_reschedule_rejects_cancelled_current_before_check_or_put(
+    server: ScriptedServer,
+) -> None:
+    config = _config(server)
+    server.responses.append((200, {"success": True, "data": _record(
+        deleted=True,
+        client={"name": "Name", "phone": "+70000000000"},
+    )}))
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(config).reschedule_booking(
+            RescheduleBooking("9001", _slot_id(config), "key")
+        )
+
+    assert [item[0] for item in server.requests] == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_reschedule_cancelled_put_response_is_outcome_unknown(
+    server: ScriptedServer,
+) -> None:
+    config = _config(server)
+    current = _record(client={"name": "Name", "phone": "+70000000000"})
+    server.responses.extend([
+        (200, {"success": True, "data": current}),
+        (201, {"success": True, "data": {}}),
+        (201, {"success": True, "data": _record(deleted=True)}),
+    ])
+
+    with pytest.raises(BookingOutcomeUnknown):
+        await YclientsAdapter(config).reschedule_booking(
+            RescheduleBooking("9001", _slot_id(config), "key")
+        )
+
+    assert sum(item[0] == "PUT" for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_cancel_sends_one_protected_delete_and_accepts_only_204(server: ScriptedServer) -> None:
     server.responses.append((204, b""))
 
@@ -700,6 +740,22 @@ async def test_book_check_conflicts_are_slot_unavailable(code: int, server: Scri
     }))
 
     with pytest.raises(SlotUnavailable):
+        await YclientsAdapter(config).create_booking(CreateBooking(
+            "customer-7", _slot_id(config), "key", "Name", "+70000000000", True
+        ))
+
+    assert len(server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_book_check_5xx_wins_over_embedded_conflict_code(server: ScriptedServer) -> None:
+    config = _config(server)
+    server.responses.append((500, {
+        "success": False,
+        "meta": {"errors": [{"code": 433, "message": "ambiguous server failure"}]},
+    }))
+
+    with pytest.raises(BookingTemporaryError):
         await YclientsAdapter(config).create_booking(CreateBooking(
             "customer-7", _slot_id(config), "key", "Name", "+70000000000", True
         ))

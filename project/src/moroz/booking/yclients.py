@@ -186,7 +186,7 @@ class YclientsAdapter(BookingPort):
             raise
         except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
             raise BookingTemporaryError() from error
-        if current.external_id != str(provider_id):
+        if current.external_id != str(provider_id) or current.status != "confirmed":
             raise BookingTemporaryError()
 
         payload = _decode_slot(command.slot_id, self._config)
@@ -232,6 +232,7 @@ class YclientsAdapter(BookingPort):
             changed.external_id != str(provider_id)
             or changed.customer_id != current.customer_id
             or changed.slot_id != command.slot_id
+            or changed.status != "confirmed"
         ):
             raise BookingOutcomeUnknown()
         return changed
@@ -286,7 +287,9 @@ class YclientsAdapter(BookingPort):
         except YclientsTransportError as error:
             raise BookingTemporaryError() from error
         envelope = _json_or_temporary(response)
-        if _has_conflict_code(envelope):
+        if 500 <= response.status or response.status == 429:
+            raise BookingTemporaryError()
+        if 400 <= response.status < 500 and _has_conflict_code(envelope):
             raise SlotUnavailable()
         if response.status != 201 or envelope.get("success") is not True:
             raise BookingTemporaryError()
