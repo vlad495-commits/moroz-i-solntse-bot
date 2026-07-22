@@ -1,5 +1,6 @@
 import os
 import subprocess
+from uuid import uuid4
 
 import asyncpg
 import pytest
@@ -449,7 +450,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0005_booking_state"
+            "0006_yclients_booking_key"
         )
     finally:
         await conn.close()
@@ -588,7 +589,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0005_booking_state"
+        assert current_revision == "0006_yclients_booking_key"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -620,6 +621,82 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         assert previous_catalog == catalog_after_downgrade_to_0004
     finally:
         run_alembic(disposable_database_url, "upgrade", "head")
+
+
+async def test_booking_key_migration_backfills_legacy_rows_and_enforces_uniqueness(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "0005_booking_state")
+    legacy_booking_id = uuid4()
+    scenario_id = uuid4()
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        await conn.execute(
+            """
+            INSERT INTO booking_scenarios
+                (id, kind, phase, idempotency_key, customer_id, state)
+            VALUES ($1, 'create', 'confirmed', $2, 'owner-a', '{}'::jsonb)
+            """,
+            scenario_id,
+            f"legacy-{scenario_id}",
+        )
+        await conn.execute(
+            """
+            INSERT INTO bookings
+                (id, last_scenario_id, external_id, customer_id, slot_id,
+                 starts_at, status, snapshot)
+            VALUES
+                ($1, $2, 'legacy-external', 'owner-a', 'legacy-slot', now(),
+                 'confirmed', '{}'::jsonb)
+            """,
+            legacy_booking_id,
+            scenario_id,
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        booking_key = await conn.fetchrow(
+            """
+            SELECT data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_name = 'bookings' AND column_name = 'booking_key'
+            """
+        )
+        assert dict(booking_key) == {"data_type": "uuid", "is_nullable": "NO"}
+        assert await conn.fetchval(
+            "SELECT count(*) FROM bookings WHERE booking_key IS NULL"
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT booking_key FROM bookings WHERE id = $1", legacy_booking_id
+        ) == legacy_booking_id
+        assert await conn.fetchval(
+            """
+            SELECT conname
+            FROM pg_constraint
+            WHERE conname = 'uq_bookings_booking_key'
+            """
+        ) == "uq_bookings_booking_key"
+
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await conn.execute(
+                """
+                INSERT INTO bookings
+                    (id, last_scenario_id, external_id, customer_id, slot_id,
+                     starts_at, status, snapshot, booking_key)
+                VALUES
+                    ($1, $2, 'duplicate-external', 'owner-a', 'duplicate-slot',
+                     now(), 'confirmed', '{}'::jsonb, $3)
+                """,
+                uuid4(),
+                scenario_id,
+                legacy_booking_id,
+            )
+    finally:
+        await conn.close()
 
 
 async def test_cutover_audits_and_stamps_exact_unversioned_schema(
