@@ -669,13 +669,15 @@ First consented attempt stopped before every mutation: service validation succee
 
 Second consented attempt proved that availability is now healthy (`services=1`, `staff=1`, `slots=312`) and again stopped before create. Official contract plus a redacted read-only comparison established the next code root cause: the former Unix integer `book_check.datetime` returned 400, while ISO8601 returned 201. The exact fake HTTP test observed RED; the shared `_book_check` fix passed focused GREEN, `121` regressions, independent review `0/0/0` and a fresh no-cache full Docker gate (`428 passed`). No record was created in either attempt; a new isolated smoke remains required.
 
+Third consented attempt again passed availability (`1/1/312`) and reached protected create, but returned `mutation_outcome_unknown` with `manual_review_required=true` and no external ID. No automatic retry was made. Two protected read-only reconciliations over the exact future window both returned zero active/deleted records with the synthetic `api_id` and comment markers, so no duplicate/provider record is currently visible. The official create schema still confirms status 201 and all submitted field names. A new mutation attempt requires an explicit post-reconciliation decision; phase remains open.
+
 - [ ] **Step 3: Verify evidence**
 
 Require: services/staff/slots read; two distinct slots; one create; exact get; one reschedule; exact get at new instant; one cancel; cancelled/deleted confirmation; duplicate marker count exactly one; `manual_review_required=false`; no secret-shaped or PII output.
 
 - [ ] **Step 4: Handle mismatch through TDD**
 
-If sandbox contradicts the official fixture/shape, do not patch live-first. Add a fake HTTP test reproducing the exact redacted mismatch, observe RED, implement minimum mapping, run focused + full Docker gates, task review, then rerun a new consented smoke. Do not retry an outcome-unknown mutation.
+If sandbox contradicts the official fixture/shape, do not patch live-first. Add a fake HTTP test reproducing the exact redacted mismatch, observe RED, implement minimum mapping, run focused + full Docker gates, task review, then rerun a new consented smoke. Do not retry an outcome-unknown mutation without completed read-only reconciliation and a new explicit decision.
 
 - [ ] **Step 5: Final documentation checkpoint**
 
