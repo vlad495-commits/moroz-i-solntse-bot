@@ -596,7 +596,7 @@ Generate one unique smoke correlation from `uuid4`; use it only in `idempotency_
 
 On known failure before mutation, exit nonzero. On successful create followed by definite later failure, a single explicit cancel is allowed only when current external ID is known and no prior mutation outcome is unknown. On any `BookingOutcomeUnknown`, print redacted `manual_review_required=true`, perform no further mutation and exit nonzero.
 
-Compose profile uses the existing worker image and optional interpolation defaults so normal `docker compose config` does not require tokens. It passes YCLIENTS values only to `worker` and `yclients-smoke`, never test/migrate/cutover.
+Compose profile uses the existing worker image and optional interpolation defaults so normal config rendering does not require tokens. It passes YCLIENTS values only to `worker` and `yclients-smoke`, never test/migrate/cutover.
 
 - [ ] **Step 4: Run GREEN and canonical local/fake verification**
 
