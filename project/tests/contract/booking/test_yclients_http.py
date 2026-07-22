@@ -84,6 +84,19 @@ def client(fake_server: FakeYclientsServer) -> YclientsHttpClient:
     return YclientsHttpClient(config)
 
 
+def test_default_http_clients_share_one_process_limiter() -> None:
+    config = YclientsConfig.from_env({
+        "YCLIENTS_PARTNER_TOKEN": "partner-value",
+        "YCLIENTS_USER_TOKEN": "user-value",
+        "YCLIENTS_COMPANY_ID": "123",
+    })
+
+    first = YclientsHttpClient(config)
+    second = YclientsHttpClient(config)
+
+    assert first._limiter is second._limiter
+
+
 def test_config_requires_tokens_without_leaking_them() -> None:
     with pytest.raises(ValueError, match="YCLIENTS_USER_TOKEN is required"):
         YclientsConfig.from_env({

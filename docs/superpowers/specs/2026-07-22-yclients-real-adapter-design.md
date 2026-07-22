@@ -64,13 +64,13 @@ class CreateBooking:
 
 ## Slot ID
 
-YCLIENTS не предоставляет готовый ID временного слота. Адаптер кодирует versioned compact JSON в URL-safe base64 с префиксом `yclients:v1:`. Payload содержит только provider-neutral значения, необходимые для mutation после restart:
+YCLIENTS не предоставляет готовый ID временного слота. Адаптер кодирует versioned compact JSON и truncated HMAC tag в URL-safe base64 с префиксом `yclients:v1:`. Формат — `yclients:v1:<payload>.<tag>`. Payload содержит только provider-neutral значения, необходимые для mutation после restart:
 
 ```json
 {"services":[331],"staff":6544,"start":1785315600,"duration":3600}
 ```
 
-JSON сериализуется с фиксированным порядком ключей и без пробелов. Один и тот же слот всегда получает один ID. Decode проверяет prefix/version, типы, положительные numeric IDs, timezone-aware instant и duration; invalid/tampered value fail-closed как `SlotUnavailable`. In-memory slot cache не используется.
+Service IDs сначала приводятся к отсортированному уникальному набору. JSON сериализуется с фиксированным порядком ключей и без пробелов. Tag — первые 16 байт `HMAC-SHA256` над domain-separated payload и `company_id`, ключом служит уже обязательный User Token; новый secret/config не добавляется. Один и тот же слот всегда получает один ID в рамках филиала и token rotation. Decode до доверия payload проверяет tag через `compare_digest`, company binding, canonical service set, prefix/version, типы, положительные numeric IDs, timezone-aware instant и duration; invalid/tampered value fail-closed как `SlotUnavailable`. Rotation User Token ожидаемо инвалидирует ранее выданные slot IDs. In-memory slot cache не используется.
 
 ## Ownership mapping
 
@@ -81,8 +81,8 @@ Create/get/update извлекают один и тот же internal owner из
 ## Availability flow
 
 1. Проверить, что `SlotQuery.service_ids` и optional `staff_id` состоят из положительных numeric YCLIENTS IDs.
-2. Запросить доступные даты через `book_dates` в локальной timezone филиала.
-3. Запросить bookable staff через `book_staff`; при заданном `staff_id` оставить только точное совпадение.
+2. Запросить доступные даты через `book_dates` в локальной timezone филиала. Официальный контракт требует `date_from` и `date_to` парой, поэтому real adapter fail-closed отвергает `SlotQuery` без `starts_before` до HTTP; доменная optional-форма остаётся для других портов.
+3. Запросить staff через `book_staff`, передав `service_ids` одной comma-separated строкой (`explode=false`), и оставить только элементы с `bookable=true`; при заданном `staff_id` оставить только точное совпадение. `book_dates` и `book_times` используют repeated `service_ids`.
 4. Для каждой подходящей пары date/staff запросить `book_times`.
 5. Преобразовать Unix `datetime` и `seance_length` в `Slot`, отфильтровать по точным aware границам `starts_after`/`starts_before`, service subset и staff.
 6. Отсортировать по `starts_at`, затем `staff_id`; дубли удалить по opaque slot ID.
@@ -115,7 +115,7 @@ DELETE exact protected record. Только documented `204` означает у
 
 ## HTTP и ошибки
 
-Transport — Python stdlib `urllib.request`, вызываемый через `asyncio.to_thread`; новая runtime dependency не добавляется. Каждый запрос имеет bounded timeout. Adapter и sandbox smoke используют один экземпляр process-local limiter с rolling окнами `5/1s` и `200/60s`. Это достаточно для текущего singleton worker; распределённый limiter не добавляется.
+Transport — Python stdlib `urllib.request`, вызываемый через `asyncio.to_thread`; новая runtime dependency не добавляется. Каждый запрос имеет bounded timeout. Все default `YclientsHttpClient` в процессе используют один module-level process-local limiter с rolling окнами `5/1s` и `200/60s`; явная injection остаётся только для детерминированных tests. Это достаточно для текущего singleton worker; распределённый limiter не добавляется.
 
 Автоматических retries нет, включая GET: официальный контракт не даёт достаточного основания для retry policy. Это минимальнее и безопаснее, чем угадывать повтор.
 

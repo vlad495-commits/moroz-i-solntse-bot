@@ -379,18 +379,20 @@ Slot payload is exact compact JSON:
 
 ```python
 payload = {
-    "services": [int(value) for value in service_ids],
+    "services": sorted({int(value) for value in service_ids}),
     "staff": int(staff_id),
     "start": int(starts_at.timestamp()),
     "duration": duration_seconds,
 }
 raw = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-slot_id = "yclients:v1:" + urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+message = b"yclients-slot:v1\0" + str(company_id).encode() + b"\0" + raw.encode()
+tag = hmac.new(user_token.encode(), message, hashlib.sha256).digest()[:16]
+slot_id = "yclients:v1:" + b64(raw.encode()) + "." + b64(tag)
 ```
 
-Decode restores padding, validates exact key set/types/positive values and returns an immutable internal slot payload. Owner marker uses the same base64 rules over UTF-8 `customer_id`, rejects blank/oversized/non-UTF8 data, and never decodes phone/name.
+Decode restores padding, verifies the company-bound HMAC with `compare_digest`, validates exact key set/types/positive values and canonical sorted unique services, then returns an immutable internal slot payload. User Token is the already-required signing key; rotation intentionally invalidates old slot IDs. Owner marker uses the same base64 rules over UTF-8 `customer_id`, rejects blank/oversized/non-UTF8 data, and never decodes phone/name.
 
-Availability follows the six steps in the spec, uses standard OpenAPI repeated query parameters, `ZoneInfo(config.timezone_name)`, exact range filtering and stable `(starts_at, staff_id, slot_id)` ordering.
+Availability follows the six steps in the spec: `book_dates`/`book_times` use repeated `service_ids`, while `book_staff` uses one comma-separated `service_ids` value per OpenAPI `explode=false`. It filters `bookable is True` and local dates before time fan-out, uses `ZoneInfo(config.timezone_name)`, exact range filtering and stable `(starts_at, staff_id, slot_id)` ordering. Because official `book_dates` requires paired `date_from`/`date_to`, missing `starts_before` is rejected before HTTP rather than inventing a horizon.
 
 - [ ] **Step 4: Implement create/get response mapping**
 

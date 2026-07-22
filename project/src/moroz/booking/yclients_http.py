@@ -93,10 +93,13 @@ class YclientsRateLimiter:
         return timestamps[0] + window - now if len(timestamps) >= limit else 0.0
 
 
+_DEFAULT_LIMITER = YclientsRateLimiter()
+
+
 class YclientsHttpClient:
     def __init__(self, config: YclientsConfig, *, limiter: YclientsRateLimiter | None = None) -> None:
         self._config = config
-        self._limiter = limiter or YclientsRateLimiter()
+        self._limiter = limiter or _DEFAULT_LIMITER
 
     async def request(
         self,
