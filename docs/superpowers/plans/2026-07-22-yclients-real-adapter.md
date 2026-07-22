@@ -392,7 +392,7 @@ slot_id = "yclients:v1:" + b64(raw.encode()) + "." + b64(tag)
 
 Decode restores padding, verifies the company-bound HMAC with `compare_digest`, validates exact key set/types/positive values and canonical sorted unique services, then returns an immutable internal slot payload. User Token is the already-required signing key; rotation intentionally invalidates old slot IDs. Owner marker uses the same base64 rules over UTF-8 `customer_id`, rejects blank/oversized/non-UTF8 data, and never decodes phone/name.
 
-Availability follows the six steps in the spec: `book_dates`/`book_times` use repeated `service_ids`, while `book_staff` uses one comma-separated `service_ids` value per OpenAPI `explode=false`. It filters `bookable is True` and local dates before time fan-out, uses `ZoneInfo(config.timezone_name)`, exact range filtering and stable `(starts_at, staff_id, slot_id)` ordering. Because official `book_dates` requires paired `date_from`/`date_to`, missing `starts_before` is rejected before HTTP rather than inventing a horizon.
+Availability follows the six steps in the spec: `book_dates`/`book_times` use repeated `service_ids`, while `book_staff` uses repeated `service_ids[]` keys exactly as shown by the official query example and confirmed by the sandbox API. It filters `bookable is True` and local dates before time fan-out, uses `ZoneInfo(config.timezone_name)`, exact range filtering and stable `(starts_at, staff_id, slot_id)` ordering. Because official `book_dates` requires paired `date_from`/`date_to`, missing `starts_before` is rejected before HTTP rather than inventing a horizon.
 
 - [x] **Step 4: Implement create/get response mapping**
 
@@ -665,7 +665,7 @@ Repeated readiness check after user confirmation: all seven required keys are pr
 
 Run exactly one `yclients-smoke` container in namespace `moroz-yclients-sandbox-<timestamp>`. Capture only the redacted summary and exit code. Never use real customer PII.
 
-First consented attempt stopped before every mutation: service validation succeeded, while availability failed before staff/slots. A separate read-only redacted diagnostic confirmed `book_dates=200` with 14 dates and `book_staff=404` with zero bookable staff. No record was created; the external test fixture must expose an online-bookable employee for the configured service before a new attempt.
+First consented attempt stopped before every mutation: service validation succeeded, while availability failed before staff/slots. Systematic read-only comparison established the code root cause: unfiltered and official `service_ids[]` calls returned one bookable employee, while the adapter's former plain `service_ids` key returned 404. A fake HTTP RED test reproduced the exact URL mismatch; the minimal bracket-key fix passed focused regression and a fresh no-cache full Docker gate (`428 passed`). No record was created; a new isolated smoke remains required.
 
 - [ ] **Step 3: Verify evidence**
 

@@ -189,7 +189,8 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
         ("date_from", "2026-07-29"),
         ("date_to", "2026-07-29"),
     ]
-    assert parse_qsl(urlsplit(server.requests[1][1]).query) == [("service_ids", "331")]
+    assert urlsplit(server.requests[1][1]).query == "service_ids%5B%5D=331"
+    assert parse_qsl(urlsplit(server.requests[1][1]).query) == [("service_ids[]", "331")]
     assert parse_qsl(urlsplit(server.requests[2][1]).query) == [("service_ids", "331")]
     assert server.requests[3][2]["Authorization"] == "Bearer partner-value"
     assert server.requests[4][2]["Authorization"] == "Bearer partner-value, User user-value"
@@ -343,10 +344,20 @@ async def test_service_ids_use_exact_endpoint_encoding_and_canonical_slot(server
 
     assert first[0].id == second[0].id
     for index, request in enumerate(server.requests):
-        service_query = [pair for pair in parse_qsl(urlsplit(request[1]).query) if pair[0] == "service_ids"]
         if index % 3 == 1:
-            assert service_query == [("service_ids", "331,332")]
+            assert urlsplit(request[1]).query == (
+                "service_ids%5B%5D=331&service_ids%5B%5D=332"
+            )
+            service_query = [
+                pair for pair in parse_qsl(urlsplit(request[1]).query)
+                if pair[0] == "service_ids[]"
+            ]
+            assert service_query == [("service_ids[]", "331"), ("service_ids[]", "332")]
         else:
+            service_query = [
+                pair for pair in parse_qsl(urlsplit(request[1]).query)
+                if pair[0] == "service_ids"
+            ]
             assert service_query == [("service_ids", "331"), ("service_ids", "332")]
 
 

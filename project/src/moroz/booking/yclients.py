@@ -71,7 +71,7 @@ class YclientsAdapter(BookingPort):
         staff_data = await self._read(
             "GET",
             f"/api/v1/book_staff/{self._config.company_id}",
-            query=[("service_ids", ",".join(str(value) for value in services))],
+            query=[("service_ids[]", value) for value in services],
         )
         staff_ids = _staff_ids(staff_data)
         if staff_filter is not None:

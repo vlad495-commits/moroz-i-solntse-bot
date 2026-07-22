@@ -82,7 +82,7 @@ Create/get/update извлекают один и тот же internal owner из
 
 1. Проверить, что `SlotQuery.service_ids` и optional `staff_id` состоят из положительных numeric YCLIENTS IDs.
 2. Запросить доступные даты через `book_dates` в локальной timezone филиала. Официальный контракт требует `date_from` и `date_to` парой, поэтому real adapter fail-closed отвергает `SlotQuery` без `starts_before` до HTTP; доменная optional-форма остаётся для других портов.
-3. Запросить staff через `book_staff`, передав `service_ids` одной comma-separated строкой (`explode=false`), и оставить только элементы с `bookable=true`; при заданном `staff_id` оставить только точное совпадение. `book_dates` и `book_times` используют repeated `service_ids`.
+3. Запросить staff через `book_staff`, передав repeated bracket keys `service_ids[]=...` по официальному query example, и оставить только элементы с `bookable=true`; при заданном `staff_id` оставить только точное совпадение. `book_dates` и `book_times` сохраняют проверенный repeated `service_ids` encoding.
 4. Для каждой подходящей пары date/staff запросить `book_times`.
 5. Преобразовать Unix `datetime` и `seance_length` в `Slot`, отфильтровать по точным aware границам `starts_after`/`starts_before`, service subset и staff.
 6. Отсортировать по `starts_at`, затем `staff_id`; дубли удалить по opaque slot ID.
