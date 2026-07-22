@@ -331,7 +331,7 @@ Task review must independently inspect the rolling-window algorithm, header isol
 - Implements `list_slots`, `create_booking`, `get_booking` in this task.
 - Private slot marker `yclients:v1:` and owner marker `moroz:v1:` are deterministic and restart-safe.
 
-- [ ] **Step 1: Write RED fake HTTP contract tests**
+- [x] **Step 1: Write RED fake HTTP contract tests**
 
 Script exact official envelopes for `book_dates`, `book_staff`, `book_times`, `book_check`, create-record and get-record. Prove:
 
@@ -369,11 +369,11 @@ Create body must equal the official minimal mapping: numeric `staff_id`, service
 
 Add official example/schema variants: epoch and ISO booking dates/datetimes, numeric/string IDs, duplicate time removal, exact aware query-bound filtering. Invalid slot/owner markers and `success=false` fail closed.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run `tests/contract/booking/test_yclients_adapter.py` in `moroz-yclients-real-t3-red`. Expected: missing module/class.
 
-- [ ] **Step 3: Implement deterministic codecs and availability**
+- [x] **Step 3: Implement deterministic codecs and availability**
 
 Slot payload is exact compact JSON:
 
@@ -394,7 +394,7 @@ Decode restores padding, verifies the company-bound HMAC with `compare_digest`, 
 
 Availability follows the six steps in the spec: `book_dates`/`book_times` use repeated `service_ids`, while `book_staff` uses one comma-separated `service_ids` value per OpenAPI `explode=false`. It filters `bookable is True` and local dates before time fan-out, uses `ZoneInfo(config.timezone_name)`, exact range filtering and stable `(starts_at, staff_id, slot_id)` ordering. Because official `book_dates` requires paired `date_from`/`date_to`, missing `starts_before` is rejected before HTTP rather than inventing a horizon.
 
-- [ ] **Step 4: Implement create/get response mapping**
+- [x] **Step 4: Implement create/get response mapping**
 
 Before create, call `book_check` with:
 
@@ -411,11 +411,11 @@ Accept `book_check` only on `201` + `success=true`; map meta error codes `433/43
 
 Use shared response helpers with an explicit `mutation_sent` flag: malformed create success or create transport/5xx becomes `BookingOutcomeUnknown`; malformed read becomes `BookingTemporaryError`.
 
-- [ ] **Step 5: Run GREEN and current booking regressions**
+- [x] **Step 5: Run GREEN and current booking regressions**
 
 Run both YCLIENTS contract files and all existing booking tests. Expected: exit 0. Recreate adapters between list/create/get assertions to prove no cache dependency.
 
-- [ ] **Step 6: Document, commit and review**
+- [x] **Step 6: Document, commit and review**
 
 Commit:
 
