@@ -44,7 +44,7 @@
 - `BookingService` consumes create scenario state keys `customer_name`, `customer_phone`, `personal_data_processing_allowed`, optional `comment`.
 - Consent/contact failure performs no `BookingPort` call and no `executing` checkpoint.
 
-- [ ] **Step 1: Write RED tests before production changes**
+- [x] **Step 1: Write RED tests before production changes**
 
 Update the shared create scenario fixture to carry:
 
@@ -116,11 +116,11 @@ def _create_command(
     )
 ```
 
-- [ ] **Step 2: Run RED in disposable Compose namespace**
+- [x] **Step 2: Run RED in disposable Compose namespace**
 
 Run focused unit/E2E files in `moroz-yclients-real-t1-red` after setting fresh process-only infrastructure values. Expected: `CreateBooking` rejects new keywords or service sends the old three-field command. Record only test counts and expected assertion/type failure.
 
-- [ ] **Step 3: Implement the minimum model and service change**
+- [x] **Step 3: Implement the minimum model and service change**
 
 Use this exact dataclass:
 
@@ -159,11 +159,11 @@ if scenario.state.get("personal_data_processing_allowed") is not True:
 
 Construct `CreateBooking` with the exact values above and normalize an empty/missing comment to `None`. Do not add a new phase or migration.
 
-- [ ] **Step 4: Run GREEN and all existing booking tests**
+- [x] **Step 4: Run GREEN and all existing booking tests**
 
 Run the focused files, then `pytest tests/unit/booking tests/integration/booking tests/e2e/booking -q` in a new namespace. Expected: exit 0 and no new warnings. Clean only task namespaces.
 
-- [ ] **Step 5: Document, verify, commit and review**
+- [x] **Step 5: Document, verify, commit and review**
 
 Append RED/GREEN evidence, mark Task 1 complete, run `git diff --check` and a secret-shaped diff scan, commit:
 
