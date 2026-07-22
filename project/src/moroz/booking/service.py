@@ -138,6 +138,23 @@ class BookingService:
                 next_action="confirm_booking",
                 events=(),
             )
+        name = str(scenario.state.get("customer_name", "")).strip()
+        phone = str(scenario.state.get("customer_phone", "")).strip()
+        if not name or not phone:
+            return ScenarioResult(
+                status="needs_input",
+                message="Нужны имя и телефон для записи.",
+                next_action="collect_booking_contact",
+                events=(),
+            )
+        if scenario.state.get("personal_data_processing_allowed") is not True:
+            return ScenarioResult(
+                status="needs_input",
+                message="Для записи нужно согласие на обработку персональных данных.",
+                next_action="request_personal_data_consent",
+                events=(),
+            )
+        comment = str(scenario.state.get("comment", "")).strip() or None
 
         executing = replace(
             scenario,
@@ -159,6 +176,10 @@ class BookingService:
                     customer_id=executing.customer_id,
                     slot_id=selected_slot_id,
                     idempotency_key=executing.idempotency_key,
+                    customer_name=name,
+                    customer_phone=phone,
+                    personal_data_processing_allowed=True,
+                    comment=comment,
                 )
             )
         except SlotUnavailable:

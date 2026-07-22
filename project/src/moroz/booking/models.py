@@ -53,6 +53,10 @@ class CreateBooking:
     customer_id: str
     slot_id: str
     idempotency_key: str
+    customer_name: str
+    customer_phone: str
+    personal_data_processing_allowed: bool
+    comment: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

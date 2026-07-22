@@ -157,7 +157,7 @@ def _scenario(
 
 async def _seed_booking(repo, port: MockYclientsAdapter, customer_id="customer-7"):
     booking = await port.create_booking(
-        CreateBooking(customer_id, "slot-old", f"seed:{uuid4()}")
+        _create_command(customer_id, "slot-old", f"seed:{uuid4()}")
     )
     seed = BookingScenario(
         id=uuid4(),
@@ -175,6 +175,21 @@ async def _seed_booking(repo, port: MockYclientsAdapter, customer_id="customer-7
     if isinstance(port, CountingChangeAdapter):
         port.reset_counts()
     return booking
+
+
+def _create_command(
+    customer_id: str = "customer-1",
+    slot_id: str = "slot-ok",
+    idempotency_key: str = "create-1",
+) -> CreateBooking:
+    return CreateBooking(
+        customer_id=customer_id,
+        slot_id=slot_id,
+        idempotency_key=idempotency_key,
+        customer_name="Sandbox Customer",
+        customer_phone="+70000000000",
+        personal_data_processing_allowed=True,
+    )
 
 
 def _thaw(value):

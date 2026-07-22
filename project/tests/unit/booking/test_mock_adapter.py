@@ -46,6 +46,21 @@ def _adapter() -> MockYclientsAdapter:
     )
 
 
+def _create_command(
+    customer_id: str = "customer-1",
+    slot_id: str = "slot-ok",
+    idempotency_key: str = "create-1",
+) -> CreateBooking:
+    return CreateBooking(
+        customer_id=customer_id,
+        slot_id=slot_id,
+        idempotency_key=idempotency_key,
+        customer_name="Sandbox Customer",
+        customer_phone="+70000000000",
+        personal_data_processing_allowed=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_list_slots_returns_only_matching_future_slots():
     adapter = _adapter()
@@ -62,7 +77,7 @@ async def test_list_slots_returns_only_matching_future_slots():
 @pytest.mark.asyncio
 async def test_list_slots_excludes_occupied_slot():
     adapter = _adapter()
-    await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+    await adapter.create_booking(_create_command())
 
     slots = await adapter.list_slots(
         SlotQuery(("service-1",), datetime(2026, 7, 22, 9, tzinfo=UTC), staff_id="staff-1")
@@ -74,7 +89,7 @@ async def test_list_slots_excludes_occupied_slot():
 @pytest.mark.asyncio
 async def test_create_is_idempotent_for_same_key():
     adapter = _adapter()
-    command = CreateBooking("customer-1", "slot-ok", "create-1")
+    command = _create_command()
 
     first = await adapter.create_booking(command)
     repeated = await adapter.create_booking(command)
@@ -86,16 +101,16 @@ async def test_create_is_idempotent_for_same_key():
 @pytest.mark.asyncio
 async def test_create_with_different_key_on_occupied_slot_raises_slot_unavailable():
     adapter = _adapter()
-    await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+    await adapter.create_booking(_create_command())
 
     with pytest.raises(SlotUnavailable):
-        await adapter.create_booking(CreateBooking("customer-2", "slot-ok", "create-2"))
+        await adapter.create_booking(_create_command("customer-2", "slot-ok", "create-2"))
 
 
 @pytest.mark.asyncio
 async def test_reschedule_checks_availability_and_is_idempotent():
     adapter = _adapter()
-    booking = await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+    booking = await adapter.create_booking(_create_command())
     command = RescheduleBooking(booking.external_id, "slot-next", "reschedule-1")
 
     first = await adapter.reschedule_booking(command)
@@ -104,14 +119,14 @@ async def test_reschedule_checks_availability_and_is_idempotent():
     assert repeated == first
     assert first.slot_id == "slot-next"
     with pytest.raises(SlotUnavailable):
-        await adapter.create_booking(CreateBooking("customer-2", "slot-next", "create-2"))
+        await adapter.create_booking(_create_command("customer-2", "slot-next", "create-2"))
 
 
 @pytest.mark.asyncio
 async def test_reschedule_to_occupied_slot_leaves_original_booking_unchanged():
     adapter = _adapter()
-    booking = await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
-    await adapter.create_booking(CreateBooking("customer-2", "slot-next", "create-2"))
+    booking = await adapter.create_booking(_create_command())
+    await adapter.create_booking(_create_command("customer-2", "slot-next", "create-2"))
 
     with pytest.raises(SlotUnavailable):
         await adapter.reschedule_booking(RescheduleBooking(booking.external_id, "slot-next", "reschedule-1"))
@@ -122,7 +137,7 @@ async def test_reschedule_to_occupied_slot_leaves_original_booking_unchanged():
 @pytest.mark.asyncio
 async def test_cancel_with_same_key_is_a_safe_repeat():
     adapter = _adapter()
-    booking = await adapter.create_booking(CreateBooking("customer-1", "slot-ok", "create-1"))
+    booking = await adapter.create_booking(_create_command())
     command = CancelBooking(booking.external_id, "cancel-1")
 
     await adapter.cancel_booking(command)

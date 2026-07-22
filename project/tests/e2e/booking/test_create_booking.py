@@ -38,6 +38,16 @@ class CountingMockYclientsAdapter(MockYclientsAdapter):
         return await super().create_booking(command)
 
 
+class CapturingMockYclientsAdapter(CountingMockYclientsAdapter):
+    def __init__(self, slots: list[Slot]) -> None:
+        super().__init__(slots)
+        self.last_create: CreateBooking | None = None
+
+    async def create_booking(self, command: CreateBooking):
+        self.last_create = command
+        return await super().create_booking(command)
+
+
 class BarrierCreateAdapter(CountingMockYclientsAdapter):
     def __init__(self, slots: list[Slot]) -> None:
         super().__init__(slots)
@@ -61,14 +71,22 @@ class SlotDisappearsOnCreateAdapter(CountingMockYclientsAdapter):
 def _slot(slot_id: str, hour: int) -> Slot:
     return Slot(
         id=slot_id,
-        service_ids=("service-1",),
-        staff_id="staff-1",
-        starts_at=datetime(2026, 7, 25, hour, tzinfo=UTC),
+        service_ids=("331",),
+        staff_id="6544",
+        starts_at=datetime(2026, 7, 29, hour, tzinfo=UTC),
         duration_minutes=60,
     )
 
 
-def _scenario(*, selected_slot_id: str = "slot-9", phase: str = "awaiting_confirmation") -> BookingScenario:
+def _scenario(
+    *,
+    selected_slot_id: str = "slot-9",
+    phase: str = "awaiting_confirmation",
+    customer_name: str = "Sandbox Customer",
+    customer_phone: str = "+70000000000",
+    personal_data_processing_allowed: bool = True,
+    comment: str = "test booking",
+) -> BookingScenario:
     return BookingScenario(
         id=uuid4(),
         kind="create",
@@ -77,14 +95,16 @@ def _scenario(*, selected_slot_id: str = "slot-9", phase: str = "awaiting_confir
         customer_id="customer-7",
         state={
             "slot_query": {
-                "service_ids": ["service-1"],
-                "starts_after": "2026-07-25T00:00:00+00:00",
-                "starts_before": "2026-07-26T00:00:00+00:00",
-                "staff_id": "staff-1",
+                "service_ids": ["331"],
+                "starts_after": "2026-07-29T00:00:00+03:00",
+                "starts_before": "2026-07-30T00:00:00+03:00",
+                "staff_id": "6544",
             },
             "selected_slot_id": selected_slot_id,
-            "customer": {"phone": "+70000000007"},
-            "service": {"id": "service-1", "name": "Криотерапия"},
+            "customer_name": customer_name,
+            "customer_phone": customer_phone,
+            "personal_data_processing_allowed": personal_data_processing_allowed,
+            "comment": comment,
         },
         error_code=None,
         created_at=NOW,
@@ -152,6 +172,51 @@ async def test_create_requires_confirmation_then_is_stable_and_idempotent(repo):
     assert (port.list_calls, port.create_calls) == (1, 1)
 
 
+async def test_create_requires_personal_data_consent_before_port_or_checkpoint(repo):
+    scenario = _scenario(personal_data_processing_allowed=False)
+    await repo.create_scenario(scenario)
+    port = CountingMockYclientsAdapter([_slot("slot-9", 14)])
+
+    result = await BookingService(port, repo).handle(scenario.id, confirmed=True)
+
+    assert result.status == "needs_input"
+    assert result.next_action == "request_personal_data_consent"
+    assert (port.list_calls, port.create_calls) == (0, 0)
+    assert (await repo.get_scenario(scenario.id)).phase == "awaiting_confirmation"
+
+
+@pytest.mark.parametrize("field", ["customer_name", "customer_phone"])
+async def test_create_requires_customer_contact_before_port_or_checkpoint(repo, field):
+    scenario = _scenario(**{field: ""})
+    await repo.create_scenario(scenario)
+    port = CountingMockYclientsAdapter([_slot("slot-9", 14)])
+
+    result = await BookingService(port, repo).handle(scenario.id, confirmed=True)
+
+    assert result.status == "needs_input"
+    assert result.next_action == "collect_booking_contact"
+    assert (port.list_calls, port.create_calls) == (0, 0)
+    assert (await repo.get_scenario(scenario.id)).phase == "awaiting_confirmation"
+
+
+async def test_create_passes_minimum_customer_data_to_port(repo):
+    port = CapturingMockYclientsAdapter([_slot("slot-9", 14)])
+    scenario = _scenario()
+    await repo.create_scenario(scenario)
+
+    await BookingService(port, repo).handle(scenario.id, confirmed=True)
+
+    assert port.last_create == CreateBooking(
+        customer_id=scenario.customer_id,
+        slot_id="slot-9",
+        idempotency_key=scenario.idempotency_key,
+        customer_name="Sandbox Customer",
+        customer_phone="+70000000000",
+        personal_data_processing_allowed=True,
+        comment="test booking",
+    )
+
+
 async def test_lost_slot_returns_and_persists_three_json_safe_alternatives(repo):
     scenario = _scenario(selected_slot_id="slot-gone")
     await repo.create_scenario(scenario)
@@ -172,8 +237,8 @@ async def test_lost_slot_returns_and_persists_three_json_safe_alternatives(repo)
     stored = await repo.get_scenario(scenario.id)
     events = await repo.list_events(scenario.id)
     assert stored.phase == "collecting"
-    assert stored.state["customer"] == scenario.state["customer"]
-    assert stored.state["service"] == scenario.state["service"]
+    assert stored.state["customer_name"] == scenario.state["customer_name"]
+    assert stored.state["customer_phone"] == scenario.state["customer_phone"]
     assert stored.state["slot_query"] == scenario.state["slot_query"]
     assert stored.state["selected_slot_id"] == "slot-gone"
     assert events[-1].event_type == "slot_unavailable"
@@ -273,10 +338,10 @@ async def test_create_repeat_keeps_original_terminal_after_reschedule_and_cancel
             "external_id": booking.external_id,
             "starts_at": booking.starts_at.isoformat(),
             "slot_query": {
-                "service_ids": ["service-1"],
-                "starts_after": "2026-07-25T15:00:00+00:00",
-                "starts_before": "2026-07-25T17:00:00+00:00",
-                "staff_id": "staff-1",
+                "service_ids": ["331"],
+                "starts_after": "2026-07-29T15:00:00+00:00",
+                "starts_before": "2026-07-29T17:00:00+00:00",
+                "staff_id": "6544",
             },
             "selected_slot_id": "slot-new",
         },
