@@ -94,7 +94,8 @@ class FakeBackend:
     async def count_duplicate_marker(self, customer_id, starts_at, ends_at):
         self._call("count_duplicate_marker")
         assert customer_id == f"smoke-{RUN_ID.hex}"
-        assert starts_at < ends_at
+        assert starts_at == self.slots[0].starts_at
+        assert ends_at == self.slots[1].starts_at
         return 1
 
 

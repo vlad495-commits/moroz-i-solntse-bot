@@ -244,7 +244,7 @@ async def run_smoke(
         count = await actual.count_duplicate_marker(
             customer_id,
             min(first.starts_at, second.starts_at),
-            max(first.starts_at, second.starts_at) + timedelta(days=1),
+            max(first.starts_at, second.starts_at),
         )
         summary["duplicate_marker_count"] = count
         if count != 1:
