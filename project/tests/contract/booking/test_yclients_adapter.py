@@ -556,6 +556,40 @@ async def test_get_deleted_record_is_cancelled(server: ScriptedServer) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [1, "true", {}])
+async def test_get_rejects_non_boolean_deleted(
+    server: ScriptedServer, deleted: object,
+) -> None:
+    server.responses.append((200, {
+        "success": True, "data": [_record(deleted=deleted)],
+    }))
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).get_booking("9001")
+
+
+@pytest.mark.asyncio
+async def test_reschedule_rejects_non_boolean_deleted_before_mutation(
+    server: ScriptedServer,
+) -> None:
+    server.responses.append((200, {
+        "success": True,
+        "data": _record(
+            deleted=1,
+            client={"name": "Name", "phone": "+70000000000"},
+        ),
+    }))
+    config = _config(server)
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(config).reschedule_booking(
+            RescheduleBooking("9001", _slot_id(config), "key")
+        )
+
+    assert [request[0] for request in server.requests] == ["GET"]
+
+
+@pytest.mark.asyncio
 async def test_get_rejects_record_with_different_external_id(server: ScriptedServer) -> None:
     server.responses.append((200, {"success": True, "data": _record()}))
 

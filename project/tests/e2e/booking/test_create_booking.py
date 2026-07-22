@@ -82,10 +82,10 @@ def _scenario(
     *,
     selected_slot_id: str = "slot-9",
     phase: str = "awaiting_confirmation",
-    customer_name: str = "Sandbox Customer",
-    customer_phone: str = "+70000000000",
+    customer_name: object = "Sandbox Customer",
+    customer_phone: object = "+70000000000",
     personal_data_processing_allowed: bool = True,
-    comment: str = "test booking",
+    comment: object = "test booking",
 ) -> BookingScenario:
     return BookingScenario(
         id=uuid4(),
@@ -186,8 +186,11 @@ async def test_create_requires_personal_data_consent_before_port_or_checkpoint(r
 
 
 @pytest.mark.parametrize("field", ["customer_name", "customer_phone"])
-async def test_create_requires_customer_contact_before_port_or_checkpoint(repo, field):
-    scenario = _scenario(**{field: ""})
+@pytest.mark.parametrize("value", ["", None, 7, {}])
+async def test_create_requires_customer_contact_before_port_or_checkpoint(
+    repo, field, value,
+):
+    scenario = _scenario(**{field: value})
     await repo.create_scenario(scenario)
     port = CountingMockYclientsAdapter([_slot("slot-9", 14)])
 
@@ -215,6 +218,17 @@ async def test_create_passes_minimum_customer_data_to_port(repo):
         personal_data_processing_allowed=True,
         comment="test booking",
     )
+
+
+@pytest.mark.parametrize("comment", [None, 7, {}])
+async def test_create_normalizes_non_string_comment_to_none(repo, comment):
+    port = CapturingMockYclientsAdapter([_slot("slot-9", 14)])
+    scenario = _scenario(comment=comment)
+    await repo.create_scenario(scenario)
+
+    await BookingService(port, repo).handle(scenario.id, confirmed=True)
+
+    assert port.last_create.comment is None
 
 
 async def test_lost_slot_returns_and_persists_three_json_safe_alternatives(repo):

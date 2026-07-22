@@ -139,8 +139,10 @@ class BookingService:
                 next_action="confirm_booking",
                 events=(),
             )
-        name = str(scenario.state.get("customer_name", "")).strip()
-        phone = str(scenario.state.get("customer_phone", "")).strip()
+        raw_name = scenario.state.get("customer_name")
+        raw_phone = scenario.state.get("customer_phone")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        phone = raw_phone.strip() if isinstance(raw_phone, str) else ""
         if not name or not phone:
             return ScenarioResult(
                 status="needs_input",
@@ -155,7 +157,8 @@ class BookingService:
                 next_action="request_personal_data_consent",
                 events=(),
             )
-        comment = str(scenario.state.get("comment", "")).strip() or None
+        raw_comment = scenario.state.get("comment")
+        comment = raw_comment.strip() or None if isinstance(raw_comment, str) else None
 
         executing = replace(
             scenario,

@@ -25,9 +25,11 @@ class RecordedRequest:
 
 class FakeYclientsServer(ThreadingHTTPServer):
     requests: list[RecordedRequest]
+    redirect_url: str | None
 
     def __init__(self) -> None:
         self.requests = []
+        self.redirect_url = None
         super().__init__(("127.0.0.1", 0), FakeYclientsHandler)
 
 
@@ -47,6 +49,12 @@ class FakeYclientsHandler(BaseHTTPRequestHandler):
             headers=dict(self.headers),
             body=self.rfile.read(int(self.headers.get("Content-Length", "0"))),
         ))
+        if self.path == "/redirect" and self.server.redirect_url is not None:
+            self.send_response(302)
+            self.send_header("Location", self.server.redirect_url)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         status = 503 if self.path == "/error" else 200
         body = b"upstream-failure" if status == 503 else b'{"success":true}'
         self.send_response(status)
@@ -194,6 +202,32 @@ async def test_http_encodes_query_json_and_http_error_response(
     assert request.body == b'{"appointments":[{"staff_id":3}]}'
     assert (error.status, error.body) == (503, b"upstream-failure")
     assert sum(request.path == "/error" for request in fake_server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_http_never_follows_redirect_or_leaks_protected_auth(
+    fake_server: FakeYclientsServer, client: YclientsHttpClient,
+) -> None:
+    target = FakeYclientsServer()
+    thread = Thread(target=target.serve_forever, daemon=True)
+    thread.start()
+    host, port = target.server_address
+    fake_server.redirect_url = f"http://{host}:{port}/target"
+    try:
+        response = await client.request(
+            "POST", "/redirect", json_body={"safe": True}, user_auth=True
+        )
+    finally:
+        target.shutdown()
+        thread.join()
+        target.server_close()
+
+    assert response.status == 302
+    assert len(fake_server.requests) == 1
+    assert fake_server.requests[0].headers["Authorization"] == (
+        "Bearer partner-value, User user-value"
+    )
+    assert target.requests == []
 
 
 @pytest.mark.asyncio

@@ -183,6 +183,7 @@ async def run_smoke(
     customer_id = f"smoke-{run_id}"
     external_id: str | None = None
     cancel_confirmed = False
+    cancel_attempted = False
     mutation_unknown = False
     instant = now()
     try:
@@ -226,6 +227,7 @@ async def run_smoke(
         _require_booking(fetched, customer_id, second)
         summary["second_get"] = "confirmed"
 
+        cancel_attempted = True
         await actual.cancel_booking(CancelBooking(
             external_id=external_id,
             idempotency_key=f"yclients-smoke-{run_id}",
@@ -262,7 +264,15 @@ async def run_smoke(
     except Exception:
         summary["error"] = "unexpected_failure"
 
-    if external_id is not None and not cancel_confirmed and not mutation_unknown:
+    if cancel_attempted and not cancel_confirmed:
+        summary["cancelled"] = "failed"
+        summary["manual_review_required"] = True
+    if (
+        external_id is not None
+        and not cancel_confirmed
+        and not cancel_attempted
+        and not mutation_unknown
+    ):
         try:
             await actual.cancel_booking(CancelBooking(
                 external_id=external_id,

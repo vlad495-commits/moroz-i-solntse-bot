@@ -564,6 +564,9 @@ def _external_booking(
     }))
     starts_at = _datetime(record.get("datetime"), timezone)
     duration = _positive_int(record.get("seance_length"))
+    deleted = record.get("deleted", False)
+    if type(deleted) is not bool:
+        raise BookingTemporaryError()
     slot_id = _encode_slot(
         _SlotPayload(services, staff, int(starts_at.timestamp()), duration), config,
     )
@@ -572,7 +575,7 @@ def _external_booking(
         customer_id,
         slot_id,
         starts_at,
-        "cancelled" if record.get("deleted") is True else "confirmed",
+        "cancelled" if deleted else "confirmed",
     )
 
 

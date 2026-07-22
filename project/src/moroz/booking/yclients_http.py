@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
 
@@ -54,6 +54,11 @@ class HttpResponse:
 
 class YclientsTransportError(Exception):
     pass
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class YclientsRateLimiter:
@@ -137,7 +142,9 @@ class YclientsHttpClient:
             body = json.dumps(json_body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         request = Request(url, data=body, headers=headers, method=method)
         try:
-            with urlopen(request, timeout=self._config.timeout_seconds) as response:
+            with build_opener(_NoRedirectHandler()).open(
+                request, timeout=self._config.timeout_seconds
+            ) as response:
                 return HttpResponse(response.status, response.read())
         except HTTPError as error:
             return HttpResponse(error.code, error.read())

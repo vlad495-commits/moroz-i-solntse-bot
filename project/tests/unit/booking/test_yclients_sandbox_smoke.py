@@ -269,6 +269,24 @@ async def test_definite_failure_after_create_attempts_one_cleanup_cancel() -> No
 
 
 @pytest.mark.asyncio
+async def test_definite_primary_cancel_failure_is_not_retried_as_cleanup() -> None:
+    backend = FakeBackend(failure=("cancel_booking", BookingTemporaryError()))
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert backend.calls[-1] == "cancel_booking"
+    assert backend.calls.count("cancel_booking") == 1
+    assert result.summary["cancelled"] == "failed"
+    assert result.summary["manual_review_required"] is True
+
+
+@pytest.mark.asyncio
 async def test_final_not_found_is_accepted_as_deleted_evidence() -> None:
     backend = FakeBackend(failure=("get_cancelled_booking", BookingNotFound()))
 
