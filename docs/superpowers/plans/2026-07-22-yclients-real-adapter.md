@@ -537,7 +537,7 @@ definite 400/401/403/409/422/429 without slot code -> BookingTemporaryError
 
 Run `tests/contract/booking`, `tests/unit/booking`, `tests/integration/booking`, `tests/e2e/booking`, and `tests/integration/test_migrations.py` in a clean namespace. Expected: exit 0, Alembic remains `0005_booking_state (head)`, no schema change.
 
-- [ ] **Step 6: Document, commit and review**
+- [x] **Step 6: Document, commit and review**
 
 Commit:
 
