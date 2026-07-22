@@ -441,7 +441,7 @@ Reviewer must verify exact official endpoints/auth/body, deterministic codecs, t
 - Preserves current record client/comment/api_id without client-list lookup.
 - Guarantees exactly one mutation request per method invocation.
 
-- [ ] **Step 1: Write RED protected CRUD/error tests**
+- [x] **Step 1: Write RED protected CRUD/error tests**
 
 Contract sequence for reschedule:
 
@@ -498,7 +498,7 @@ async def test_read_transport_failure_is_temporary_and_not_retried(scripted_serv
 
 The fake server counts received methods; every mutation assertion requires count `== 1`.
 
-- [ ] **Step 2: Write the cross-layer RED E2E**
+- [x] **Step 2: Write the cross-layer RED E2E**
 
 Use disposable PostgreSQL, `YclientsAdapter` against a fake server that returns successful availability/book_check, fully reads the create body, records one POST, then closes the socket without a response:
 
@@ -514,11 +514,11 @@ assert [event.event_type for event in await repo.list_events(scenario.id)].count
 ) == 1
 ```
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run focused contract cases and E2E in `moroz-yclients-real-t4-red`. Expected: missing reschedule/cancel branches or incorrect exception mapping.
 
-- [ ] **Step 4: Implement minimum protected change mapping**
+- [x] **Step 4: Implement minimum protected change mapping**
 
 Reschedule gets the exact current record first and rejects missing/invalid `moroz:v1:` ownership. Build PUT from target slot plus only preserved record fields required by official schema. Do not carry finance, documents, labels, arbitrary custom fields or unrelated provider response fields.
 
@@ -533,7 +533,7 @@ mutation transport, timeout, 5xx, malformed success, unexpected status -> Bookin
 definite 400/401/403/409/422/429 without slot code -> BookingTemporaryError
 ```
 
-- [ ] **Step 5: Run GREEN and complete booking/migration regression**
+- [x] **Step 5: Run GREEN and complete booking/migration regression**
 
 Run `tests/contract/booking`, `tests/unit/booking`, `tests/integration/booking`, `tests/e2e/booking`, and `tests/integration/test_migrations.py` in a clean namespace. Expected: exit 0, Alembic remains `0005_booking_state (head)`, no schema change.
 

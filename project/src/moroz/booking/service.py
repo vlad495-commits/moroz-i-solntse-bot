@@ -5,6 +5,7 @@ from uuid import UUID
 
 from moroz.booking.models import (
     BookingIdentity,
+    BookingNotFound,
     BookingOutcomeUnknown,
     BookingScenario,
     BookingTemporaryError,
@@ -98,7 +99,7 @@ class BookingService:
                         confirmed,
                         booking,
                     )
-                except BookingTemporaryError:
+                except (BookingNotFound, BookingTemporaryError):
                     return await self._escalate(
                         session,
                         session.scenario,
@@ -110,7 +111,7 @@ class BookingService:
                         session.scenario,
                         "booking_outcome_unknown",
                     )
-        except BookingTemporaryError:
+        except (BookingNotFound, BookingTemporaryError):
             return await self._escalate(
                 session,
                 session.scenario,

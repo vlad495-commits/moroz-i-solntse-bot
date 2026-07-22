@@ -15,7 +15,9 @@ from moroz.booking.models import (
     BookingNotFound,
     BookingOutcomeUnknown,
     BookingTemporaryError,
+    CancelBooking,
     CreateBooking,
+    RescheduleBooking,
     SlotQuery,
     SlotUnavailable,
 )
@@ -25,7 +27,7 @@ from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient
 
 class ScriptedServer(ThreadingHTTPServer):
     def __init__(self) -> None:
-        self.responses: list[tuple[int, object]] = []
+        self.responses: list[tuple[int | None, object]] = []
         self.requests: list[tuple[str, str, dict[str, str], object | None]] = []
         super().__init__(("127.0.0.1", 0), ScriptedHandler)
 
@@ -39,6 +41,12 @@ class ScriptedHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._respond()
 
+    def do_PUT(self) -> None:
+        self._respond()
+
+    def do_DELETE(self) -> None:
+        self._respond()
+
     def _respond(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length)
@@ -49,6 +57,9 @@ class ScriptedHandler(BaseHTTPRequestHandler):
             json.loads(raw) if raw else None,
         ))
         status, payload = self.server.responses.pop(0)
+        if status is None:
+            self.close_connection = True
+            return
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -560,6 +571,8 @@ async def test_get_rejects_lossy_duration_and_date_only_datetime(
 
     with pytest.raises(BookingTemporaryError):
         await YclientsAdapter(_config(server)).get_booking("9001")
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).get_booking("9001")
 
 
 @pytest.mark.asyncio
@@ -596,5 +609,225 @@ async def test_malformed_read_and_success_false_fail_closed(server: ScriptedServ
 
     with pytest.raises(BookingTemporaryError):
         await YclientsAdapter(_config(server)).get_booking("9001")
+
+
+@pytest.mark.asyncio
+async def test_reschedule_uses_protected_get_check_put_and_preserves_minimum_record(
+    server: ScriptedServer,
+) -> None:
+    config = _config(server)
+    target_slot = _slot_id(config, staff=77, start=1785322800, duration=1800)
+    current = _record(
+        client={"name": "Sandbox Customer", "phone": "+70000000000"},
+        comment="keep me",
+    )
+    changed = _record(
+        staff_id=77,
+        datetime="2026-07-29T14:00:00+03:00",
+        seance_length=1800,
+        client=current["client"],
+        comment="keep me",
+    )
+    server.responses.extend([
+        (200, {"success": True, "data": current}),
+        (201, {"success": True, "data": {}}),
+        (201, {"success": True, "data": changed}),
+    ])
+
+    booking = await YclientsAdapter(config).reschedule_booking(
+        RescheduleBooking("9001", target_slot, "local-key-only")
+    )
+
+    assert booking.slot_id == target_slot
+    assert [urlsplit(item[1]).path for item in server.requests] == [
+        "/api/v1/record/123/9001",
+        "/api/v1/book_check/123",
+        "/api/v1/record/123/9001",
+    ]
+    assert [item[0] for item in server.requests] == ["GET", "POST", "PUT"]
+    assert server.requests[0][2]["Authorization"] == "Bearer partner-value, User user-value"
+    assert server.requests[1][2]["Authorization"] == "Bearer partner-value"
+    assert server.requests[2][2]["Authorization"] == "Bearer partner-value, User user-value"
+    assert server.requests[2][3] == {
+        "staff_id": 77,
+        "services": [{"id": 331}],
+        "client": {"name": "Sandbox Customer", "phone": "+70000000000"},
+        "save_if_busy": False,
+        "datetime": "2026-07-29 14:00:00",
+        "seance_length": 1800,
+        "send_sms": False,
+        "comment": "keep me",
+        "attendance": 0,
+        "api_id": "moroz:v1:Y3VzdG9tZXItNw",
+    }
+    assert all("Idempotency-Key" not in item[2] for item in server.requests)
+    assert "local-key-only" not in json.dumps(server.requests)
+
+
+@pytest.mark.asyncio
+async def test_reschedule_rejects_foreign_owner_before_check_or_put(server: ScriptedServer) -> None:
+    config = _config(server)
+    server.responses.append((200, {"success": True, "data": _record(api_id="foreign")}))
+
+    with pytest.raises(BookingNotFound):
+        await YclientsAdapter(config).reschedule_booking(
+            RescheduleBooking("9001", _slot_id(config), "key")
+        )
+
+    assert [item[0] for item in server.requests] == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_sends_one_protected_delete_and_accepts_only_204(server: ScriptedServer) -> None:
+    server.responses.append((204, b""))
+
+    await YclientsAdapter(_config(server)).cancel_booking(CancelBooking("9001", "local-key-only"))
+
+    assert [(item[0], urlsplit(item[1]).path) for item in server.requests] == [
+        ("DELETE", "/api/v1/record/123/9001")
+    ]
+    assert server.requests[0][2]["Authorization"] == "Bearer partner-value, User user-value"
+    assert "Idempotency-Key" not in server.requests[0][2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [433, 436, 437, 438])
+async def test_book_check_conflicts_are_slot_unavailable(code: int, server: ScriptedServer) -> None:
+    config = _config(server)
+    server.responses.append((422, {
+        "success": False,
+        "meta": {"errors": [{"code": code, "message": "slot conflict"}]},
+    }))
+
+    with pytest.raises(SlotUnavailable):
+        await YclientsAdapter(config).create_booking(CreateBooking(
+            "customer-7", _slot_id(config), "key", "Name", "+70000000000", True
+        ))
+
+    assert len(server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_connection_drop_is_outcome_unknown_and_not_retried(
+    server: ScriptedServer,
+) -> None:
+    config = _config(server)
+    server.responses.extend([
+        (201, {"success": True, "data": {}}),
+        (None, b""),
+    ])
+
+    with pytest.raises(BookingOutcomeUnknown):
+        await YclientsAdapter(config).create_booking(CreateBooking(
+            "customer-7", _slot_id(config), "key", "Name", "+70000000000", True
+        ))
+
+    assert sum(item[0] == "POST" and urlsplit(item[1]).path == "/api/v1/records/123" for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_put_500_is_outcome_unknown_and_not_retried(server: ScriptedServer) -> None:
+    config = _config(server)
+    server.responses.extend([
+        (200, {"success": True, "data": _record(
+            client={"name": "Name", "phone": "+70000000000"}, comment="safe",
+        )}),
+        (201, {"success": True, "data": {}}),
+        (500, {"success": False}),
+    ])
+
+    with pytest.raises(BookingOutcomeUnknown):
+        await YclientsAdapter(config).reschedule_booking(
+            RescheduleBooking("9001", _slot_id(config), "key")
+        )
+
+    assert sum(item[0] == "PUT" for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_put_success_is_outcome_unknown(server: ScriptedServer) -> None:
+    config = _config(server)
+    server.responses.extend([
+        (200, {"success": True, "data": _record(
+            client={"name": "Name", "phone": "+70000000000"}, comment="safe",
+        )}),
+        (201, {"success": True, "data": {}}),
+        (201, {"success": True, "data": []}),
+    ])
+
+    with pytest.raises(BookingOutcomeUnknown):
+        await YclientsAdapter(config).reschedule_booking(
+            RescheduleBooking("9001", _slot_id(config), "key")
+        )
+
+    assert sum(item[0] == "PUT" for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 401, 403, 409, 422, 429])
+async def test_definite_cancel_rejection_is_temporary(status: int, server: ScriptedServer) -> None:
+    server.responses.append((status, {"success": False}))
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).cancel_booking(CancelBooking("9001", "key"))
+
+    assert sum(item[0] == "DELETE" for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_404_is_not_found(server: ScriptedServer) -> None:
+    server.responses.append((404, {"success": False}))
+
+    with pytest.raises(BookingNotFound):
+        await YclientsAdapter(_config(server)).cancel_booking(CancelBooking("9001", "key"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 500])
+async def test_cancel_unexpected_or_server_status_is_outcome_unknown(
+    status: int, server: ScriptedServer,
+) -> None:
+    server.responses.append((status, {"success": status == 200}))
+
+    with pytest.raises(BookingOutcomeUnknown):
+        await YclientsAdapter(_config(server)).cancel_booking(CancelBooking("9001", "key"))
+
+    assert sum(item[0] == "DELETE" for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_definite_429_is_temporary_without_retry(server: ScriptedServer) -> None:
+    config = _config(server)
+    server.responses.extend([
+        (201, {"success": True, "data": {}}),
+        (429, {"success": False}),
+    ])
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(config).create_booking(CreateBooking(
+            "customer-7", _slot_id(config), "key", "Name", "+70000000000", True
+        ))
+
+    assert sum(item[0] == "POST" and "/records/" in item[1] for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_connection_drop_is_outcome_unknown_and_not_retried(
+    server: ScriptedServer,
+) -> None:
+    server.responses.append((None, b""))
+
+    with pytest.raises(BookingOutcomeUnknown):
+        await YclientsAdapter(_config(server)).cancel_booking(CancelBooking("9001", "key"))
+
+    assert sum(item[0] == "DELETE" for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_read_transport_failure_is_temporary_and_not_retried(server: ScriptedServer) -> None:
+    server.responses.append((None, b""))
+
     with pytest.raises(BookingTemporaryError):
         await YclientsAdapter(_config(server)).get_booking("9001")
+
+    assert sum(item[0] == "GET" for item in server.requests) == 1

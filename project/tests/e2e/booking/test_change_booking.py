@@ -10,6 +10,7 @@ import pytest
 from moroz.booking.mock_yclients import MockYclientsAdapter
 from moroz.booking.models import (
     BookingIdentity,
+    BookingNotFound,
     BookingOutcomeUnknown,
     BookingScenario,
     BookingTemporaryError,
@@ -344,10 +345,11 @@ async def test_change_under_three_hours_escalates_before_any_port_call(repo, kin
 
 
 @pytest.mark.parametrize("kind", ["reschedule", "cancel"])
-async def test_temporary_failure_is_durable_without_a_new_promise(repo, kind):
+@pytest.mark.parametrize("error", [BookingTemporaryError, BookingNotFound])
+async def test_definite_failure_is_durable_without_a_new_promise(repo, kind, error):
     port = FailingMutationAdapter(
         [_slot("slot-old", 14), _slot("slot-new", 16)],
-        BookingTemporaryError,
+        error,
     )
     original = await _seed_booking(repo, port)
     scenario = _scenario(kind, original.external_id)

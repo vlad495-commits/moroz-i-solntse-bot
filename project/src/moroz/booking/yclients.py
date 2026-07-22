@@ -31,6 +31,7 @@ _SLOT_PREFIX = "yclients:v1:"
 _OWNER_PREFIX = "moroz:v1:"
 _SLOT_KEYS = {"services", "staff", "start", "duration"}
 _CONFLICT_CODES = {433, 436, 437, 438}
+_DEFINITE_MUTATION_REJECTIONS = {400, 401, 403, 409, 422, 429}
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +140,7 @@ class YclientsAdapter(BookingPort):
             )
         except YclientsTransportError as error:
             raise BookingOutcomeUnknown() from error
-        if response.status in {400, 401, 403, 404, 409, 422}:
+        if response.status in {400, 401, 403, 404, 409, 422, 429}:
             raise BookingTemporaryError()
         if response.status != 201:
             raise BookingOutcomeUnknown()
@@ -177,10 +178,98 @@ class YclientsAdapter(BookingPort):
             raise BookingTemporaryError() from error
 
     async def reschedule_booking(self, command: RescheduleBooking) -> ExternalBooking:
-        raise NotImplementedError
+        provider_id = _provider_id(command.external_id)
+        record = await self._get_record(provider_id)
+        try:
+            current = _external_booking(record, self._timezone, self._config)
+        except BookingNotFound:
+            raise
+        except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
+            raise BookingTemporaryError() from error
+        if current.external_id != str(provider_id):
+            raise BookingTemporaryError()
+
+        payload = _decode_slot(command.slot_id, self._config)
+        client = _record_client(record)
+        owner = record.get("api_id")
+        _decode_owner(owner)
+        await self._book_check(payload)
+        body: dict[str, object] = {
+            "staff_id": payload.staff,
+            "services": [{"id": value} for value in payload.services],
+            "client": client,
+            "save_if_busy": False,
+            "datetime": datetime.fromtimestamp(payload.start, self._timezone).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+            "seance_length": payload.duration,
+            "send_sms": False,
+            "attendance": 0,
+            "api_id": owner,
+        }
+        if "comment" in record and record["comment"] is not None:
+            if not isinstance(record["comment"], str):
+                raise BookingTemporaryError()
+            body["comment"] = record["comment"]
+
+        try:
+            response = await self._http.request(
+                "PUT",
+                f"/api/v1/record/{self._config.company_id}/{provider_id}",
+                json_body=body,
+                user_auth=True,
+            )
+        except YclientsTransportError as error:
+            raise BookingOutcomeUnknown() from error
+        _check_mutation_status(response.status, expected=201)
+        try:
+            changed = _external_booking(
+                _record(_envelope(response)), self._timezone, self._config
+            )
+        except (BookingNotFound, BookingTemporaryError, ValueError, TypeError, KeyError) as error:
+            raise BookingOutcomeUnknown() from error
+        if (
+            changed.external_id != str(provider_id)
+            or changed.customer_id != current.customer_id
+            or changed.slot_id != command.slot_id
+        ):
+            raise BookingOutcomeUnknown()
+        return changed
 
     async def cancel_booking(self, command: CancelBooking) -> None:
-        raise NotImplementedError
+        provider_id = _provider_id(command.external_id)
+        try:
+            response = await self._http.request(
+                "DELETE",
+                f"/api/v1/record/{self._config.company_id}/{provider_id}",
+                user_auth=True,
+            )
+        except YclientsTransportError as error:
+            raise BookingOutcomeUnknown() from error
+        _check_mutation_status(response.status, expected=204)
+
+    async def _get_record(self, provider_id: int) -> dict[str, object]:
+        try:
+            response = await self._http.request(
+                "GET",
+                f"/api/v1/record/{self._config.company_id}/{provider_id}",
+                user_auth=True,
+            )
+        except YclientsTransportError as error:
+            raise BookingTemporaryError() from error
+        if response.status == 404:
+            raise BookingNotFound()
+        if response.status != 200:
+            raise BookingTemporaryError()
+        try:
+            record = _record(_envelope(response))
+            if _provider_id(record.get("id")) != provider_id:
+                raise BookingTemporaryError()
+            return record
+        except BookingNotFound:
+            raise
+        except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
+            raise BookingTemporaryError() from error
 
     async def _book_check(self, payload: _SlotPayload) -> None:
         try:
@@ -312,6 +401,32 @@ def _required_text(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise BookingTemporaryError()
     return value.strip()
+
+
+def _record_client(record: dict[str, object]) -> dict[str, str]:
+    client = record.get("client")
+    if not isinstance(client, dict):
+        raise BookingTemporaryError()
+    name = client.get("name")
+    phone = client.get("phone")
+    if (
+        not isinstance(name, str)
+        or not name.strip()
+        or not isinstance(phone, str)
+        or not phone.strip()
+    ):
+        raise BookingTemporaryError()
+    return {"name": name, "phone": phone}
+
+
+def _check_mutation_status(status: int, *, expected: int) -> None:
+    if status == expected:
+        return
+    if status == 404:
+        raise BookingNotFound()
+    if status in _DEFINITE_MUTATION_REJECTIONS:
+        raise BookingTemporaryError()
+    raise BookingOutcomeUnknown()
 
 
 def _decode_owner(value: object) -> str:
