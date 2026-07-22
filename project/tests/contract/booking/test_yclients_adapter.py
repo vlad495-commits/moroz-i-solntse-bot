@@ -524,12 +524,35 @@ async def test_malformed_create_success_is_outcome_unknown(server: ScriptedServe
         (201, {"success": True, "data": []}),
     ])
 
-    with pytest.raises(BookingOutcomeUnknown):
+    with pytest.raises(BookingOutcomeUnknown) as raised:
         await YclientsAdapter(_config(server)).create_booking(CreateBooking(
             "customer-7", slot_id, "key", "Name", "+70000000000", True
         ))
 
+    assert (raised.value.kind, raised.value.status) == ("response_shape", 201)
     assert len(server.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_unexpected_create_http_status_has_safe_unknown_metadata(
+    server: ScriptedServer,
+) -> None:
+    config = _config(server)
+    server.responses.extend([
+        (201, {"success": True, "data": {}}),
+        (200, {"success": True, "data": _record()}),
+    ])
+
+    with pytest.raises(BookingOutcomeUnknown) as raised:
+        await YclientsAdapter(config).create_booking(CreateBooking(
+            "customer-7", _slot_id(config), "key", "Name", "+70000000000", True
+        ))
+
+    assert (raised.value.kind, raised.value.status) == ("http_status", 200)
+    assert sum(
+        method == "POST" and urlsplit(url).path == "/api/v1/records/123"
+        for method, url, _headers, _body in server.requests
+    ) == 1
 
 
 @pytest.mark.asyncio
@@ -834,12 +857,35 @@ async def test_create_connection_drop_is_outcome_unknown_and_not_retried(
         (None, b""),
     ])
 
-    with pytest.raises(BookingOutcomeUnknown):
+    with pytest.raises(BookingOutcomeUnknown) as raised:
         await YclientsAdapter(config).create_booking(CreateBooking(
             "customer-7", _slot_id(config), "key", "Name", "+70000000000", True
         ))
 
+    assert (raised.value.kind, raised.value.status) == ("transport", None)
     assert sum(item[0] == "POST" and urlsplit(item[1]).path == "/api/v1/records/123" for item in server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_put_connection_drop_has_safe_unknown_metadata_and_is_not_retried(
+    server: ScriptedServer,
+) -> None:
+    config = _config(server)
+    server.responses.extend([
+        (200, {"success": True, "data": _record(
+            client={"name": "Name", "phone": "+70000000000"}, comment="safe",
+        )}),
+        (201, {"success": True, "data": {}}),
+        (None, b""),
+    ])
+
+    with pytest.raises(BookingOutcomeUnknown) as raised:
+        await YclientsAdapter(config).reschedule_booking(
+            RescheduleBooking("9001", _slot_id(config), "key")
+        )
+
+    assert (raised.value.kind, raised.value.status) == ("transport", None)
+    assert sum(item[0] == "PUT" for item in server.requests) == 1
 
 
 @pytest.mark.asyncio
@@ -853,11 +899,12 @@ async def test_put_500_is_outcome_unknown_and_not_retried(server: ScriptedServer
         (500, {"success": False}),
     ])
 
-    with pytest.raises(BookingOutcomeUnknown):
+    with pytest.raises(BookingOutcomeUnknown) as raised:
         await YclientsAdapter(config).reschedule_booking(
             RescheduleBooking("9001", _slot_id(config), "key")
         )
 
+    assert (raised.value.kind, raised.value.status) == ("http_status", 500)
     assert sum(item[0] == "PUT" for item in server.requests) == 1
 
 
@@ -872,11 +919,12 @@ async def test_malformed_put_success_is_outcome_unknown(server: ScriptedServer) 
         (201, {"success": True, "data": []}),
     ])
 
-    with pytest.raises(BookingOutcomeUnknown):
+    with pytest.raises(BookingOutcomeUnknown) as raised:
         await YclientsAdapter(config).reschedule_booking(
             RescheduleBooking("9001", _slot_id(config), "key")
         )
 
+    assert (raised.value.kind, raised.value.status) == ("response_shape", 201)
     assert sum(item[0] == "PUT" for item in server.requests) == 1
 
 
@@ -906,9 +954,10 @@ async def test_cancel_unexpected_or_server_status_is_outcome_unknown(
 ) -> None:
     server.responses.append((status, {"success": status == 200}))
 
-    with pytest.raises(BookingOutcomeUnknown):
+    with pytest.raises(BookingOutcomeUnknown) as raised:
         await YclientsAdapter(_config(server)).cancel_booking(CancelBooking("9001", "key"))
 
+    assert (raised.value.kind, raised.value.status) == ("http_status", status)
     assert sum(item[0] == "DELETE" for item in server.requests) == 1
 
 
@@ -934,9 +983,10 @@ async def test_delete_connection_drop_is_outcome_unknown_and_not_retried(
 ) -> None:
     server.responses.append((None, b""))
 
-    with pytest.raises(BookingOutcomeUnknown):
+    with pytest.raises(BookingOutcomeUnknown) as raised:
         await YclientsAdapter(_config(server)).cancel_booking(CancelBooking("9001", "key"))
 
+    assert (raised.value.kind, raised.value.status) == ("transport", None)
     assert sum(item[0] == "DELETE" for item in server.requests) == 1
 
 

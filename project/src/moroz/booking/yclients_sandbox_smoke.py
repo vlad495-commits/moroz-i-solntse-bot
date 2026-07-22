@@ -253,10 +253,11 @@ async def run_smoke(
             raise _SmokeFailure("duplicate_marker_count_mismatch")
         summary["success"] = True
         return SmokeResult(0, summary)
-    except BookingOutcomeUnknown:
+    except BookingOutcomeUnknown as error:
         mutation_unknown = True
         summary["manual_review_required"] = True
         summary["error"] = "mutation_outcome_unknown"
+        _record_unknown_metadata(summary, error)
     except _SmokeFailure as error:
         summary["error"] = str(error)
     except (BookingNotFound, BookingTemporaryError):
@@ -279,9 +280,10 @@ async def run_smoke(
                 idempotency_key=f"yclients-smoke-cleanup-{run_id}",
             ))
             summary["cancelled"] = "cleanup_confirmed"
-        except BookingOutcomeUnknown:
+        except BookingOutcomeUnknown as error:
             summary["cancelled"] = "cleanup_unknown"
             summary["manual_review_required"] = True
+            _record_unknown_metadata(summary, error)
         except Exception:
             summary["cancelled"] = "cleanup_failed"
             summary["manual_review_required"] = True
@@ -319,6 +321,15 @@ def _redacted_id(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:12]
 
 
+def _record_unknown_metadata(
+    summary: dict[str, object], error: BookingOutcomeUnknown,
+) -> None:
+    if error.kind in {"transport", "http_status", "response_shape"}:
+        summary["unknown_kind"] = error.kind
+    if type(error.status) is int and 100 <= error.status <= 599:
+        summary["unknown_status"] = error.status
+
+
 def _empty_summary() -> dict[str, object]:
     return {
         "success": False,
@@ -334,6 +345,8 @@ def _empty_summary() -> dict[str, object]:
         "final_state": "not_checked",
         "duplicate_marker_count": None,
         "record_id": None,
+        "unknown_kind": None,
+        "unknown_status": None,
         "error": None,
     }
 

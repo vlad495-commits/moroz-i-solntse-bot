@@ -139,22 +139,22 @@ class YclientsAdapter(BookingPort):
                 user_auth=True,
             )
         except YclientsTransportError as error:
-            raise BookingOutcomeUnknown() from error
+            raise _outcome_unknown("transport") from error
         if response.status in {400, 401, 403, 404, 409, 422, 429}:
             raise BookingTemporaryError()
         if response.status != 201:
-            raise BookingOutcomeUnknown()
+            raise _outcome_unknown("http_status", status=response.status)
         try:
             record = _record(_envelope(response))
             booking = _external_booking(record, self._timezone, self._config)
         except (BookingNotFound, BookingTemporaryError, ValueError, TypeError, KeyError) as error:
-            raise BookingOutcomeUnknown() from error
+            raise _outcome_unknown("response_shape", status=response.status) from error
         if (
             booking.customer_id != customer_id
             or booking.slot_id != command.slot_id
             or booking.status != "confirmed"
         ):
-            raise BookingOutcomeUnknown()
+            raise _outcome_unknown("response_shape", status=response.status)
         return booking
 
     async def get_booking(self, external_id: str) -> ExternalBooking:
@@ -224,21 +224,21 @@ class YclientsAdapter(BookingPort):
                 user_auth=True,
             )
         except YclientsTransportError as error:
-            raise BookingOutcomeUnknown() from error
+            raise _outcome_unknown("transport") from error
         _check_mutation_status(response.status, expected=201)
         try:
             changed = _external_booking(
                 _record(_envelope(response)), self._timezone, self._config
             )
         except (BookingNotFound, BookingTemporaryError, ValueError, TypeError, KeyError) as error:
-            raise BookingOutcomeUnknown() from error
+            raise _outcome_unknown("response_shape", status=response.status) from error
         if (
             changed.external_id != str(provider_id)
             or changed.customer_id != current.customer_id
             or changed.slot_id != command.slot_id
             or changed.status != "confirmed"
         ):
-            raise BookingOutcomeUnknown()
+            raise _outcome_unknown("response_shape", status=response.status)
         return changed
 
     async def cancel_booking(self, command: CancelBooking) -> None:
@@ -250,7 +250,7 @@ class YclientsAdapter(BookingPort):
                 user_auth=True,
             )
         except YclientsTransportError as error:
-            raise BookingOutcomeUnknown() from error
+            raise _outcome_unknown("transport") from error
         _check_mutation_status(response.status, expected=204)
 
     async def _get_record(self, provider_id: int) -> dict[str, object]:
@@ -433,7 +433,11 @@ def _check_mutation_status(status: int, *, expected: int) -> None:
         raise BookingNotFound()
     if status in _DEFINITE_MUTATION_REJECTIONS:
         raise BookingTemporaryError()
-    raise BookingOutcomeUnknown()
+    raise _outcome_unknown("http_status", status=status)
+
+
+def _outcome_unknown(kind: str, *, status: int | None = None) -> BookingOutcomeUnknown:
+    return BookingOutcomeUnknown(kind=kind, status=status)
 
 
 def _decode_owner(value: object) -> str:

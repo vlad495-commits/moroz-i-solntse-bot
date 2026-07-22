@@ -178,6 +178,8 @@ async def test_successful_smoke_runs_the_exact_bounded_flow() -> None:
         "final_state": "cancelled",
         "duplicate_marker_count": 1,
         "record_id": "13b7994fae93",
+        "unknown_kind": None,
+        "unknown_status": None,
         "error": None,
     }
 
@@ -202,7 +204,9 @@ async def test_smoke_requires_two_distinct_future_instants_before_mutation() -> 
 @pytest.mark.asyncio
 async def test_unknown_outcome_aborts_without_blind_cleanup_and_redacts_output() -> None:
     backend = FakeBackend(
-        failure=("reschedule_booking", BookingOutcomeUnknown("forbidden detail"))
+        failure=("reschedule_booking", BookingOutcomeUnknown(
+            "forbidden detail", kind="http_status", status=503,
+        ))
     )
     settings = SandboxSmokeSettings.from_env(_env())
 
@@ -221,10 +225,50 @@ async def test_unknown_outcome_aborts_without_blind_cleanup_and_redacts_output()
     ]
     assert result.summary["manual_review_required"] is True
     assert result.summary["error"] == "mutation_outcome_unknown"
+    assert result.summary["unknown_kind"] == "http_status"
+    assert result.summary["unknown_status"] == 503
     for value in _env().values():
         assert value not in rendered
     assert "forbidden detail" not in rendered
     assert RUN_ID.hex not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [
+        ("transport", None),
+        ("response_shape", 200),
+        ("private-detail", 99),
+        ("http_status", "500"),
+        ("http_status", True),
+        ("http_status", 600),
+    ],
+)
+async def test_unknown_diagnostic_metadata_is_strictly_allowlisted(
+    kind, status,
+) -> None:
+    backend = FakeBackend(failure=(
+        "create_booking",
+        BookingOutcomeUnknown("forbidden detail", kind=kind, status=status),
+    ))
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+    rendered = json.dumps(result.summary, sort_keys=True)
+
+    assert result.summary["unknown_kind"] == (
+        kind if kind in {"transport", "http_status", "response_shape"} else None
+    )
+    assert result.summary["unknown_status"] == (
+        status if type(status) is int and 100 <= status <= 599 else None
+    )
+    assert "forbidden detail" not in rendered
+    assert "private-detail" not in rendered
 
 
 @pytest.mark.asyncio

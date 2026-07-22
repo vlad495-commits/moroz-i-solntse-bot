@@ -134,4 +134,12 @@ class BookingTemporaryError(Exception):
 
 
 class BookingOutcomeUnknown(Exception):
-    pass
+    def __init__(
+        self,
+        *args: object,
+        kind: str | None = None,
+        status: int | None = None,
+    ) -> None:
+        super().__init__(*args)
+        self.kind = kind
+        self.status = status
