@@ -106,6 +106,25 @@ services:
       retries: 3
       start_period: 10s
 
+  yclients-smoke:
+    profiles: ["yclients-smoke"]
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    restart: "no"
+    command: ["python", "-m", "moroz.booking.yclients_sandbox_smoke"]
+    environment:
+      YCLIENTS_PARTNER_TOKEN: ${YCLIENTS_PARTNER_TOKEN:-}
+      YCLIENTS_USER_TOKEN: ${YCLIENTS_USER_TOKEN:-}
+      YCLIENTS_COMPANY_ID: ${YCLIENTS_COMPANY_ID:-}
+      YCLIENTS_BASE_URL: ${YCLIENTS_BASE_URL:-}
+      YCLIENTS_TIMEZONE: ${YCLIENTS_TIMEZONE:-}
+      YCLIENTS_TIMEOUT_SECONDS: ${YCLIENTS_TIMEOUT_SECONDS:-}
+      YCLIENTS_TEST_SERVICE_ID: ${YCLIENTS_TEST_SERVICE_ID:-}
+      YCLIENTS_TEST_NAME: ${YCLIENTS_TEST_NAME:-}
+      YCLIENTS_TEST_PHONE: ${YCLIENTS_TEST_PHONE:-}
+      YCLIENTS_SANDBOX_CONSENT: ${YCLIENTS_SANDBOX_CONSENT:-}
+
   scheduler:
     build:
       context: .

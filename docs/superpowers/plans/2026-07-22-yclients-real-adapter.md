@@ -566,7 +566,7 @@ Reviewer must inspect no-retry evidence, ambiguity classification, preserved own
 - Reads only `YCLIENTS_*` environment values; returns exit 0 only after full create/get/reschedule/get/cancel/duplicate proof.
 - Emits one redacted JSON summary containing operation statuses and counts, never tokens, phone, name, comment, raw provider body or foreign records.
 
-- [ ] **Step 1: Write RED smoke-orchestrator tests with fake adapter/HTTP**
+- [x] **Step 1: Write RED smoke-orchestrator tests with fake adapter/HTTP**
 
 Test exact order and compensation policy:
 
@@ -586,11 +586,11 @@ assert calls == [
 
 Prove it requires two distinct future slots, `YCLIENTS_TEST_SERVICE_ID`, synthetic `YCLIENTS_TEST_NAME`, `YCLIENTS_TEST_PHONE`, and explicit `YCLIENTS_SANDBOX_CONSENT=yes`. Prove `BookingOutcomeUnknown` aborts without blind cancel and output redaction removes every configured secret/test PII value.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run `tests/unit/booking/test_yclients_sandbox_smoke.py`. Expected: missing module/profile.
 
-- [ ] **Step 3: Implement bounded smoke flow**
+- [x] **Step 3: Implement bounded smoke flow**
 
 Use `book_services` for configured service validation, `list_slots` for staff/times, `BookingPort` methods for CRUD, and a protected records query restricted to the two slot dates only for the final exact `api_id` duplicate count. Discard nonmatching records without logging or returning them.
 

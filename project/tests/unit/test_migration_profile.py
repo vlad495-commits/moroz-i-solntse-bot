@@ -174,7 +174,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
         assert "env_file" not in services[name]
 
 
-def test_yclients_environment_is_passed_only_to_worker():
+def test_yclients_environment_is_passed_only_to_worker_and_smoke():
     services = compose_services()
     yclients_keys = {
         "YCLIENTS_PARTNER_TOKEN",
@@ -186,10 +186,40 @@ def test_yclients_environment_is_passed_only_to_worker():
     }
 
     assert yclients_keys <= set(services["worker"]["environment"])
+    assert yclients_keys <= set(services["yclients-smoke"]["environment"])
     for name, service in services.items():
-        if name != "worker":
+        if name not in {"worker", "yclients-smoke"}:
             assert not yclients_keys & set(service.get("environment", {}))
             assert "env_file" not in service
+
+
+def test_yclients_smoke_is_an_explicit_bounded_profile() -> None:
+    service = compose_services()["yclients-smoke"]
+
+    assert service["profiles"] == ["yclients-smoke"]
+    assert service["build"] == {"context": ".", "dockerfile": "worker/Dockerfile"}
+    assert service["command"] == [
+        "python", "-m", "moroz.booking.yclients_sandbox_smoke"
+    ]
+    assert service["restart"] == "no"
+    assert "depends_on" not in service
+    assert "ports" not in service
+    assert "volumes" not in service
+    assert set(service["environment"]) == {
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_TIMEZONE",
+        "YCLIENTS_TIMEOUT_SECONDS",
+        "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_TEST_NAME",
+        "YCLIENTS_TEST_PHONE",
+        "YCLIENTS_SANDBOX_CONSENT",
+    }
+    assert service["environment"]["YCLIENTS_SANDBOX_CONSENT"] == (
+        "${YCLIENTS_SANDBOX_CONSENT:-}"
+    )
 
 
 def test_worker_image_installs_only_exact_pipeline_dependencies():
@@ -243,12 +273,18 @@ def test_host_ops_regression_checks_rendered_compose_environment_allowlists():
         encoding="utf-8"
     )
 
-    assert "config --format json" in script
+    assert "--profile yclients-smoke config --format json" in script
     assert '$expectedEnvironment = @{' in script
     worker_literal = re.search(r"worker = @\(([^)]*)\)", script)
     assert worker_literal
     scripted_worker_keys = set(re.findall(r'"([A-Z_]+)"', worker_literal.group(1)))
     assert scripted_worker_keys == set(compose_services()["worker"]["environment"])
+    smoke_literal = re.search(r'"yclients-smoke" = @\(([^)]*)\)', script)
+    assert smoke_literal
+    scripted_smoke_keys = set(re.findall(r'"([A-Z_]+)"', smoke_literal.group(1)))
+    assert scripted_smoke_keys == set(
+        compose_services()["yclients-smoke"]["environment"]
+    )
     assert 'redis = @("REDIS_PASSWORD")' in script
     assert 'postgres = @("POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")' in script
     assert 'env_file' in script
