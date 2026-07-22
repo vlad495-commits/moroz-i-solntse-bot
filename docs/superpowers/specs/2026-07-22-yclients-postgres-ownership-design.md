@@ -1,7 +1,7 @@
 # PostgreSQL ownership и `moroz_booking_key` для YCLIENTS
 
-**Дата:** 2026-07-22  
-**Статус:** одобрено пользователем  
+**Дата:** 2026-07-22
+**Статус:** одобрено пользователем
 **Исправляет:** ошибочную трактовку YCLIENTS `api_id` как writable correlation field
 
 ## Цель
