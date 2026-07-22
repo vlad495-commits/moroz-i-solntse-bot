@@ -665,6 +665,8 @@ Repeated readiness check after user confirmation: all seven required keys are pr
 
 Run exactly one `yclients-smoke` container in namespace `moroz-yclients-sandbox-<timestamp>`. Capture only the redacted summary and exit code. Never use real customer PII.
 
+First consented attempt stopped before every mutation: service validation succeeded, while availability failed before staff/slots. A separate read-only redacted diagnostic confirmed `book_dates=200` with 14 dates and `book_staff=404` with zero bookable staff. No record was created; the external test fixture must expose an online-bookable employee for the configured service before a new attempt.
+
 - [ ] **Step 3: Verify evidence**
 
 Require: services/staff/slots read; two distinct slots; one create; exact get; one reschedule; exact get at new instant; one cancel; cancelled/deleted confirmation; duplicate marker count exactly one; `manual_review_required=false`; no secret-shaped or PII output.
