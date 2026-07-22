@@ -60,7 +60,7 @@ services:
         condition: service_healthy
 
   worker:
-    image: "moroz-i-solntse-worker:local"
+    image: "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
     build:
       context: .
       dockerfile: worker/Dockerfile
@@ -109,7 +109,7 @@ services:
 
   yclients-smoke:
     profiles: ["yclients-smoke"]
-    image: "moroz-i-solntse-worker:local"
+    image: "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
     build:
       context: .
       dockerfile: worker/Dockerfile

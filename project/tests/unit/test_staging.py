@@ -57,6 +57,7 @@ def test_staging_override_tags_apps_and_never_publishes_stores():
     services = load_staging()["services"]
     assert services["bot"]["image"] == "moroz-staging-bot:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     assert services["worker"]["image"] == "moroz-staging-worker:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
+    assert services["yclients-smoke"]["image"] == services["worker"]["image"]
     assert services["migrate"]["image"] == "moroz-staging-migrate:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     assert services["cutover"]["image"] == services["migrate"]["image"]
     assert services["bot"]["ports"] == [

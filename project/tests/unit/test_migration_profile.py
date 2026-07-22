@@ -210,6 +210,9 @@ def test_yclients_smoke_is_an_explicit_bounded_profile() -> None:
 
     assert service["profiles"] == ["yclients-smoke"]
     assert service["image"] == services["worker"]["image"]
+    assert service["image"] == (
+        "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
+    )
     assert service["build"] == {"context": ".", "dockerfile": "worker/Dockerfile"}
     assert service["command"] == [
         "python", "-m", "moroz.booking.yclients_sandbox_smoke"
