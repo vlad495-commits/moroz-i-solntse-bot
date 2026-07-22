@@ -671,6 +671,8 @@ Second consented attempt proved that availability is now healthy (`services=1`, 
 
 Third consented attempt again passed availability (`1/1/312`) and reached protected create, but returned `mutation_outcome_unknown` with `manual_review_required=true` and no external ID. No automatic retry was made. Two protected read-only reconciliations over the exact future window both returned zero active/deleted records with the synthetic `api_id` and comment markers, so no duplicate/provider record is currently visible. The official create schema still confirms status 201 and all submitted field names. A new mutation attempt requires an explicit post-reconciliation decision; phase remains open.
 
+The one explicitly approved post-reconciliation attempt reproduced the same boundary (`1/1/313`, then `mutation_outcome_unknown`) and its subsequent protected GET reconciliation again found zero synthetic active/deleted records. No second POST was sent. This is now a repeatable protected-create evidence gap rather than a one-off failure; without a redacted provider status/transport subtype or provider-side request log it cannot be mapped safely, and create/get/reschedule/cancel evidence remains incomplete.
+
 - [ ] **Step 3: Verify evidence**
 
 Require: services/staff/slots read; two distinct slots; one create; exact get; one reschedule; exact get at new instant; one cancel; cancelled/deleted confirmation; duplicate marker count exactly one; `manual_review_required=false`; no secret-shaped or PII output.
