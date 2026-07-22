@@ -657,6 +657,8 @@ YCLIENTS_SANDBOX_CONSENT=yes
 
 If any is absent, ask one concise question instructing the user to add missing values directly to ignored `.env` and confirm readiness without sharing them. This is the only legitimate external blocker before smoke.
 
+Readiness check 2026-07-22: `.env` exists, but all seven required sandbox keys are absent and explicit consent is not set. No values were printed or logged; this step remains open until the user populates the ignored file and confirms readiness.
+
 - [ ] **Step 2: Run smoke in a dedicated profile**
 
 Run exactly one `yclients-smoke` container in namespace `moroz-yclients-sandbox-<timestamp>`. Capture only the redacted summary and exit code. Never use real customer PII.
