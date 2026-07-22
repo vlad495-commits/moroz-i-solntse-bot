@@ -35,7 +35,13 @@ $expectedEnvironment = @{
         "POSTGRES_USER",
         "RABBITMQ_URL",
         "REDIS_URL",
-        "TELEGRAM_BOT_TOKEN"
+        "TELEGRAM_BOT_TOKEN",
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_TIMEOUT_SECONDS",
+        "YCLIENTS_TIMEZONE",
+        "YCLIENTS_USER_TOKEN"
     )
     redis = @("REDIS_PASSWORD")
     postgres = @("POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")
@@ -55,5 +61,41 @@ foreach ($serviceName in $expectedEnvironment.Keys) {
     $difference = @(Compare-Object $expectedKeys $actualKeys)
     if ($difference.Count -ne 0) {
         throw "Rendered Compose environment allowlist mismatch: $serviceName"
+    }
+}
+
+$yclientsKeys = @(
+    "YCLIENTS_BASE_URL",
+    "YCLIENTS_COMPANY_ID",
+    "YCLIENTS_PARTNER_TOKEN",
+    "YCLIENTS_TIMEOUT_SECONDS",
+    "YCLIENTS_TIMEZONE",
+    "YCLIENTS_USER_TOKEN"
+)
+foreach ($serviceProperty in $services.PSObject.Properties) {
+    $serviceName = $serviceProperty.Name
+    $service = $serviceProperty.Value
+    if ($service.PSObject.Properties.Name -contains "env_file") {
+        throw "Rendered Compose service still contains env_file: $serviceName"
+    }
+    if ($serviceName -ne "worker") {
+        $leakedKeys = @($service.environment.PSObject.Properties.Name | Where-Object {
+            $_ -in $yclientsKeys
+        })
+        if ($leakedKeys.Count -ne 0) {
+            throw "Rendered Compose leaked YCLIENTS environment: $serviceName"
+        }
+    }
+}
+
+$requiredRuntimeKeys = @{
+    bot = @("DATABASE_URL", "POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER", "TELEGRAM_MODE")
+    admin = @("DATABASE_URL", "POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")
+}
+foreach ($serviceName in $requiredRuntimeKeys.Keys) {
+    $actualKeys = @($services.$serviceName.environment.PSObject.Properties.Name)
+    $missingKeys = @($requiredRuntimeKeys[$serviceName] | Where-Object { $_ -notin $actualKeys })
+    if ($missingKeys.Count -ne 0) {
+        throw "Rendered Compose runtime fallback mismatch: $serviceName"
     }
 }
