@@ -191,7 +191,7 @@ Generate a task diff package and require reviewer verdicts: spec compliance `✅
 - Produces `YclientsHttpClient.request(method, path, *, query=(), json_body=None, user_auth=False) -> HttpResponse`.
 - Produces internal transport exception `YclientsTransportError` without URL/token/body text.
 
-- [ ] **Step 1: Write RED config/rate/auth tests**
+- [x] **Step 1: Write RED config/rate/auth tests**
 
 Use a stdlib `ThreadingHTTPServer` bound to `127.0.0.1` and capture only method/path/headers/body. Required tests:
 
@@ -226,11 +226,11 @@ async def test_http_uses_exact_partner_and_partner_user_headers(fake_server):
 
 Use a fake monotonic clock whose injected sleep advances time. Acquire six times and assert a `1.0` delay before request 6; acquire 201 times with the second-window safely advanced and assert the minute window delays before request 201.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run `tests/contract/booking/test_yclients_http.py` in `moroz-yclients-real-t2-red`. Expected: import failure for `moroz.booking.yclients_http`.
 
-- [ ] **Step 3: Implement exact config and HTTP primitives**
+- [x] **Step 3: Implement exact config and HTTP primitives**
 
 Core public types:
 
@@ -302,11 +302,11 @@ Use `urlencode(query, doseq=True)`, compact UTF-8 JSON, required headers, `urlli
 
 Compose passes optional `YCLIENTS_*` only to `worker`; test/migrate/cutover env sets remain byte-for-byte unchanged. Update the static env-contract test accordingly.
 
-- [ ] **Step 4: Run GREEN and unit/static regressions**
+- [x] **Step 4: Run GREEN and unit/static regressions**
 
 Run the contract file, `tests/unit/common/test_config.py`, `tests/unit/test_migration_profile.py`, and `docker compose --env-file ../.env -p moroz-yclients-real-t2 config --quiet` with fresh non-secret placeholder YCLIENTS values in process environment. Expected: exit 0.
 
-- [ ] **Step 5: Document, commit and review**
+- [x] **Step 5: Document, commit and review**
 
 Commit after `git diff --check` and scoped secret scan:
 
