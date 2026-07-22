@@ -33,7 +33,7 @@
 - `GET /api/v1/book_dates/{company_id}` принимает `service_ids`, optional `staff_id`, `date_from`, `date_to`.
 - `GET /api/v1/book_staff/{company_id}` принимает `service_ids` и optional `datetime`.
 - `GET /api/v1/book_times/{company_id}/{staff_id}/{date}` принимает `service_ids`.
-- `POST /api/v1/book_check/{company_id}` принимает `appointments` с `services`, `staff_id`, Unix `datetime`; коды `433`, `436`, `437`, `438` означают недоступный слот.
+- `POST /api/v1/book_check/{company_id}` принимает `appointments` с `services`, `staff_id`, ISO8601 `datetime`, восстановленным из opaque slot в timezone филиала; коды `433`, `436`, `437`, `438` означают недоступный слот.
 - `POST /api/v1/records/{company_id}` создаёт запись и возвращает `201`.
 - `GET /api/v1/record/{company_id}/{record_id}` возвращает запись с `200`.
 - `PUT /api/v1/record/{company_id}/{record_id}` изменяет запись и возвращает `201`.

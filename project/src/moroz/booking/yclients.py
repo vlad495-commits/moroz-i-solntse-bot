@@ -285,7 +285,7 @@ class YclientsAdapter(BookingPort):
                     "id": 1,
                     "services": list(payload.services),
                     "staff_id": payload.staff,
-                    "datetime": payload.start,
+                    "datetime": datetime.fromtimestamp(payload.start, self._timezone).isoformat(),
                 }]},
             )
         except YclientsTransportError as error:

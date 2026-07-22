@@ -199,7 +199,7 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
         "id": 1,
         "services": [331],
         "staff_id": 6544,
-        "datetime": 1785315600,
+        "datetime": "2026-07-29T12:00:00+03:00",
     }]}
     assert server.requests[4][3] == {
         "staff_id": 6544,

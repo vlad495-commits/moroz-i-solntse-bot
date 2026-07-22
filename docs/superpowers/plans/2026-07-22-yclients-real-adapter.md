@@ -403,7 +403,7 @@ Before create, call `book_check` with:
     "id": 1,
     "services": [331],
     "staff_id": 6544,
-    "datetime": 1785315600,
+    "datetime": "2026-07-29T12:00:00+03:00",
 }]}
 ```
 
@@ -665,7 +665,9 @@ Repeated readiness check after user confirmation: all seven required keys are pr
 
 Run exactly one `yclients-smoke` container in namespace `moroz-yclients-sandbox-<timestamp>`. Capture only the redacted summary and exit code. Never use real customer PII.
 
-First consented attempt stopped before every mutation: service validation succeeded, while availability failed before staff/slots. Systematic read-only comparison established the code root cause: unfiltered and official `service_ids[]` calls returned one bookable employee, while the adapter's former plain `service_ids` key returned 404. A fake HTTP RED test reproduced the exact URL mismatch; the minimal bracket-key fix passed focused regression and a fresh no-cache full Docker gate (`428 passed`). No record was created; a new isolated smoke remains required.
+First consented attempt stopped before every mutation: service validation succeeded, while availability failed before staff/slots. Systematic read-only comparison established the code root cause: unfiltered and official `service_ids[]` calls returned one bookable employee, while the adapter's former plain `service_ids` key returned 404. A fake HTTP RED test reproduced the exact URL mismatch; the minimal bracket-key fix passed focused regression and a fresh no-cache full Docker gate (`428 passed`).
+
+Second consented attempt proved that availability is now healthy (`services=1`, `staff=1`, `slots=312`) and again stopped before create. Official contract plus a redacted read-only comparison established the next code root cause: the former Unix integer `book_check.datetime` returned 400, while ISO8601 returned 201. The exact fake HTTP test observed RED; the shared `_book_check` fix passed focused GREEN, `121` regressions, independent review `0/0/0` and a fresh no-cache full Docker gate (`428 passed`). No record was created in either attempt; a new isolated smoke remains required.
 
 - [ ] **Step 3: Verify evidence**
 
