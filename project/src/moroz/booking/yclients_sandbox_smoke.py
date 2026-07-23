@@ -1,6 +1,4 @@
 import asyncio
-import base64
-import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping
@@ -20,6 +18,7 @@ from moroz.booking.models import (
     RescheduleBooking,
     Slot,
     SlotQuery,
+    SlotUnavailable,
 )
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient, YclientsTransportError
@@ -70,9 +69,9 @@ class SmokeBackend(Protocol):
     async def get_booking(self, command: GetBooking) -> ExternalBooking: ...
     async def reschedule_booking(self, command: RescheduleBooking) -> ExternalBooking: ...
     async def cancel_booking(self, command: CancelBooking) -> None: ...
-    async def count_duplicate_marker(
-        self, customer_id: str, starts_at: datetime, ends_at: datetime
-    ) -> int: ...
+    async def reconcile_booking_key(
+        self, booking_key: UUID, starts_at: datetime, ends_at: datetime
+    ) -> dict[str, int]: ...
 
 
 class YclientsSmokeBackend:
@@ -115,11 +114,11 @@ class YclientsSmokeBackend:
     async def cancel_booking(self, command: CancelBooking) -> None:
         await self._adapter.cancel_booking(command)
 
-    async def count_duplicate_marker(
-        self, customer_id: str, starts_at: datetime, ends_at: datetime
-    ) -> int:
-        marker = _owner_marker(customer_id)
+    async def reconcile_booking_key(
+        self, booking_key: UUID, starts_at: datetime, ends_at: datetime
+    ) -> dict[str, int]:
         matched = 0
+        active_matched = 0
         for page in range(1, _MAX_RECORD_PAGES + 1):
             data = await self._read(
                 f"/api/v1/records/{self._config.company_id}",
@@ -134,9 +133,18 @@ class YclientsSmokeBackend:
             )
             if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
                 raise BookingTemporaryError()
-            matched += sum(item.get("api_id") == marker for item in data)
+            for item in data:
+                fields = item.get("custom_fields")
+                if not isinstance(fields, Mapping) or fields.get("moroz_booking_key") != str(booking_key):
+                    continue
+                deleted = item.get("deleted", False)
+                if type(deleted) is not bool:
+                    raise BookingTemporaryError()
+                matched += 1
+                if not deleted:
+                    active_matched += 1
             if len(data) < _PAGE_SIZE:
-                return matched
+                return {"matches": matched, "active_matches": active_matched}
         raise BookingTemporaryError()
 
     async def _read(
@@ -212,7 +220,6 @@ async def run_smoke(
         external_id = created.external_id
         _require_booking(created, customer_id, booking_key, first)
         summary["created"] = "confirmed"
-        summary["record_id"] = _redacted_id(external_id)
 
         fetched = await actual.get_booking(GetBooking(
             external_id, customer_id, booking_key,
@@ -256,14 +263,14 @@ async def run_smoke(
                 raise _SmokeFailure("cancelled_record_not_confirmed")
             summary["final_state"] = "cancelled"
 
-        count = await actual.count_duplicate_marker(
-            customer_id,
+        reconciliation = await actual.reconcile_booking_key(
+            booking_key,
             min(first.starts_at, second.starts_at),
             max(first.starts_at, second.starts_at),
         )
-        summary["duplicate_marker_count"] = count
-        if count != 1:
-            raise _SmokeFailure("duplicate_marker_count_mismatch")
+        summary.update(reconciliation)
+        if reconciliation != {"matches": 1, "active_matches": 0}:
+            raise _SmokeFailure("reconciliation_mismatch")
         summary["success"] = True
         return SmokeResult(0, summary)
     except BookingOutcomeUnknown as error:
@@ -273,7 +280,7 @@ async def run_smoke(
         _record_unknown_metadata(summary, error)
     except _SmokeFailure as error:
         summary["error"] = str(error)
-    except (BookingNotFound, BookingTemporaryError):
+    except (BookingNotFound, BookingTemporaryError, SlotUnavailable):
         summary["error"] = "definite_provider_failure"
     except Exception:
         summary["error"] = "unexpected_failure"
@@ -333,15 +340,6 @@ def _require_booking(
         raise _SmokeFailure("record_mismatch")
 
 
-def _owner_marker(customer_id: str) -> str:
-    encoded = base64.urlsafe_b64encode(customer_id.encode()).decode().rstrip("=")
-    return f"moroz:v1:{encoded}"
-
-
-def _redacted_id(value: str) -> str:
-    return hashlib.sha256(value.encode()).hexdigest()[:12]
-
-
 def _record_unknown_metadata(
     summary: dict[str, object], error: BookingOutcomeUnknown,
 ) -> None:
@@ -364,8 +362,8 @@ def _empty_summary() -> dict[str, object]:
         "second_get": "not_started",
         "cancelled": "not_started",
         "final_state": "not_checked",
-        "duplicate_marker_count": None,
-        "record_id": None,
+        "matches": 0,
+        "active_matches": 0,
         "unknown_kind": None,
         "unknown_status": None,
         "error": None,

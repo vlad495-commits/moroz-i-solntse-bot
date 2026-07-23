@@ -4,6 +4,18 @@
 
 ---
 
+[2026-07-23 12:22] Task 4 self-review: staged scope ограничен smoke/tests/roadmap/master/changelog/report; `git diff --check` clean, Docker GREEN `32 passed`, static privacy `legacy=0 schema_disclosure=0`, временный env отсутствует. Независимые live действия, merge и push не выполнялись.
+
+[2026-07-23 12:20] Task 4: добавлен `.superpowers/sdd/task-4-report.md` с RED/GREEN командами и counts, privacy/safety evidence, exact cleanup и открытыми live prerequisites; в report нет секретов, provider IDs или raw provider bodies.
+
+[2026-07-23 12:19] Task 4: ignored empty `tmp/compose-empty.env` удалён после Docker checks; exact namespaces `moroz-ownership-task4-red` и `moroz-ownership-task4-green` очищены до `containers=0 volumes=0 networks=0 images=0`.
+
+[2026-07-23 12:18] Task 4: дорожная карта и master plan обновлены локальным exact-key smoke status; явные live prerequisites сохранены: branch field `moroz_booking_key`, отдельное cleanup consent для pre-design active synthetic записи и новый consented lifecycle smoke. Live YCLIENTS и `.env` не использовались.
+
+[2026-07-23 12:14] Task 4: smoke flow переведён на финальную read-only reconciliation только по exact canonical `custom_fields.moroz_booking_key`; summary больше не содержит provider record ID, а missing/wrong-key records игнорируются и malformed active-status exact-match fail-closed.
+
+[2026-07-23 12:10] Task 4: добавлены RED unit-тесты sandbox smoke для одного trusted UUID во всех lifecycle commands, exact `custom_fields.moroz_booking_key` reconciliation, отсутствия active duplicate и остановки до мутаций при недоступности; production-код и внешние сервисы пока не менялись.
+
 [2026-07-02 19:14] Инициализация проекта Moroz i Solntse Bot — ступень 1 (прототип). Развёрнут шаблон бота: bot.py, handlers.py, llm.py, db.py, cache.py, config.py + Docker (3 контейнера: llm, redis, postgres).
 
 [2026-07-02 19:14] Project initialized. Step 1 (prototype). Model: gpt-4.1-mini. Secrets for Telegram and LLM are left empty for local setup.

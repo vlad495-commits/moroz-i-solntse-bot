@@ -10,6 +10,7 @@ from moroz.booking.models import (
     BookingTemporaryError,
     ExternalBooking,
     Slot,
+    SlotUnavailable,
 )
 from moroz.booking.yclients_http import HttpResponse, YclientsConfig
 from moroz.booking.yclients_sandbox_smoke import (
@@ -56,6 +57,7 @@ def _booking(slot: Slot, *, status: str = "confirmed") -> ExternalBooking:
 class FakeBackend:
     def __init__(self, *, failure: tuple[str, Exception] | None = None, slots=None):
         self.calls: list[str] = []
+        self.commands: list[object] = []
         self.failure = failure
         self.slots = slots or [_slot("slot-a", 48), _slot("slot-b", 72)]
         self.current = self.slots[0]
@@ -79,6 +81,8 @@ class FakeBackend:
 
     async def create_booking(self, command):
         self._call("create_booking")
+        self.commands.append(command)
+        assert command.customer_id == f"smoke-{RUN_ID.hex}"
         assert command.booking_key == RUN_ID
         assert command.customer_name == "Synthetic Sensitive Name"
         assert command.customer_phone == "+70000000000"
@@ -90,6 +94,7 @@ class FakeBackend:
     async def get_booking(self, command):
         name = "get_cancelled_booking" if "cancel_booking" in self.calls else "get_booking"
         self._call(name)
+        self.commands.append(command)
         assert command.external_id == "9001"
         assert command.customer_id == f"smoke-{RUN_ID.hex}"
         assert command.booking_key == RUN_ID
@@ -99,6 +104,8 @@ class FakeBackend:
 
     async def reschedule_booking(self, command):
         self._call("reschedule_booking")
+        self.commands.append(command)
+        assert command.external_id == "9001"
         assert command.customer_id == f"smoke-{RUN_ID.hex}"
         assert command.booking_key == RUN_ID
         self.current = self.slots[1]
@@ -106,15 +113,17 @@ class FakeBackend:
 
     async def cancel_booking(self, command):
         self._call("cancel_booking")
+        self.commands.append(command)
+        assert command.external_id == "9001"
         assert command.customer_id == f"smoke-{RUN_ID.hex}"
         assert command.booking_key == RUN_ID
 
-    async def count_duplicate_marker(self, customer_id, starts_at, ends_at):
-        self._call("count_duplicate_marker")
-        assert customer_id == f"smoke-{RUN_ID.hex}"
+    async def reconcile_booking_key(self, booking_key, starts_at, ends_at):
+        self._call("reconcile_booking_key")
+        assert booking_key == RUN_ID
         assert starts_at == self.slots[0].starts_at
         assert ends_at == self.slots[1].starts_at
-        return 1
+        return {"matches": 1, "active_matches": 0}
 
 
 @pytest.mark.parametrize(
@@ -177,8 +186,11 @@ async def test_successful_smoke_runs_the_exact_bounded_flow() -> None:
         "get_booking",
         "cancel_booking",
         "get_cancelled_booking",
-        "count_duplicate_marker",
+        "reconcile_booking_key",
     ]
+    assert len(backend.commands) == 6
+    assert all(command.customer_id == f"smoke-{RUN_ID.hex}" for command in backend.commands)
+    assert all(command.booking_key == RUN_ID for command in backend.commands)
     assert result.summary == {
         "success": True,
         "manual_review_required": False,
@@ -191,8 +203,8 @@ async def test_successful_smoke_runs_the_exact_bounded_flow() -> None:
         "second_get": "confirmed",
         "cancelled": "confirmed",
         "final_state": "cancelled",
-        "duplicate_marker_count": 1,
-        "record_id": "13b7994fae93",
+        "matches": 1,
+        "active_matches": 0,
         "unknown_kind": None,
         "unknown_status": None,
         "error": None,
@@ -214,6 +226,22 @@ async def test_smoke_requires_two_distinct_future_instants_before_mutation() -> 
     assert result.exit_code == 1
     assert backend.calls == ["list_services", "list_slots"]
     assert result.summary["error"] == "insufficient_distinct_future_slots"
+
+
+@pytest.mark.asyncio
+async def test_availability_failure_stops_before_all_mutations() -> None:
+    backend = FakeBackend(failure=("list_slots", SlotUnavailable()))
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert backend.calls == ["list_services", "list_slots"]
+    assert backend.commands == []
 
 
 @pytest.mark.asyncio
@@ -358,7 +386,7 @@ async def test_final_not_found_is_accepted_as_deleted_evidence() -> None:
 
     assert result.exit_code == 0
     assert result.summary["final_state"] == "deleted"
-    assert backend.calls[-1] == "count_duplicate_marker"
+    assert backend.calls[-1] == "reconcile_booking_key"
 
 
 class FakeHttp:
@@ -372,7 +400,7 @@ class FakeHttp:
 
 
 @pytest.mark.asyncio
-async def test_backend_validates_service_and_counts_only_exact_owner_marker() -> None:
+async def test_backend_reconciliation_counts_only_exact_canonical_booking_key() -> None:
     http = FakeHttp([
         HttpResponse(200, json.dumps({
             "success": True,
@@ -381,8 +409,30 @@ async def test_backend_validates_service_and_counts_only_exact_owner_marker() ->
         HttpResponse(200, json.dumps({
             "success": True,
             "data": [
-                {"api_id": "moroz:v1:c21va2UtY29ycmVsYXRpb24"},
-                {"api_id": "foreign"},
+                {
+                    "id": 9001,
+                    "api_id": str(RUN_ID),
+                    "custom_fields": {"moroz_booking_key": str(RUN_ID)},
+                    "deleted": True,
+                },
+                {
+                    "id": 9002,
+                    "api_id": str(RUN_ID),
+                    "custom_fields": {"moroz_booking_key": str(UUID(int=2))},
+                    "deleted": False,
+                },
+                {
+                    "id": 9003,
+                    "api_id": str(RUN_ID),
+                    "custom_fields": {"foreign": str(RUN_ID)},
+                    "deleted": False,
+                },
+                {
+                    "id": 9004,
+                    "api_id": "foreign",
+                    "custom_fields": {"moroz_booking_key": str(UUID(int=3))},
+                    "deleted": False,
+                },
             ],
         }).encode()),
     ])
@@ -390,9 +440,10 @@ async def test_backend_validates_service_and_counts_only_exact_owner_marker() ->
     backend = YclientsSmokeBackend(config, http=http)
 
     assert await backend.list_services("331") == 2
-    assert await backend.count_duplicate_marker(
-        "smoke-correlation", NOW, NOW + timedelta(days=2)
-    ) == 1
+    assert await backend.reconcile_booking_key(RUN_ID, NOW, NOW + timedelta(days=2)) == {
+        "matches": 1,
+        "active_matches": 0,
+    }
     assert http.requests == [
         ("GET", "/api/v1/book_services/123", (), False),
         (
@@ -423,22 +474,22 @@ async def test_backend_service_or_records_malformed_response_fails_closed() -> N
 
 @pytest.mark.asyncio
 async def test_duplicate_scan_paginates_until_a_short_page() -> None:
-    marker = "moroz:v1:c21va2UtY29ycmVsYXRpb24"
     http = FakeHttp([
         HttpResponse(200, json.dumps({
             "success": True,
-            "data": [{"api_id": marker}] * 100,
+            "data": [{"custom_fields": {"moroz_booking_key": str(RUN_ID)}}] * 100,
         }).encode()),
         HttpResponse(200, json.dumps({
             "success": True,
-            "data": [{"api_id": marker}],
+            "data": [{"custom_fields": {"moroz_booking_key": str(RUN_ID)}}],
         }).encode()),
     ])
     backend = YclientsSmokeBackend(YclientsConfig.from_env(_env()), http=http)
 
-    assert await backend.count_duplicate_marker(
-        "smoke-correlation", NOW, NOW + timedelta(days=1)
-    ) == 101
+    assert await backend.reconcile_booking_key(RUN_ID, NOW, NOW + timedelta(days=1)) == {
+        "matches": 101,
+        "active_matches": 101,
+    }
     assert [request[2][0] for request in http.requests] == [("page", 1), ("page", 2)]
 
 
@@ -446,13 +497,11 @@ async def test_duplicate_scan_paginates_until_a_short_page() -> None:
 async def test_duplicate_scan_fails_closed_at_the_page_bound() -> None:
     page = HttpResponse(200, json.dumps({
         "success": True,
-        "data": [{"api_id": "foreign"}] * 100,
+        "data": [{"custom_fields": {"foreign": "value"}}] * 100,
     }).encode())
     http = FakeHttp([page] * 20)
     backend = YclientsSmokeBackend(YclientsConfig.from_env(_env()), http=http)
 
     with pytest.raises(BookingTemporaryError):
-        await backend.count_duplicate_marker(
-            "smoke-correlation", NOW, NOW + timedelta(days=1)
-        )
+        await backend.reconcile_booking_key(RUN_ID, NOW, NOW + timedelta(days=1))
     assert len(http.requests) == 20
