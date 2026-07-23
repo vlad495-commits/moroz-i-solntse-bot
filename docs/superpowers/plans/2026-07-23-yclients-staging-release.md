@@ -199,8 +199,9 @@ Status: in progress.
 - Local start: linked detached worktree, base `7e2ec278ed730edf15b58c2a20cc82d3cfbe42ec`.
 - Local release-plan checkpoint: `029510fe761c91f7ab637bbc8bdbfdd5d7f5f6e5`, clean detached worktree immediately after commit.
 - Remote candidate availability: absent from existing remote branches; Git bundle handoff selected.
-- Current blocker: staging TCP accepts connections but SSH protocol banner is temporarily absent (`0` bytes); no remote command or mutation has occurred.
+- Current blocker: staging TCP accepts connections but SSH protocol banner remains absent (`0` bytes) across repeated probes before and after the full local gate; no remote command or mutation has occurred. Task 1 Step 2 requires SSH recovery through the VPS serial console before any previous/candidate action.
 - Fresh local gate: no-cache test image, `472 passed in 332.93s`, skips `0`; standalone task-prefixed migration image reached `0006_yclients_booking_key (head)`.
 - Local cleanup: full-suite namespace `0/0/0/0`; corrected task-prefixed migration namespace/image `0/0/0/0`.
 - Local isolation note: the first standalone migration command omitted explicit `MIGRATION_IMAGE` and rebuilt the pre-existing local tag `moroz-i-solntse-migrate:local`. No shared container used it; the prior image ID was not recoverable (`dangling=0`), so no blind retag/delete was attempted. The migration gate was repeated with an exact task-prefixed image and clean teardown.
 - Candidate bundle: complete-history Git bundle, head `b5ce49dd405bec817826e6e519effa6218329639`, SHA-256 `0495d183e0f4d230bd859e420bc7164453bd2929946b4bfd73e22e8fe8cd2805`, size `2178684` bytes, `git bundle verify` exit `0`.
+- Local evidence head after bundle record: `fca6d8d2ecc1d5b3769d51c7cc2e0af73a45627f`; bundle intentionally remains pinned to the verified source/evidence head above.
