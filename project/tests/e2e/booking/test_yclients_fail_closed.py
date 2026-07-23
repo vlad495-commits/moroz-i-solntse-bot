@@ -22,6 +22,7 @@ NOW = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
 class DropAfterCreateServer(ThreadingHTTPServer):
     def __init__(self) -> None:
         self.create_count = 0
+        self.create_bodies: list[dict[str, object]] = []
         super().__init__(("127.0.0.1", 0), DropAfterCreateHandler)
 
 
@@ -42,12 +43,13 @@ class DropAfterCreateHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
-        self.rfile.read(length)
+        raw = self.rfile.read(length)
         if "/book_check/" in self.path:
             self._json(201, {"success": True, "data": {}})
             return
         if "/records/" in self.path:
             self.server.create_count += 1
+            self.server.create_bodies.append(json.loads(raw))
             self.close_connection = True
             return
         self._json(404, {"success": False})
@@ -130,6 +132,10 @@ async def test_real_adapter_unknown_create_is_durable_and_never_retried_after_re
             "booking_outcome_unknown",
         )
         assert server.create_count == 1
+        assert server.create_bodies[0]["custom_fields"] == {
+            "moroz_booking_key": str(scenario.id),
+        }
+        assert "api_id" not in server.create_bodies[0]
         stored = await repo.get_scenario(scenario.id)
         assert (stored.phase, stored.error_code) == (
             "escalated",

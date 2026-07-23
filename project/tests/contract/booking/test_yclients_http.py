@@ -191,7 +191,12 @@ async def test_http_encodes_query_json_and_http_error_response(
         "POST",
         "/api/v1/book_check",
         query=(("service_ids", [1, 2]), ("staff_id", 3)),
-        json_body={"appointments": [{"staff_id": 3}]},
+        json_body={
+            "appointments": [{"staff_id": 3}],
+            "custom_fields": {
+                "moroz_booking_key": "3b53e155-7fd7-4dd0-9ff3-871e0db59577",
+            },
+        },
     )
     error = await client.request("GET", "/error")
 
@@ -199,7 +204,11 @@ async def test_http_encodes_query_json_and_http_error_response(
     assert request.method == "POST"
     assert request.path == "/api/v1/book_check?service_ids=1&service_ids=2&staff_id=3"
     assert request.headers["Content-Type"] == "application/json"
-    assert request.body == b'{"appointments":[{"staff_id":3}]}'
+    assert request.body == (
+        b'{"appointments":[{"staff_id":3}],"custom_fields":'
+        b'{"moroz_booking_key":"3b53e155-7fd7-4dd0-9ff3-871e0db59577"}}'
+    )
+    assert b'"api_id"' not in request.body
     assert (error.status, error.body) == (503, b"upstream-failure")
     assert sum(request.path == "/error" for request in fake_server.requests) == 1
 

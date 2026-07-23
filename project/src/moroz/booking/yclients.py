@@ -2,8 +2,10 @@ import base64
 import hashlib
 import hmac
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from moroz.booking.models import (
@@ -13,6 +15,7 @@ from moroz.booking.models import (
     CancelBooking,
     CreateBooking,
     ExternalBooking,
+    GetBooking,
     RescheduleBooking,
     Slot,
     SlotQuery,
@@ -28,7 +31,7 @@ from moroz.booking.yclients_http import (
 
 
 _SLOT_PREFIX = "yclients:v1:"
-_OWNER_PREFIX = "moroz:v1:"
+_BOOKING_KEY_FIELD = "moroz_booking_key"
 _SLOT_KEYS = {"services", "staff", "start", "duration"}
 _CONFLICT_CODES = {433, 436, 437, 438}
 _DEFINITE_MUTATION_REJECTIONS = {400, 401, 403, 409, 422, 429}
@@ -113,7 +116,6 @@ class YclientsAdapter(BookingPort):
             raise BookingTemporaryError()
         payload = _decode_slot(command.slot_id, self._config)
         await self._book_check(payload)
-        owner = _encode_owner(customer_id)
         body: dict[str, object] = {
             "staff_id": payload.staff,
             "services": [{"id": value} for value in payload.services],
@@ -123,7 +125,7 @@ class YclientsAdapter(BookingPort):
             "seance_length": payload.duration,
             "send_sms": False,
             "attendance": 0,
-            "api_id": owner,
+            "custom_fields": {_BOOKING_KEY_FIELD: str(command.booking_key)},
             "client_agreements": {
                 "is_personal_data_processing_allowed": True,
                 "is_newsletter_allowed": False,
@@ -146,7 +148,14 @@ class YclientsAdapter(BookingPort):
             raise _outcome_unknown("http_status", status=response.status)
         try:
             record = _record(_envelope(response))
-            booking = _external_booking(record, self._timezone, self._config)
+            _require_booking_key(record, command.booking_key)
+            booking = _external_booking(
+                record,
+                self._timezone,
+                self._config,
+                customer_id,
+                command.booking_key,
+            )
         except (BookingNotFound, BookingTemporaryError, ValueError, TypeError, KeyError) as error:
             raise _outcome_unknown("response_shape", status=response.status) from error
         if (
@@ -157,8 +166,8 @@ class YclientsAdapter(BookingPort):
             raise _outcome_unknown("response_shape", status=response.status)
         return booking
 
-    async def get_booking(self, external_id: str) -> ExternalBooking:
-        provider_id = _provider_id(external_id)
+    async def get_booking(self, command: GetBooking) -> ExternalBooking:
+        provider_id = _provider_id(command.external_id)
         try:
             response = await self._http.request(
                 "GET",
@@ -172,7 +181,15 @@ class YclientsAdapter(BookingPort):
         if response.status != 200:
             raise BookingTemporaryError()
         try:
-            booking = _external_booking(_record(_envelope(response)), self._timezone, self._config)
+            record = _record(_envelope(response))
+            _require_booking_key(record, command.booking_key)
+            booking = _external_booking(
+                record,
+                self._timezone,
+                self._config,
+                command.customer_id,
+                command.booking_key,
+            )
             if booking.external_id != str(provider_id):
                 raise BookingTemporaryError()
             return booking
@@ -185,7 +202,14 @@ class YclientsAdapter(BookingPort):
         provider_id = _provider_id(command.external_id)
         record = await self._get_record(provider_id)
         try:
-            current = _external_booking(record, self._timezone, self._config)
+            _require_booking_key(record, command.booking_key)
+            current = _external_booking(
+                record,
+                self._timezone,
+                self._config,
+                command.customer_id,
+                command.booking_key,
+            )
         except BookingNotFound:
             raise
         except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
@@ -195,8 +219,8 @@ class YclientsAdapter(BookingPort):
 
         payload = _decode_slot(command.slot_id, self._config)
         client = _record_client(record)
-        owner = record.get("api_id")
-        _decode_owner(owner)
+        custom_fields = dict(record["custom_fields"])
+        custom_fields[_BOOKING_KEY_FIELD] = str(command.booking_key)
         await self._book_check(payload)
         body: dict[str, object] = {
             "staff_id": payload.staff,
@@ -209,7 +233,7 @@ class YclientsAdapter(BookingPort):
             "seance_length": payload.duration,
             "send_sms": False,
             "attendance": 0,
-            "api_id": owner,
+            "custom_fields": custom_fields,
         }
         if "comment" in record and record["comment"] is not None:
             if not isinstance(record["comment"], str):
@@ -227,8 +251,14 @@ class YclientsAdapter(BookingPort):
             raise _outcome_unknown("transport") from error
         _check_mutation_status(response.status, expected=201)
         try:
+            changed_record = _record(_envelope(response))
+            _require_booking_key(changed_record, command.booking_key)
             changed = _external_booking(
-                _record(_envelope(response)), self._timezone, self._config
+                changed_record,
+                self._timezone,
+                self._config,
+                command.customer_id,
+                command.booking_key,
             )
         except (BookingNotFound, BookingTemporaryError, ValueError, TypeError, KeyError) as error:
             raise _outcome_unknown("response_shape", status=response.status) from error
@@ -243,6 +273,8 @@ class YclientsAdapter(BookingPort):
 
     async def cancel_booking(self, command: CancelBooking) -> None:
         provider_id = _provider_id(command.external_id)
+        record = await self._get_record(provider_id)
+        _require_booking_key(record, command.booking_key)
         try:
             response = await self._http.request(
                 "DELETE",
@@ -397,13 +429,6 @@ def _decode_slot(value: str, config: YclientsConfig) -> _SlotPayload:
         raise SlotUnavailable() from error
 
 
-def _encode_owner(customer_id: str) -> str:
-    raw = customer_id.encode("utf-8")
-    if not customer_id.strip() or len(raw) > 512:
-        raise BookingTemporaryError()
-    return _OWNER_PREFIX + _compact_b64(raw)
-
-
 def _required_text(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise BookingTemporaryError()
@@ -440,19 +465,18 @@ def _outcome_unknown(kind: str, *, status: int | None = None) -> BookingOutcomeU
     return BookingOutcomeUnknown(kind=kind, status=status)
 
 
-def _decode_owner(value: object) -> str:
+def _require_booking_key(record: Mapping[str, object], expected: UUID) -> UUID:
+    fields = record.get("custom_fields")
+    if not isinstance(fields, Mapping):
+        raise BookingTemporaryError("booking custom fields are malformed")
+    raw = fields.get(_BOOKING_KEY_FIELD)
     try:
-        if not isinstance(value, str) or not value.startswith(_OWNER_PREFIX):
-            raise ValueError
-        raw = _decode_b64(value[len(_OWNER_PREFIX):])
-        if len(raw) > 512:
-            raise ValueError
-        customer_id = raw.decode("utf-8")
-        if not customer_id.strip() or _encode_owner(customer_id) != value:
-            raise ValueError
-        return customer_id
-    except (ValueError, UnicodeDecodeError, BookingTemporaryError) as error:
-        raise BookingNotFound() from error
+        actual = UUID(raw) if isinstance(raw, str) else None
+    except ValueError as error:
+        raise BookingNotFound("booking ownership marker is invalid") from error
+    if actual != expected or raw != str(expected):
+        raise BookingNotFound("booking ownership marker does not match")
+    return actual
 
 
 def _json_or_temporary(response: HttpResponse) -> dict[str, object]:
@@ -551,10 +575,13 @@ def _record(data: object) -> dict[str, object]:
 
 
 def _external_booking(
-    record: dict[str, object], timezone: ZoneInfo, config: YclientsConfig,
+    record: dict[str, object],
+    timezone: ZoneInfo,
+    config: YclientsConfig,
+    customer_id: str,
+    booking_key: UUID,
 ) -> ExternalBooking:
     external_id = str(_provider_id(record["id"]))
-    customer_id = _decode_owner(record.get("api_id"))
     staff_value = record.get("staff_id")
     if staff_value is None and isinstance(record.get("staff"), dict):
         staff_value = record["staff"].get("id")
@@ -577,6 +604,7 @@ def _external_booking(
     return ExternalBooking(
         external_id,
         customer_id,
+        booking_key,
         slot_id,
         starts_at,
         "cancelled" if deleted else "confirmed",

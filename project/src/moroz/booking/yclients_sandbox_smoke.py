@@ -16,6 +16,7 @@ from moroz.booking.models import (
     CancelBooking,
     CreateBooking,
     ExternalBooking,
+    GetBooking,
     RescheduleBooking,
     Slot,
     SlotQuery,
@@ -66,7 +67,7 @@ class SmokeBackend(Protocol):
     async def list_services(self, service_id: str) -> int: ...
     async def list_slots(self, query: SlotQuery) -> list[Slot]: ...
     async def create_booking(self, command: CreateBooking) -> ExternalBooking: ...
-    async def get_booking(self, external_id: str) -> ExternalBooking: ...
+    async def get_booking(self, command: GetBooking) -> ExternalBooking: ...
     async def reschedule_booking(self, command: RescheduleBooking) -> ExternalBooking: ...
     async def cancel_booking(self, command: CancelBooking) -> None: ...
     async def count_duplicate_marker(
@@ -105,8 +106,8 @@ class YclientsSmokeBackend:
     async def create_booking(self, command: CreateBooking) -> ExternalBooking:
         return await self._adapter.create_booking(command)
 
-    async def get_booking(self, external_id: str) -> ExternalBooking:
-        return await self._adapter.get_booking(external_id)
+    async def get_booking(self, command: GetBooking) -> ExternalBooking:
+        return await self._adapter.get_booking(command)
 
     async def reschedule_booking(self, command: RescheduleBooking) -> ExternalBooking:
         return await self._adapter.reschedule_booking(command)
@@ -179,7 +180,8 @@ async def run_smoke(
 ) -> SmokeResult:
     actual = backend or YclientsSmokeBackend(settings.config)
     summary = _empty_summary()
-    run_id = uuid_factory().hex
+    booking_key = uuid_factory()
+    run_id = booking_key.hex
     customer_id = f"smoke-{run_id}"
     external_id: str | None = None
     cancel_confirmed = False
@@ -199,6 +201,7 @@ async def run_smoke(
 
         created = await actual.create_booking(CreateBooking(
             customer_id=customer_id,
+            booking_key=booking_key,
             slot_id=first.id,
             idempotency_key=f"yclients-smoke-{run_id}",
             customer_name=settings.customer_name,
@@ -207,35 +210,45 @@ async def run_smoke(
             comment=f"moroz sandbox smoke {run_id}",
         ))
         external_id = created.external_id
-        _require_booking(created, customer_id, first)
+        _require_booking(created, customer_id, booking_key, first)
         summary["created"] = "confirmed"
         summary["record_id"] = _redacted_id(external_id)
 
-        fetched = await actual.get_booking(external_id)
-        _require_booking(fetched, customer_id, first)
+        fetched = await actual.get_booking(GetBooking(
+            external_id, customer_id, booking_key,
+        ))
+        _require_booking(fetched, customer_id, booking_key, first)
         summary["first_get"] = "confirmed"
 
         changed = await actual.reschedule_booking(RescheduleBooking(
             external_id=external_id,
+            customer_id=customer_id,
+            booking_key=booking_key,
             slot_id=second.id,
             idempotency_key=f"yclients-smoke-{run_id}",
         ))
-        _require_booking(changed, customer_id, second)
+        _require_booking(changed, customer_id, booking_key, second)
         summary["rescheduled"] = "confirmed"
 
-        fetched = await actual.get_booking(external_id)
-        _require_booking(fetched, customer_id, second)
+        fetched = await actual.get_booking(GetBooking(
+            external_id, customer_id, booking_key,
+        ))
+        _require_booking(fetched, customer_id, booking_key, second)
         summary["second_get"] = "confirmed"
 
         cancel_attempted = True
         await actual.cancel_booking(CancelBooking(
             external_id=external_id,
+            customer_id=customer_id,
+            booking_key=booking_key,
             idempotency_key=f"yclients-smoke-{run_id}",
         ))
         cancel_confirmed = True
         summary["cancelled"] = "confirmed"
         try:
-            cancelled = await actual.get_booking(external_id)
+            cancelled = await actual.get_booking(GetBooking(
+                external_id, customer_id, booking_key,
+            ))
         except BookingNotFound:
             summary["final_state"] = "deleted"
         else:
@@ -277,6 +290,8 @@ async def run_smoke(
         try:
             await actual.cancel_booking(CancelBooking(
                 external_id=external_id,
+                customer_id=customer_id,
+                booking_key=booking_key,
                 idempotency_key=f"yclients-smoke-cleanup-{run_id}",
             ))
             summary["cancelled"] = "cleanup_confirmed"
@@ -302,9 +317,15 @@ def _two_distinct_future_slots(slots: list[Slot], now: datetime) -> tuple[Slot, 
     raise _SmokeFailure("insufficient_distinct_future_slots")
 
 
-def _require_booking(booking: ExternalBooking, customer_id: str, slot: Slot) -> None:
+def _require_booking(
+    booking: ExternalBooking,
+    customer_id: str,
+    booking_key: UUID,
+    slot: Slot,
+) -> None:
     if (
         booking.customer_id != customer_id
+        or booking.booking_key != booking_key
         or booking.slot_id != slot.id
         or booking.starts_at != slot.starts_at
         or booking.status != "confirmed"

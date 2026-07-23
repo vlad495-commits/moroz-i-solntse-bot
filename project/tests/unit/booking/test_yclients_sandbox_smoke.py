@@ -43,7 +43,14 @@ def _slot(slot_id: str, hours: int) -> Slot:
 
 
 def _booking(slot: Slot, *, status: str = "confirmed") -> ExternalBooking:
-    return ExternalBooking("9001", f"smoke-{RUN_ID.hex}", slot.id, slot.starts_at, status)
+    return ExternalBooking(
+        "9001",
+        f"smoke-{RUN_ID.hex}",
+        RUN_ID,
+        slot.id,
+        slot.starts_at,
+        status,
+    )
 
 
 class FakeBackend:
@@ -72,6 +79,7 @@ class FakeBackend:
 
     async def create_booking(self, command):
         self._call("create_booking")
+        assert command.booking_key == RUN_ID
         assert command.customer_name == "Synthetic Sensitive Name"
         assert command.customer_phone == "+70000000000"
         assert command.personal_data_processing_allowed is True
@@ -79,20 +87,27 @@ class FakeBackend:
         assert RUN_ID.hex in command.comment
         return _booking(self.slots[0])
 
-    async def get_booking(self, external_id: str):
+    async def get_booking(self, command):
         name = "get_cancelled_booking" if "cancel_booking" in self.calls else "get_booking"
         self._call(name)
+        assert command.external_id == "9001"
+        assert command.customer_id == f"smoke-{RUN_ID.hex}"
+        assert command.booking_key == RUN_ID
         if name == "get_cancelled_booking":
             return _booking(self.current, status="cancelled")
         return _booking(self.current)
 
     async def reschedule_booking(self, command):
         self._call("reschedule_booking")
+        assert command.customer_id == f"smoke-{RUN_ID.hex}"
+        assert command.booking_key == RUN_ID
         self.current = self.slots[1]
         return _booking(self.current)
 
     async def cancel_booking(self, command):
         self._call("cancel_booking")
+        assert command.customer_id == f"smoke-{RUN_ID.hex}"
+        assert command.booking_key == RUN_ID
 
     async def count_duplicate_marker(self, customer_id, starts_at, ends_at):
         self._call("count_duplicate_marker")
