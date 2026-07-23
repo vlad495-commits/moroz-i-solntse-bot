@@ -25,3 +25,10 @@
 ## Concerns
 
 Local implementation is complete. Live completion remains blocked until the branch field `moroz_booking_key` exists, separate cleanup consent is granted for the one pre-design active synthetic record, and a new lifecycle smoke is explicitly consented. No live smoke was run.
+
+## Review fix loop
+
+- RED: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-review-red --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py -q` → `4 failed, 29 passed`.
+- GREEN: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-review-green --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/unit/test_runtime_logging_policy.py -q` → `38 passed`.
+- Cleanup: both review namespaces reached `containers=0 volumes=0 networks=0 images=0`; the ignored temp env was removed.
+- Fix: invalid create results cannot trigger cleanup cancellation. Missing `custom_fields` remains unrelated; present non-mapping fields and exact-key records with absent/non-boolean `deleted` fail closed.

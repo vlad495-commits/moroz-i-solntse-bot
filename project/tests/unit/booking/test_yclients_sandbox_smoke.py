@@ -55,12 +55,19 @@ def _booking(slot: Slot, *, status: str = "confirmed") -> ExternalBooking:
 
 
 class FakeBackend:
-    def __init__(self, *, failure: tuple[str, Exception] | None = None, slots=None):
+    def __init__(
+        self,
+        *,
+        failure: tuple[str, Exception] | None = None,
+        slots=None,
+        created: ExternalBooking | None = None,
+    ):
         self.calls: list[str] = []
         self.commands: list[object] = []
         self.failure = failure
         self.slots = slots or [_slot("slot-a", 48), _slot("slot-b", 72)]
         self.current = self.slots[0]
+        self.created = created
 
     def _call(self, name: str) -> None:
         self.calls.append(name)
@@ -89,7 +96,7 @@ class FakeBackend:
         assert command.personal_data_processing_allowed is True
         assert RUN_ID.hex in command.idempotency_key
         assert RUN_ID.hex in command.comment
-        return _booking(self.slots[0])
+        return self.created or _booking(self.slots[0])
 
     async def get_booking(self, command):
         name = "get_cancelled_booking" if "cancel_booking" in self.calls else "get_booking"
@@ -242,6 +249,30 @@ async def test_availability_failure_stops_before_all_mutations() -> None:
     assert result.exit_code == 1
     assert backend.calls == ["list_services", "list_slots"]
     assert backend.commands == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("booking_key", [UUID(int=2), None])
+async def test_invalid_create_result_never_triggers_cleanup_mutation(booking_key) -> None:
+    backend = FakeBackend(created=ExternalBooking(
+        "9001",
+        f"smoke-{RUN_ID.hex}",
+        booking_key,
+        "slot-a",
+        _slot("slot-a", 48).starts_at,
+        "confirmed",
+    ))
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert backend.calls == ["list_services", "list_slots", "create_booking"]
+    assert len(backend.commands) == 1
 
 
 @pytest.mark.asyncio
@@ -433,6 +464,7 @@ async def test_backend_reconciliation_counts_only_exact_canonical_booking_key() 
                     "custom_fields": {"moroz_booking_key": str(UUID(int=3))},
                     "deleted": False,
                 },
+                {"id": 9005, "api_id": str(RUN_ID), "deleted": False},
             ],
         }).encode()),
     ])
@@ -473,15 +505,42 @@ async def test_backend_service_or_records_malformed_response_fails_closed() -> N
 
 
 @pytest.mark.asyncio
+async def test_reconciliation_rejects_non_mapping_custom_fields() -> None:
+    backend = YclientsSmokeBackend(YclientsConfig.from_env(_env()), http=FakeHttp([
+        HttpResponse(200, json.dumps({
+            "success": True,
+            "data": [{"custom_fields": [str(RUN_ID)]}],
+        }).encode()),
+    ]))
+
+    with pytest.raises(BookingTemporaryError):
+        await backend.reconcile_booking_key(RUN_ID, NOW, NOW + timedelta(days=1))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [None, "false", 0])
+async def test_reconciliation_requires_explicit_boolean_deleted_for_exact_key(deleted) -> None:
+    record = {"custom_fields": {"moroz_booking_key": str(RUN_ID)}}
+    if deleted is not None:
+        record["deleted"] = deleted
+    backend = YclientsSmokeBackend(YclientsConfig.from_env(_env()), http=FakeHttp([
+        HttpResponse(200, json.dumps({"success": True, "data": [record]}).encode()),
+    ]))
+
+    with pytest.raises(BookingTemporaryError):
+        await backend.reconcile_booking_key(RUN_ID, NOW, NOW + timedelta(days=1))
+
+
+@pytest.mark.asyncio
 async def test_duplicate_scan_paginates_until_a_short_page() -> None:
     http = FakeHttp([
         HttpResponse(200, json.dumps({
             "success": True,
-            "data": [{"custom_fields": {"moroz_booking_key": str(RUN_ID)}}] * 100,
+            "data": [{"custom_fields": {"moroz_booking_key": str(RUN_ID)}, "deleted": False}] * 100,
         }).encode()),
         HttpResponse(200, json.dumps({
             "success": True,
-            "data": [{"custom_fields": {"moroz_booking_key": str(RUN_ID)}}],
+            "data": [{"custom_fields": {"moroz_booking_key": str(RUN_ID)}, "deleted": False}],
         }).encode()),
     ])
     backend = YclientsSmokeBackend(YclientsConfig.from_env(_env()), http=http)

@@ -4,6 +4,12 @@
 
 ---
 
+[2026-07-23 12:40] Task 4 review fix-loop GREEN: fresh Docker focused smoke + safe logging `38 passed`; review red/green namespaces each cleaned to `0/0/0/0`, ignored temp env removed. Дорожная карта, master plan и Task 4 report дополнены exact RED/GREEN evidence; live YCLIENTS/.env/downgrade не использовались.
+
+[2026-07-23 12:34] Task 4 review fix-loop: `external_id` теперь присваивается только после `_require_booking`, поэтому invalid create result не допускает cleanup cancel; reconciliation различает absent `custom_fields` как unrelated, но fail-closed для present non-mapping fields и exact-key record без явного boolean `deleted`.
+
+[2026-07-23 12:30] Task 4 review fix-loop: добавлены RED-тесты на invalid create result без cleanup mutation и на strict reconciliation shapes — non-mapping `custom_fields`, missing/non-boolean `deleted` для exact key; missing field и wrong key по-прежнему покрыты как unrelated records. Production-код пока не менялся.
+
 [2026-07-23 12:22] Task 4 self-review: staged scope ограничен smoke/tests/roadmap/master/changelog/report; `git diff --check` clean, Docker GREEN `32 passed`, static privacy `legacy=0 schema_disclosure=0`, временный env отсутствует. Независимые live действия, merge и push не выполнялись.
 
 [2026-07-23 12:20] Task 4: добавлен `.superpowers/sdd/task-4-report.md` с RED/GREEN командами и counts, privacy/safety evidence, exact cleanup и открытыми live prerequisites; в report нет секретов, provider IDs или raw provider bodies.

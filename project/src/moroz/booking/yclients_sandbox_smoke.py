@@ -134,10 +134,14 @@ class YclientsSmokeBackend:
             if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
                 raise BookingTemporaryError()
             for item in data:
-                fields = item.get("custom_fields")
-                if not isinstance(fields, Mapping) or fields.get("moroz_booking_key") != str(booking_key):
+                if "custom_fields" not in item:
                     continue
-                deleted = item.get("deleted", False)
+                fields = item["custom_fields"]
+                if not isinstance(fields, Mapping):
+                    raise BookingTemporaryError()
+                if fields.get("moroz_booking_key") != str(booking_key):
+                    continue
+                deleted = item.get("deleted")
                 if type(deleted) is not bool:
                     raise BookingTemporaryError()
                 matched += 1
@@ -217,8 +221,8 @@ async def run_smoke(
             personal_data_processing_allowed=True,
             comment=f"moroz sandbox smoke {run_id}",
         ))
-        external_id = created.external_id
         _require_booking(created, customer_id, booking_key, first)
+        external_id = created.external_id
         summary["created"] = "confirmed"
 
         fetched = await actual.get_booking(GetBooking(
