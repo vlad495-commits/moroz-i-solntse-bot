@@ -51,6 +51,7 @@ class Slot:
 @dataclass(frozen=True, slots=True)
 class CreateBooking:
     customer_id: str
+    booking_key: UUID
     slot_id: str
     idempotency_key: str
     customer_name: str
@@ -60,8 +61,17 @@ class CreateBooking:
 
 
 @dataclass(frozen=True, slots=True)
+class GetBooking:
+    external_id: str
+    customer_id: str
+    booking_key: UUID
+
+
+@dataclass(frozen=True, slots=True)
 class RescheduleBooking:
     external_id: str
+    customer_id: str
+    booking_key: UUID
     slot_id: str
     idempotency_key: str
 
@@ -69,6 +79,8 @@ class RescheduleBooking:
 @dataclass(frozen=True, slots=True)
 class CancelBooking:
     external_id: str
+    customer_id: str
+    booking_key: UUID
     idempotency_key: str
 
 
@@ -76,6 +88,7 @@ class CancelBooking:
 class ExternalBooking:
     external_id: str
     customer_id: str
+    booking_key: UUID
     slot_id: str
     starts_at: datetime
     status: Literal["confirmed", "cancelled"]

@@ -14,6 +14,7 @@ from moroz.common.db import Database
 
 
 pytestmark = pytest.mark.asyncio
+BOOKING_KEY = uuid4()
 
 
 @pytest_asyncio.fixture
@@ -51,6 +52,7 @@ def confirmed_booking(*, status="confirmed"):
     return ExternalBooking(
         external_id="yclients-42",
         customer_id="customer-7",
+        booking_key=BOOKING_KEY,
         slot_id="slot-9",
         starts_at=datetime(2026, 7, 25, 14, 0, tzinfo=UTC),
         status=status,
@@ -129,7 +131,7 @@ async def test_confirm_atomically_persists_terminal_scenario_and_booking(
     async with database.acquire() as connection:
         row = await connection.fetchrow(
             """
-            SELECT last_scenario_id, snapshot
+            SELECT last_scenario_id, booking_key, snapshot
             FROM bookings
             WHERE external_id = $1
             """,
@@ -144,8 +146,10 @@ async def test_confirm_atomically_persists_terminal_scenario_and_booking(
         "booking_confirmed",
     ]
     assert row["last_scenario_id"] == scenario.id
+    assert row["booking_key"] == booking.booking_key
     snapshot = json.loads(row["snapshot"])
     assert snapshot["external_id"] == booking.external_id
+    assert snapshot["booking_key"] == str(booking.booking_key)
     assert snapshot["starts_at"] == booking.starts_at.isoformat()
 
 
@@ -237,3 +241,63 @@ async def test_cancellation_upserts_snapshot_resolvable_by_earlier_scenario(
         count = await connection.fetchval("SELECT count(*) FROM bookings")
     assert count == 1
     assert row["last_scenario_id"] == cancel_scenario.id
+
+
+async def _assert_ownership_conflict_rolls_back(
+    database,
+    repo,
+    scenario: BookingScenario,
+    conflicting_booking: ExternalBooking,
+) -> None:
+    original = confirmed_booking()
+    origin = replace(scenario, phase="executing")
+    await repo.create_scenario(origin)
+    await repo.confirm(replace(origin, phase="confirmed"), original)
+
+    contender = replace(
+        scenario,
+        id=uuid4(),
+        phase="executing",
+        idempotency_key=f"booking:{uuid4()}",
+        customer_id=conflicting_booking.customer_id,
+    )
+    await repo.create_scenario(contender)
+    before_scenario = await repo.get_scenario(contender.id)
+    before_events = await repo.list_events(contender.id)
+
+    with pytest.raises(RuntimeError, match="^booking ownership conflict$"):
+        await repo.confirm(replace(contender, phase="confirmed"), conflicting_booking)
+
+    assert await repo.get_scenario(contender.id) == before_scenario
+    assert await repo.list_events(contender.id) == before_events
+    assert await repo.get_local_booking(origin.id) == original
+    async with database.acquire() as connection:
+        row = await connection.fetchrow(
+            "SELECT customer_id, booking_key, snapshot FROM bookings WHERE external_id = $1",
+            original.external_id,
+        )
+    assert row["customer_id"] == original.customer_id
+    assert row["booking_key"] == original.booking_key
+    assert json.loads(row["snapshot"])["booking_key"] == str(original.booking_key)
+
+
+async def test_confirm_rejects_external_id_with_different_booking_key_and_rolls_back(
+    database, repo, scenario
+):
+    await _assert_ownership_conflict_rolls_back(
+        database,
+        repo,
+        scenario,
+        replace(confirmed_booking(), booking_key=uuid4()),
+    )
+
+
+async def test_confirm_rejects_external_id_with_different_customer_and_rolls_back(
+    database, repo, scenario
+):
+    await _assert_ownership_conflict_rolls_back(
+        database,
+        repo,
+        scenario,
+        replace(confirmed_booking(), customer_id="customer-other"),
+    )

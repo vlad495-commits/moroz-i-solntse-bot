@@ -211,6 +211,7 @@ async def test_create_passes_minimum_customer_data_to_port(repo):
 
     assert port.last_create == CreateBooking(
         customer_id=scenario.customer_id,
+        booking_key=scenario.id,
         slot_id="slot-9",
         idempotency_key=scenario.idempotency_key,
         customer_name="Sandbox Customer",

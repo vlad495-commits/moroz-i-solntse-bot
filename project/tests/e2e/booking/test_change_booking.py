@@ -16,6 +16,7 @@ from moroz.booking.models import (
     BookingTemporaryError,
     CancelBooking,
     CreateBooking,
+    GetBooking,
     RescheduleBooking,
     Slot,
     SlotQuery,
@@ -36,6 +37,8 @@ class CountingChangeAdapter(MockYclientsAdapter):
         self.reschedule_calls = 0
         self.cancel_calls = 0
         self.get_calls = 0
+        self.last_reschedule: RescheduleBooking | None = None
+        self.last_cancel: CancelBooking | None = None
 
     async def list_slots(self, query: SlotQuery) -> list[Slot]:
         self.list_calls += 1
@@ -43,21 +46,25 @@ class CountingChangeAdapter(MockYclientsAdapter):
 
     async def reschedule_booking(self, command: RescheduleBooking):
         self.reschedule_calls += 1
+        self.last_reschedule = command
         return await super().reschedule_booking(command)
 
     async def cancel_booking(self, command: CancelBooking) -> None:
         self.cancel_calls += 1
+        self.last_cancel = command
         await super().cancel_booking(command)
 
-    async def get_booking(self, external_id: str):
+    async def get_booking(self, command: GetBooking):
         self.get_calls += 1
-        return await super().get_booking(external_id)
+        return await super().get_booking(command)
 
     def reset_counts(self) -> None:
         self.list_calls = 0
         self.reschedule_calls = 0
         self.cancel_calls = 0
         self.get_calls = 0
+        self.last_reschedule = None
+        self.last_cancel = None
 
 
 class FailingMutationAdapter(CountingChangeAdapter):
@@ -185,6 +192,7 @@ def _create_command(
 ) -> CreateBooking:
     return CreateBooking(
         customer_id=customer_id,
+        booking_key=uuid4(),
         slot_id=slot_id,
         idempotency_key=idempotency_key,
         customer_name="Sandbox Customer",
@@ -279,6 +287,9 @@ async def test_reschedule_persists_old_and_new_snapshot_and_repeat_is_stable(rep
     assert OLD_START.isoformat() in result.message
     assert _slot("slot-new", 16).starts_at.isoformat() in result.message
     assert (port.list_calls, port.reschedule_calls) == (1, 1)
+    assert port.last_reschedule is not None
+    assert port.last_reschedule.customer_id == original.customer_id
+    assert port.last_reschedule.booking_key == original.booking_key
     stored = await repo.get_scenario(scenario.id)
     snapshot = await repo.get_local_booking(scenario.id)
     assert stored.phase == "confirmed"
@@ -307,6 +318,9 @@ async def test_cancel_at_exactly_three_hours_uses_local_snapshot_and_mutates_onc
     assert result.status == "ok"
     assert OLD_START.isoformat() in result.message
     assert (port.cancel_calls, port.list_calls, port.get_calls) == (1, 0, 1)
+    assert port.last_cancel is not None
+    assert port.last_cancel.customer_id == original.customer_id
+    assert port.last_cancel.booking_key == original.booking_key
     stored = await repo.get_scenario(scenario.id)
     snapshot = await repo.get_local_booking(scenario.id)
     assert stored.phase == "confirmed"

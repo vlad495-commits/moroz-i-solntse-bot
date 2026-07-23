@@ -1,6 +1,14 @@
 from typing import Protocol
 
-from moroz.booking.models import CancelBooking, CreateBooking, ExternalBooking, RescheduleBooking, Slot, SlotQuery
+from moroz.booking.models import (
+    CancelBooking,
+    CreateBooking,
+    ExternalBooking,
+    GetBooking,
+    RescheduleBooking,
+    Slot,
+    SlotQuery,
+)
 
 
 class BookingPort(Protocol):
@@ -12,4 +20,4 @@ class BookingPort(Protocol):
 
     async def cancel_booking(self, command: CancelBooking) -> None: ...
 
-    async def get_booking(self, external_id: str) -> ExternalBooking: ...
+    async def get_booking(self, command: GetBooking) -> ExternalBooking: ...

@@ -176,7 +176,7 @@ class BookingRepository:
     ) -> ExternalBooking | None:
         row = await connection.fetchrow(
             """
-            SELECT b.external_id, b.customer_id, b.slot_id,
+            SELECT b.external_id, b.customer_id, b.booking_key, b.slot_id,
                    b.starts_at, b.status
             FROM booking_scenarios AS s
             JOIN bookings AS b
@@ -190,6 +190,7 @@ class BookingRepository:
         return ExternalBooking(
             external_id=row["external_id"],
             customer_id=row["customer_id"],
+            booking_key=row["booking_key"],
             slot_id=row["slot_id"],
             starts_at=row["starts_at"],
             status=row["status"],
@@ -265,35 +266,41 @@ class BookingRepository:
         snapshot = {
             "external_id": booking.external_id,
             "customer_id": booking.customer_id,
+            "booking_key": str(booking.booking_key),
             "slot_id": booking.slot_id,
             "starts_at": booking.starts_at.isoformat(),
             "status": booking.status,
         }
         await self._update_scenario(connection, scenario, state=state)
-        await connection.execute(
+        stored_external_id = await connection.fetchval(
             """
             INSERT INTO bookings
                 (id, last_scenario_id, external_id, customer_id,
-                 slot_id, starts_at, status, snapshot)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                 booking_key, slot_id, starts_at, status, snapshot)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
             ON CONFLICT (external_id) DO UPDATE SET
                 last_scenario_id = EXCLUDED.last_scenario_id,
-                customer_id = EXCLUDED.customer_id,
                 slot_id = EXCLUDED.slot_id,
                 starts_at = EXCLUDED.starts_at,
                 status = EXCLUDED.status,
                 snapshot = EXCLUDED.snapshot,
                 updated_at = now()
+            WHERE bookings.customer_id = EXCLUDED.customer_id
+              AND bookings.booking_key = EXCLUDED.booking_key
+            RETURNING external_id
             """,
             uuid4(),
             scenario.id,
             booking.external_id,
             booking.customer_id,
+            booking.booking_key,
             booking.slot_id,
             booking.starts_at,
             booking.status,
             _dump_json(snapshot),
         )
+        if stored_external_id is None:
+            raise RuntimeError("booking ownership conflict")
         await self._insert_event(
             connection,
             scenario.id,

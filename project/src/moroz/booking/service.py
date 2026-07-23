@@ -178,6 +178,7 @@ class BookingService:
             booking = await self._port.create_booking(
                 CreateBooking(
                     customer_id=executing.customer_id,
+                    booking_key=executing.id,
                     slot_id=selected_slot_id,
                     idempotency_key=executing.idempotency_key,
                     customer_name=name,
@@ -230,7 +231,7 @@ class BookingService:
         executing = replace(scenario, phase="executing", updated_at=self._now())
         await session.checkpoint(executing, f"booking_{scenario.kind}_started")
         if scenario.kind == "reschedule":
-            return await self._reschedule(session, executing)
+            return await self._reschedule(session, executing, booking)
         if scenario.kind == "cancel":
             return await self._cancel(session, executing, booking)
         raise ValueError(f"unsupported booking kind: {scenario.kind}")
@@ -260,6 +261,7 @@ class BookingService:
         self,
         session: BookingScenarioSession,
         scenario: BookingScenario,
+        booking: ExternalBooking,
     ) -> ScenarioResult:
         query = self._slot_query(scenario.state)
         selected_slot_id = str(scenario.state["selected_slot_id"])
@@ -272,6 +274,8 @@ class BookingService:
             booking = await self._port.reschedule_booking(
                 RescheduleBooking(
                     external_id=str(scenario.state["external_id"]),
+                    customer_id=booking.customer_id,
+                    booking_key=booking.booking_key,
                     slot_id=selected_slot_id,
                     idempotency_key=scenario.idempotency_key,
                 )
@@ -302,6 +306,8 @@ class BookingService:
         await self._port.cancel_booking(
             CancelBooking(
                 external_id=str(scenario.state["external_id"]),
+                customer_id=booking.customer_id,
+                booking_key=booking.booking_key,
                 idempotency_key=scenario.idempotency_key,
             )
         )

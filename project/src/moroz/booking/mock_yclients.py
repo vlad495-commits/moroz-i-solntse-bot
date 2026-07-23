@@ -5,6 +5,7 @@ from moroz.booking.models import (
     CancelBooking,
     CreateBooking,
     ExternalBooking,
+    GetBooking,
     RescheduleBooking,
     Slot,
     SlotQuery,
@@ -36,39 +37,79 @@ class MockYclientsAdapter(BookingPort):
         if command.idempotency_key in self._create_results:
             return self._create_results[command.idempotency_key]
         slot = self._available_slot(command.slot_id)
-        booking = ExternalBooking(str(uuid4()), command.customer_id, slot.id, slot.starts_at, "confirmed")
+        booking = ExternalBooking(
+            external_id=str(uuid4()),
+            customer_id=command.customer_id,
+            booking_key=command.booking_key,
+            slot_id=slot.id,
+            starts_at=slot.starts_at,
+            status="confirmed",
+        )
         self._bookings[booking.external_id] = booking
         self._create_results[command.idempotency_key] = booking
         return booking
 
     async def reschedule_booking(self, command: RescheduleBooking) -> ExternalBooking:
+        booking = await self.get_booking(
+            GetBooking(
+                command.external_id,
+                command.customer_id,
+                command.booking_key,
+            )
+        )
         if command.idempotency_key in self._reschedule_results:
             return self._reschedule_results[command.idempotency_key]
-        booking = await self.get_booking(command.external_id)
         slot = self._available_slot(command.slot_id, excluding_external_id=booking.external_id)
-        updated = ExternalBooking(booking.external_id, booking.customer_id, slot.id, slot.starts_at, "confirmed")
+        updated = ExternalBooking(
+            external_id=booking.external_id,
+            customer_id=command.customer_id,
+            booking_key=command.booking_key,
+            slot_id=slot.id,
+            starts_at=slot.starts_at,
+            status="confirmed",
+        )
         self._bookings[updated.external_id] = updated
         self._reschedule_results[command.idempotency_key] = updated
         return updated
 
     async def cancel_booking(self, command: CancelBooking) -> None:
-        booking = await self.get_booking(command.external_id)
+        booking = await self.get_booking(
+            GetBooking(
+                command.external_id,
+                command.customer_id,
+                command.booking_key,
+            )
+        )
         if command.idempotency_key in self._cancel_keys:
             return
         self._bookings[booking.external_id] = ExternalBooking(
-            booking.external_id,
-            booking.customer_id,
-            booking.slot_id,
-            booking.starts_at,
-            "cancelled",
+            external_id=booking.external_id,
+            customer_id=command.customer_id,
+            booking_key=command.booking_key,
+            slot_id=booking.slot_id,
+            starts_at=booking.starts_at,
+            status="cancelled",
         )
         self._cancel_keys.add(command.idempotency_key)
 
-    async def get_booking(self, external_id: str) -> ExternalBooking:
+    async def get_booking(self, command: GetBooking) -> ExternalBooking:
         try:
-            return self._bookings[external_id]
+            booking = self._bookings[command.external_id]
         except KeyError as error:
-            raise BookingNotFound(external_id) from error
+            raise BookingNotFound(command.external_id) from error
+        if (
+            booking.customer_id != command.customer_id
+            or booking.booking_key != command.booking_key
+        ):
+            raise BookingNotFound(command.external_id)
+        return ExternalBooking(
+            external_id=booking.external_id,
+            customer_id=command.customer_id,
+            booking_key=command.booking_key,
+            slot_id=booking.slot_id,
+            starts_at=booking.starts_at,
+            status=booking.status,
+        )
 
     def _available_slot(self, slot_id: str, *, excluding_external_id: str | None = None) -> Slot:
         try:

@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -10,6 +10,7 @@ from moroz.booking.models import (
     BookingScenario,
     CancelBooking,
     CreateBooking,
+    GetBooking,
     RescheduleBooking,
     Slot,
     SlotQuery,
@@ -50,9 +51,11 @@ def _create_command(
     customer_id: str = "customer-1",
     slot_id: str = "slot-ok",
     idempotency_key: str = "create-1",
+    booking_key: UUID | None = None,
 ) -> CreateBooking:
     return CreateBooking(
         customer_id=customer_id,
+        booking_key=booking_key or uuid4(),
         slot_id=slot_id,
         idempotency_key=idempotency_key,
         customer_name="Sandbox Customer",
@@ -95,7 +98,9 @@ async def test_create_is_idempotent_for_same_key():
     repeated = await adapter.create_booking(command)
 
     assert repeated == first
-    assert await adapter.get_booking(first.external_id) == first
+    assert await adapter.get_booking(
+        GetBooking(first.external_id, first.customer_id, first.booking_key)
+    ) == first
 
 
 @pytest.mark.asyncio
@@ -111,7 +116,13 @@ async def test_create_with_different_key_on_occupied_slot_raises_slot_unavailabl
 async def test_reschedule_checks_availability_and_is_idempotent():
     adapter = _adapter()
     booking = await adapter.create_booking(_create_command())
-    command = RescheduleBooking(booking.external_id, "slot-next", "reschedule-1")
+    command = RescheduleBooking(
+        external_id=booking.external_id,
+        customer_id=booking.customer_id,
+        booking_key=booking.booking_key,
+        slot_id="slot-next",
+        idempotency_key="reschedule-1",
+    )
 
     first = await adapter.reschedule_booking(command)
     repeated = await adapter.reschedule_booking(command)
@@ -129,27 +140,70 @@ async def test_reschedule_to_occupied_slot_leaves_original_booking_unchanged():
     await adapter.create_booking(_create_command("customer-2", "slot-next", "create-2"))
 
     with pytest.raises(SlotUnavailable):
-        await adapter.reschedule_booking(RescheduleBooking(booking.external_id, "slot-next", "reschedule-1"))
+        await adapter.reschedule_booking(
+            RescheduleBooking(
+                external_id=booking.external_id,
+                customer_id=booking.customer_id,
+                booking_key=booking.booking_key,
+                slot_id="slot-next",
+                idempotency_key="reschedule-1",
+            )
+        )
 
-    assert await adapter.get_booking(booking.external_id) == booking
+    assert await adapter.get_booking(
+        GetBooking(booking.external_id, booking.customer_id, booking.booking_key)
+    ) == booking
 
 
 @pytest.mark.asyncio
 async def test_cancel_with_same_key_is_a_safe_repeat():
     adapter = _adapter()
     booking = await adapter.create_booking(_create_command())
-    command = CancelBooking(booking.external_id, "cancel-1")
+    command = CancelBooking(
+        external_id=booking.external_id,
+        customer_id=booking.customer_id,
+        booking_key=booking.booking_key,
+        idempotency_key="cancel-1",
+    )
 
     await adapter.cancel_booking(command)
     await adapter.cancel_booking(command)
 
-    assert (await adapter.get_booking(booking.external_id)).status == "cancelled"
+    assert (
+        await adapter.get_booking(
+            GetBooking(booking.external_id, booking.customer_id, booking.booking_key)
+        )
+    ).status == "cancelled"
 
 
 @pytest.mark.asyncio
 async def test_unknown_external_id_raises_booking_not_found():
     with pytest.raises(BookingNotFound):
-        await _adapter().get_booking("unknown")
+        await _adapter().get_booking(GetBooking("unknown", "customer-1", uuid4()))
+
+
+@pytest.mark.asyncio
+async def test_trusted_ownership_mismatch_is_rejected_before_mutation():
+    adapter = _adapter()
+    booking = await adapter.create_booking(_create_command(customer_id="owner"))
+
+    with pytest.raises(BookingNotFound):
+        await adapter.get_booking(
+            GetBooking(booking.external_id, "other-owner", booking.booking_key)
+        )
+    with pytest.raises(BookingNotFound):
+        await adapter.cancel_booking(
+            CancelBooking(
+                external_id=booking.external_id,
+                customer_id="owner",
+                booking_key=uuid4(),
+                idempotency_key="cancel-with-other-key",
+            )
+        )
+
+    assert await adapter.get_booking(
+        GetBooking(booking.external_id, "owner", booking.booking_key)
+    ) == booking
 
 
 def test_slot_query_rejects_naive_datetimes():
