@@ -74,7 +74,7 @@ In a unique Compose namespace, generate one-time process-only PostgreSQL/Redis/R
 
 Expected: `472 passed`, skips `0`, `0006_yclients_booking_key (head)`, no leaked secret values.
 
-- [ ] **Step 2: Build and verify the Git bundle**
+- [x] **Step 2: Build and verify the Git bundle**
 
 Run:
 
@@ -203,3 +203,4 @@ Status: in progress.
 - Fresh local gate: no-cache test image, `472 passed in 332.93s`, skips `0`; standalone task-prefixed migration image reached `0006_yclients_booking_key (head)`.
 - Local cleanup: full-suite namespace `0/0/0/0`; corrected task-prefixed migration namespace/image `0/0/0/0`.
 - Local isolation note: the first standalone migration command omitted explicit `MIGRATION_IMAGE` and rebuilt the pre-existing local tag `moroz-i-solntse-migrate:local`. No shared container used it; the prior image ID was not recoverable (`dangling=0`), so no blind retag/delete was attempted. The migration gate was repeated with an exact task-prefixed image and clean teardown.
+- Candidate bundle: complete-history Git bundle, head `b5ce49dd405bec817826e6e519effa6218329639`, SHA-256 `0495d183e0f4d230bd859e420bc7164453bd2929946b4bfd73e22e8fe8cd2805`, size `2178684` bytes, `git bundle verify` exit `0`.
