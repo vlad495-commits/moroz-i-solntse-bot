@@ -61,6 +61,8 @@ class FakeBackend:
         failure: tuple[str, Exception] | None = None,
         slots=None,
         created: ExternalBooking | None = None,
+        final_status: str = "cancelled",
+        reconciliation: dict[str, int] | None = None,
     ):
         self.calls: list[str] = []
         self.commands: list[object] = []
@@ -68,6 +70,11 @@ class FakeBackend:
         self.slots = slots or [_slot("slot-a", 48), _slot("slot-b", 72)]
         self.current = self.slots[0]
         self.created = created
+        self.final_status = final_status
+        self.reconciliation = reconciliation or {
+            "matches": 1,
+            "active_matches": 0,
+        }
 
     def _call(self, name: str) -> None:
         self.calls.append(name)
@@ -106,7 +113,7 @@ class FakeBackend:
         assert command.customer_id == f"smoke-{RUN_ID.hex}"
         assert command.booking_key == RUN_ID
         if name == "get_cancelled_booking":
-            return _booking(self.current, status="cancelled")
+            return _booking(self.current, status=self.final_status)
         return _booking(self.current)
 
     async def reschedule_booking(self, command):
@@ -130,7 +137,7 @@ class FakeBackend:
         assert booking_key == RUN_ID
         assert starts_at == self.slots[0].starts_at
         assert ends_at == self.slots[1].starts_at
-        return {"matches": 1, "active_matches": 0}
+        return self.reconciliation
 
 
 @pytest.mark.parametrize(
@@ -418,6 +425,39 @@ async def test_final_not_found_is_accepted_as_deleted_evidence() -> None:
     assert result.exit_code == 0
     assert result.summary["final_state"] == "deleted"
     assert backend.calls[-1] == "reconcile_booking_key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("final_status", "reconciliation"),
+    [
+        ("confirmed", {"matches": 1, "active_matches": 0}),
+        ("cancelled", {"matches": 0, "active_matches": 0}),
+        ("cancelled", {"matches": 2, "active_matches": 0}),
+        ("cancelled", {"matches": 1, "active_matches": 1}),
+    ],
+)
+async def test_post_cancel_contradiction_requires_manual_review_without_new_mutation(
+    final_status: str,
+    reconciliation: dict[str, int],
+) -> None:
+    backend = FakeBackend(
+        final_status=final_status,
+        reconciliation=reconciliation,
+    )
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert result.summary["manual_review_required"] is True
+    assert backend.calls.count("create_booking") == 1
+    assert backend.calls.count("reschedule_booking") == 1
+    assert backend.calls.count("cancel_booking") == 1
 
 
 class FakeHttp:

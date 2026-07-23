@@ -284,6 +284,8 @@ async def run_smoke(
         _record_unknown_metadata(summary, error)
     except _SmokeFailure as error:
         summary["error"] = str(error)
+        if cancel_confirmed:
+            summary["manual_review_required"] = True
     except (BookingNotFound, BookingTemporaryError, SlotUnavailable):
         summary["error"] = "definite_provider_failure"
     except Exception:
