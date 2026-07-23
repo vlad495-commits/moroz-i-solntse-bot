@@ -11,10 +11,13 @@ DOCUMENTS = [
 ]
 
 
-def test_official_compose_commands_use_parent_env_file():
+def test_official_compose_commands_use_approved_env_file():
     for path in DOCUMENTS:
         text = path.read_text(encoding="utf-8")
-        assert not re.search(r"docker compose(?! --env-file \.\./\.env)", text), path
+        assert not re.search(
+            r"docker compose(?! --env-file \.\./(?:\.env|tmp/compose-empty\.env)(?:\s|$))",
+            text,
+        ), path
 
 
 def test_release_checkpoints_do_not_start_telegram_polling():
