@@ -1,34 +1,49 @@
-# Task 4 report — exact-key sandbox smoke
+# Task 4 report — shared SecurityPipeline
 
-## Commands and counts
+Base HEAD: `c9ab47417da9d59218d2f45a013cbbce7fa009ef`
 
-- RED: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-red --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py -q` → `5 failed, 22 passed`.
-- GREEN: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-green --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/unit/test_runtime_logging_policy.py -q` → `32 passed`.
-- Static privacy check → `privacy legacy=0 schema_disclosure=0` for the smoke source and `_empty_summary` output schema.
+## Delivered
+
+- Added the shared in-process `SecurityPipeline`.
+- Added local zero-call block, stop, rate-limit and medical escalation results.
+- Added invocation-only masking for allowed history and current input before
+  external guard/answer requests.
+- Added strict masked guard handling, deterministic route metadata, source-owned
+  output validation, one bounded answer retry and current-turn-only restore.
+- Added exact usage aggregation across actual guard/answer responses.
+- Wired legacy `generate_response` and production `init_llm` to the shared
+  primary/reserve SDK gateway while preserving prompt hot reload.
+- Kept the owned prompt, route metadata and validator retry code in one
+  machine-owned privileged system block for OpenAI/Anthropic compatibility.
+
+## TDD and Docker evidence
+
+- Two pre-build invocation errors were root-caused before implementation:
+  fallback cwd resolution and an incomplete process-only Redis credential pair.
+  Neither created persistent resources; both are recorded safely in changelog.
+- Fresh RED: no-cache build exit `0`; pytest collection exit `2` on the expected
+  missing `moroz.security.pipeline`; cleanup `0/0/0/0`.
+- First GREEN: `258 passed / 1 failed`; the only failure was a hard-coded
+  placeholder ordinal in the test. One session correctly assigned the current
+  email after the history email. The assertion was corrected without production
+  changes.
+- Corrected gate: `259 passed / 0 failed`; compile exit `0`; cleanup
+  `0/0/0/0`.
+- Requirements audit added a focused multiple-system regression. RED was
+  `2 failed / 19 passed`, proving the existing request could let Anthropic keep
+  metadata instead of the owned prompt.
+- Final fresh no-cache gate after the source fix: `259 passed / 0 failed`,
+  compile exit `0`, build/test/compile/cleanup/image-removal exits all `0`,
+  remaining containers/volumes/networks/images `0/0/0/0`.
+- Task-local empty env-file was removed.
 
 ## Safety
 
-- Only Docker test profile, local fakes and synthetic values were used. No live YCLIENTS, `.env` or credentials were read or emitted.
-- One UUID is passed through create/get/reschedule/get/cancel. Reconciliation uses only exact canonical `custom_fields.moroz_booking_key`; `api_id` and structural similarity are ignored.
-- Output has no provider record ID and accepts only stage/count/boolean gates plus allowlisted unknown kind/status.
-
-## Cleanup
-
-- `moroz-ownership-task4-red`: `containers=0 volumes=0 networks=0 images=0`.
-- `moroz-ownership-task4-green`: `containers=0 volumes=0 networks=0 images=0`.
-- Ignored `tmp/compose-empty.env` was removed.
-
-## Commit
-
-`test: sandbox smoke использует moroz booking key`
+- Tests used scripted in-memory gateways only; no provider call was made.
+- No raw fixture, mapping, provider response, endpoint, credential or exception
+  message is included in this report or changelog evidence.
+- No staging/production mutation, push or merge was performed.
 
 ## Concerns
 
-Local implementation is complete. Live completion remains blocked until the branch field `moroz_booking_key` exists, separate cleanup consent is granted for the one pre-design active synthetic record, and a new lifecycle smoke is explicitly consented. No live smoke was run.
-
-## Review fix loop
-
-- RED: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-review-red --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py -q` → `4 failed, 29 passed`.
-- GREEN: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-review-green --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/unit/test_runtime_logging_policy.py -q` → `38 passed`.
-- Cleanup: both review namespaces reached `containers=0 volumes=0 networks=0 images=0`; the ignored temp env was removed.
-- Fix: invalid create results cannot trigger cleanup cancellation. Missing `custom_fields` remains unrelated; present non-mapping fields and exact-key records with absent/non-boolean `deleted` fail closed.
+- None within Task 4 scope.

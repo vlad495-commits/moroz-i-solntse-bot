@@ -17,6 +17,14 @@ from types import SimpleNamespace
 
 from openai import AsyncOpenAI
 import redis.asyncio as aioredis
+from moroz.security.llm_gateway import (
+    LLMRequest,
+    LLMResponse,
+    PrimaryReserveGateway,
+    SDKProvider,
+)
+from moroz.security.pipeline import SecurityPipeline
+from moroz.security.validator import extract_structured_facts
 
 from config import (
     LLM_API_KEY,
@@ -27,6 +35,9 @@ from config import (
     LLM_REQUEST_TIMEOUT_SEC,
     PROMPT_RELOAD_CHANNEL,
     REDIS_URL,
+    RESERVE_API_KEY,
+    RESERVE_BASE_URL,
+    RESERVE_MODEL,
     SYSTEM_PROMPT_PATH,
 )
 
@@ -47,6 +58,8 @@ class LLMResult:
 _system_prompt: str = ""
 _primary_client = None
 _primary_kind: str = ""
+_pipeline: SecurityPipeline | None = None
+_pipeline_client = None
 
 
 def _detect_kind(model: str, base_url: str | None) -> str:
@@ -87,11 +100,14 @@ def _load_prompt() -> None:
         _system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
     else:
         _system_prompt = ""
+    if _pipeline is not None:
+        _pipeline.system_prompt = _system_prompt
+        _pipeline.facts = extract_structured_facts(_system_prompt)
 
 
 def init_llm() -> None:
     """Инициализировать LLM-клиент. Один раз при старте."""
-    global _primary_client, _primary_kind
+    global _primary_client, _primary_kind, _pipeline, _pipeline_client
 
     _load_prompt()
     if not _system_prompt:
@@ -105,6 +121,29 @@ def init_llm() -> None:
         raise RuntimeError("LLM_API_KEY не задан в .env")
     _primary_kind = _detect_kind(LLM_MODEL, LLM_BASE_URL)
     _primary_client = _create_client(LLM_API_KEY, LLM_BASE_URL, _primary_kind)
+    primary = SDKProvider(
+        _primary_client,
+        _primary_kind,
+        LLM_MODEL,
+        LLM_TEMPERATURE,
+        LLM_MAX_TOKENS,
+    )
+    reserve = None
+    if RESERVE_API_KEY and RESERVE_MODEL:
+        reserve_kind = _detect_kind(RESERVE_MODEL, RESERVE_BASE_URL)
+        reserve = SDKProvider(
+            _create_client(RESERVE_API_KEY, RESERVE_BASE_URL, reserve_kind),
+            reserve_kind,
+            RESERVE_MODEL,
+            LLM_TEMPERATURE,
+            LLM_MAX_TOKENS,
+        )
+    _pipeline = SecurityPipeline(
+        PrimaryReserveGateway(primary, reserve),
+        _system_prompt,
+        extract_structured_facts(_system_prompt),
+    )
+    _pipeline_client = _primary_client
     logger.info(
         "llm_client_created kind=%s model=%s custom_endpoint=%s",
         _primary_kind,
@@ -178,26 +217,9 @@ async def _invoke(messages: list[dict]) -> object:
     )
 
 
-async def generate_response(
-    user_message: str,
-    context: list[dict[str, str]],
-) -> LLMResult:
-    """Сгенерировать ответ LLM. Подкладывает системный промпт + контекст."""
-    if not _primary_client:
-        raise RuntimeError("LLM не инициализирован, вызовите init_llm()")
-
-    messages: list[dict] = []
-    if _system_prompt:
-        messages.append({"role": "system", "content": _system_prompt})
-    for msg in context:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": user_message})
-
-    response = await _invoke(messages)
-
+def _adapt_legacy_response(response: object) -> LLMResponse:
     text = response.choices[0].message.content or ""
     usage = response.usage
-
     cached = 0
     if hasattr(usage, "prompt_tokens_details"):
         details = usage.prompt_tokens_details
@@ -205,14 +227,48 @@ async def generate_response(
             cached = details.cached_tokens or 0
     elif hasattr(usage, "cached_tokens"):
         cached = usage.cached_tokens or 0
-
-    return LLMResult(
+    return LLMResponse(
         text=text,
         prompt_tokens=usage.prompt_tokens,
         completion_tokens=usage.completion_tokens,
         cached_tokens=cached,
         total_tokens=usage.total_tokens,
         model=response.model or LLM_MODEL,
+    )
+
+
+class _LegacyInvokeGateway:
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        messages = [dict(message) for message in request.messages]
+        if messages and messages[0]["role"] == "system":
+            messages[0]["content"] = messages[0]["content"].split(
+                "\n\nROUTE intents=",
+                1,
+            )[0]
+        response = await _invoke(messages)
+        return _adapt_legacy_response(response)
+
+
+async def generate_response(
+    user_message: str,
+    context: list[dict[str, str]],
+    recent_message_count: int = 1,
+) -> LLMResponse:
+    """Сгенерировать ответ через общий security pipeline."""
+    if not _primary_client:
+        raise RuntimeError("LLM не инициализирован, вызовите init_llm()")
+
+    active_pipeline = _pipeline
+    if active_pipeline is None or _pipeline_client is not _primary_client:
+        active_pipeline = SecurityPipeline(
+            _LegacyInvokeGateway(),
+            _system_prompt,
+            extract_structured_facts(_system_prompt),
+        )
+    return await active_pipeline.respond(
+        user_message,
+        context,
+        recent_message_count=recent_message_count,
     )
 
 
