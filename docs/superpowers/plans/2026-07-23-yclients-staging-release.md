@@ -86,15 +86,15 @@ git bundle list-heads tmp/yclients-staging-release.bundle
 
 Expected: bundle contains exact reviewed release commit; no `.env` or ignored temporary files.
 
-- [ ] **Step 3: Transfer via protected artifact handoff**
+- [x] **Step 3: Transfer via protected artifact handoff**
 
 Use only the deploy skill’s `scp`/`expect` wrapper. Copy bundle to `/opt/moroz-staging/tmp/releases/yclients-7e2ec278ed7/candidate.bundle`; never print host/password/path secrets. On VPS verify bundle, fetch it through Git, require `FETCH_HEAD` equals the expected full SHA, require clean staging checkout, then detached-checkout exact candidate.
 
-- [ ] **Step 4: Install only allowlisted YCLIENTS staging config**
+- [x] **Step 4: Install only allowlisted YCLIENTS staging config**
 
 Presence-check local `YCLIENTS_PARTNER_TOKEN`, `YCLIENTS_USER_TOKEN`, `YCLIENTS_COMPANY_ID`, `YCLIENTS_BASE_URL`, `YCLIENTS_TIMEZONE`, `YCLIENTS_TIMEOUT_SECONDS`, `YCLIENTS_TEST_SERVICE_ID` without values. Through suppressed `expect` stdin, atomically replace only these keys in protected server `.env`; verify mode/owner plus presence/count only.
 
-- [ ] **Step 5: Record Task 2 evidence and commit**
+- [x] **Step 5: Record Task 2 evidence and commit**
 
 Record exact source SHA, bundle digest, fresh test/migration/cleanup counts and server checkout boolean. Do not push.
 
@@ -208,3 +208,5 @@ Status: in progress.
 - Local isolation note: the first standalone migration command omitted explicit `MIGRATION_IMAGE` and rebuilt the pre-existing local tag `moroz-i-solntse-migrate:local`. No shared container used it; the prior image ID was not recoverable (`dangling=0`), so no blind retag/delete was attempted. The migration gate was repeated with an exact task-prefixed image and clean teardown.
 - Candidate bundle: complete-history Git bundle, head `b5ce49dd405bec817826e6e519effa6218329639`, SHA-256 `0495d183e0f4d230bd859e420bc7164453bd2929946b4bfd73e22e8fe8cd2805`, size `2178684` bytes, `git bundle verify` exit `0`.
 - Local evidence head after bundle record: `fca6d8d2ecc1d5b3769d51c7cc2e0af73a45627f`; bundle intentionally remains pinned to the verified source/evidence head above.
+- Protected handoff: server digest and `git bundle verify` match local evidence; Git fetched only from the bundle and checked out exact clean detached `b5ce49dd405bec817826e6e519effa6218329639`. Existing staging remained `6/6` healthy on previous images.
+- YCLIENTS config: the unique repo-local ignored env supplied Partner/User tokens, Company ID and Test Service ID; the three missing optional values use exact reviewed runtime defaults. Atomic stdin-only installation confirmed `7/7` keys, allowlist-only replacement and preserved owner/mode; no values were printed.
