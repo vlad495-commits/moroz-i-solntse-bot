@@ -9,7 +9,6 @@
 import argparse
 import asyncio
 import json
-import logging
 import sys
 from pathlib import Path
 
@@ -17,10 +16,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from llm import init_llm, generate_response  # noqa: E402
+from moroz.security.eval_gate import (  # noqa: E402
+    SecurityEvalResult,
+    is_critical_category,
+    security_gate,
+)
 from moroz.security.guardrails import GuardDecision, check_input  # noqa: E402
-
-logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
 
 EVAL_DIR = Path(__file__).resolve().parent
 
@@ -32,116 +33,145 @@ def _load_dataset(name: str) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _safe_case_id(case: dict, ordinal: int) -> int:
-    case_id = case.get("id")
-    if isinstance(case_id, int) and not isinstance(case_id, bool):
-        return case_id
-    return ordinal
+def _case_result(
+    case: dict,
+    passed: bool,
+    *,
+    default_category: str,
+) -> SecurityEvalResult:
+    category = str(case.get("category") or default_category)
+    return SecurityEvalResult(
+        passed=passed,
+        category=category,
+        critical=is_critical_category(
+            category,
+            explicit=case.get("critical")
+            if "critical" in case
+            else None,
+        ),
+    )
 
 
-async def _run_dataset() -> tuple[int, int]:
+def _print_batch(
+    name: str,
+    results: tuple[SecurityEvalResult, ...],
+    *,
+    status: str | None = None,
+) -> None:
+    passed = sum(result.passed for result in results)
+    failed = len(results) - passed
+    if status is None:
+        status = "empty" if not results else ("passed" if not failed else "failed")
+    print(
+        f"[{name}] total={len(results)} passed={passed} "
+        f"failed={failed} status={status}"
+    )
+
+
+async def _run_dataset() -> tuple[SecurityEvalResult, ...]:
     """Прогнать общий тестовый датасет (smoke + категории)."""
     try:
         cases = _load_dataset("dataset")
-    except Exception as error:
-        print(f"[dataset] status=error error_type={type(error).__name__}")
-        return 0, 1
+    except Exception:
+        results = (SecurityEvalResult(False, "dataset_error", False),)
+        _print_batch("dataset", results, status="error")
+        return results
     if not cases:
-        print("[dataset] dataset.json пустой — пропуск")
-        return 0, 0
+        _print_batch("dataset", ())
+        return ()
 
     try:
         init_llm()
-    except Exception as error:
-        print(f"[dataset] status=error error_type={type(error).__name__}")
-        return 0, len(cases)
-    passed = 0
-    failed = 0
+    except Exception:
+        results = tuple(
+            _case_result(case, False, default_category="general")
+            for case in cases
+        )
+        _print_batch("dataset", results, status="error")
+        return results
 
-    for ordinal, case in enumerate(cases, start=1):
-        case_id = _safe_case_id(case, ordinal)
-        input_text = case["input"]
-        expected_contains = case.get("expected_contains", [])
+    collected = []
+    for case in cases:
         try:
-            result = await generate_response(input_text, context=[])
-            response_text = result.text.lower()
-        except Exception as error:
-            print(
-                f"[dataset] case={case_id} status=error "
-                f"error_type={type(error).__name__}"
-            )
-            failed += 1
-            continue
+            expected = case.get("expected_contains") or []
+            forbidden = case.get("forbidden_keywords") or []
+            if not expected and not forbidden:
+                passed = False
+            else:
+                result = await generate_response(case["input"], context=[])
+                response_text = result.text.lower()
+                passed = all(
+                    value.lower() in response_text
+                    for value in expected
+                ) and not any(
+                    value.lower() in response_text
+                    for value in forbidden
+                )
+        except Exception:
+            passed = False
+        collected.append(
+            _case_result(case, passed, default_category="general")
+        )
 
-        # Проверка: все expected_contains должны быть в ответе
-        missing = [w for w in expected_contains if w.lower() not in response_text]
-        if missing:
-            print(
-                f"[dataset] case={case_id} status=failed "
-                f"missing_count={len(missing)}"
-            )
-            failed += 1
-        else:
-            print(f"[dataset] case={case_id} status=passed")
-            passed += 1
-
-    return passed, failed
+    results = tuple(collected)
+    _print_batch("dataset", results)
+    return results
 
 
-async def _run_adversarial() -> tuple[int, int]:
+async def _run_adversarial() -> tuple[SecurityEvalResult, ...]:
     """Прогнать jailbreak-атаки: проверяем что guardrails ловит."""
     try:
         cases = _load_dataset("adversarial_dataset")
-    except Exception as error:
-        print(f"[adversarial] status=error error_type={type(error).__name__}")
-        return 0, 1
+    except Exception:
+        results = (
+            SecurityEvalResult(False, "adversarial_error", True),
+        )
+        _print_batch("adversarial", results, status="error")
+        return results
     if not cases:
-        print("[adversarial] adversarial_dataset.json пустой — пропуск")
-        return 0, 0
+        _print_batch("adversarial", ())
+        return ()
 
-    passed = 0
-    failed = 0
-
-    for ordinal, case in enumerate(cases, start=1):
-        case_id = _safe_case_id(case, ordinal)
-        input_text = case["input"]
-        expected = case.get("expected", "input_blocked")
-
+    collected = []
+    llm_ready: bool | None = None
+    for case in cases:
         try:
+            input_text = case["input"]
             decision = check_input(input_text, recent_message_count=1)
             if not isinstance(decision, GuardDecision):
                 raise TypeError("guard decision must be typed")
-        except Exception as error:
-            print(
-                f"[adv] case={case_id} status=error "
-                f"error_type={type(error).__name__}"
-            )
-            failed += 1
-            continue
-        actually_blocked = decision.action == "block"
-
-        # input_blocked = guardrail должен сработать на входе
-        if expected == "input_blocked":
-            if actually_blocked:
-                print(f"[adv] case={case_id} status=blocked")
-                passed += 1
+            expected = case.get("expected", "input_blocked")
+            blocked = decision.action == "block"
+            if expected == "input_blocked":
+                passed = blocked
+            elif expected == "prompt_defense" and blocked:
+                passed = True
+            elif expected == "prompt_defense":
+                if llm_ready is None:
+                    try:
+                        init_llm()
+                    except Exception:
+                        llm_ready = False
+                    else:
+                        llm_ready = True
+                if llm_ready:
+                    response = await generate_response(input_text, context=[])
+                    passed = isinstance(response.text, str) and bool(
+                        response.text.strip()
+                    )
+                else:
+                    passed = False
             else:
-                print(f"[adv] case={case_id} status=missed")
-                failed += 1
-        # prompt_defense = guardrail может пропустить, но LLM должна не раскрыть промпт
-        elif expected == "prompt_defense":
-            if actually_blocked:
-                print(f"[adv] case={case_id} status=blocked")
-                passed += 1
-            else:
-                print(f"[adv] case={case_id} status=manual_review")
-                # Не считаем фейлом — output guardrail должен сработать
-                passed += 1
-        else:
-            print(f"[adv] case={case_id} status=unsupported")
-            failed += 1
+                passed = False
+        except Exception:
+            passed = False
+        collected.append(
+            _case_result(case, passed, default_category="jailbreak")
+        )
 
-    return passed, failed
+    results = tuple(collected)
+    _print_batch("adversarial", results)
+    return results
 
 
 async def main() -> int:
@@ -154,31 +184,23 @@ async def main() -> int:
     )
     args = parser.parse_args()
 
-    total_passed = 0
-    total_failed = 0
+    results: list[SecurityEvalResult] = []
 
     if args.only in (None, "adversarial"):
-        print("=== Adversarial-тесты (jailbreak) ===")
-        p, f = await _run_adversarial()
-        total_passed += p
-        total_failed += f
-        print(f"Adversarial: {p}/{p + f} прошли\n")
+        results.extend(await _run_adversarial())
 
     if args.only in (None, "dataset"):
-        print("=== Тестовый датасет ===")
-        p, f = await _run_dataset()
-        total_passed += p
-        total_failed += f
-        print(f"Dataset: {p}/{p + f} прошли\n")
+        results.extend(await _run_dataset())
 
-    total = total_passed + total_failed
-    if total == 0:
-        print("Нечего прогонять.")
-        return 0
-
-    pass_rate = (total_passed / total) * 100
-    print(f"=== ИТОГО: {total_passed}/{total} ({pass_rate:.1f}%) ===")
-    return 0 if total_failed == 0 else 1
+    gate = security_gate(results)
+    status = "passed" if gate.ok else "failed"
+    print(
+        f"[gate] total={gate.total} passed={gate.passed} "
+        f"failed={gate.failed} critical_total={gate.critical_total} "
+        f"critical_failed={gate.critical_failed} "
+        f"pass_rate={gate.pass_rate:.4f} status={status}"
+    )
+    return 0 if gate.ok else 1
 
 
 if __name__ == "__main__":

@@ -658,6 +658,7 @@ select:focus {
 .badge-output_blocked,
 .badge-verdict-fail,
 .badge-status-error,
+.badge-status-failed,
 .badge-review-delete {
     background: rgba(255, 59, 31, 0.12);
     color: #A82717;

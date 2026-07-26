@@ -1,5 +1,6 @@
 import asyncio
 import ast
+import hashlib
 import json
 import logging
 import subprocess
@@ -13,6 +14,11 @@ import eval_routes
 import eval_runner
 from eval import run_evals
 from moroz.security.guardrails import GuardDecision
+from moroz.security.eval_gate import (
+    SecurityEvalResult,
+    is_critical_category,
+    security_gate,
+)
 from moroz.security.llm_gateway import LLMResponse
 
 
@@ -52,6 +58,12 @@ _NON_PRODUCTION_DIRECTORIES = frozenset(
         "tmp",
         "temp",
     }
+)
+_DATASET_LEGACY_DIGEST = (
+    "47f2ee6796c9ebac751983d52bee95f90b70e5d6972457e380957c73f3b1154f"
+)
+_ADVERSARIAL_LEGACY_DIGEST = (
+    "b567fc192600b1d134e385cf01047b2a12a6b774f006d0ec3a4c3cb8daf01f90"
 )
 
 
@@ -106,6 +118,30 @@ def _production_sdk_call_sites(root: Path) -> set[tuple[str, str]]:
                 (relative.as_posix(), _qualified_scope(node, parents))
             )
     return found
+
+
+def _legacy_payload_digest(
+    cases: list[dict],
+    *,
+    max_id: int,
+    excluded: frozenset[str],
+) -> str:
+    payload = [
+        {
+            key: value
+            for key, value in case.items()
+            if key not in excluded
+        }
+        for case in cases
+        if case["id"] <= max_id
+    ]
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _security_result(
@@ -216,6 +252,49 @@ async def test_run_eval_set_uses_security_gate_status_and_count_only_log(
     assert category_sentinel not in repr(finished)
 
 
+@pytest.mark.asyncio
+async def test_run_eval_set_derives_critical_from_persisted_category(
+    monkeypatch,
+):
+    finished = []
+    cases = [
+        {
+            "id": index,
+            "category": "general" if index < 20 else "prompt_safety",
+            "passed": index < 20,
+        }
+        for index in range(1, 21)
+    ]
+
+    async def list_cases():
+        return cases
+
+    async def run_case(case, _run_id):
+        return {
+            "verdict": "pass" if case["passed"] else "fail",
+        }
+
+    async def update_run_progress(*_args):
+        return None
+
+    async def finish_run(*args, **kwargs):
+        finished.append((args, kwargs))
+
+    monkeypatch.setattr(eval_runner, "_init_clients", lambda: None)
+    monkeypatch.setattr(eval_runner.evdb, "list_cases", list_cases)
+    monkeypatch.setattr(eval_runner, "run_case", run_case)
+    monkeypatch.setattr(
+        eval_runner.evdb,
+        "update_run_progress",
+        update_run_progress,
+    )
+    monkeypatch.setattr(eval_runner.evdb, "finish_run", finish_run)
+
+    await eval_runner.run_eval_set(55, cases=None)
+
+    assert finished == [((55, 19, 1), {"status": "failed"})]
+
+
 def test_security_datasets_preserve_existing_cases_and_cover_critical_matrix():
     eval_dir = Path("/workspace/llm/eval")
     dataset = json.loads(
@@ -257,6 +336,32 @@ def test_security_datasets_preserve_existing_cases_and_cover_critical_matrix():
         if case["id"] <= 20
     } == {"input_blocked", "prompt_defense"}
 
+    assert {
+        case["id"]
+        for case in dataset
+        if case["id"] <= 53 and case["critical"]
+    } == {
+        2,
+        3,
+        12,
+        13,
+        14,
+        18,
+        19,
+        20,
+        23,
+        24,
+        25,
+        36,
+        42,
+        46,
+    }
+    assert all(
+        case["critical"] == is_critical_category(case["category"])
+        for case in dataset
+        if case["id"] <= 53
+    )
+
     critical_categories = {
         case["category"]
         for case in dataset + adversarial
@@ -281,6 +386,45 @@ def test_security_datasets_preserve_existing_cases_and_cover_critical_matrix():
         "nonretryable_provider",
         "nontext_voice",
     } <= critical_categories
+
+    assert _legacy_payload_digest(
+        dataset,
+        max_id=53,
+        excluded=frozenset({"critical"}),
+    ) == _DATASET_LEGACY_DIGEST
+    assert _legacy_payload_digest(
+        adversarial,
+        max_id=20,
+        excluded=frozenset({"category", "critical"}),
+    ) == _ADVERSARIAL_LEGACY_DIGEST
+
+    mutated = json.loads(json.dumps(dataset, ensure_ascii=False))
+    mutated[0]["expected_answer"] += " mutation"
+    assert _legacy_payload_digest(
+        mutated,
+        max_id=53,
+        excluded=frozenset({"critical"}),
+    ) != _DATASET_LEGACY_DIGEST
+
+    mutated_adversarial = json.loads(
+        json.dumps(adversarial, ensure_ascii=False)
+    )
+    mutated_adversarial[0]["expected"] = "mutation"
+    assert _legacy_payload_digest(
+        mutated_adversarial,
+        max_id=20,
+        excluded=frozenset({"category", "critical"}),
+    ) != _ADVERSARIAL_LEGACY_DIGEST
+
+
+def test_failed_status_badge_uses_existing_red_status_group():
+    styles = Path("/workspace/admin/static/styles.css").read_text(
+        encoding="utf-8"
+    )
+    start = styles.index(".badge-input_blocked")
+    selectors = styles[start:styles.index("{", start)]
+
+    assert ".badge-status-failed" in selectors
 
 
 @pytest.mark.asyncio
@@ -402,8 +546,22 @@ async def test_eval_cli_dataset_output_contains_only_safe_metadata(
         run_evals,
         "_load_dataset",
         lambda _name: [
-            {"id": "unsafe-id", "input": input_sentinel, "expected_contains": []},
-            {"id": 62, "input": input_sentinel, "expected_contains": [missing_sentinel]},
+            {
+                "id": "unsafe-id",
+                "category": "general",
+                "critical": False,
+                "input": input_sentinel,
+                "expected_contains": [],
+                "forbidden_keywords": [],
+            },
+            {
+                "id": 62,
+                "category": "prompt_safety",
+                "critical": True,
+                "input": input_sentinel,
+                "expected_contains": [missing_sentinel],
+                "forbidden_keywords": [],
+            },
         ],
     )
     monkeypatch.setattr(run_evals, "init_llm", lambda: None)
@@ -418,11 +576,16 @@ async def test_eval_cli_dataset_output_contains_only_safe_metadata(
 
     monkeypatch.setattr(run_evals, "generate_response", generate_response)
 
-    assert await run_evals._run_dataset() == (0, 2)
+    results = await run_evals._run_dataset()
     output = capsys.readouterr().out
 
-    assert "case=1 status=error error_type=CliProviderError" in output
-    assert "case=62 status=failed missing_count=1" in output
+    assert [(result.passed, result.critical) for result in results] == [
+        (False, False),
+        (False, True),
+    ]
+    assert "[dataset] total=2 passed=0 failed=2 status=failed" in output
+    assert "case=" not in output
+    assert "error_type=" not in output
     assert provider_sentinel not in output
     assert input_sentinel not in output
     assert missing_sentinel not in output
@@ -451,16 +614,226 @@ async def test_eval_cli_adversarial_output_hides_dataset_and_guardrail_values(
                 "input": input_sentinel,
                 "technique": technique_sentinel,
                 "expected": "input_blocked",
+                "category": "jailbreak",
+                "critical": True,
             }
         ],
     )
-    assert await run_evals._run_adversarial() == (1, 0)
+    results = await run_evals._run_adversarial()
     output = capsys.readouterr().out
 
-    assert "case=71 status=blocked" in output
+    assert results == (
+        SecurityEvalResult(
+            passed=True,
+            category="jailbreak",
+            critical=True,
+        ),
+    )
+    assert (
+        "[adversarial] total=1 passed=1 failed=0 status=passed"
+        in output
+    )
+    assert "case=" not in output
     assert input_sentinel not in output
     assert technique_sentinel not in output
     assert calls == [(input_sentinel, 1)]
+
+
+@pytest.mark.asyncio
+async def test_eval_cli_dataset_enforces_forbidden_keywords(
+    monkeypatch,
+    capsys,
+):
+    expected_sentinel = "expected-sentinel"
+    forbidden_sentinel = "forbidden-sentinel"
+    monkeypatch.setattr(
+        run_evals,
+        "_load_dataset",
+        lambda _name: [
+            {
+                "id": 72,
+                "category": "prompt_safety",
+                "critical": True,
+                "input": "safe synthetic input",
+                "expected_contains": [expected_sentinel],
+                "forbidden_keywords": [forbidden_sentinel],
+            }
+        ],
+    )
+    monkeypatch.setattr(run_evals, "init_llm", lambda: None)
+
+    async def generate_response(_input, context):
+        assert context == []
+        return SimpleNamespace(
+            text=f"{expected_sentinel} {forbidden_sentinel}"
+        )
+
+    monkeypatch.setattr(run_evals, "generate_response", generate_response)
+
+    results = await run_evals._run_dataset()
+    output = capsys.readouterr().out
+
+    assert results == (
+        SecurityEvalResult(
+            passed=False,
+            category="prompt_safety",
+            critical=True,
+        ),
+    )
+    assert "[dataset] total=1 passed=0 failed=1 status=failed" in output
+    assert expected_sentinel not in output
+    assert forbidden_sentinel not in output
+
+
+@pytest.mark.asyncio
+async def test_eval_cli_dataset_rejects_vacuous_response_assertions(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setattr(
+        run_evals,
+        "_load_dataset",
+        lambda _name: [
+            {
+                "id": 66,
+                "category": "primary_reserve",
+                "critical": True,
+                "input": "synthetic provider policy case",
+                "expected_contains": [],
+                "forbidden_keywords": [],
+            }
+        ],
+    )
+    monkeypatch.setattr(run_evals, "init_llm", lambda: None)
+    generated = []
+
+    async def generate_response(_input, context):
+        assert context == []
+        generated.append(True)
+        return SimpleNamespace(text="arbitrary successful response")
+
+    monkeypatch.setattr(run_evals, "generate_response", generate_response)
+
+    results = await run_evals._run_dataset()
+    output = capsys.readouterr().out
+
+    assert results == (
+        SecurityEvalResult(
+            passed=False,
+            category="primary_reserve",
+            critical=True,
+        ),
+    )
+    assert generated == []
+    assert "[dataset] total=1 passed=0 failed=1 status=failed" in output
+
+
+@pytest.mark.asyncio
+async def test_eval_cli_prompt_defense_requires_output_pipeline(
+    monkeypatch,
+    capsys,
+):
+    input_sentinel = "prompt-defense-input-sentinel"
+    generated = []
+    initialized = []
+
+    def check_input(text, *, recent_message_count):
+        assert (text, recent_message_count) == (input_sentinel, 1)
+        return GuardDecision("allow", "safe")
+
+    async def generate_response(text, context):
+        assert initialized == [True]
+        generated.append((text, context))
+        return SimpleNamespace(text="safe validated response")
+
+    monkeypatch.setattr(run_evals, "check_input", check_input)
+    monkeypatch.setattr(
+        run_evals,
+        "init_llm",
+        lambda: initialized.append(True),
+    )
+    monkeypatch.setattr(run_evals, "generate_response", generate_response)
+    monkeypatch.setattr(
+        run_evals,
+        "_load_dataset",
+        lambda _name: [
+            {
+                "id": 73,
+                "category": "jailbreak",
+                "critical": True,
+                "input": input_sentinel,
+                "expected": "prompt_defense",
+            }
+        ],
+    )
+
+    results = await run_evals._run_adversarial()
+    output = capsys.readouterr().out
+
+    assert results == (
+        SecurityEvalResult(
+            passed=True,
+            category="jailbreak",
+            critical=True,
+        ),
+    )
+    assert generated == [(input_sentinel, [])]
+    assert initialized == [True]
+    assert (
+        "[adversarial] total=1 passed=1 failed=0 status=passed"
+        in output
+    )
+    assert "manual_review" not in output
+    assert input_sentinel not in output
+
+
+@pytest.mark.parametrize(
+    ("results", "expected_exit"),
+    [
+        (
+            tuple(
+                [SecurityEvalResult(True, "general", False)] * 19
+                + [SecurityEvalResult(False, "general", False)]
+            ),
+            0,
+        ),
+        (
+            tuple(
+                [SecurityEvalResult(True, "general", False)] * 19
+                + [SecurityEvalResult(False, "prompt_safety", True)]
+            ),
+            1,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_eval_cli_main_uses_shared_security_gate(
+    monkeypatch,
+    capsys,
+    results,
+    expected_exit,
+):
+    async def run_dataset():
+        return results
+
+    monkeypatch.setattr(run_evals, "_run_dataset", run_dataset)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_evals", "--only", "dataset"],
+    )
+
+    assert await run_evals.main() == expected_exit
+    output = capsys.readouterr().out
+    gate = security_gate(results)
+    status = "passed" if gate.ok else "failed"
+    assert (
+        f"[gate] total={gate.total} passed={gate.passed} "
+        f"failed={gate.failed} critical_total={gate.critical_total} "
+        f"critical_failed={gate.critical_failed} "
+        f"pass_rate={gate.pass_rate:.4f} status={status}"
+        in output
+    )
 
 
 @pytest.mark.parametrize(
@@ -482,9 +855,17 @@ async def test_eval_cli_dataset_load_error_is_nonzero_and_redacted(
 
     monkeypatch.setattr(run_evals, "_load_dataset", fail_load)
 
-    assert await run_evals._run_dataset() == (0, 1)
+    results = await run_evals._run_dataset()
     output = capsys.readouterr().out
-    assert f"status=error error_type={type(error).__name__}" in output
+    assert results == (
+        SecurityEvalResult(
+            passed=False,
+            category="dataset_error",
+            critical=False,
+        ),
+    )
+    assert "[dataset] total=1 passed=0 failed=1 status=error" in output
+    assert "error_type=" not in output
     assert sentinel not in output
 
 
@@ -499,9 +880,20 @@ async def test_eval_cli_adversarial_load_error_is_nonzero_and_redacted(
 
     monkeypatch.setattr(run_evals, "_load_dataset", fail_load)
 
-    assert await run_evals._run_adversarial() == (0, 1)
+    results = await run_evals._run_adversarial()
     output = capsys.readouterr().out
-    assert "status=error error_type=CliDatasetError" in output
+    assert results == (
+        SecurityEvalResult(
+            passed=False,
+            category="adversarial_error",
+            critical=True,
+        ),
+    )
+    assert (
+        "[adversarial] total=1 passed=0 failed=1 status=error"
+        in output
+    )
+    assert "error_type=" not in output
     assert sentinel not in output
 
 
@@ -519,9 +911,17 @@ async def test_eval_cli_init_failure_is_nonzero_and_redacted(monkeypatch, capsys
 
     monkeypatch.setattr(run_evals, "init_llm", fail_init)
 
-    assert await run_evals._run_dataset() == (0, 1)
+    results = await run_evals._run_dataset()
     output = capsys.readouterr().out
-    assert "status=error error_type=CliProviderError" in output
+    assert results == (
+        SecurityEvalResult(
+            passed=False,
+            category="general",
+            critical=False,
+        ),
+    )
+    assert "[dataset] total=1 passed=0 failed=1 status=error" in output
+    assert "error_type=" not in output
     assert sentinel not in output
 
 
@@ -776,7 +1176,9 @@ raise SystemExit(asyncio.run(run_evals.main()))
     )
 
     assert result.returncode == 1
-    assert "status=error error_type=DatasetError" in result.stdout
+    assert "[dataset] total=1 passed=0 failed=1 status=error" in result.stdout
+    assert "[gate] total=1 passed=0 failed=1" in result.stdout
+    assert "error_type=" not in result.stdout
     assert sentinel not in result.stdout
     assert sentinel not in result.stderr
 
@@ -785,5 +1187,8 @@ raise SystemExit(asyncio.run(run_evals.main()))
 async def test_eval_cli_empty_dataset_is_explicit_noop(monkeypatch, capsys):
     monkeypatch.setattr(run_evals, "_load_dataset", lambda _name: [])
 
-    assert await run_evals._run_dataset() == (0, 0)
-    assert "пустой" in capsys.readouterr().out
+    assert await run_evals._run_dataset() == ()
+    assert (
+        "[dataset] total=0 passed=0 failed=0 status=empty"
+        in capsys.readouterr().out
+    )
