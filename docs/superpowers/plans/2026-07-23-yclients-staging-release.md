@@ -102,11 +102,11 @@ Record exact source SHA, bundle digest, fresh test/migration/cleanup counts and 
 
 **Produces:** distinct candidate images running on expanded schema with safe staging/YCLIENTS evidence.
 
-- [ ] **Step 1: Build immutable candidate**
+- [x] **Step 1: Build immutable candidate**
 
 Set `STAGING_IMAGE_TAG=yclients-7e2ec278ed7`. Validate merged base+staging Compose, build `bot worker migrate`, inspect non-root users and exact IDs, and require candidate bot/worker IDs differ from their previous counterparts. Save candidate images to `/opt/moroz-staging/tmp/releases/yclients-7e2ec278ed7/candidate-images.tar` with SHA-256.
 
-- [ ] **Step 2: Apply only forward migration**
+- [x] **Step 2: Apply only forward migration**
 
 Keep stores running and execute only:
 
@@ -118,19 +118,19 @@ docker compose --env-file ../.env -p moroz-staging \
 
 Read back exact `0006_yclients_booking_key (head)`. No downgrade command exists in this task.
 
-- [ ] **Step 3: Start candidate app only**
+- [x] **Step 3: Start candidate app only**
 
 Run `up -d --no-build --wait --wait-timeout 120 bot worker`. Verify per-service configured refs/IDs equal candidate IDs, app health, stores/Caddy unchanged, loopback OpenAPI, webhook status and HTTPS `404/403/403`.
 
-- [ ] **Step 4: Run minimal safe Telegram smoke and log scan**
+- [x] **Step 4: Run minimal safe Telegram smoke and log scan**
 
 Reuse the existing synthetic staging smoke with a fresh snapshot/ID; require exact inbox/LLM/sent `1/1/1`. Pipe raw bot/worker/Caddy logs directly to `staging-smoke scan-logs`; require all aggregate counters zero.
 
-- [ ] **Step 5: Run read-only YCLIENTS readiness**
+- [x] **Step 5: Run read-only YCLIENTS readiness**
 
 Run an ignored temporary script inside the candidate `yclients-smoke` image with overridden entrypoint. It may call only GET services, slots and record custom-fields; output only service/staff/slot counts, exact `moroz_booking_key` match count and boolean field properties. No POST/PUT/DELETE and no record lifecycle.
 
-- [ ] **Step 6: Record Task 3 evidence and commit**
+- [x] **Step 6: Record Task 3 evidence and commit**
 
 Record candidate IDs/archive digest, migration, app/store health, webhook/HTTPS, smoke/log counts and read-only YCLIENTS counts/booleans.
 
@@ -210,3 +210,7 @@ Status: in progress.
 - Local evidence head after bundle record: `fca6d8d2ecc1d5b3769d51c7cc2e0af73a45627f`; bundle intentionally remains pinned to the verified source/evidence head above.
 - Protected handoff: server digest and `git bundle verify` match local evidence; Git fetched only from the bundle and checked out exact clean detached `b5ce49dd405bec817826e6e519effa6218329639`. Existing staging remained `6/6` healthy on previous images.
 - YCLIENTS config: the unique repo-local ignored env supplied Partner/User tokens, Company ID and Test Service ID; the three missing optional values use exact reviewed runtime defaults. Atomic stdin-only installation confirmed `7/7` keys, allowlist-only replacement and preserved owner/mode; no values were printed.
+- Candidate artifacts: tag `yclients-7e2ec278ed7`; exact bot/worker/migrate IDs `sha256:6f3b3f4ef2efbf3756ea91bbce1f04799f7ba82bd37f9277fd59cd6370a74f1b`, `sha256:f779b4a62d7170dd29b8acc7205f4684302eade4d42975744370d0094908ebdf`, and `sha256:4f1dd9c093f3220727f636921f483150bfb48db508d4f4b0fe8b8c3f093f4eb2`. Users are `appuser/appuser/appuser`; bot/worker distinction from previous is `true/true`; image/history scan is `0/0/0/0`. Candidate archive is `99995648` bytes with SHA-256 `a08877037c3c3440f4090576d928e1941fddcbc1d1fcff2cb3f687d466a36fcf`.
+- Forward migration and rollout: schema reached exact `0006_yclients_booking_key`; no downgrade command ran. Candidate bot/worker are `2/2` healthy, all four store/Caddy IDs and StartedAt values match the pre-migration baseline, loopback OpenAPI and webhook status pass, HTTPS is `404/403/403`, and staging is `6/6` healthy.
+- Candidate smoke: fresh synthetic Telegram deltas are exact `1/1/1`; aggregate secret/traceback/PII/raw log counters are `0/0/0/0`.
+- GET-only YCLIENTS readiness: services/staff/slots `1/1/312`, exact `moroz_booking_key` field matches `1`, text/edit/hidden properties all true, `18` calls and methods `GET_ONLY`. No provider lifecycle mutation ran.
