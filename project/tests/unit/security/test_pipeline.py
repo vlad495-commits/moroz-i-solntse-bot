@@ -34,6 +34,9 @@ class CapturingGateway:
             return response(event)
         return event
 
+    def __repr__(self) -> str:
+        return f"CapturingGateway(requests={self.requests!r})"
+
 
 def response(
     text: str = "Безопасный ответ",
@@ -324,8 +327,29 @@ async def test_cancellation_propagates_unchanged() -> None:
     assert raised.value is cancellation
 
 
-def test_pipeline_repr_does_not_retain_raw_invocation_data() -> None:
-    raw = "raw-user-sentinel@example.ru"
-    instance = pipeline(CapturingGateway())
+@pytest.mark.asyncio
+async def test_pipeline_does_not_retain_or_expose_raw_invocation_pii() -> None:
+    current = "privacy-current-sentinel@example.ru"
+    history = "privacy-history-sentinel@example.ru"
+    gateway = CapturingGateway("Безопасный ответ")
+    instance = pipeline(gateway)
 
-    assert raw not in repr(instance)
+    await instance.respond(
+        f"Моя почта {current}",
+        [{"role": "user", "content": f"Ранее указывал {history}"}],
+    )
+
+    state = repr(vars(instance))
+    instance_repr = repr(instance)
+    external = repr(gateway.requests)
+    assert gateway.requests
+    assert current not in state
+    assert history not in state
+    assert current not in instance_repr
+    assert history not in instance_repr
+    assert current not in external
+    assert history not in external
+    for request in gateway.requests:
+        assert current not in repr(request)
+        assert history not in repr(request)
+    assert external.count("<PII_EMAIL_") >= 2
