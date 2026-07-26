@@ -15,7 +15,17 @@ from moroz.messaging.models import IncomingMessage
 from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
-from moroz.security.pipeline import INPUT_BLOCK_REPLY, SecurityPipeline
+from moroz.security.llm_gateway import (
+    LLMResponse,
+    NonRetryableLLMError,
+    PrimaryReserveGateway,
+    RetryableLLMError,
+)
+from moroz.security.pipeline import (
+    INPUT_BLOCK_REPLY,
+    SAFE_OUTPUT_FALLBACK,
+    SecurityPipeline,
+)
 from moroz.security.validator import extract_structured_facts
 from webhook import create_app
 from worker.main import MessageTaskHandler, PipelinePump
@@ -54,6 +64,25 @@ class ForbiddenGateway:
     async def complete(self, _request):
         self.calls += 1
         raise AssertionError("local security decision must not call a provider")
+
+
+class ScriptedProvider:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = 0
+        self.requests = []
+
+    async def complete(self, request):
+        self.calls += 1
+        self.requests.append(request)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def _response(text: str = "Безопасный ответ.") -> LLMResponse:
+    return LLMResponse(text, 1, 1, 0, 2, "scripted")
 
 
 def _incoming(update_id: str) -> IncomingMessage:
@@ -218,3 +247,59 @@ async def test_pre_consent_update_has_no_inbox_history_security_or_provider_call
     assert response.status_code == 200
     assert inbox == history == process_tasks == 0
     assert security_calls == provider.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("user_message", "placeholder"),
+    [
+        ("Телефон +7 999 123-45-67", "<PII_PHONE_1>"),
+        ("Почта test@example.ru", "<PII_EMAIL_1>"),
+        ("Меня зовут Анна Иванова", "<PII_NAME_1>"),
+        ("Адрес: г. Москва, ул. Тверская, д. 1", "<PII_ADDRESS_1>"),
+        ("Карта 4111 1111 1111 1111", "<PII_PAYMENT_1>"),
+        ("Диагноз: сахарный диабет", "<PII_MEDICAL_1>"),
+    ],
+)
+async def test_security_pipeline_masks_each_critical_pii_class(
+    user_message,
+    placeholder,
+):
+    primary = ScriptedProvider([_response()])
+    result = await SecurityPipeline(
+        PrimaryReserveGateway(primary),
+        "",
+        extract_structured_facts(""),
+    ).respond(user_message, [])
+
+    assert result.text == "Безопасный ответ."
+    assert primary.calls == 1
+    sent = repr(primary.requests)
+    assert placeholder in sent
+    assert user_message not in sent
+
+
+@pytest.mark.parametrize(
+    ("primary_outcome", "reserve_outcomes", "primary_calls", "reserve_calls"),
+    [
+        (RetryableLLMError(), [_response()], 1, 1),
+        (RetryableLLMError(), [RetryableLLMError()], 1, 1),
+        (NonRetryableLLMError(), [_response()], 1, 0),
+    ],
+)
+async def test_security_pipeline_enforces_provider_fallback_matrix(
+    primary_outcome,
+    reserve_outcomes,
+    primary_calls,
+    reserve_calls,
+):
+    primary = ScriptedProvider([primary_outcome])
+    reserve = ScriptedProvider(reserve_outcomes)
+    result = await SecurityPipeline(
+        PrimaryReserveGateway(primary, reserve),
+        "",
+        extract_structured_facts(""),
+    ).respond("Сколько стоит криокапсула?", [])
+
+    assert primary.calls == primary_calls
+    assert reserve.calls == reserve_calls
+    assert result.text in {"Безопасный ответ.", SAFE_OUTPUT_FALLBACK}

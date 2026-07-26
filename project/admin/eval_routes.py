@@ -20,6 +20,7 @@ router = APIRouter(prefix="/eval")
 _BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=_BASE_DIR / "templates")
 _eval_tasks: set[asyncio.Task] = set()
+TERMINAL_RUN_STATUSES = frozenset({"finished", "failed", "error"})
 
 
 def _eval_task_done(task: asyncio.Task, run_id: int) -> None:
@@ -219,7 +220,7 @@ async def eval_run_stream(request: Request, run_id: int):
             }
             yield f"event: progress\ndata: {json.dumps(progress)}\n\n"
 
-            if run["status"] in ("finished", "error"):
+            if run["status"] in TERMINAL_RUN_STATUSES:
                 yield "event: done\ndata: {}\n\n"
                 break
 
