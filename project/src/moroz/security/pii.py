@@ -40,6 +40,10 @@ _NON_PHONE_SHAPE_RE = re.compile(
     r"(?:\d{1,2}\.\d{1,2}\.\d{4}[ \t]+\d{1,2}(?:[.:]\d{2})?"
     r"|\d{1,6}\.\d{2}(?:[ \t]+\d{1,6}\.\d{2})+)"
 )
+_PHONE_MARKER_RE = re.compile(
+    r"(?:телефон|номер(?:\s+телефона)?|тел\.)\s*[:—-]?\s*$",
+    re.IGNORECASE,
+)
 _NAME_RE = re.compile(
     r"(?P<prefix>\b(?:меня\s+зовут|имя|фио)\s*(?::|—|-)?\s*)"
     r"(?P<value>[А-ЯЁ][а-яё]+(?:[-\s][А-ЯЁ][а-яё]+){0,2})",
@@ -51,7 +55,7 @@ _QUESTION_TRANSITION = (
     r"когда\s+можно|сколько\s+стоит|есть\s+ли|подскажите)"
 )
 _SENSITIVE_VALUE_END = (
-    rf"(?=;|\n|,\s+{_QUESTION_TRANSITION}\b|"
+    rf"(?=;|\n|,\s+{_QUESTION_TRANSITION}\b[^.;\n?]*\?|"
     r"(?:(?<!\bг)(?<!\bд)(?<!\bул)\.|[!?])"
     r"(?=\s+[А-ЯЁ]|$)|$)"
 )
@@ -97,7 +101,7 @@ def _passes_luhn(value: str) -> bool:
     return total % 10 == 0
 
 
-def _looks_like_phone(value: str) -> bool:
+def _looks_like_phone(value: str, leading_text: str) -> bool:
     if not 10 <= sum(char.isdigit() for char in value) <= 15:
         return False
     if _NON_PHONE_SHAPE_RE.fullmatch(value):
@@ -106,8 +110,11 @@ def _looks_like_phone(value: str) -> bool:
     group_shape = tuple(len(group) for group in groups)
     return (
         len(groups) == 1
-        or any(char in value for char in "+()-.")
-        or group_shape in _SPACE_PHONE_GROUPS
+        or any(char in value for char in "+()-")
+        or (
+            group_shape in _SPACE_PHONE_GROUPS
+            and _PHONE_MARKER_RE.search(leading_text) is not None
+        )
         or not all(len(group) >= 3 for group in groups)
     )
 
@@ -140,15 +147,18 @@ class PiiSession:
                     if rule.value_group
                     else match.group(0)
                 )
-                if rule.kind == "payment" and not _passes_luhn(value):
-                    continue
-                if rule.kind == "phone" and not _looks_like_phone(value):
-                    continue
                 start, end = (
                     match.span(rule.value_group)
                     if rule.value_group
                     else match.span()
                 )
+                if rule.kind == "payment" and not _passes_luhn(value):
+                    continue
+                if rule.kind == "phone" and not _looks_like_phone(
+                    value,
+                    source[max(0, start - 40):start],
+                ):
+                    continue
                 candidates.append((start, end, priority, rule.kind, value))
 
         selected: list[tuple[int, int, str, str]] = []

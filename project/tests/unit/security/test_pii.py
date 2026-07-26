@@ -172,6 +172,27 @@ def test_phone_detection_accepts_common_space_only_group_shapes(text):
     _require(masked.placeholders == frozenset({"<PII_PHONE_1>"}))
 
 
+def test_ambiguous_space_phone_shape_requires_explicit_marker():
+    masked = PiiSession().mask("Цены 240 350 4500")
+
+    _require(masked.placeholders == frozenset())
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Связь +7 999 123 45 67",
+        "Связь 8 (999) 123 45 67",
+        "Связь 8 999 123-45-67",
+    ],
+    ids=["plus", "parentheses", "dash"],
+)
+def test_unambiguous_phone_punctuation_needs_no_marker(text):
+    masked = PiiSession().mask(text)
+
+    _require(masked.placeholders == frozenset({"<PII_PHONE_1>"}))
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -237,6 +258,38 @@ def test_sensitive_spans_preserve_comma_question_transitions(
     ids=["address-relative", "medical-relative"],
 )
 def test_sensitive_spans_keep_relative_clauses_inside_mask(
+    text,
+    expected_start,
+    expected_end,
+    placeholder,
+):
+    masked = PiiSession().mask(text)
+
+    _require(masked.text.startswith(expected_start))
+    _require(masked.text.endswith(expected_end))
+    _require(masked.placeholders == frozenset({placeholder}))
+
+
+@pytest.mark.parametrize(
+    "text, expected_start, expected_end, placeholder",
+    [
+        (
+            "Адрес: ул. Тверская, где находится вход. Как добраться?",
+            "Адрес: <PII_ADDRESS_1>. ",
+            "Как добраться?",
+            "<PII_ADDRESS_1>",
+        ),
+        (
+            "Диагноз: сахарный диабет, можно ли его контролировать терапией. "
+            "Что делать?",
+            "Диагноз: <PII_MEDICAL_1>. ",
+            "Что делать?",
+            "<PII_MEDICAL_1>",
+        ),
+    ],
+    ids=["address-clause", "medical-clause"],
+)
+def test_question_transition_must_reach_question_before_sentence_boundary(
     text,
     expected_start,
     expected_end,
