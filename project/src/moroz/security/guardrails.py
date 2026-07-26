@@ -16,17 +16,14 @@ class GuardDecision:
 
 _STOP_RULES = (
     re.compile(
-        r"^\s*(?:стоп|stop|отписаться|не\s+пишите\s+мне)"
-        r"(?:\s*(?:[.!]|пожалуйста))*\s*$",
+        r"^\s*(?:(?:пожалуйста|please)\s*[,!.-]?\s*)?"
+        r"(?:стоп|stop|отписаться|отпишите\s+меня|unsubscribe|"
+        r"не\s+пишите\s+мне)"
+        r"(?:\s*[,!.-]?\s*(?:пожалуйста|please))?\s*[.!]*\s*$",
         re.IGNORECASE,
     ),
 )
 _PROMPT_ATTACK_RULES = (
-    re.compile(
-        r"\b(?:игнорируй|игнорировать|ignore|disregard|override)\b"
-        r".{0,80}\b(?:инструкц\w*|instructions?|rules?|правил\w*)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
     re.compile(
         r"\b(?:покажи|раскрой|выведи|повтори|show|reveal|print|repeat)\b"
         r".{0,80}\b(?:системн\w*\s+промпт\w*|system\s+prompt|"
@@ -38,6 +35,20 @@ _PROMPT_ATTACK_RULES = (
         r"\b(?:покажи|раскрой|выведи|повтори)\b.{0,80}\b"
         r"(?:(?:свои|твои)\s+)?(?:системн\w*|внутренн\w*|скрыт\w*)"
         r"\s+инструкц\w*\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:смени|замени|забудь|переопредели|игнорируй|"
+        r"override|replace|forget|ignore|disregard)\b.{0,80}\b"
+        r"(?:system\s+prompt|developer\s+(?:role|instructions?)|"
+        r"системн\w*\s+(?:роль|промпт\w*)|"
+        r"внутренн\w*\s+инструкц\w*)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:работай|действуй|work|operate)\b.{0,20}\b"
+        r"(?:без\s+ограничен\w*|without\s+restrictions?|"
+        r"without\s+limitations?)\b",
         re.IGNORECASE | re.DOTALL,
     ),
 )

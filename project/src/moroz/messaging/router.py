@@ -58,6 +58,12 @@ _INTENT_RULES: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
                 r"booking|appointment|time)\b",
                 re.IGNORECASE,
             ),
+            re.compile(
+                r"\b(?:запис\w*|визит\w*|booking|appointment)\b"
+                r".{0,40}\b(?:перенес\w*|перенос\w*|измен\w*|"
+                r"поменя\w*|reschedul\w*|change)\b",
+                re.IGNORECASE,
+            ),
         ),
     ),
     (

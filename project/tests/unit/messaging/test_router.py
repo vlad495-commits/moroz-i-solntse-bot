@@ -57,6 +57,12 @@ def test_change_and_cancel_conflict_requires_clarification() -> None:
     )
 
 
+def test_noun_first_existing_booking_change_needs_no_trailing_time() -> None:
+    assert route_message(
+        "Существующую запись нужно перенести"
+    ) == RouteDecision(("booking_change",), False)
+
+
 def test_router_is_pure_immutable_and_does_not_echo_input() -> None:
     text = "неизвестный секретный пользовательский маркер"
     decision = route_message(text)
