@@ -510,6 +510,13 @@ Static audit подтвердил legacy direct SDK bypass в `_invoke`. Сох�
 seam и prompt reload tests, но делегировать сам вызов в `SDKProvider`; прямые SDK
 calls остаются только в `SDKProvider` и masked judge adapter.
 
+Project-wide recursive AST gate сканирует каждый production `.py` под `project/`,
+исключая только tests/cache/generated/temp directories, и сравнивает exact
+`(relative file, enclosing function)` с двумя разрешёнными adapters. Synthetic
+`tmp_path` mutation доказывает, что новый production/eval bypass отклоняется.
+После делегации удалить dead legacy Anthropic helpers/import; safe-logging tests
+называть по фактическому no-raw fallback инварианту.
+
 - [ ] **Step 4: Run GREEN and durable-path regression**
 
 ```powershell
@@ -518,11 +525,11 @@ docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspa
 
 - [ ] **Step 5: Static external-call audit**
 
-```powershell
-rg -n "chat\.completions\.create|messages\.create" project
-```
-
-Expected: only `SDKProvider` and masked judge adapter contain SDK calls; no raw runtime/eval bypass.
+Run the project-wide AST allowlist and sensitivity tests from
+`project/tests/unit/test_eval_privacy.py`, then perform a textual count-only
+cross-check. Expected: `4 allowed / 0 bad`; only `SDKProvider.complete` and
+`_invoke_masked_judge` contain SDK calls, and a synthetic extra module fails the
+allowlist comparison.
 
 - [ ] **Step 6: Commit**
 

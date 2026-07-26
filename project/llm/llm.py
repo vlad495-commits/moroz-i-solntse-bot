@@ -13,7 +13,6 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from types import SimpleNamespace
 
 from openai import AsyncOpenAI
 import redis.asyncio as aioredis
@@ -149,50 +148,6 @@ def init_llm() -> None:
         _primary_kind,
         LLM_MODEL,
         bool(LLM_BASE_URL),
-    )
-
-
-def _convert_messages_for_anthropic(messages: list[dict]) -> tuple[str, list[dict]]:
-    """OpenAI-формат → Anthropic-формат. Извлекает system, чередует user/assistant."""
-    system = ""
-    msgs: list[dict] = []
-    for m in messages:
-        role = m.get("role", "")
-        content = m.get("content", "") or ""
-        if role == "system":
-            system = content
-        elif role == "user":
-            msgs.append({"role": "user", "content": content})
-        elif role == "assistant" and content:
-            msgs.append({"role": "assistant", "content": content})
-
-    cleaned: list[dict] = []
-    for m in msgs:
-        if cleaned and cleaned[-1]["role"] == m["role"]:
-            cleaned[-1]["content"] += "\n" + m["content"]
-        else:
-            cleaned.append(m)
-    if cleaned and cleaned[0]["role"] != "user":
-        cleaned.insert(0, {"role": "user", "content": "Привет"})
-    return system, cleaned
-
-
-def _anthropic_to_openai_format(response) -> object:
-    """Адаптировать ответ Anthropic к формату OpenAI."""
-    text_blocks = [b.text for b in response.content if b.type == "text"]
-    content = "\n".join(text_blocks) if text_blocks else None
-
-    cached = getattr(response.usage, "cache_read_input_tokens", 0) or 0
-    usage = SimpleNamespace(
-        prompt_tokens=response.usage.input_tokens,
-        completion_tokens=response.usage.output_tokens,
-        cached_tokens=cached,
-        total_tokens=response.usage.input_tokens + response.usage.output_tokens,
-    )
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
-        usage=usage,
-        model=response.model,
     )
 
 

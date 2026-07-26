@@ -96,7 +96,7 @@ async def test_judge_invalid_json_log_does_not_include_raw_content(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_primary_llm_failure_before_reserve_logs_only_error_type(
+async def test_primary_retryable_fallback_does_not_log_raw_sentinels(
     monkeypatch, caplog
 ):
     primary = object()
@@ -128,7 +128,10 @@ async def test_primary_llm_failure_before_reserve_logs_only_error_type(
 
 
 @pytest.mark.asyncio
-async def test_reserve_llm_failure_logs_only_error_type(monkeypatch, caplog):
+async def test_exhausted_provider_fallback_does_not_log_raw_sentinels(
+    monkeypatch,
+    caplog,
+):
     primary = object()
     reserve = object()
     primary_sentinel = "https://primary:password@provider.test primary-user-text"

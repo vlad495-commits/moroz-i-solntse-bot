@@ -36,6 +36,67 @@ class CliDatasetError(RuntimeError):
     pass
 
 
+_SDK_CALL_SUFFIXES = (
+    ("messages", "create"),
+    ("chat", "completions", "create"),
+)
+_NON_PRODUCTION_DIRECTORIES = frozenset(
+    {
+        "tests",
+        "test",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "generated",
+        "tmp",
+        "temp",
+    }
+)
+
+
+def _attribute_chain(node: ast.AST) -> tuple[str, ...]:
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    return tuple(reversed(parts))
+
+
+def _production_sdk_call_sites(root: Path) -> set[tuple[str, str]]:
+    found = set()
+    for path in root.rglob("*.py"):
+        relative = path.relative_to(root)
+        if any(
+            part.lower() in _NON_PRODUCTION_DIRECTORIES
+            for part in relative.parts[:-1]
+        ):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            chain = _attribute_chain(node.func)
+            if not any(
+                chain[-len(suffix):] == suffix
+                for suffix in _SDK_CALL_SUFFIXES
+            ):
+                continue
+            parent = node
+            while parent in parents and not isinstance(
+                parent,
+                (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                parent = parents[parent]
+            found.add((relative.as_posix(), getattr(parent, "name", "<module>")))
+    return found
+
+
 @pytest.mark.asyncio
 async def test_run_eval_set_catches_init_failure_and_persists_only_type(
     monkeypatch, caplog
@@ -422,41 +483,41 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
 
 
 def test_external_sdk_calls_are_limited_to_provider_and_masked_judge_adapter():
-    root = Path("/workspace")
-    found = set()
-    openai_call = ".chat." + "completions." + "create"
-    anthropic_call = ".messages." + "create"
-
-    for relative in (
-        "src/moroz/security/llm_gateway.py",
-        "llm/llm.py",
-        "admin/eval_runner.py",
-    ):
-        tree = ast.parse((root / relative).read_text(encoding="utf-8"))
-        parents = {}
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                parents[child] = node
-            if not isinstance(node, ast.Call):
-                continue
-            expression = ast.unparse(node.func)
-            if not (
-                expression.endswith(openai_call)
-                or expression.endswith(anthropic_call)
-            ):
-                continue
-            parent = node
-            while parent in parents and not isinstance(
-                parent,
-                (ast.FunctionDef, ast.AsyncFunctionDef),
-            ):
-                parent = parents[parent]
-            found.add((relative, getattr(parent, "name", "")))
-
-    assert found == {
+    assert _production_sdk_call_sites(Path("/workspace")) == {
         ("src/moroz/security/llm_gateway.py", "complete"),
         ("admin/eval_runner.py", "_invoke_masked_judge"),
     }
+
+
+def test_external_sdk_audit_rejects_synthetic_new_production_call(tmp_path):
+    project = tmp_path / "project"
+    module = project / "new_runtime" / "provider.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        "async def bypass(client):\n"
+        "    return await client.chat."
+        "completions.create(model='synthetic')\n",
+        encoding="utf-8",
+    )
+
+    assert _production_sdk_call_sites(project) == {
+        ("new_runtime/provider.py", "bypass")
+    }
+
+
+def test_external_sdk_audit_skips_only_non_production_directories(tmp_path):
+    project = tmp_path / "project"
+    for directory in _NON_PRODUCTION_DIRECTORIES:
+        module = project / directory / "provider.py"
+        module.parent.mkdir(parents=True, exist_ok=True)
+        module.write_text(
+            "async def ignored(client):\n"
+            "    return await client.messages."
+            "create(model='synthetic')\n",
+            encoding="utf-8",
+        )
+
+    assert _production_sdk_call_sites(project) == set()
 
 
 def test_eval_cli_real_dataset_error_exits_nonzero_without_raw_exception():
