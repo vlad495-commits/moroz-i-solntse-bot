@@ -55,9 +55,8 @@ _QUESTION_TRANSITION = (
     r"когда\s+можно|сколько\s+стоит|есть\s+ли|подскажите)"
 )
 _SENSITIVE_VALUE_END = (
-    rf"(?=;|\n|,\s+{_QUESTION_TRANSITION}\b[^.;\n?]*\?|"
-    r"(?:(?<!\bг)(?<!\bд)(?<!\bул)\.|[!?])"
-    r"(?=\s+[А-ЯЁ]|$)|$)"
+    rf"(?=;|\n|[,.]\s+{_QUESTION_TRANSITION}\b[^.;\n?]*\?|"
+    r"[!?](?=\s+[А-ЯЁ]|$)|$)"
 )
 _ADDRESS_RE = re.compile(
     r"(?P<prefix>\b(?:адрес|место\s+жительства|улица|ул\.)"

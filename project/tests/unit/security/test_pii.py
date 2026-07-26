@@ -302,6 +302,22 @@ def test_question_transition_must_reach_question_before_sentence_boundary(
     _require(masked.placeholders == frozenset({placeholder}))
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Адрес: пер. Садовый, д. 1. Как добраться?",
+        "Адрес: пр. Мира, д. 2. Как добраться?",
+        "Адрес: ш. Энтузиастов, д. 3. Как добраться?",
+    ],
+    ids=["lane", "avenue", "highway"],
+)
+def test_unknown_address_abbreviation_stays_inside_sensitive_span(text):
+    masked = PiiSession().mask(text)
+
+    _require(masked.text == "Адрес: <PII_ADDRESS_1>. Как добраться?")
+    _require(masked.placeholders == frozenset({"<PII_ADDRESS_1>"}))
+
+
 def test_short_social_handles_are_masked_after_email_detection():
     masked = PiiSession().mask(
         "Контакты @abc и @abcd, почта client@example.ru"
