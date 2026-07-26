@@ -59,8 +59,8 @@ $env:REDIS_URL = "redis://:$($env:REDIS_PASSWORD)@redis:6379/0"
 Run from `project/` in that same process:
 
 ```powershell
-docker compose --profile test build --no-cache test
-docker compose --profile test run --rm test pytest -q
+docker compose --env-file ../.env --profile test build --no-cache test
+docker compose --env-file ../.env --profile test run --rm test pytest -q
 ```
 
 Expected: `472 passed`, skips `0`, exit `0`.
@@ -68,7 +68,7 @@ Expected: `472 passed`, skips `0`, exit `0`.
 - [ ] **Step 3: Clean the exact namespace**
 
 ```powershell
-docker compose --profile test down --volumes --remove-orphans
+docker compose --env-file ../.env --profile test down --volumes --remove-orphans
 docker image rm "$($env:COMPOSE_PROJECT_NAME)-test" -f
 ```
 
@@ -126,7 +126,7 @@ Also cover address markers, `@handle`, Luhn-valid payment card, medical-detail m
 - [ ] **Step 2: Run RED in Docker**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pii.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pii.py
 ```
 
 Expected: collection/import failure because `moroz.security.pii` does not exist.
@@ -150,7 +150,7 @@ return text
 - [ ] **Step 4: Run GREEN and local regression**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pii.py /workspace/tests/unit/test_eval_privacy.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pii.py /workspace/tests/unit/test_eval_privacy.py
 ```
 
 Expected: all selected tests pass, no warnings or raw sentinel output.
@@ -211,7 +211,7 @@ Also cover primary success, no reserve, both retryable failures, OpenAI/Anthropi
 - [ ] **Step 2: Run RED**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_llm_gateway.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_llm_gateway.py
 ```
 
 Expected: import failure.
@@ -239,7 +239,7 @@ Create both SDK clients with `max_retries=0`; do not log base URL or exception t
 - [ ] **Step 4: Run GREEN and provider/privacy regression**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_llm_gateway.py /workspace/tests/unit/test_llm_providers.py /workspace/tests/unit/test_active_sanitization.py /workspace/tests/unit/test_documented_compose_commands.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_llm_gateway.py /workspace/tests/unit/test_llm_providers.py /workspace/tests/unit/test_active_sanitization.py /workspace/tests/unit/test_documented_compose_commands.py
 ```
 
 - [ ] **Step 5: Commit**
@@ -311,7 +311,7 @@ Also cover valid approved price, public contact, unknown/context-only placeholde
 - [ ] **Step 3: Run RED**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_guardrails.py /workspace/tests/unit/messaging/test_router.py /workspace/tests/unit/security/test_validator.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_guardrails.py /workspace/tests/unit/messaging/test_router.py /workspace/tests/unit/security/test_validator.py
 ```
 
 - [ ] **Step 4: Implement ordered deterministic rules**
@@ -323,7 +323,7 @@ Add `MOROZ_INTERNAL_CANARY_V1` to the system prompt as an internal non-secret le
 - [ ] **Step 5: Run GREEN**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_guardrails.py /workspace/tests/unit/messaging/test_router.py /workspace/tests/unit/security/test_validator.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_guardrails.py /workspace/tests/unit/messaging/test_router.py /workspace/tests/unit/security/test_validator.py
 ```
 
 - [ ] **Step 6: Commit**
@@ -380,7 +380,7 @@ Also cover zero external calls for local block/stop/rate limit, one masked guard
 - [ ] **Step 2: Run RED**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pipeline.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pipeline.py
 ```
 
 - [ ] **Step 3: Implement pipeline order**
@@ -410,7 +410,7 @@ The second request contains only a short validator code, never the rejected raw 
 - [ ] **Step 4: Run GREEN and prompt reload regression**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pipeline.py /workspace/tests/integration/messaging/test_prompt_reload.py /workspace/tests/unit/test_runtime_logging_policy.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pipeline.py /workspace/tests/integration/messaging/test_prompt_reload.py /workspace/tests/unit/test_runtime_logging_policy.py
 ```
 
 - [ ] **Step 5: Commit**
@@ -462,7 +462,7 @@ Extend existing privacy-gate E2E to assert pre-consent input creates no inbox/hi
 - [ ] **Step 2: Run RED**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py
 ```
 
 - [ ] **Step 3: Wire only the current boundaries**
@@ -474,7 +474,7 @@ Replace admin `_generate_bot_response` provider fallback with the shared pipelin
 - [ ] **Step 4: Run GREEN and durable-path regression**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/e2e/test_privacy_gate.py /workspace/tests/e2e/test_message_delivery.py /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/e2e/test_privacy_gate.py /workspace/tests/e2e/test_message_delivery.py /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py
 ```
 
 - [ ] **Step 5: Static external-call audit**
@@ -525,7 +525,7 @@ Add concrete cases for consent, phone/email/name/address/payment/medical masking
 - [ ] **Step 2: Run RED**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py
 ```
 
 - [ ] **Step 3: Implement count-only gate**
@@ -535,7 +535,7 @@ Admin runner marks a run failed when a critical result fails regardless of total
 - [ ] **Step 4: Run targeted GREEN**
 
 ```powershell
-docker compose --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security /workspace/tests/unit/messaging/test_router.py /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security /workspace/tests/unit/messaging/test_router.py /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py
 ```
 
 Expected: `100%` deterministic critical cases and `>=95%` total.
@@ -549,15 +549,15 @@ Review exact range from design checkpoint commit to current HEAD against this pl
 In a new task-specific namespace with new process-only values:
 
 ```powershell
-docker compose --profile test build --no-cache test
-docker compose --profile test run --rm test pytest -q
-docker compose --profile migration run --rm migrate
-docker compose --profile migration run --rm migrate alembic -c /app/alembic.ini current
-docker compose config --quiet
-docker compose build --no-cache bot worker admin
-docker compose run --rm --no-deps --entrypoint python bot -m compileall -q /app
-docker compose run --rm --no-deps --entrypoint python worker -m compileall -q /app
-docker compose run --rm --no-deps --entrypoint python admin -m compileall -q /app
+docker compose --env-file ../.env --profile test build --no-cache test
+docker compose --env-file ../.env --profile test run --rm test pytest -q
+docker compose --env-file ../.env --profile migration run --rm migrate
+docker compose --env-file ../.env --profile migration run --rm migrate alembic -c /app/alembic.ini current
+docker compose --env-file ../.env config --quiet
+docker compose --env-file ../.env build --no-cache bot worker admin
+docker compose --env-file ../.env run --rm --no-deps --entrypoint python bot -m compileall -q /app
+docker compose --env-file ../.env run --rm --no-deps --entrypoint python worker -m compileall -q /app
+docker compose --env-file ../.env run --rm --no-deps --entrypoint python admin -m compileall -q /app
 ```
 
 Expected: all tests pass with skips `0`; migration `0006_yclients_booking_key (head)`; compile/config true; safe external-call/static secret scans clean.
