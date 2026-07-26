@@ -181,6 +181,20 @@ def test_ambiguous_space_phone_shape_requires_explicit_marker():
 @pytest.mark.parametrize(
     "text",
     [
+        "Телефон для связи 999 123 4567",
+        "Номер телефона для записи 7495 123 4567",
+    ],
+    ids=["contact-connector", "booking-connector"],
+)
+def test_ambiguous_space_phone_accepts_approved_marker_connectors(text):
+    masked = PiiSession().mask(text)
+
+    _require(masked.placeholders == frozenset({"<PII_PHONE_1>"}))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "Связь +7 999 123 45 67",
         "Связь 8 (999) 123 45 67",
         "Связь 8 999 123-45-67",
