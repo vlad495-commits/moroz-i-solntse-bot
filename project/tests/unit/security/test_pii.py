@@ -161,6 +161,51 @@ def test_phone_detection_keeps_supported_forms():
     _require(international.placeholders == frozenset({"<PII_PHONE_1>"}))
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Запись 26.07.2026 15:00",
+        "Цены 2400.00 3500.00",
+    ],
+    ids=["date-time", "decimal-prices"],
+)
+def test_phone_detection_rejects_date_time_and_decimal_price_shapes(text):
+    masked = PiiSession().mask(text)
+
+    _require(masked.placeholders == frozenset())
+
+
+@pytest.mark.parametrize(
+    "text, prefix, suffix, placeholder",
+    [
+        (
+            "Адрес: г. Москва, ул. Тверская, д. 1, как добраться?",
+            "Адрес: ",
+            ", как добраться?",
+            "<PII_ADDRESS_1>",
+        ),
+        (
+            "Диагноз: сахарный диабет, можно ли посетить криокапсулу?",
+            "Диагноз: ",
+            ", можно ли посетить криокапсулу?",
+            "<PII_MEDICAL_1>",
+        ),
+    ],
+    ids=["address-question", "medical-question"],
+)
+def test_sensitive_spans_preserve_comma_question_transitions(
+    text,
+    prefix,
+    suffix,
+    placeholder,
+):
+    masked = PiiSession().mask(text)
+
+    _require(masked.text.startswith(prefix + placeholder))
+    _require(masked.text.endswith(suffix))
+    _require(masked.placeholders == frozenset({placeholder}))
+
+
 def test_short_social_handles_are_masked_after_email_detection():
     masked = PiiSession().mask(
         "Контакты @abc и @abcd, почта client@example.ru"

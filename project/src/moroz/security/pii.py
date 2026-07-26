@@ -36,16 +36,27 @@ _EMAIL_RE = re.compile(
 )
 _PAYMENT_RE = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 _PHONE_RE = re.compile(r"(?<![\w])\+?(?:\d[ \t().-]*){9,18}\d(?![\w])")
+_NON_PHONE_SHAPE_RE = re.compile(
+    r"(?:\d{1,2}\.\d{1,2}\.\d{4}[ \t]+\d{1,2}(?:[.:]\d{2})?"
+    r"|\d{1,6}\.\d{2}(?:[ \t]+\d{1,6}\.\d{2})+)"
+)
 _NAME_RE = re.compile(
     r"(?P<prefix>\b(?:меня\s+зовут|имя|фио)\s*(?::|—|-)?\s*)"
     r"(?P<value>[А-ЯЁ][а-яё]+(?:[-\s][А-ЯЁ][а-яё]+){0,2})",
     re.IGNORECASE,
 )
+_QUESTION_TRANSITION = (
+    r"(?:как|можно\s+ли|когда|где|сколько|что|есть\s+ли|подскажите)"
+)
+_SENSITIVE_VALUE_END = (
+    rf"(?=;|\n|,\s+{_QUESTION_TRANSITION}\b|"
+    r"(?:(?<!\bг)(?<!\bд)(?<!\bул)\.|[!?])"
+    r"(?=\s+[А-ЯЁ]|$)|$)"
+)
 _ADDRESS_RE = re.compile(
     r"(?P<prefix>\b(?:адрес|место\s+жительства|улица|ул\.)"
     r"\s*(?::|—|-)?\s*)(?P<value>[^;\n]+?)"
-    r"(?=;|\n|(?:(?<!\bг)(?<!\bд)(?<!\bул)\.|[!?])"
-    r"(?=\s+[А-ЯЁ]|$)|$)",
+    + _SENSITIVE_VALUE_END,
     re.IGNORECASE,
 )
 _HANDLE_RE = re.compile(r"(?<![\w@])@[A-Za-z0-9_]{3,32}\b")
@@ -53,8 +64,7 @@ _MEDICAL_RE = re.compile(
     r"(?P<prefix>\b(?:диагноз|анамнез|история\s+болезни|"
     r"медицинская\s+история)\s*(?::|—|-)?\s*)"
     r"(?P<value>[^;\n]+?)"
-    r"(?=;|\n|(?:(?<!\bг)(?<!\bд)(?<!\bул)\.|[!?])"
-    r"(?=\s+[А-ЯЁ]|$)|$)",
+    + _SENSITIVE_VALUE_END,
     re.IGNORECASE,
 )
 
@@ -86,6 +96,8 @@ def _passes_luhn(value: str) -> bool:
 
 def _looks_like_phone(value: str) -> bool:
     if not 10 <= sum(char.isdigit() for char in value) <= 15:
+        return False
+    if _NON_PHONE_SHAPE_RE.fullmatch(value):
         return False
     groups = re.findall(r"\d+", value)
     return (
