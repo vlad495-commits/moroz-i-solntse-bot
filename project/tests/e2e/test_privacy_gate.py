@@ -220,6 +220,10 @@ async def test_message_without_consent_is_not_persisted(
 
     assert response.status_code == 200
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert await db.fetchval("SELECT count(*) FROM messages") == 0
+    assert await db.fetchval(
+        "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
+    ) == 0
     assert fake_telegram.last_text == CONSENT_PROMPT
     assert (
         fake_telegram.sent_messages[-1]["reply_markup"]

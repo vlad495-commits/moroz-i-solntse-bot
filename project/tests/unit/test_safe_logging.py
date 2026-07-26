@@ -5,6 +5,8 @@ import pytest
 
 import cache as llm_cache
 import eval_runner
+from moroz.security.llm_gateway import LLMResponse, RetryableLLMError
+from moroz.security.pipeline import SAFE_OUTPUT_FALLBACK
 
 
 class HealthyRedis:
@@ -16,14 +18,6 @@ class HealthyRedis:
 
 
 class SentinelRedisError(RuntimeError):
-    pass
-
-
-class PrimaryProviderError(RuntimeError):
-    pass
-
-
-class ReserveProviderError(RuntimeError):
     pass
 
 
@@ -109,23 +103,26 @@ async def test_primary_llm_failure_before_reserve_logs_only_error_type(
     reserve = object()
     sentinel = "https://user:password@provider.test exception-user-sentinel"
 
-    async def invoke(client, *_args, **_kwargs):
-        if client is primary:
-            raise PrimaryProviderError(sentinel)
-        return "safe reserve response"
+    class Provider:
+        def __init__(self, client, *_args):
+            self.client = client
+
+        async def complete(self, _request):
+            if self.client is primary:
+                raise RetryableLLMError(sentinel)
+            return LLMResponse("safe reserve response", 1, 1, 0, 2, "reserve")
 
     monkeypatch.setattr(eval_runner, "_primary", primary)
+    monkeypatch.setattr(eval_runner, "_primary_kind", "openai")
     monkeypatch.setattr(eval_runner, "_reserve", reserve)
-    monkeypatch.setattr(eval_runner, "_invoke_llm", invoke)
-
+    monkeypatch.setattr(eval_runner, "_reserve_kind", "openai")
+    monkeypatch.setattr(eval_runner, "SDKProvider", Provider)
     with caplog.at_level(logging.WARNING, logger=eval_runner.logger.name):
         response = await eval_runner._generate_bot_response(
             "private-question-sentinel", ""
         )
 
     assert response == "safe reserve response"
-    assert "primary_llm_failed" in caplog.text
-    assert "error_type=PrimaryProviderError" in caplog.text
     assert sentinel not in caplog.text
     assert "private-question-sentinel" not in caplog.text
 
@@ -137,23 +134,25 @@ async def test_reserve_llm_failure_logs_only_error_type(monkeypatch, caplog):
     primary_sentinel = "https://primary:password@provider.test primary-user-text"
     reserve_sentinel = "https://reserve:password@provider.test reserve-user-text"
 
-    async def invoke(client, *_args, **_kwargs):
-        if client is primary:
-            raise PrimaryProviderError(primary_sentinel)
-        raise ReserveProviderError(reserve_sentinel)
+    class Provider:
+        def __init__(self, client, *_args):
+            self.sentinel = (
+                primary_sentinel if client is primary else reserve_sentinel
+            )
 
+        async def complete(self, _request):
+            raise RetryableLLMError(self.sentinel)
+
+    monkeypatch.setattr(eval_runner, "_primary_kind", "openai")
     monkeypatch.setattr(eval_runner, "_primary", primary)
+    monkeypatch.setattr(eval_runner, "_reserve_kind", "openai")
     monkeypatch.setattr(eval_runner, "_reserve", reserve)
-    monkeypatch.setattr(eval_runner, "_invoke_llm", invoke)
+    monkeypatch.setattr(eval_runner, "SDKProvider", Provider)
 
     with caplog.at_level(logging.WARNING, logger=eval_runner.logger.name):
-        with pytest.raises(PrimaryProviderError):
-            await eval_runner._generate_bot_response("safe question", "")
+        response = await eval_runner._generate_bot_response("safe question", "")
 
-    assert "primary_llm_failed" in caplog.text
-    assert "error_type=PrimaryProviderError" in caplog.text
-    assert "reserve_llm_failed" in caplog.text
-    assert "error_type=ReserveProviderError" in caplog.text
+    assert response == SAFE_OUTPUT_FALLBACK
     assert primary_sentinel not in caplog.text
     assert reserve_sentinel not in caplog.text
 

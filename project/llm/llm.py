@@ -197,27 +197,24 @@ def _anthropic_to_openai_format(response) -> object:
 
 
 async def _invoke(messages: list[dict]) -> object:
-    """Вызов LLM. Возвращает ответ в OpenAI-совместимом формате."""
-    if _primary_kind == "anthropic":
-        system, msgs = _convert_messages_for_anthropic(messages)
-        response = await _primary_client.messages.create(
-            model=LLM_MODEL,
-            max_tokens=LLM_MAX_TOKENS,
-            system=system,
-            messages=msgs,
-            temperature=LLM_TEMPERATURE,
+    """Compatibility seam delegated to the audited SDK adapter."""
+    return await SDKProvider(
+        _primary_client,
+        _primary_kind,
+        LLM_MODEL,
+        LLM_TEMPERATURE,
+        LLM_MAX_TOKENS,
+    ).complete(
+        LLMRequest(
+            messages=tuple(dict(message) for message in messages),
+            purpose="legacy",
         )
-        return _anthropic_to_openai_format(response)
-
-    return await _primary_client.chat.completions.create(
-        model=LLM_MODEL,
-        messages=messages,
-        temperature=LLM_TEMPERATURE,
-        max_tokens=LLM_MAX_TOKENS,
     )
 
 
 def _adapt_legacy_response(response: object) -> LLMResponse:
+    if isinstance(response, LLMResponse):
+        return response
     text = response.choices[0].message.content or ""
     usage = response.usage
     cached = 0

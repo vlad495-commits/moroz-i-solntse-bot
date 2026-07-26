@@ -19,6 +19,10 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 import eval_database as evdb
+from moroz.security.llm_gateway import PrimaryReserveGateway, SDKProvider
+from moroz.security.pii import PiiSession
+from moroz.security.pipeline import SecurityPipeline
+from moroz.security.validator import extract_structured_facts
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +58,8 @@ def _detect_kind(model: str, base_url: str | None) -> str:
 def _create_client(api_key: str, base_url: str | None, kind: str):
     if kind == "anthropic":
         from anthropic import AsyncAnthropic
-        return AsyncAnthropic(api_key=api_key)
-    kwargs = {"api_key": api_key}
+        return AsyncAnthropic(api_key=api_key, max_retries=0)
+    kwargs = {"api_key": api_key, "max_retries": 0}
     if base_url:
         kwargs["base_url"] = base_url
     return AsyncOpenAI(**kwargs)
@@ -165,9 +169,9 @@ JUDGE_PROMPT_TEMPLATE = """Ты эксперт-оценщик ответов AI-
 """
 
 
-async def _invoke_llm(client, kind: str, model: str, messages: list[dict]) -> str:
-    """Универсальный вызов LLM. Возвращает строку с ответом."""
-    if kind == "anthropic":
+async def _invoke_masked_judge(messages: list[dict]) -> str:
+    """Вызвать judge только с уже замаскированным prompt."""
+    if _judge_kind == "anthropic":
         # Извлекаем system отдельно, конвертируем формат
         system = ""
         msgs = []
@@ -176,8 +180,8 @@ async def _invoke_llm(client, kind: str, model: str, messages: list[dict]) -> st
                 system = m["content"]
             else:
                 msgs.append(m)
-        resp = await client.messages.create(
-            model=model,
+        resp = await _judge.messages.create(
+            model=JUDGE_MODEL,
             max_tokens=LLM_MAX_TOKENS,
             system=system,
             messages=msgs,
@@ -185,12 +189,11 @@ async def _invoke_llm(client, kind: str, model: str, messages: list[dict]) -> st
         )
         return "\n".join(b.text for b in resp.content if b.type == "text")
 
-    # OpenAI-совместимый
-    resp = await client.chat.completions.create(
-        model=model,
+    resp = await _judge.chat.completions.create(
+        model=JUDGE_MODEL,
         messages=messages,
-        temperature=LLM_TEMPERATURE,
-        max_tokens=LLM_MAX_TOKENS,
+        temperature=0.0,
+        response_format={"type": "json_object"},
     )
     return resp.choices[0].message.content or ""
 
@@ -200,23 +203,14 @@ async def llm_judge(question: str, expected: str, actual: str) -> tuple[float, s
     if not _judge:
         raise RuntimeError("Judge-клиент не инициализирован (JUDGE_API_KEY/LLM_API_KEY пусты)")
 
+    session = PiiSession()
     prompt = JUDGE_PROMPT_TEMPLATE.format(
-        question=question, expected=expected, actual=actual
+        question=session.mask(question).text,
+        expected=session.mask(expected).text,
+        actual=session.mask(actual).text,
     )
     messages = [{"role": "user", "content": prompt}]
-
-    # Для OpenAI-совместимых judge-моделей используем response_format,
-    # для Anthropic — просим JSON в промпте (без структурированного формата).
-    if _judge_kind == "openai":
-        response = await _judge.chat.completions.create(
-            model=JUDGE_MODEL,
-            messages=messages,
-            temperature=0.0,
-            response_format={"type": "json_object"},
-        )
-        content = response.choices[0].message.content or "{}"
-    else:
-        content = await _invoke_llm(_judge, _judge_kind, JUDGE_MODEL, messages)
+    content = await _invoke_masked_judge(messages)
 
     try:
         data = json.loads(content)
@@ -235,27 +229,31 @@ async def llm_judge(question: str, expected: str, actual: str) -> tuple[float, s
 # --- Прогон одного кейса ---
 
 async def _generate_bot_response(question: str, system_prompt: str) -> str:
-    """Сгенерировать ответ бота на вопрос. Чистый LLM-вызов с системным промптом."""
-    messages: list[dict] = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": question})
-
-    try:
-        return await _invoke_llm(_primary, _primary_kind, LLM_MODEL, messages)
-    except Exception as primary_error:
-        logger.warning(
-            "primary_llm_failed error_type=%s", type(primary_error).__name__
+    """Сгенерировать ответ через общий runtime/eval security pipeline."""
+    primary = SDKProvider(
+        _primary,
+        _primary_kind,
+        LLM_MODEL,
+        LLM_TEMPERATURE,
+        LLM_MAX_TOKENS,
+    )
+    reserve = (
+        SDKProvider(
+            _reserve,
+            _reserve_kind,
+            RESERVE_MODEL,
+            LLM_TEMPERATURE,
+            LLM_MAX_TOKENS,
         )
-        if _reserve:
-            try:
-                return await _invoke_llm(_reserve, _reserve_kind, RESERVE_MODEL, messages)
-            except Exception as reserve_error:
-                logger.error(
-                    "reserve_llm_failed error_type=%s",
-                    type(reserve_error).__name__,
-                )
-        raise
+        if _reserve is not None
+        else None
+    )
+    result = await SecurityPipeline(
+        PrimaryReserveGateway(primary, reserve),
+        system_prompt,
+        extract_structured_facts(system_prompt),
+    ).respond(question, [], recent_message_count=1)
+    return result.text
 
 
 async def run_case(case: dict, run_id: int) -> dict:

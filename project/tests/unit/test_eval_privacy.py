@@ -1,8 +1,10 @@
 import asyncio
+import ast
 import json
 import logging
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +12,8 @@ import pytest
 import eval_routes
 import eval_runner
 from eval import run_evals
+from moroz.security.guardrails import GuardDecision
+from moroz.security.llm_gateway import LLMResponse
 
 
 class EvalInitError(RuntimeError):
@@ -184,12 +188,13 @@ async def test_eval_cli_adversarial_output_hides_dataset_and_guardrail_values(
 ):
     input_sentinel = "adversarial-input-sentinel"
     technique_sentinel = "technique-sentinel"
-    reason_sentinel = "guardrail-reason-sentinel"
-    monkeypatch.setattr(
-        run_evals,
-        "_load_guardrail_checker",
-        lambda: lambda _text: (False, reason_sentinel),
-    )
+    calls = []
+
+    def check_input(text, *, recent_message_count):
+        calls.append((text, recent_message_count))
+        return GuardDecision("block", "test_block")
+
+    monkeypatch.setattr(run_evals, "check_input", check_input)
     monkeypatch.setattr(
         run_evals,
         "_load_dataset",
@@ -208,7 +213,7 @@ async def test_eval_cli_adversarial_output_hides_dataset_and_guardrail_values(
     assert "case=71 status=blocked" in output
     assert input_sentinel not in output
     assert technique_sentinel not in output
-    assert reason_sentinel not in output
+    assert calls == [(input_sentinel, 1)]
 
 
 @pytest.mark.parametrize(
@@ -241,9 +246,6 @@ async def test_eval_cli_adversarial_load_error_is_nonzero_and_redacted(
     monkeypatch, capsys
 ):
     sentinel = "C:/private/adversarial.json malformed-user-sentinel"
-    monkeypatch.setattr(
-        run_evals, "_load_guardrail_checker", lambda: lambda _text: (True, "")
-    )
 
     def fail_load(_name):
         raise CliDatasetError(sentinel)
@@ -287,94 +289,174 @@ def test_eval_cli_real_foundation_module_imports_without_stubs():
     assert result.returncode == 0, result.stderr
 
 
-def test_eval_cli_real_adversarial_mode_skips_safely_without_guardrails():
-    result = subprocess.run(
-        [sys.executable, "-m", "eval.run_evals", "--only", "adversarial"],
-        cwd="/app/llm",
-        capture_output=True,
-        text=True,
-        check=False,
+def test_eval_cli_imports_typed_phase5_guard_directly():
+    source = Path("/workspace/llm/eval/run_evals.py").read_text(encoding="utf-8")
+
+    assert (
+        "from moroz.security.guardrails import GuardDecision, check_input"
+        in source
     )
-    assert result.returncode == 0
-    assert "status=unavailable" in result.stdout
-    assert "ImportError" not in result.stderr
+    assert "_load_guardrail_checker" not in source
 
 
-def test_eval_cli_enabled_but_missing_guardrails_is_safely_unavailable():
-    code = """
-import asyncio
-import config
-import sys
-
-config.GUARDRAILS_INPUT_ENABLED = True
-config.GUARDRAILS_INPUT_CATEGORIES = ["configured"]
-from eval import run_evals
-
-sys.argv = ["run_evals", "--only", "adversarial"]
-raise SystemExit(asyncio.run(run_evals.main()))
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd="/app/llm",
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0
-    assert "status=unavailable" in result.stdout
-    assert "Traceback" not in result.stderr
-
-
-@pytest.mark.parametrize(
-    ("guardrails_source", "error_type", "sentinel"),
-    [
-        (
-            "import missing_guardrail_dependency_sentinel\n",
-            "ModuleNotFoundError",
-            "missing_guardrail_dependency_sentinel",
-        ),
-        ("BROKEN_GUARDRAILS = True\n", "ImportError", "missing-check-sentinel"),
-        ("def syntax_error_sentinel(:\n", "SyntaxError", "syntax_error_sentinel"),
-        (
-            'raise RuntimeError("runtime-error-sentinel")\n',
-            "RuntimeError",
-            "runtime-error-sentinel",
-        ),
-    ],
-)
-def test_eval_cli_existing_broken_guardrails_is_nonzero_and_redacted(
-    tmp_path, guardrails_source, error_type, sentinel
+@pytest.mark.parametrize("kind", ["openai", "anthropic"])
+@pytest.mark.asyncio
+async def test_eval_judge_masks_every_interpolated_field(
+    monkeypatch,
+    kind,
 ):
-    (tmp_path / "guardrails.py").write_text(guardrails_source, encoding="utf-8")
-    code = f"""
-import asyncio
-import config
-import sys
+    captured = []
 
-config.GUARDRAILS_INPUT_ENABLED = True
-config.GUARDRAILS_INPUT_CATEGORIES = ["configured"]
-sys.path.insert(0, {str(tmp_path)!r})
-from eval import run_evals
+    async def create(**kwargs):
+        captured.append(kwargs)
+        if kind == "openai":
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content='{"score": 1.0, "reasoning": "ok"}'
+                        )
+                    )
+                ]
+            )
+        return SimpleNamespace(
+            content=[
+                SimpleNamespace(
+                    type="text",
+                    text='{"score": 1.0, "reasoning": "ok"}',
+                )
+            ]
+        )
 
-sys.argv = ["run_evals", "--only", "adversarial"]
-raise SystemExit(asyncio.run(run_evals.main()))
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd="/app/llm",
-        capture_output=True,
-        text=True,
-        check=False,
+    client = (
+        SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        if kind == "openai"
+        else SimpleNamespace(messages=SimpleNamespace(create=create))
+    )
+    monkeypatch.setattr(eval_runner, "_judge", client)
+    monkeypatch.setattr(eval_runner, "_judge_kind", kind)
+
+    raw_values = (
+        "Меня зовут Анна Иванова, телефон +7 999 111-22-33",
+        "Ответ отправлен на expected@example.ru",
+        "Адрес: улица Секретная, 1",
+    )
+    assert await eval_runner.llm_judge(*raw_values) == (1.0, "ok")
+
+    sent = repr(captured)
+    assert captured
+    assert "<PII_" in sent
+    assert all(
+        sentinel not in sent
+        for sentinel in (
+            "Анна Иванова",
+            "+7 999 111-22-33",
+            "expected@example.ru",
+            "улица Секретная, 1",
+        )
     )
 
-    assert result.returncode == 1
-    assert f"status=error error_type={error_type}" in result.stdout
-    assert sentinel not in result.stdout
-    assert sentinel not in result.stderr
-    assert str(tmp_path) not in result.stdout
-    assert str(tmp_path) not in result.stderr
-    assert "Traceback" not in result.stderr
+
+def test_admin_client_factory_disables_sdk_retries(monkeypatch):
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(eval_runner, "AsyncOpenAI", Client)
+    monkeypatch.setattr("anthropic.AsyncAnthropic", Client)
+
+    eval_runner._create_client("configured", None, "openai")
+    eval_runner._create_client("configured", None, "anthropic")
+
+    assert [call["max_retries"] for call in calls] == [0, 0]
+
+
+@pytest.mark.asyncio
+async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
+    captured = {}
+
+    class Provider:
+        def __init__(self, client, kind, model, temperature, max_tokens):
+            self.values = (client, kind, model, temperature, max_tokens)
+
+    class Gateway:
+        def __init__(self, primary, reserve):
+            captured["providers"] = (primary, reserve)
+
+    class Pipeline:
+        def __init__(self, gateway, system_prompt, facts):
+            captured["pipeline"] = (gateway, system_prompt, facts)
+
+        async def respond(self, question, context, *, recent_message_count):
+            captured["request"] = (question, context, recent_message_count)
+            return LLMResponse("safe", 1, 1, 0, 2, "fake")
+
+    primary = object()
+    reserve = object()
+    monkeypatch.setattr(eval_runner, "_primary", primary)
+    monkeypatch.setattr(eval_runner, "_primary_kind", "openai")
+    monkeypatch.setattr(eval_runner, "_reserve", reserve)
+    monkeypatch.setattr(eval_runner, "_reserve_kind", "anthropic")
+    monkeypatch.setattr(eval_runner, "SDKProvider", Provider)
+    monkeypatch.setattr(eval_runner, "PrimaryReserveGateway", Gateway)
+    monkeypatch.setattr(eval_runner, "SecurityPipeline", Pipeline)
+
+    assert await eval_runner._generate_bot_response("Вопрос", "Цена 2400 руб.") == "safe"
+    primary_provider, reserve_provider = captured["providers"]
+    assert primary_provider.values[:3] == (
+        primary,
+        "openai",
+        eval_runner.LLM_MODEL,
+    )
+    assert reserve_provider.values[:3] == (
+        reserve,
+        "anthropic",
+        eval_runner.RESERVE_MODEL,
+    )
+    _, source_prompt, facts = captured["pipeline"]
+    assert source_prompt == "Цена 2400 руб."
+    assert "2400" in facts.prices
+    assert captured["request"] == ("Вопрос", [], 1)
+
+
+def test_external_sdk_calls_are_limited_to_provider_and_masked_judge_adapter():
+    root = Path("/workspace")
+    found = set()
+    openai_call = ".chat." + "completions." + "create"
+    anthropic_call = ".messages." + "create"
+
+    for relative in (
+        "src/moroz/security/llm_gateway.py",
+        "llm/llm.py",
+        "admin/eval_runner.py",
+    ):
+        tree = ast.parse((root / relative).read_text(encoding="utf-8"))
+        parents = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+            if not isinstance(node, ast.Call):
+                continue
+            expression = ast.unparse(node.func)
+            if not (
+                expression.endswith(openai_call)
+                or expression.endswith(anthropic_call)
+            ):
+                continue
+            parent = node
+            while parent in parents and not isinstance(
+                parent,
+                (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                parent = parents[parent]
+            found.add((relative, getattr(parent, "name", "")))
+
+    assert found == {
+        ("src/moroz/security/llm_gateway.py", "complete"),
+        ("admin/eval_runner.py", "_invoke_masked_judge"),
+    }
 
 
 def test_eval_cli_real_dataset_error_exits_nonzero_without_raw_exception():

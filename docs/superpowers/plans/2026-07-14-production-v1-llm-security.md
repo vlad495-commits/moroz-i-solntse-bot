@@ -460,10 +460,13 @@ git commit -m "feat: добавлен общий LLM security pipeline"
 - Modify: `project/worker/main.py`
 - Modify: `project/admin/eval_runner.py`
 - Modify: `project/llm/eval/run_evals.py`
+- Modify: `project/llm/llm.py`
 - Modify: `project/tests/e2e/test_message_delivery.py`
 - Create: `project/tests/e2e/test_security_pipeline.py`
 - Modify: `project/tests/unit/test_eval_privacy.py`
 - Modify: `project/tests/unit/test_worker.py`
+- Modify: `project/tests/unit/test_safe_logging.py`
+- Modify: `project/tests/integration/messaging/test_prompt_reload.py`
 - Modify: `changelog.md`
 
 **Interfaces:**
@@ -503,10 +506,14 @@ Keep `MessageTaskHandler` transaction/idempotency/outbox behavior unchanged. Add
 
 Replace admin `_generate_bot_response` provider fallback with the shared pipeline. Keep judge as a separate model role, but mask all interpolated fields first and validate its JSON as today. Update CLI guard import and typed decision handling.
 
+Static audit подтвердил legacy direct SDK bypass в `_invoke`. Сохранить compatibility
+seam и prompt reload tests, но делегировать сам вызов в `SDKProvider`; прямые SDK
+calls остаются только в `SDKProvider` и masked judge adapter.
+
 - [ ] **Step 4: Run GREEN and durable-path regression**
 
 ```powershell
-docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/e2e/test_privacy_gate.py /workspace/tests/e2e/test_message_delivery.py /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/e2e/test_privacy_gate.py /workspace/tests/e2e/test_message_delivery.py /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py /workspace/tests/unit/test_safe_logging.py /workspace/tests/integration/messaging/test_prompt_reload.py
 ```
 
 - [ ] **Step 5: Static external-call audit**
@@ -520,7 +527,7 @@ Expected: only `SDKProvider` and masked judge adapter contain SDK calls; no raw 
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add project/worker/main.py project/admin/eval_runner.py project/llm/eval/run_evals.py project/tests/e2e/test_message_delivery.py project/tests/e2e/test_security_pipeline.py project/tests/unit/test_eval_privacy.py project/tests/unit/test_worker.py changelog.md
+git add project/worker/main.py project/admin/eval_runner.py project/llm/eval/run_evals.py project/llm/llm.py project/tests/e2e/test_message_delivery.py project/tests/e2e/test_security_pipeline.py project/tests/unit/test_eval_privacy.py project/tests/unit/test_worker.py project/tests/unit/test_safe_logging.py project/tests/integration/messaging/test_prompt_reload.py docs/superpowers/plans/2026-07-14-production-v1-llm-security.md changelog.md
 git commit -m "feat: подключен security pipeline к worker и eval"
 ```
 

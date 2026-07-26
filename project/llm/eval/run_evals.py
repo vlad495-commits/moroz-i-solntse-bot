@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from llm import init_llm, generate_response  # noqa: E402
+from moroz.security.guardrails import GuardDecision, check_input  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -36,25 +37,6 @@ def _safe_case_id(case: dict, ordinal: int) -> int:
     if isinstance(case_id, int) and not isinstance(case_id, bool):
         return case_id
     return ordinal
-
-
-def _load_guardrail_checker():
-    """Вернуть guardrail-проверку, если она доступна на текущей ступени."""
-    import config
-
-    enabled = getattr(config, "GUARDRAILS_INPUT_ENABLED", False)
-    categories = getattr(config, "GUARDRAILS_INPUT_CATEGORIES", ())
-    if not enabled or not categories:
-        return None
-
-    try:
-        from guardrails import check_input
-    except ModuleNotFoundError as error:
-        if error.name == "guardrails":
-            return None
-        raise
-
-    return check_input
 
 
 async def _run_dataset() -> tuple[int, int]:
@@ -109,15 +91,6 @@ async def _run_dataset() -> tuple[int, int]:
 async def _run_adversarial() -> tuple[int, int]:
     """Прогнать jailbreak-атаки: проверяем что guardrails ловит."""
     try:
-        checker = _load_guardrail_checker()
-    except Exception as error:
-        print(f"[adversarial] status=error error_type={type(error).__name__}")
-        return 0, 1
-    if checker is None:
-        print("[adversarial] status=unavailable")
-        return 0, 0
-
-    try:
         cases = _load_dataset("adversarial_dataset")
     except Exception as error:
         print(f"[adversarial] status=error error_type={type(error).__name__}")
@@ -135,7 +108,9 @@ async def _run_adversarial() -> tuple[int, int]:
         expected = case.get("expected", "input_blocked")
 
         try:
-            ok, _reason = checker(input_text)
+            decision = check_input(input_text, recent_message_count=1)
+            if not isinstance(decision, GuardDecision):
+                raise TypeError("guard decision must be typed")
         except Exception as error:
             print(
                 f"[adv] case={case_id} status=error "
@@ -143,7 +118,7 @@ async def _run_adversarial() -> tuple[int, int]:
             )
             failed += 1
             continue
-        actually_blocked = not ok
+        actually_blocked = decision.action == "block"
 
         # input_blocked = guardrail должен сработать на входе
         if expected == "input_blocked":
