@@ -113,6 +113,18 @@ _PROMPT_LEAK_RULES = (
 )
 _NEGATED_MEDICAL_GUARANTEE_RULES = (
     re.compile(
+        r"\b(?:результат\w*|эффект\w*|result|effect)\b.{0,12}\b"
+        r"(?:не\s+гарантир\w*|not\s+guaranteed|"
+        r"не\s+обязательн\w*\s+(?:будет|наступ\w*))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:обсуд\w*|уточн\w*|спрос\w*)\b.{0,40}\b"
+        r"(?:гарантир\w*\s+ли|есть\s+ли\s+гаранти\w*)\b.{0,25}\b"
+        r"(?:результат\w*|эффект\w*)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"\bне\s+обязательн\w*\b.{0,30}\b"
         r"(?:будет|даст|получ\w*|наступ\w*|результат\w*|эффект\w*)\b",
         re.IGNORECASE,
@@ -141,6 +153,17 @@ _NEGATED_MEDICAL_GUARANTEE_RULES = (
     ),
 )
 _MEDICAL_GUARANTEE_RULES = (
+    re.compile(
+        r"\b(?:результат\w*|эффект\w*|result|effect)\b.{0,12}\b"
+        r"(?:гарантир\w*|guaranteed)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:результат\w*|эффект\w*|result|effect)\b.{0,12}\b"
+        r"(?:обязательн\w*\s+(?:будет|наступ\w*)|"
+        r"will\s+definitely\s+(?:happen|occur))\b",
+        re.IGNORECASE,
+    ),
     re.compile(
         r"\b(?:гарантированно|точно|100\s*%)\s+"
         r"(?:вылечит\w*|избавит\w*|поможет\w*|снимет\w*)\b",
@@ -205,7 +228,11 @@ def _normalize_date(value: str) -> str:
         year, month, day = (int(part) for part in value.split("-"))
         return f"{year:04d}-{month:02d}-{day:02d}"
     if "." in value:
-        parts = [int(part) for part in value.split(".")]
+        raw_parts = value.split(".")
+        parts = [int(part) for part in raw_parts]
+        if len(parts) == 3 and len(raw_parts[2]) == 4:
+            day, month, year = parts
+            return f"{year:04d}-{month:02d}-{day:02d}"
         return ".".join(f"{part:02d}" for part in parts)
     return value
 

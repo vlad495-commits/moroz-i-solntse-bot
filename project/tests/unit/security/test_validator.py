@@ -255,6 +255,43 @@ def test_mandatory_negation_and_advice_pass(text: str) -> None:
     assert validate_output(text, _facts(), frozenset()).ok is True
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Результат гарантирован", id="result-guaranteed"),
+        pytest.param("Эффект обязательно наступит", id="effect-definitely-happens"),
+    ],
+)
+def test_outcome_first_medical_promises_are_rejected(text: str) -> None:
+    assert validate_output(
+        text,
+        _facts(),
+        frozenset(),
+    ).code == "medical_guarantee"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Результат не гарантирован", id="reverse-negation"),
+        pytest.param(
+            "Эффект не обязательно наступит",
+            id="reverse-uncertainty",
+        ),
+        pytest.param(
+            "Возможный эффект обсудите с врачом",
+            id="uncertain-advice",
+        ),
+        pytest.param(
+            "Обсудите с врачом, гарантирован ли результат",
+            id="guarantee-discussion",
+        ),
+    ],
+)
+def test_outcome_first_uncertainty_and_advice_pass(text: str) -> None:
+    assert validate_output(text, _facts(), frozenset()).ok is True
+
+
 def test_grouped_source_prices_are_all_approved() -> None:
     facts = extract_structured_facts("Клиентский день — 500/600 руб.")
     assert facts.prices == frozenset({"500", "600"})
@@ -289,6 +326,38 @@ def test_slot_validation_uses_full_scenario_owned_date_and_time() -> None:
     assert validate_output(
         "Свободно 2026-07-30 в 15:00",
         _facts(slots=frozenset()),
+        frozenset(),
+    ).code == "invented_slot"
+
+
+@pytest.mark.parametrize(
+    ("approved_slot", "answer"),
+    [
+        (
+            "2026-07-30 15:00",
+            "Свободно 30.07.2026 в 15:00",
+        ),
+        (
+            "30.07.2026 15:00",
+            "Свободно 2026-07-30 в 15:00",
+        ),
+    ],
+)
+def test_full_dotted_and_iso_slot_dates_are_equivalent(
+    approved_slot: str,
+    answer: str,
+) -> None:
+    assert validate_output(
+        answer,
+        _facts(slots=frozenset({approved_slot})),
+        frozenset(),
+    ).ok is True
+
+
+def test_full_dotted_slot_with_different_date_still_fails() -> None:
+    assert validate_output(
+        "Свободно 31.07.2026 в 15:00",
+        _facts(slots=frozenset({"2026-07-30 15:00"})),
         frozenset(),
     ).code == "invented_slot"
 

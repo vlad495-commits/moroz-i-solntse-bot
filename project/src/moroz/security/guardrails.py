@@ -40,9 +40,11 @@ _PROMPT_ATTACK_RULES = (
     re.compile(
         r"\b(?:смени|замени|забудь|переопредели|игнорируй|"
         r"override|replace|forget|ignore|disregard)\b.{0,80}\b"
-        r"(?:system\s+prompt|developer\s+(?:role|instructions?)|"
-        r"системн\w*\s+(?:роль|промпт\w*)|"
-        r"(?:системн\w*|внутренн\w*)\s+инструкц\w*)\b",
+        r"(?:system\s+(?:prompt|rules?)|"
+        r"developer\s+(?:role|instructions?|rules?)|internal\s+rules?|"
+        r"системн\w*\s+(?:роль|промпт\w*|инструкц\w*|правил\w*)|"
+        r"внутренн\w*\s+(?:инструкц\w*|правил\w*)|"
+        r"правил\w*\s+разработчик\w*)\b",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
