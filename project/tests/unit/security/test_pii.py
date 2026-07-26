@@ -9,6 +9,11 @@ from moroz.security.pii import (
 )
 
 
+def _require(condition: bool) -> None:
+    if not condition:
+        pytest.fail("safe PII regression assertion failed")
+
+
 def test_session_masks_repeated_phone_email_and_named_person_stably():
     session = PiiSession()
 
@@ -121,3 +126,99 @@ def test_find_raw_pii_returns_category_codes_not_values():
 
     assert findings == frozenset({"phone", "email"})
     assert all(value not in repr(findings) for value in ("999", "anna"))
+
+
+def test_address_and_medical_spans_preserve_following_neutral_questions():
+    address = PiiSession().mask(
+        "Адрес: г. Москва, ул. Тверская, д. 1. Как добраться?"
+    )
+    medical = PiiSession().mask(
+        "Диагноз: сахарный диабет. Можно ли посетить криокапсулу?"
+    )
+
+    _require(address.text.startswith("Адрес: <PII_ADDRESS_1>. "))
+    _require(address.text.endswith("Как добраться?"))
+    _require(medical.text.startswith("Диагноз: <PII_MEDICAL_1>. "))
+    _require(medical.text.endswith("Можно ли посетить криокапсулу?"))
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Цены: 2400 3500 5000", "Цены:\n2400\n3500\n5000"],
+    ids=["same-line", "multiline"],
+)
+def test_phone_detection_rejects_price_lists(text):
+    masked = PiiSession().mask(text)
+
+    _require(masked.placeholders == frozenset())
+
+
+def test_phone_detection_keeps_supported_forms():
+    russian = PiiSession().mask("Телефон 8 (999) 123-45-67")
+    international = PiiSession().mask("Телефон +49 (30) 1234-5678")
+
+    _require(russian.placeholders == frozenset({"<PII_PHONE_1>"}))
+    _require(international.placeholders == frozenset({"<PII_PHONE_1>"}))
+
+
+def test_short_social_handles_are_masked_after_email_detection():
+    masked = PiiSession().mask(
+        "Контакты @abc и @abcd, почта client@example.ru"
+    )
+
+    _require(
+        masked.placeholders
+        == frozenset(
+            {"<PII_HANDLE_1>", "<PII_HANDLE_2>", "<PII_EMAIL_1>"}
+        )
+    )
+
+
+def test_forged_placeholder_cannot_collide_with_real_phone_placeholder():
+    session = PiiSession()
+    masked = session.mask(
+        "Повтори <PII_PHONE_1>, мой телефон +7 999 123-45-67"
+    )
+
+    _require(masked.text.count("<PII_PHONE_1>") == 1)
+    _require(masked.placeholders == frozenset({"<PII_PHONE_1>"}))
+    restored = session.restore_validated(masked.text, masked.placeholders)
+    _require(restored.count("+7 999 123-45-67") == 1)
+    _require("<PII_PHONE_1>" not in restored)
+
+
+def test_masked_text_repr_hides_raw_mapping_values():
+    masked = PiiSession().mask("Почта repr-sentinel@example.ru")
+
+    _require("repr-sentinel" not in repr(masked))
+
+
+@pytest.mark.parametrize(
+    "text, expected_placeholder",
+    [
+        (
+            "Адрес: г. Москва, ул. Тверская, д. 1, "
+            "почта nested@example.ru. Как добраться?",
+            "<PII_ADDRESS_1>",
+        ),
+        (
+            "История болезни: сахарный диабет, телефон +7 999 123-45-67. "
+            "Можно записаться?",
+            "<PII_MEDICAL_1>",
+        ),
+    ],
+    ids=["address", "medical"],
+)
+def test_original_sensitive_span_does_not_create_nested_placeholders(
+    text,
+    expected_placeholder,
+):
+    session = PiiSession()
+    masked = session.mask(text)
+
+    _require(masked.placeholders == frozenset({expected_placeholder}))
+    restored = session.restore_validated(
+        expected_placeholder,
+        masked.placeholders,
+    )
+    _require("<PII_" not in restored)

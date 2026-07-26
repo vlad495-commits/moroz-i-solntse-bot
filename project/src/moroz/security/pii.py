@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import AbstractSet
 
@@ -17,7 +17,7 @@ class UnknownPlaceholder(ValueError):
 @dataclass(frozen=True, slots=True)
 class MaskedText:
     text: str
-    mapping: Mapping[str, str]
+    mapping: Mapping[str, str] = field(repr=False)
     placeholders: frozenset[str]
 
 
@@ -35,7 +35,7 @@ _EMAIL_RE = re.compile(
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
 )
 _PAYMENT_RE = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
-_PHONE_RE = re.compile(r"(?<![\w])\+?(?:\d[\s().-]*){9,18}\d(?![\w])")
+_PHONE_RE = re.compile(r"(?<![\w])\+?(?:\d[ \t().-]*){9,18}\d(?![\w])")
 _NAME_RE = re.compile(
     r"(?P<prefix>\b(?:меня\s+зовут|имя|фио)\s*(?::|—|-)?\s*)"
     r"(?P<value>[А-ЯЁ][а-яё]+(?:[-\s][А-ЯЁ][а-яё]+){0,2})",
@@ -43,14 +43,18 @@ _NAME_RE = re.compile(
 )
 _ADDRESS_RE = re.compile(
     r"(?P<prefix>\b(?:адрес|место\s+жительства|улица|ул\.)"
-    r"\s*(?::|—|-)?\s*)(?P<value>[^;\n]+)",
+    r"\s*(?::|—|-)?\s*)(?P<value>[^;\n]+?)"
+    r"(?=;|\n|(?:(?<!\bг)(?<!\bд)(?<!\bул)\.|[!?])"
+    r"(?=\s+[А-ЯЁ]|$)|$)",
     re.IGNORECASE,
 )
-_HANDLE_RE = re.compile(r"(?<![\w@])@[A-Za-z0-9_]{5,32}\b")
+_HANDLE_RE = re.compile(r"(?<![\w@])@[A-Za-z0-9_]{3,32}\b")
 _MEDICAL_RE = re.compile(
     r"(?P<prefix>\b(?:диагноз|анамнез|история\s+болезни|"
     r"медицинская\s+история)\s*(?::|—|-)?\s*)"
-    r"(?P<value>[^;\n]+)",
+    r"(?P<value>[^;\n]+?)"
+    r"(?=;|\n|(?:(?<!\bг)(?<!\bд)(?<!\bул)\.|[!?])"
+    r"(?=\s+[А-ЯЁ]|$)|$)",
     re.IGNORECASE,
 )
 
@@ -81,7 +85,14 @@ def _passes_luhn(value: str) -> bool:
 
 
 def _looks_like_phone(value: str) -> bool:
-    return 10 <= sum(char.isdigit() for char in value) <= 15
+    if not 10 <= sum(char.isdigit() for char in value) <= 15:
+        return False
+    groups = re.findall(r"\d+", value)
+    return (
+        len(groups) == 1
+        or any(char in value for char in "+()-.")
+        or not all(len(group) >= 3 for group in groups)
+    )
 
 
 class PiiSession:
@@ -102,35 +113,52 @@ class PiiSession:
         return placeholder
 
     def mask(self, text: str) -> MaskedText:
-        masked = text
-        replacements: set[str] = set()
+        source = PLACEHOLDER_RE.sub("[PII_TOKEN]", text)
+        candidates: list[tuple[int, int, int, str, str]] = []
 
-        for rule in _RULES:
-            def replace(match: re.Match[str], *, current_rule: _Rule = rule) -> str:
+        for priority, rule in enumerate(_RULES):
+            for match in rule.pattern.finditer(source):
                 value = (
-                    match.group(current_rule.value_group)
-                    if current_rule.value_group
+                    match.group(rule.value_group)
+                    if rule.value_group
                     else match.group(0)
                 )
-                if current_rule.kind == "payment" and not _passes_luhn(value):
-                    return match.group(0)
-                if current_rule.kind == "phone" and not _looks_like_phone(value):
-                    return match.group(0)
-                placeholder = self._placeholder(current_rule.kind, value)
-                replacements.add(placeholder)
-                if current_rule.value_group:
-                    return match.group("prefix") + placeholder
-                return placeholder
+                if rule.kind == "payment" and not _passes_luhn(value):
+                    continue
+                if rule.kind == "phone" and not _looks_like_phone(value):
+                    continue
+                start, end = (
+                    match.span(rule.value_group)
+                    if rule.value_group
+                    else match.span()
+                )
+                candidates.append((start, end, priority, rule.kind, value))
 
-            masked = rule.pattern.sub(replace, masked)
+        selected: list[tuple[int, int, str, str]] = []
+        selected_end = -1
+        for start, end, _, kind, value in sorted(
+            candidates,
+            key=lambda item: (item[0], -(item[1] - item[0]), item[2]),
+        ):
+            if start < selected_end:
+                continue
+            selected.append((start, end, kind, value))
+            selected_end = end
 
-        present = frozenset(
-            placeholder for placeholder in replacements if placeholder in masked
-        )
+        parts: list[str] = []
+        placeholders: set[str] = set()
+        position = 0
+        for start, end, kind, value in selected:
+            placeholder = self._placeholder(kind, value)
+            parts.extend((source[position:start], placeholder))
+            placeholders.add(placeholder)
+            position = end
+        parts.append(source[position:])
+
         return MaskedText(
-            text=masked,
+            text="".join(parts),
             mapping=MappingProxyType(dict(self._mapping)),
-            placeholders=present,
+            placeholders=frozenset(placeholders),
         )
 
     def restore_validated(
