@@ -260,6 +260,8 @@ def test_mandatory_negation_and_advice_pass(text: str) -> None:
     [
         pytest.param("Результат гарантирован", id="result-guaranteed"),
         pytest.param("Эффект обязательно наступит", id="effect-definitely-happens"),
+        pytest.param("Эффект точно будет", id="effect-certainly-will-be"),
+        pytest.param("Результат точно наступит", id="result-certainly-happens"),
     ],
 )
 def test_outcome_first_medical_promises_are_rejected(text: str) -> None:
@@ -285,6 +287,14 @@ def test_outcome_first_medical_promises_are_rejected(text: str) -> None:
         pytest.param(
             "Обсудите с врачом, гарантирован ли результат",
             id="guarantee-discussion",
+        ),
+        pytest.param(
+            "Эффект точно не наступит",
+            id="certainty-direct-negation",
+        ),
+        pytest.param(
+            "Результат, возможно, наступит",
+            id="outcome-uncertainty",
         ),
     ],
 )

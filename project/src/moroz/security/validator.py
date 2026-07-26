@@ -160,7 +160,7 @@ _MEDICAL_GUARANTEE_RULES = (
     ),
     re.compile(
         r"\b(?:результат\w*|эффект\w*|result|effect)\b.{0,12}\b"
-        r"(?:обязательн\w*\s+(?:будет|наступ\w*)|"
+        r"(?:(?:обязательн\w*|точно)\s+(?:будет|наступ\w*)|"
         r"will\s+definitely\s+(?:happen|occur))\b",
         re.IGNORECASE,
     ),
