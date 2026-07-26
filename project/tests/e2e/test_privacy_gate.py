@@ -20,6 +20,7 @@ from config import (
 )
 from moroz.common.db import Database
 from moroz.messaging.repository import MessageRepository
+import webhook as webhook_module
 from webhook import create_app
 
 
@@ -504,6 +505,64 @@ async def test_non_text_update_sends_one_durable_static_reply(
     )
     assert await db.fetchval("SELECT count(*) FROM task_outbox") == 1
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+
+
+async def test_webhook_uses_shared_ingress_decision_for_nontext(
+    client,
+    fake_telegram,
+    monkeypatch,
+):
+    calls = []
+    original = webhook_module.decide_ingress
+
+    def capture(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(webhook_module, "decide_ingress", capture)
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_photo_update(update_id=916),
+    )
+
+    assert response.status_code == 200
+    assert fake_telegram.last_text == NON_TEXT_REPLY
+    assert calls == [
+        {
+            "has_text": False,
+            "has_processing_consent": False,
+        }
+    ]
+
+
+async def test_webhook_uses_shared_ingress_decision_for_missing_consent(
+    client,
+    fake_telegram,
+    monkeypatch,
+):
+    calls = []
+    original = webhook_module.decide_ingress
+
+    def capture(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(webhook_module, "decide_ingress", capture)
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_text_update(update_id=917),
+    )
+
+    assert response.status_code == 200
+    assert fake_telegram.last_text == CONSENT_PROMPT
+    assert calls == [
+        {
+            "has_text": True,
+            "has_processing_consent": False,
+        }
+    ]
 
 
 async def test_claimed_consent_outbound_rebuilds_keyboard_from_database(

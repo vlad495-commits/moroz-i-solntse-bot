@@ -686,7 +686,7 @@ async def test_eval_cli_dataset_enforces_forbidden_keywords(
 
 
 @pytest.mark.asyncio
-async def test_eval_cli_dataset_rejects_vacuous_response_assertions(
+async def test_eval_cli_primary_reserve_case_uses_structural_evaluator(
     monkeypatch,
     capsys,
 ):
@@ -704,8 +704,13 @@ async def test_eval_cli_dataset_rejects_vacuous_response_assertions(
             }
         ],
     )
-    monkeypatch.setattr(run_evals, "init_llm", lambda: None)
+    initialized = []
     generated = []
+    monkeypatch.setattr(
+        run_evals,
+        "init_llm",
+        lambda: initialized.append(True),
+    )
 
     async def generate_response(_input, context):
         assert context == []
@@ -719,13 +724,98 @@ async def test_eval_cli_dataset_rejects_vacuous_response_assertions(
 
     assert results == (
         SecurityEvalResult(
-            passed=False,
+            passed=True,
             category="primary_reserve",
             critical=True,
         ),
     )
+    assert initialized == []
     assert generated == []
-    assert "[dataset] total=1 passed=0 failed=1 status=failed" in output
+    assert "[dataset] total=1 passed=1 failed=0 status=passed" in output
+
+
+@pytest.mark.asyncio
+async def test_eval_cli_all_structural_categories_are_local_and_executable(
+    monkeypatch,
+    capsys,
+):
+    categories = (
+        "consent",
+        "primary_reserve",
+        "providers_unavailable",
+        "nonretryable_provider",
+        "nontext_voice",
+    )
+    cases = [
+        {
+            "id": 100 + index,
+            "category": category,
+            "critical": True,
+            "input": "synthetic structural input",
+            "expected_contains": [],
+        }
+        for index, category in enumerate(categories)
+    ]
+    initialized = []
+    generated = []
+    monkeypatch.setattr(run_evals, "_load_dataset", lambda _name: cases)
+    monkeypatch.setattr(
+        run_evals,
+        "init_llm",
+        lambda: initialized.append(True),
+    )
+
+    async def generate_response(*_args, **_kwargs):
+        generated.append(True)
+        raise AssertionError("external generation must stay unreachable")
+
+    monkeypatch.setattr(run_evals, "generate_response", generate_response)
+
+    results = await run_evals._run_dataset()
+    output = capsys.readouterr().out
+
+    assert results == tuple(
+        SecurityEvalResult(True, category, True)
+        for category in categories
+    )
+    assert initialized == []
+    assert generated == []
+    assert "[dataset] total=5 passed=5 failed=0 status=passed" in output
+
+
+@pytest.mark.asyncio
+async def test_structural_consent_is_mutation_sensitive(monkeypatch):
+    monkeypatch.setattr(
+        run_evals,
+        "decide_ingress",
+        lambda **_kwargs: SimpleNamespace(action="accept", code=None),
+    )
+
+    assert await run_evals._evaluate_structural_case(
+        {"category": "consent"}
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_structural_provider_policy_requires_real_gateway_call_counts(
+    monkeypatch,
+):
+    class BypassGateway:
+        def __init__(self, _primary, _reserve):
+            pass
+
+        async def complete(self, _request):
+            return LLMResponse("Безопасный ответ", 0, 0, 0, 0, "bypass")
+
+    monkeypatch.setattr(
+        run_evals,
+        "PrimaryReserveGateway",
+        BypassGateway,
+    )
+
+    assert await run_evals._evaluate_structural_case(
+        {"category": "primary_reserve"}
+    ) is False
 
 
 @pytest.mark.asyncio
