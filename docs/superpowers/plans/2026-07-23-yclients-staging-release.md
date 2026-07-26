@@ -138,27 +138,27 @@ Record candidate IDs/archive digest, migration, app/store health, webhook/HTTPS,
 
 **Produces:** live proof of `candidate → previous → candidate` with expanded DB retained.
 
-- [ ] **Step 1: Verify candidate starting point**
+- [x] **Step 1: Verify candidate starting point**
 
 Capture candidate bot/worker configured refs and actual IDs, schema `0006`, health, webhook and stores/Caddy IDs/started-at values.
 
-- [ ] **Step 2: Switch only bot/worker to previous**
+- [x] **Step 2: Switch only bot/worker to previous**
 
 Export the recorded previous shared tag and run only `up -d --no-build --wait ... bot worker`. Require actual bot/worker IDs equal previous IDs and differ from candidate IDs. Confirm schema remains `0006`; PostgreSQL/Redis/RabbitMQ/Caddy IDs and started-at values remain unchanged.
 
-- [ ] **Step 3: Verify previous on expanded DB**
+- [x] **Step 3: Verify previous on expanded DB**
 
 Require app health, loopback OpenAPI, webhook status and one fresh synthetic Telegram `1/1/1` smoke. Run safe aggregate log scan. Do not run YCLIENTS mutation/readiness against previous.
 
-- [ ] **Step 4: Restore candidate**
+- [x] **Step 4: Restore candidate**
 
 With failure-safe trap semantics, export candidate tag and run only `up -d --no-build --wait ... bot worker`. Require actual IDs equal candidate IDs and differ from previous IDs; schema stays `0006`, stores/Caddy unchanged.
 
-- [ ] **Step 5: Verify restored candidate**
+- [x] **Step 5: Verify restored candidate**
 
 Repeat app health, loopback, webhook, fresh synthetic `1/1/1` smoke and aggregate log scan. Confirm candidate artifacts and previous archive remain inspectable.
 
-- [ ] **Step 6: Record Task 4 evidence and commit**
+- [x] **Step 6: Record Task 4 evidence and commit**
 
 Persist the sequence, per-service previous/candidate IDs, unchanged store/Caddy identity, migration, health/smoke/log counters and archive availability.
 
@@ -214,3 +214,4 @@ Status: in progress.
 - Forward migration and rollout: schema reached exact `0006_yclients_booking_key`; no downgrade command ran. Candidate bot/worker are `2/2` healthy, all four store/Caddy IDs and StartedAt values match the pre-migration baseline, loopback OpenAPI and webhook status pass, HTTPS is `404/403/403`, and staging is `6/6` healthy.
 - Candidate smoke: fresh synthetic Telegram deltas are exact `1/1/1`; aggregate secret/traceback/PII/raw log counters are `0/0/0/0`.
 - GET-only YCLIENTS readiness: services/staff/slots `1/1/312`, exact `moroz_booking_key` field matches `1`, text/edit/hidden properties all true, `18` calls and methods `GET_ONLY`. No provider lifecycle mutation ran.
+- Official rollback rehearsal: exact sequence `candidate → previous → candidate`; bot/worker distinctions `true/true`. Previous on expanded schema and restored candidate each passed app health/webhook/loopback plus fresh Telegram `1/1/1` and log scan `0/0/0/0`. PostgreSQL/Redis/RabbitMQ/Caddy IDs and StartedAt values stayed unchanged, schema stayed `0006_yclients_booking_key`, both archives remained inspectable, and final app is candidate.
