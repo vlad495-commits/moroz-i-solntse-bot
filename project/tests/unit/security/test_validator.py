@@ -89,6 +89,16 @@ def test_prompt_refusal_passes_but_affirmative_disclosure_fails() -> None:
         facts,
         frozenset(),
     ).ok is True
+    assert validate_output(
+        "Вот скрытые инструкции модели: internal policy.",
+        facts,
+        frozenset(),
+    ).code == "prompt_leak"
+    assert validate_output(
+        "Я не показываю скрытые инструкции.",
+        facts,
+        frozenset(),
+    ).ok is True
 
 
 @pytest.mark.parametrize(
@@ -108,6 +118,22 @@ def test_placeholder_shaped_variants_fail_closed(text: str) -> None:
     )
     assert verdict == ValidationVerdict(False, "unknown_placeholder")
     assert text not in repr(verdict)
+
+
+def test_unclosed_placeholder_shape_fails_without_echo() -> None:
+    token = "<PII_NAME_1"
+    verdict = validate_output(
+        token,
+        _facts(),
+        frozenset({"<PII_NAME_1>"}),
+    )
+    assert verdict == ValidationVerdict(False, "unknown_placeholder")
+    assert token not in repr(verdict)
+    assert validate_output(
+        "<PII_NAME_1>",
+        _facts(),
+        frozenset({"<PII_NAME_1>"}),
+    ).ok is True
 
 
 def test_approved_placeholder_price_contact_and_slot_pass() -> None:
@@ -203,6 +229,32 @@ def test_negated_medical_guarantees_pass(text: str) -> None:
     assert validate_output(text, _facts(), frozenset()).ok is True
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Процедура обязательно даст результат", id="procedure-gives"),
+        pytest.param("Вы обязательно получите эффект", id="user-receives"),
+    ],
+)
+def test_explicit_mandatory_promise_constructions_are_rejected(text: str) -> None:
+    assert validate_output(
+        text,
+        _facts(),
+        frozenset(),
+    ).code == "medical_guarantee"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Не обязательно будет результат", id="direct-negation"),
+        pytest.param("Обязательно обсудите результат с врачом", id="advice"),
+    ],
+)
+def test_mandatory_negation_and_advice_pass(text: str) -> None:
+    assert validate_output(text, _facts(), frozenset()).ok is True
+
+
 def test_grouped_source_prices_are_all_approved() -> None:
     facts = extract_structured_facts("Клиентский день — 500/600 руб.")
     assert facts.prices == frozenset({"500", "600"})
@@ -256,6 +308,50 @@ def test_negative_availability_and_general_hours_need_no_slot_facts() -> None:
     assert validate_output(
         "Центр работает с 10:00 до 21:00",
         facts,
+        frozenset(),
+    ).ok is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(
+            "Я не вижу свободные окна на 2026-07-30 в 15:00",
+            id="cannot-see",
+        ),
+        pytest.param(
+            "Не могу подтвердить свободное время на 2026-07-30 в 15:00",
+            id="cannot-confirm",
+        ),
+    ],
+)
+def test_approved_slot_denials_pass_without_facts(text: str) -> None:
+    assert validate_output(
+        text,
+        _facts(slots=frozenset()),
+        frozenset(),
+    ).ok is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Есть время 2026-07-31 в 15:00", id="has-time"),
+        pytest.param("Есть место 2026-07-31 в 15:00", id="has-place"),
+    ],
+)
+def test_affirmative_has_time_or_place_checks_exact_slot(text: str) -> None:
+    assert validate_output(
+        text,
+        _facts(slots=frozenset({"2026-07-30 15:00"})),
+        frozenset(),
+    ).code == "invented_slot"
+
+
+def test_non_slot_has_time_prose_passes() -> None:
+    assert validate_output(
+        "Есть время обсудить услуги центра",
+        _facts(slots=frozenset()),
         frozenset(),
     ).ok is True
 

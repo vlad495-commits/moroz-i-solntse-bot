@@ -42,7 +42,7 @@ _PROMPT_ATTACK_RULES = (
         r"override|replace|forget|ignore|disregard)\b.{0,80}\b"
         r"(?:system\s+prompt|developer\s+(?:role|instructions?)|"
         r"системн\w*\s+(?:роль|промпт\w*)|"
-        r"внутренн\w*\s+инструкц\w*)\b",
+        r"(?:системн\w*|внутренн\w*)\s+инструкц\w*)\b",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
@@ -66,6 +66,12 @@ _MEDICAL_RISK_RULES = (
     ),
 )
 _REVIEW_RULES = (
+    re.compile(
+        r"\b(?:игнорируй|игнорировать|забудь|ignore|forget|disregard)\b"
+        r".{0,30}\b(?:предыдущ\w*|прежн\w*|все|previous|prior|all)\b"
+        r".{0,20}\b(?:инструкц\w*|instructions?)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
     re.compile(
         r"\b(?:следующ\w*|вложенн\w*|эт\w*)"
         r"(?:\s+\w+){0,4}\s+инструкц\w*"

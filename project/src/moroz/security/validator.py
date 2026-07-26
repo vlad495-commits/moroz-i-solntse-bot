@@ -10,6 +10,10 @@ from moroz.security.pii import PLACEHOLDER_RE
 INTERNAL_CANARY = "MOROZ_INTERNAL_CANARY_V1"
 
 _PLACEHOLDER_SHAPE_RE = re.compile(r"<\s*PII(?:[_\s-][^>]*)?>", re.IGNORECASE)
+_PLACEHOLDER_RESIDUAL_RE = re.compile(
+    r"<\s*PII(?:[_\s-][^\s<>]*)?",
+    re.IGNORECASE,
+)
 _PRICE_RE = re.compile(
     r"(?<!\d)(?P<values>\d+(?:[ \u00a0]\d{3})*"
     r"(?:\s*/\s*\d+(?:[ \u00a0]\d{3})*)*)"
@@ -42,7 +46,8 @@ _SLOT_RE = re.compile(
 )
 _AVAILABILITY_RE = re.compile(
     r"\b(?:свободн\w*|доступн\w*|есть\s+окн\w*|"
-    r"можно\s+записат\w*|available|open\s+slot)\b",
+    r"есть\s+(?:врем\w*|мест\w*)|можно\s+записат\w*|"
+    r"available|open\s+slot)\b",
     re.IGNORECASE,
 )
 _NEGATED_AVAILABILITY_RULES = (
@@ -55,6 +60,15 @@ _NEGATED_AVAILABILITY_RULES = (
         r"\b(?:свободн\w*|доступн\w*|окон\w*)\b.{0,50}\bнет\b",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"\bне\s+виж\w*\b.{0,40}\b(?:свободн\w*|окон\w*)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bне\s+могу\s+подтверд\w*\b.{0,40}\b"
+        r"(?:свободн\w*|врем\w*|окон\w*)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(?:not\s+available|no\s+available\s+slots?)\b", re.IGNORECASE),
 )
 _NEGATED_PROMPT_LEAK_RULES = (
@@ -62,37 +76,47 @@ _NEGATED_PROMPT_LEAK_RULES = (
         r"\b(?:не|не\s+могу|нельзя|cannot|can't|do\s+not|never)\s+"
         r"(?:раскры\w*|показ\w*|вывод\w*|reveal\w*|show\w*)"
         r".{0,40}\b(?:system\s+prompt|developer\s+instructions?|"
-        r"системн\w*\s+промпт\w*|внутренн\w*\s+инструкц\w*)\b",
+        r"системн\w*\s+промпт\w*|"
+        r"(?:внутренн\w*|скрыт\w*)\s+инструкц\w*)\b",
         re.IGNORECASE,
     ),
 )
 _PROMPT_LEAK_RULES = (
     re.compile(
         r"\b(?:system\s+prompt|developer\s+instructions?|"
-        r"системн\w*\s+промпт\w*|внутренн\w*\s+инструкц\w*)"
+        r"системн\w*\s+промпт\w*|"
+        r"(?:внутренн\w*|скрыт\w*)\s+инструкц\w*)"
         r"\s*:",
         re.IGNORECASE,
     ),
     re.compile(
         r"\b(?:вот|ниже|here(?:\s+are|'s)|below)\b.{0,50}\b"
         r"(?:system\s+prompt|developer\s+instructions?|"
-        r"системн\w*\s+промпт\w*|внутренн\w*\s+инструкц\w*)\b",
+        r"системн\w*\s+промпт\w*|"
+        r"(?:внутренн\w*|скрыт\w*)\s+инструкц\w*)\b",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
         r"\b(?:system\s+prompt|developer\s+instructions?|"
-        r"системн\w*\s+промпт\w*|внутренн\w*\s+инструкц\w*)\b"
+        r"системн\w*\s+промпт\w*|"
+        r"(?:внутренн\w*|скрыт\w*)\s+инструкц\w*)\b"
         r".{0,30}\b(?:следующ\w*|таков\w*|below|follows?)\b",
         re.IGNORECASE,
     ),
     re.compile(
         r"\b(?:раскры\w*|показыва\w*|вывож\w*|reveal\w*|showing)\b"
         r".{0,40}\b(?:system\s+prompt|developer\s+instructions?|"
-        r"системн\w*\s+промпт\w*|внутренн\w*\s+инструкц\w*)\b",
+        r"системн\w*\s+промпт\w*|"
+        r"(?:внутренн\w*|скрыт\w*)\s+инструкц\w*)\b",
         re.IGNORECASE,
     ),
 )
 _NEGATED_MEDICAL_GUARANTEE_RULES = (
+    re.compile(
+        r"\bне\s+обязательн\w*\b.{0,30}\b"
+        r"(?:будет|даст|получ\w*|наступ\w*|результат\w*|эффект\w*)\b",
+        re.IGNORECASE,
+    ),
     re.compile(
         r"\b(?:не|нельзя|невозможно|not|cannot)\s+"
         r"(?:\w+\s+){0,2}(?:гарантир\w*|guarantee\w*)"
@@ -129,9 +153,14 @@ _MEDICAL_GUARANTEE_RULES = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"\bобязательн\w*\b.{0,30}\b"
-        r"(?:вылеч\w*|избав\w*|исцел\w*|снимет\w*|"
-        r"результат\w*|эффект\w*)\b",
+        r"\bобязательн\w*\b.{0,12}\b"
+        r"(?:вылеч\w*|избав\w*|исцел\w*|снимет\w*)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bобязательн\w*\b.{0,12}\b"
+        r"(?:будет|даст|получ\w*|наступ\w*)\b.{0,20}\b"
+        r"(?:результат\w*|эффект\w*|выздоровл\w*)\b",
         re.IGNORECASE,
     ),
     re.compile(
@@ -311,6 +340,9 @@ def validate_output(
     if (
         placeholders - set(allowed_placeholders)
         or placeholders - set(PLACEHOLDER_RE.findall(text))
+        or _PLACEHOLDER_RESIDUAL_RE.search(
+            _PLACEHOLDER_SHAPE_RE.sub("", text)
+        )
     ):
         return ValidationVerdict(False, "unknown_placeholder")
     if _contacts(text) - facts.public_contacts:
@@ -333,6 +365,6 @@ def validate_output(
         allowed_slots = frozenset(
             key for slot in facts.slots for key in _slot_keys(slot)
         )
-        if not output_slots or output_slots - allowed_slots:
+        if output_slots and output_slots - allowed_slots:
             return ValidationVerdict(False, "invented_slot")
     return ValidationVerdict(True, "output_valid")
