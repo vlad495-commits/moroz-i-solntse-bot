@@ -1,19 +1,63 @@
 import re
 from pathlib import Path
 
+import pytest
+
 
 REPO = Path("/repo")
+OWNERSHIP_PLAN = (
+    REPO / "docs/superpowers/plans/2026-07-22-yclients-postgres-ownership.md"
+)
 DOCUMENTS = [
     REPO / "AGENTS.md",
     REPO / "План реализации.md",
+    Path("/workspace/ops/staging-runbook.md"),
     *sorted((REPO / "docs/superpowers/plans").glob("*.md")),
 ]
 
 
-def test_official_compose_commands_use_parent_env_file():
+def test_official_compose_commands_use_approved_env_file():
     for path in DOCUMENTS:
         text = path.read_text(encoding="utf-8")
-        assert not re.search(r"docker compose(?! --env-file \.\./\.env)", text), path
+        env_file = (
+            "../tmp/compose-empty.env"
+            if path == OWNERSHIP_PLAN
+            else "../.env"
+        )
+        assert not re.search(
+            rf"docker compose(?! --env-file {re.escape(env_file)}(?:\s|$))",
+            text,
+        ), path
+
+
+def test_normal_document_rejects_ownership_empty_env(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    document = tmp_path / "staging-runbook.md"
+    document.write_text(
+        "docker compose --env-file ../tmp/compose-empty.env up -d",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(globals(), "DOCUMENTS", [document])
+
+    with pytest.raises(AssertionError):
+        test_official_compose_commands_use_approved_env_file()
+
+
+def test_ownership_plan_uses_empty_env_only_for_isolated_commands() -> None:
+    commands = re.findall(
+        r"^docker compose[^\n]*",
+        OWNERSHIP_PLAN.read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+
+    assert commands
+    assert all(
+        command.startswith(
+            "docker compose --env-file ../tmp/compose-empty.env "
+        )
+        for command in commands
+    )
 
 
 def test_release_checkpoints_do_not_start_telegram_polling():

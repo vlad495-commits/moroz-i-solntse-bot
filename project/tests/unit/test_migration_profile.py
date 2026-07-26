@@ -129,17 +129,21 @@ def test_compose_process_environment_overrides_external_test_credentials():
             assert services[name]["environment"][key] == (
                 f"${{{key}:?set {key} outside Git}}"
             )
-    assert services["admin"]["environment"] == {
-        "DATABASE_URL": "${DATABASE_URL:-}",
-        "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
-    }
-    assert services["bot"]["environment"] == {
-        "DATABASE_URL": "${DATABASE_URL:-}",
-        "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
-        "TELEGRAM_WEBHOOK_SECRET": (
-            "${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET outside Git}"
-        ),
-    }
+    assert {"DATABASE_URL", "REDIS_URL"} <= set(services["admin"]["environment"])
+    assert {"DATABASE_URL", "REDIS_URL", "TELEGRAM_WEBHOOK_SECRET"} <= set(
+        services["bot"]["environment"]
+    )
+    assert "env_file" not in services["admin"]
+    assert "env_file" not in services["bot"]
+    for name in ("bot", "admin"):
+        assert services[name]["environment"]["DATABASE_URL"] == "${DATABASE_URL:-}"
+        for key in ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"):
+            assert services[name]["environment"][key] == (
+                f"${{{key}:?set {key} outside Git}}"
+            )
+    assert services["bot"]["environment"]["TELEGRAM_MODE"] == (
+        "${TELEGRAM_MODE:-webhook}"
+    )
     for name in ("bot", "worker"):
         assert "redis" not in services[name]["depends_on"]
 
@@ -159,9 +163,79 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "LLM_MAX_TOKENS": "${LLM_MAX_TOKENS:-2000}",
         "LLM_REQUEST_TIMEOUT_SEC": "${LLM_REQUEST_TIMEOUT_SEC:-30}",
         "CONTEXT_MESSAGES_LIMIT": "${CONTEXT_MESSAGES_LIMIT:-20}",
+        "YCLIENTS_PARTNER_TOKEN": "${YCLIENTS_PARTNER_TOKEN:-}",
+        "YCLIENTS_USER_TOKEN": "${YCLIENTS_USER_TOKEN:-}",
+        "YCLIENTS_COMPANY_ID": "${YCLIENTS_COMPANY_ID:-}",
+        "YCLIENTS_BASE_URL": "${YCLIENTS_BASE_URL:-}",
+        "YCLIENTS_TIMEZONE": "${YCLIENTS_TIMEZONE:-}",
+        "YCLIENTS_TIMEOUT_SECONDS": "${YCLIENTS_TIMEOUT_SECONDS:-}",
     }
     for name in ("worker", "redis", "postgres"):
         assert "env_file" not in services[name]
+
+
+def test_yclients_environment_is_passed_only_to_worker_and_smoke():
+    services = compose_services()
+    runtime_keys = {
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_TIMEZONE",
+        "YCLIENTS_TIMEOUT_SECONDS",
+    }
+    smoke_only_keys = {
+        "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_TEST_NAME",
+        "YCLIENTS_TEST_PHONE",
+        "YCLIENTS_SANDBOX_CONSENT",
+    }
+
+    assert runtime_keys <= set(services["worker"]["environment"])
+    assert not smoke_only_keys & set(services["worker"]["environment"])
+    assert runtime_keys | smoke_only_keys <= set(
+        services["yclients-smoke"]["environment"]
+    )
+    for name, service in services.items():
+        if name not in {"worker", "yclients-smoke"}:
+            assert not (runtime_keys | smoke_only_keys) & set(
+                service.get("environment", {})
+            )
+            assert "env_file" not in service
+
+
+def test_yclients_smoke_is_an_explicit_bounded_profile() -> None:
+    services = compose_services()
+    service = services["yclients-smoke"]
+
+    assert service["profiles"] == ["yclients-smoke"]
+    assert service["image"] == services["worker"]["image"]
+    assert service["image"] == (
+        "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
+    )
+    assert service["build"] == {"context": ".", "dockerfile": "worker/Dockerfile"}
+    assert service["command"] == [
+        "python", "-m", "moroz.booking.yclients_sandbox_smoke"
+    ]
+    assert service["restart"] == "no"
+    assert "depends_on" not in service
+    assert "ports" not in service
+    assert "volumes" not in service
+    assert set(service["environment"]) == {
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_TIMEZONE",
+        "YCLIENTS_TIMEOUT_SECONDS",
+        "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_TEST_NAME",
+        "YCLIENTS_TEST_PHONE",
+        "YCLIENTS_SANDBOX_CONSENT",
+    }
+    assert service["environment"]["YCLIENTS_SANDBOX_CONSENT"] == (
+        "${YCLIENTS_SANDBOX_CONSENT:-}"
+    )
 
 
 def test_worker_image_installs_only_exact_pipeline_dependencies():
@@ -215,12 +289,18 @@ def test_host_ops_regression_checks_rendered_compose_environment_allowlists():
         encoding="utf-8"
     )
 
-    assert "config --format json" in script
+    assert "--profile yclients-smoke config --format json" in script
     assert '$expectedEnvironment = @{' in script
     worker_literal = re.search(r"worker = @\(([^)]*)\)", script)
     assert worker_literal
     scripted_worker_keys = set(re.findall(r'"([A-Z_]+)"', worker_literal.group(1)))
     assert scripted_worker_keys == set(compose_services()["worker"]["environment"])
+    smoke_literal = re.search(r'"yclients-smoke" = @\(([^)]*)\)', script)
+    assert smoke_literal
+    scripted_smoke_keys = set(re.findall(r'"([A-Z_]+)"', smoke_literal.group(1)))
+    assert scripted_smoke_keys == set(
+        compose_services()["yclients-smoke"]["environment"]
+    )
     assert 'redis = @("REDIS_PASSWORD")' in script
     assert 'postgres = @("POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")' in script
     assert 'env_file' in script

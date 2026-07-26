@@ -1,0 +1,17 @@
+{
+	http_port 8080
+	https_port 8443
+	admin off
+}
+
+{$STAGING_DOMAIN} {
+	@telegram_webhook path /telegram/webhook
+
+	handle @telegram_webhook {
+		reverse_proxy bot:8081
+	}
+
+	handle {
+		respond 404
+	}
+}
