@@ -24,6 +24,48 @@
 - Логи и test output не содержат raw input/output, mappings, endpoint, DSN, tokens, passwords или exception messages.
 - Ponytail `full`: stdlib и существующие зависимости, без Presidio, новых сервисов, ORM, queues или speculative role-model infrastructure.
 
+## Mandatory local Docker invocation contract
+
+Этот контракт обязателен **перед каждым** Phase 5 Docker RED, GREEN, regression, baseline и completion gate. Каждый логический gate получает новый task-specific namespace и новые одноразовые process-only credentials. Команды из всех задач ниже выполняются в том же PowerShell-процессе из `$phase5RunDir`; поэтому их буквальный `--env-file ../.env` разрешается в созданный пустой task-local файл, а `COMPOSE_FILE` указывает на tracked `project/docker-compose.yml`.
+
+Linked worktree может не содержать локальный `.env`. Не читать и не копировать внешний/реальный `.env`; создать только пустой task-local env-file внутри корневого `tmp/`:
+
+```powershell
+$repoRoot = (Resolve-Path (git rev-parse --show-toplevel)).Path
+$phase5TmpRoot = (Resolve-Path (Join-Path $repoRoot "tmp")).Path
+$phase5RunRoot = Join-Path $phase5TmpRoot "phase5-$([Guid]::NewGuid().ToString('N').Substring(0,8))"
+$phase5RunDir = Join-Path $phase5RunRoot "project"
+New-Item -ItemType Directory -Path $phase5RunDir | Out-Null
+New-Item -ItemType File -Path (Join-Path $phase5RunRoot ".env") | Out-Null
+
+$env:COMPOSE_FILE = (Resolve-Path (Join-Path $repoRoot "project\docker-compose.yml")).Path
+$env:COMPOSE_PROJECT_NAME = "moroz-phase5-$([Guid]::NewGuid().ToString('N').Substring(0,8))"
+$env:DATABASE_URL = ""
+$env:POSTGRES_USER = "phase5"
+$env:POSTGRES_PASSWORD = [Guid]::NewGuid().ToString("N")
+$env:POSTGRES_DB = "moroz_phase5"
+$env:RABBITMQ_USER = "phase5"
+$env:RABBITMQ_PASSWORD = [Guid]::NewGuid().ToString("N")
+$env:REDIS_PASSWORD = [Guid]::NewGuid().ToString("N")
+$env:TELEGRAM_WEBHOOK_SECRET = [Guid]::NewGuid().ToString("N")
+$env:RABBITMQ_URL = "amqp://$($env:RABBITMQ_USER):$($env:RABBITMQ_PASSWORD)@rabbitmq:5672/"
+$env:REDIS_URL = "redis://:$($env:REDIS_PASSWORD)@redis:6379/0"
+Set-Location -LiteralPath $phase5RunDir
+```
+
+`DATABASE_URL` задаётся явно пустым в process environment, чтобы никакой inherited/env-file override не обошёл одноразовые `POSTGRES_*`. Значения credentials/DSN нельзя печатать, сохранять или включать в evidence.
+
+После каждого gate сначала очистить exact Compose namespace/его подтверждённый task image и проверить остатки containers/volumes/networks/images `0/0/0/0`. Затем удалить только три заранее известные task-local сущности внутри подтверждённого `$phase5TmpRoot`:
+
+```powershell
+Set-Location -LiteralPath $repoRoot
+Remove-Item -LiteralPath (Join-Path $phase5RunRoot ".env")
+Remove-Item -LiteralPath $phase5RunDir
+Remove-Item -LiteralPath $phase5RunRoot
+```
+
+Не применять recursive cleanup, glob или вычисленный путь за пределами корневого `tmp/`.
+
 ---
 
 ### Task 0: Baseline and exact implementation map
@@ -37,26 +79,13 @@
 - Consumes: clean detached worktree at approved main and existing Compose `test` profile.
 - Produces: fresh baseline evidence and confirmed file map before production code.
 
-- [ ] **Step 1: Generate process-only test settings**
+- [ ] **Step 1: Apply the mandatory local Docker invocation contract**
 
-In one PowerShell process, generate unique values without printing them:
-
-```powershell
-$env:COMPOSE_PROJECT_NAME = "moroz-phase5-baseline-$([Guid]::NewGuid().ToString('N').Substring(0,8))"
-$env:POSTGRES_USER = "phase5"
-$env:POSTGRES_PASSWORD = [Guid]::NewGuid().ToString("N")
-$env:POSTGRES_DB = "moroz_phase5"
-$env:RABBITMQ_USER = "phase5"
-$env:RABBITMQ_PASSWORD = [Guid]::NewGuid().ToString("N")
-$env:REDIS_PASSWORD = [Guid]::NewGuid().ToString("N")
-$env:TELEGRAM_WEBHOOK_SECRET = [Guid]::NewGuid().ToString("N")
-$env:RABBITMQ_URL = "amqp://$($env:RABBITMQ_USER):$($env:RABBITMQ_PASSWORD)@rabbitmq:5672/"
-$env:REDIS_URL = "redis://:$($env:REDIS_PASSWORD)@redis:6379/0"
-```
+Выполнить общий preflight выше с новым task-specific namespace, пустым process-only `DATABASE_URL`, пустым task-local env-file внутри корневого `tmp/` и process-only `COMPOSE_FILE`. Не читать/копировать реальный `.env`.
 
 - [ ] **Step 2: Run fresh baseline**
 
-Run from `project/` in that same process:
+Run from `$phase5RunDir` in that same process:
 
 ```powershell
 docker compose --env-file ../.env --profile test build --no-cache test
@@ -73,6 +102,7 @@ docker image rm "$($env:COMPOSE_PROJECT_NAME)-test" -f
 ```
 
 Expected exact task namespace: containers/volumes/networks/images `0/0/0/0`.
+После подтверждения `0/0/0/0` удалить только task-local empty env-file и два пустых каталога по общему contract.
 
 - [ ] **Step 4: Record baseline**
 
@@ -546,7 +576,7 @@ Review exact range from design checkpoint commit to current HEAD against this pl
 
 - [ ] **Step 6: Run fresh full Docker completion gate**
 
-In a new task-specific namespace with new process-only values:
+Сначала применить mandatory local Docker invocation contract в новом task-specific namespace с новыми process-only values и явно пустым `DATABASE_URL`; команды ниже запускать из нового `$phase5RunDir`:
 
 ```powershell
 docker compose --env-file ../.env --profile test build --no-cache test
