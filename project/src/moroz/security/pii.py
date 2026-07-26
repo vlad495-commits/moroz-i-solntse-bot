@@ -46,7 +46,9 @@ _NAME_RE = re.compile(
     re.IGNORECASE,
 )
 _QUESTION_TRANSITION = (
-    r"(?:как|можно\s+ли|когда|где|сколько|что|есть\s+ли|подскажите)"
+    r"(?:как\s+(?:добраться|записаться)|можно\s+ли|"
+    r"что\s+(?:делать|выбрать)|где\s+(?:находится|записаться)|"
+    r"когда\s+можно|сколько\s+стоит|есть\s+ли|подскажите)"
 )
 _SENSITIVE_VALUE_END = (
     rf"(?=;|\n|,\s+{_QUESTION_TRANSITION}\b|"
@@ -77,6 +79,7 @@ _RULES = (
     _Rule("handle", _HANDLE_RE),
     _Rule("medical", _MEDICAL_RE, "value"),
 )
+_SPACE_PHONE_GROUPS = frozenset({(3, 3, 4), (4, 3, 4)})
 
 
 def _passes_luhn(value: str) -> bool:
@@ -100,9 +103,11 @@ def _looks_like_phone(value: str) -> bool:
     if _NON_PHONE_SHAPE_RE.fullmatch(value):
         return False
     groups = re.findall(r"\d+", value)
+    group_shape = tuple(len(group) for group in groups)
     return (
         len(groups) == 1
         or any(char in value for char in "+()-.")
+        or group_shape in _SPACE_PHONE_GROUPS
         or not all(len(group) >= 3 for group in groups)
     )
 

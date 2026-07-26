@@ -163,6 +163,17 @@ def test_phone_detection_keeps_supported_forms():
 
 @pytest.mark.parametrize(
     "text",
+    ["Телефон 999 123 4567", "Телефон 7495 123 4567"],
+    ids=["groups-3-3-4", "groups-4-3-4"],
+)
+def test_phone_detection_accepts_common_space_only_group_shapes(text):
+    masked = PiiSession().mask(text)
+
+    _require(masked.placeholders == frozenset({"<PII_PHONE_1>"}))
+
+
+@pytest.mark.parametrize(
+    "text",
     [
         "Запись 26.07.2026 15:00",
         "Цены 2400.00 3500.00",
@@ -203,6 +214,38 @@ def test_sensitive_spans_preserve_comma_question_transitions(
 
     _require(masked.text.startswith(prefix + placeholder))
     _require(masked.text.endswith(suffix))
+    _require(masked.placeholders == frozenset({placeholder}))
+
+
+@pytest.mark.parametrize(
+    "text, expected_start, expected_end, placeholder",
+    [
+        (
+            "Адрес: ул. Тверская, где живёт клиент. Как добраться?",
+            "Адрес: <PII_ADDRESS_1>. ",
+            "Как добраться?",
+            "<PII_ADDRESS_1>",
+        ),
+        (
+            "Диагноз: сахарный диабет, как указано в медкарте. "
+            "Можно ли посетить криокапсулу?",
+            "Диагноз: <PII_MEDICAL_1>. ",
+            "Можно ли посетить криокапсулу?",
+            "<PII_MEDICAL_1>",
+        ),
+    ],
+    ids=["address-relative", "medical-relative"],
+)
+def test_sensitive_spans_keep_relative_clauses_inside_mask(
+    text,
+    expected_start,
+    expected_end,
+    placeholder,
+):
+    masked = PiiSession().mask(text)
+
+    _require(masked.text.startswith(expected_start))
+    _require(masked.text.endswith(expected_end))
     _require(masked.placeholders == frozenset({placeholder}))
 
 
