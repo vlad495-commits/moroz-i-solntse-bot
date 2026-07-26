@@ -199,6 +199,8 @@ git commit -m "feat: добавлено сессионное маскирова�
 **Files:**
 - Create: `project/src/moroz/security/llm_gateway.py`
 - Create: `project/tests/unit/security/test_llm_gateway.py`
+- Modify: `project/tests/unit/test_migration_profile.py`
+- Modify: `project/tests/ops/verify_compose_db_fallback.ps1`
 - Modify: `project/llm/llm.py`
 - Modify: `project/llm/config.py`
 - Modify: `project/docker-compose.yml`
@@ -269,7 +271,7 @@ Create both SDK clients with `max_retries=0`; do not log base URL or exception t
 - [ ] **Step 4: Run GREEN and provider/privacy regression**
 
 ```powershell
-docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_llm_gateway.py /workspace/tests/unit/test_llm_providers.py /workspace/tests/unit/test_active_sanitization.py /workspace/tests/unit/test_documented_compose_commands.py
+docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_llm_gateway.py /workspace/tests/unit/test_llm_providers.py /workspace/tests/unit/test_active_sanitization.py /workspace/tests/unit/test_documented_compose_commands.py /workspace/tests/unit/test_migration_profile.py
 ```
 
 - [ ] **Step 5: Commit**

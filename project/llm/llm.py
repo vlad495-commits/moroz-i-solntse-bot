@@ -65,8 +65,16 @@ def _create_client(api_key: str, base_url: str | None, kind: str):
     """Создать клиент нужного типа."""
     if kind == "anthropic":
         from anthropic import AsyncAnthropic
-        return AsyncAnthropic(api_key=api_key, timeout=LLM_REQUEST_TIMEOUT_SEC)
-    kwargs = {"api_key": api_key, "timeout": LLM_REQUEST_TIMEOUT_SEC}
+        return AsyncAnthropic(
+            api_key=api_key,
+            timeout=LLM_REQUEST_TIMEOUT_SEC,
+            max_retries=0,
+        )
+    kwargs = {
+        "api_key": api_key,
+        "timeout": LLM_REQUEST_TIMEOUT_SEC,
+        "max_retries": 0,
+    }
     if base_url:
         kwargs["base_url"] = base_url
     return AsyncOpenAI(**kwargs)

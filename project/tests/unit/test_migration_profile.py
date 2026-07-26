@@ -159,6 +159,9 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
         "LLM_BASE_URL": "${LLM_BASE_URL:-}",
         "LLM_MODEL": "${LLM_MODEL:-gpt-4.1-mini}",
+        "RESERVE_API_KEY": "${RESERVE_API_KEY:-}",
+        "RESERVE_BASE_URL": "${RESERVE_BASE_URL:-}",
+        "RESERVE_MODEL": "${RESERVE_MODEL:-}",
         "LLM_TEMPERATURE": "${LLM_TEMPERATURE:-0.3}",
         "LLM_MAX_TOKENS": "${LLM_MAX_TOKENS:-2000}",
         "LLM_REQUEST_TIMEOUT_SEC": "${LLM_REQUEST_TIMEOUT_SEC:-30}",
@@ -172,6 +175,18 @@ def test_compose_process_environment_overrides_external_test_credentials():
     }
     for name in ("worker", "redis", "postgres"):
         assert "env_file" not in services[name]
+
+
+def test_reserve_llm_environment_is_limited_to_runtime_llm_services():
+    services = compose_services()
+    reserve_keys = {"RESERVE_API_KEY", "RESERVE_BASE_URL", "RESERVE_MODEL"}
+
+    for name in ("bot", "worker", "admin"):
+        assert reserve_keys <= set(services[name]["environment"])
+    for name in ("test", "migrate", "cutover", "scheduler"):
+        assert reserve_keys.isdisjoint(
+            services[name].get("environment", {})
+        )
 
 
 def test_yclients_environment_is_passed_only_to_worker_and_smoke():
