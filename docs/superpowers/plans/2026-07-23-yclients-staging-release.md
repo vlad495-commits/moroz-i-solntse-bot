@@ -48,11 +48,11 @@ git branch -r --contains HEAD
 
 Expected: exact local release commit, clean detached worktree before artifact build, candidate absent from remote.
 
-- [ ] **Step 2: Restore the safe SSH control channel**
+- [x] **Step 2: Restore the safe SSH control channel**
 
 Use the installed deploy skill’s Docker/`expect` wrapper with allowlisted `SERVER_*` process environment. Run only `SAFE_*` output commands. Expected: TCP and SSH banner present, `SAFE_SSH=ok`; otherwise record `staging SSH control channel unavailable` and do not mutate VPS.
 
-- [ ] **Step 3: Capture read-only staging previous**
+- [x] **Step 3: Capture read-only staging previous**
 
 Verify exact `/opt/moroz-staging`, clean checkout, Compose project label, six staging services healthy, prototype resources healthy/unchanged, current `bot`/`worker` image refs and IDs, matching current tag suffix, available migrate image, and Alembic revision. Query migration by read-only SQL inside staging PostgreSQL.
 
@@ -199,7 +199,8 @@ Status: in progress.
 - Local start: linked detached worktree, base `7e2ec278ed730edf15b58c2a20cc82d3cfbe42ec`.
 - Local release-plan checkpoint: `029510fe761c91f7ab637bbc8bdbfdd5d7f5f6e5`, clean detached worktree immediately after commit.
 - Remote candidate availability: absent from existing remote branches; Git bundle handoff selected.
-- Current blocker: staging TCP accepts connections but SSH protocol banner remains absent (`0` bytes) across repeated probes before and after the full local gate; no remote command or mutation has occurred. Task 1 Step 2 requires SSH recovery through the VPS serial console before any previous/candidate action.
+- Restored control channel: SSH banner and password-authenticated Docker/`expect` probe pass; raw SSH output and credentials remain suppressed.
+- Read-only previous capture: clean server checkout `a964ab9c2fce`; staging services `6/6` running and `6/6` healthy; non-staging services `4` running and `0` unhealthy. Previous app refs are `moroz-staging-bot:32fa9924a84a`, `moroz-staging-worker:32fa9924a84a`, and `moroz-staging-migrate:32fa9924a84a`; exact image IDs are `sha256:85b96af90cdf884c08cb31fc9a389b5152bd33a1536f758d07e3ddf847797bb8`, `sha256:9884a8df7c29e6f78184b99d9a8ba3477d228ec91cbc6d9a2d9def8e456450cd`, and `sha256:95db27d1162911222f431754a2ebe6f126f718c612cbcd47393455420882f3ec`. Current schema is `0004_pipeline_order_claim`; all three images remain locally inspectable on the VPS.
 - Fresh local gate: no-cache test image, `472 passed in 332.93s`, skips `0`; standalone task-prefixed migration image reached `0006_yclients_booking_key (head)`.
 - Local cleanup: full-suite namespace `0/0/0/0`; corrected task-prefixed migration namespace/image `0/0/0/0`.
 - Local isolation note: the first standalone migration command omitted explicit `MIGRATION_IMAGE` and rebuilt the pre-existing local tag `moroz-i-solntse-migrate:local`. No shared container used it; the prior image ID was not recoverable (`dangling=0`), so no blind retag/delete was attempted. The migration gate was repeated with an exact task-prefixed image and clean teardown.
