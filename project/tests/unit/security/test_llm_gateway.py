@@ -35,11 +35,13 @@ class ScriptedProvider:
 class OpenAIClient:
     def __init__(self, event):
         self.event = event
+        self.calls = []
         self.chat = SimpleNamespace(
             completions=SimpleNamespace(create=self.create)
         )
 
-    async def create(self, **_kwargs):
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
         if isinstance(self.event, BaseException):
             raise self.event
         return self.event
@@ -48,19 +50,30 @@ class OpenAIClient:
 class AnthropicClient:
     def __init__(self, event):
         self.event = event
+        self.calls = []
         self.messages = SimpleNamespace(create=self.create)
 
-    async def create(self, **_kwargs):
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
         if isinstance(self.event, BaseException):
             raise self.event
         return self.event
 
 
-def request():
+def request(purpose="answer"):
     return LLMRequest(
         messages=({"role": "user", "content": "safe"},),
-        temperature=0.2,
-        max_tokens=100,
+        purpose=purpose,
+    )
+
+
+def provider(client, kind, model="model", temperature=0.2, max_tokens=100):
+    return SDKProvider(
+        client,
+        kind,
+        model,
+        temperature,
+        max_tokens,
     )
 
 
@@ -73,6 +86,37 @@ def response(text="primary"):
         total_tokens=5,
         model="model",
     )
+
+
+def openai_response(**overrides):
+    values = {
+        "choices": [
+            SimpleNamespace(message=SimpleNamespace(content="answer"))
+        ],
+        "usage": SimpleNamespace(
+            prompt_tokens=7,
+            completion_tokens=4,
+            total_tokens=11,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=3),
+        ),
+        "model": "openai-model",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def anthropic_response(**overrides):
+    values = {
+        "content": [SimpleNamespace(type="text", text="answer")],
+        "usage": SimpleNamespace(
+            input_tokens=9,
+            output_tokens=6,
+            cache_read_input_tokens=2,
+        ),
+        "model": "anthropic-model",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 @pytest.mark.asyncio
@@ -137,6 +181,36 @@ async def test_unexpected_python_exception_propagates_unchanged():
     assert raised.value is unexpected
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["openai", "anthropic"])
+async def test_provider_owns_generation_settings_and_request_retains_purpose(
+    kind,
+):
+    raw = openai_response() if kind == "openai" else anthropic_response()
+    client = OpenAIClient(raw) if kind == "openai" else AnthropicClient(raw)
+    llm_request = request("guard")
+
+    await provider(
+        client,
+        kind,
+        temperature=0.7,
+        max_tokens=321,
+    ).complete(llm_request)
+
+    assert llm_request.purpose == "guard"
+    assert not hasattr(llm_request, "temperature")
+    assert not hasattr(llm_request, "max_tokens")
+    expected = {
+        "model": "model",
+        "messages": [{"role": "user", "content": "safe"}],
+        "temperature": 0.7,
+        "max_tokens": 321,
+    }
+    if kind == "anthropic":
+        expected["system"] = ""
+    assert client.calls == [expected]
+
+
 def _status_error(kind, status):
     request = httpx.Request(
         "POST",
@@ -158,7 +232,7 @@ def _status_error(kind, status):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["openai", "anthropic"])
-@pytest.mark.parametrize("status", [408, 409, 429, 500, 503])
+@pytest.mark.parametrize("status", [408, 409, 429, 500, 503, 599])
 async def test_retryable_sdk_statuses_are_sanitized(kind, status):
     client = (
         OpenAIClient(_status_error(kind, status))
@@ -167,7 +241,7 @@ async def test_retryable_sdk_statuses_are_sanitized(kind, status):
     )
 
     with pytest.raises(RetryableLLMError) as raised:
-        await SDKProvider(client, kind, "model").complete(request())
+        await provider(client, kind).complete(request())
 
     evidence = str(raised.value) + repr(raised.value)
     assert evidence == (
@@ -176,11 +250,13 @@ async def test_retryable_sdk_statuses_are_sanitized(kind, status):
     )
     assert "sentinel" not in evidence
     assert "provider.invalid" not in evidence
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["openai", "anthropic"])
-@pytest.mark.parametrize("status", [400, 401, 403, 422])
+@pytest.mark.parametrize("status", [400, 401, 403, 422, 600])
 async def test_non_retryable_sdk_statuses_are_sanitized(kind, status):
     client = (
         OpenAIClient(_status_error(kind, status))
@@ -189,7 +265,7 @@ async def test_non_retryable_sdk_statuses_are_sanitized(kind, status):
     )
 
     with pytest.raises(NonRetryableLLMError) as raised:
-        await SDKProvider(client, kind, "model").complete(request())
+        await provider(client, kind).complete(request())
 
     evidence = str(raised.value) + repr(raised.value)
     assert evidence == (
@@ -198,6 +274,8 @@ async def test_non_retryable_sdk_statuses_are_sanitized(kind, status):
     )
     assert "sentinel" not in evidence
     assert "provider.invalid" not in evidence
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 @pytest.mark.asyncio
@@ -218,8 +296,138 @@ async def test_sdk_connection_and_timeout_are_retryable(kind, error_name):
         else AnthropicClient(error)
     )
 
-    with pytest.raises(RetryableLLMError):
-        await SDKProvider(client, kind, "model").complete(request())
+    with pytest.raises(RetryableLLMError) as raised:
+        await provider(client, kind).complete(request())
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["openai", "anthropic"])
+async def test_unexpected_client_exception_propagates_unchanged(kind):
+    unexpected = ValueError("programming-error")
+    client = (
+        OpenAIClient(unexpected)
+        if kind == "openai"
+        else AnthropicClient(unexpected)
+    )
+
+    with pytest.raises(ValueError) as raised:
+        await provider(client, kind).complete(request())
+
+    assert raised.value is unexpected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind,raw",
+    [
+        (
+            "openai",
+            openai_response(choices=[]),
+        ),
+        (
+            "openai",
+            openai_response(
+                choices=[SimpleNamespace(message=SimpleNamespace())]
+            ),
+        ),
+        (
+            "openai",
+            openai_response(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="")
+                    )
+                ]
+            ),
+        ),
+        (
+            "openai",
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="answer")
+                    )
+                ],
+                model="model",
+            ),
+        ),
+        (
+            "openai",
+            openai_response(
+                usage=SimpleNamespace(
+                    prompt_tokens="7",
+                    completion_tokens=4,
+                    total_tokens=11,
+                )
+            ),
+        ),
+        (
+            "anthropic",
+            anthropic_response(content=[]),
+        ),
+        (
+            "anthropic",
+            anthropic_response(
+                content=[SimpleNamespace(type="tool_use")]
+            ),
+        ),
+        (
+            "anthropic",
+            anthropic_response(
+                content=[SimpleNamespace(type="text", text="")]
+            ),
+        ),
+        (
+            "anthropic",
+            SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="answer")],
+                model="model",
+            ),
+        ),
+        (
+            "anthropic",
+            anthropic_response(
+                usage=SimpleNamespace(
+                    input_tokens=9,
+                    output_tokens=-1,
+                )
+            ),
+        ),
+    ],
+    ids=[
+        "openai-empty-choices",
+        "openai-missing-content",
+        "openai-empty-content",
+        "openai-missing-usage",
+        "openai-invalid-usage",
+        "anthropic-empty-content",
+        "anthropic-no-text-content",
+        "anthropic-empty-text",
+        "anthropic-missing-usage",
+        "anthropic-invalid-usage",
+    ],
+)
+async def test_malformed_response_is_sanitized_without_reserve(kind, raw):
+    raw.secret = "raw-response-sentinel"
+    client = OpenAIClient(raw) if kind == "openai" else AnthropicClient(raw)
+    reserve = ScriptedProvider(response("must-not-run"))
+    gateway = PrimaryReserveGateway(provider(client, kind), reserve)
+
+    with pytest.raises(NonRetryableLLMError) as raised:
+        await gateway.complete(request())
+
+    evidence = str(raised.value) + repr(raised.value)
+    assert evidence == (
+        "non_retryable_llm_error"
+        "NonRetryableLLMError('non_retryable_llm_error')"
+    )
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert "sentinel" not in evidence
+    assert reserve.calls == 0
 
 
 @pytest.mark.asyncio
@@ -238,7 +446,7 @@ async def test_openai_response_is_adapted_without_raw_response_storage():
         secret="raw-response-sentinel",
     )
 
-    adapted = await SDKProvider(
+    adapted = await provider(
         OpenAIClient(raw), "openai", "configured"
     ).complete(request())
 
@@ -270,7 +478,7 @@ async def test_anthropic_response_is_adapted_without_raw_response_storage():
         secret="raw-response-sentinel",
     )
 
-    adapted = await SDKProvider(
+    adapted = await provider(
         AnthropicClient(raw), "anthropic", "configured"
     ).complete(request())
 
