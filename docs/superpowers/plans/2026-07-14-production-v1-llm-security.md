@@ -512,8 +512,11 @@ calls остаются только в `SDKProvider` и masked judge adapter.
 
 Project-wide recursive AST gate сканирует каждый production `.py` под `project/`,
 исключая только tests/cache/generated/temp directories, и сравнивает exact
-`(relative file, enclosing function)` с двумя разрешёнными adapters. Synthetic
-`tmp_path` mutation доказывает, что новый production/eval bypass отклоняется.
+`(relative file, qualified scope)` с двумя разрешёнными adapters:
+`SDKProvider.complete` и `_invoke_masked_judge`. Class/function ancestors,
+включая nested scopes, собираются детерминированно; synthetic `tmp_path`
+mutations доказывают, что новый production/eval bypass и чужой одноимённый
+метод в разрешённом файле отклоняются.
 После делегации удалить dead legacy Anthropic helpers/import; safe-logging tests
 называть по фактическому no-raw fallback инварианту.
 
@@ -528,8 +531,8 @@ docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspa
 Run the project-wide AST allowlist and sensitivity tests from
 `project/tests/unit/test_eval_privacy.py`, then perform a textual count-only
 cross-check. Expected: `4 allowed / 0 bad`; only `SDKProvider.complete` and
-`_invoke_masked_judge` contain SDK calls, and a synthetic extra module fails the
-allowlist comparison.
+`_invoke_masked_judge` contain SDK calls, while a synthetic extra module and a
+wrong-class `complete` inside the allowed file fail the allowlist comparison.
 
 - [ ] **Step 6: Commit**
 

@@ -63,6 +63,21 @@ def _attribute_chain(node: ast.AST) -> tuple[str, ...]:
     return tuple(reversed(parts))
 
 
+def _qualified_scope(
+    node: ast.AST,
+    parents: dict[ast.AST, ast.AST],
+) -> str:
+    parts = []
+    while node in parents:
+        node = parents[node]
+        if isinstance(
+            node,
+            (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+        ):
+            parts.append(node.name)
+    return ".".join(reversed(parts)) or "<module>"
+
+
 def _production_sdk_call_sites(root: Path) -> set[tuple[str, str]]:
     found = set()
     for path in root.rglob("*.py"):
@@ -87,13 +102,9 @@ def _production_sdk_call_sites(root: Path) -> set[tuple[str, str]]:
                 for suffix in _SDK_CALL_SUFFIXES
             ):
                 continue
-            parent = node
-            while parent in parents and not isinstance(
-                parent,
-                (ast.FunctionDef, ast.AsyncFunctionDef),
-            ):
-                parent = parents[parent]
-            found.add((relative.as_posix(), getattr(parent, "name", "<module>")))
+            found.add(
+                (relative.as_posix(), _qualified_scope(node, parents))
+            )
     return found
 
 
@@ -484,8 +495,52 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
 
 def test_external_sdk_calls_are_limited_to_provider_and_masked_judge_adapter():
     assert _production_sdk_call_sites(Path("/workspace")) == {
-        ("src/moroz/security/llm_gateway.py", "complete"),
+        ("src/moroz/security/llm_gateway.py", "SDKProvider.complete"),
         ("admin/eval_runner.py", "_invoke_masked_judge"),
+    }
+
+
+def test_external_sdk_audit_rejects_wrong_class_in_allowed_file(tmp_path):
+    project = tmp_path / "project"
+    module = project / "src" / "moroz" / "security" / "llm_gateway.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        "class SDKProvider:\n"
+        "    async def complete(self, client):\n"
+        "        return await client.messages."
+        "create(model='approved')\n"
+        "\n"
+        "class RogueProvider:\n"
+        "    async def complete(self, client):\n"
+        "        return await client.messages."
+        "create(model='rogue')\n",
+        encoding="utf-8",
+    )
+    approved = {
+        ("src/moroz/security/llm_gateway.py", "SDKProvider.complete")
+    }
+
+    assert _production_sdk_call_sites(project) - approved == {
+        ("src/moroz/security/llm_gateway.py", "RogueProvider.complete")
+    }
+
+
+def test_external_sdk_audit_qualifies_nested_scopes_deterministically(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    module = project / "runtime.py"
+    module.write_text(
+        "class Provider:\n"
+        "    async def complete(self, client):\n"
+        "        async def nested():\n"
+        "            return await client.messages."
+        "create(model='synthetic')\n"
+        "        return await nested()\n",
+        encoding="utf-8",
+    )
+
+    assert _production_sdk_call_sites(project) == {
+        ("runtime.py", "Provider.complete.nested")
     }
 
 
