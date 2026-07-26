@@ -49,6 +49,7 @@ $env:POSTGRES_DB = "moroz_phase5"
 $env:RABBITMQ_USER = "phase5"
 $env:RABBITMQ_PASSWORD = [Guid]::NewGuid().ToString("N")
 $env:REDIS_PASSWORD = [Guid]::NewGuid().ToString("N")
+$env:TELEGRAM_WEBHOOK_SECRET = [Guid]::NewGuid().ToString("N")
 $env:RABBITMQ_URL = "amqp://$($env:RABBITMQ_USER):$($env:RABBITMQ_PASSWORD)@rabbitmq:5672/"
 $env:REDIS_URL = "redis://:$($env:REDIS_PASSWORD)@redis:6379/0"
 ```
