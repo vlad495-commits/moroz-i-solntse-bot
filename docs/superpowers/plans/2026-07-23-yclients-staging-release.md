@@ -56,11 +56,11 @@ Use the installed deploy skill’s Docker/`expect` wrapper with allowlisted `SER
 
 Verify exact `/opt/moroz-staging`, clean checkout, Compose project label, six staging services healthy, prototype resources healthy/unchanged, current `bot`/`worker` image refs and IDs, matching current tag suffix, available migrate image, and Alembic revision. Query migration by read-only SQL inside staging PostgreSQL.
 
-- [ ] **Step 4: Create immutable previous references and archive**
+- [x] **Step 4: Create immutable previous references and archive**
 
 Fail if target tags or archive already exist. Compute one shared suffix `previous-${previous_source_sha}-${previous_bot_id_prefix}` from the recorded 12-character source SHA and first 12 image-ID hex characters; apply it to `moroz-staging-bot`, `moroz-staging-worker`, and `moroz-staging-migrate`. Save those exact images to `/opt/moroz-staging/tmp/releases/yclients-7e2ec278ed7/previous-images.tar`, calculate SHA-256, restrict directory/file permissions, re-inspect tags and IDs, and keep stores running.
 
-- [ ] **Step 5: Record Task 1 evidence and commit**
+- [x] **Step 5: Record Task 1 evidence and commit**
 
 Evidence contains only source SHA, per-service image refs/IDs, archive SHA-256, health counts and migration revision. Update roadmap/master/changelog and commit the logical checkpoint.
 
@@ -201,6 +201,8 @@ Status: in progress.
 - Remote candidate availability: absent from existing remote branches; Git bundle handoff selected.
 - Restored control channel: SSH banner and password-authenticated Docker/`expect` probe pass; raw SSH output and credentials remain suppressed.
 - Read-only previous capture: clean server checkout `a964ab9c2fce`; staging services `6/6` running and `6/6` healthy; non-staging services `4` running and `0` unhealthy. Previous app refs are `moroz-staging-bot:32fa9924a84a`, `moroz-staging-worker:32fa9924a84a`, and `moroz-staging-migrate:32fa9924a84a`; exact image IDs are `sha256:85b96af90cdf884c08cb31fc9a389b5152bd33a1536f758d07e3ddf847797bb8`, `sha256:9884a8df7c29e6f78184b99d9a8ba3477d228ec91cbc6d9a2d9def8e456450cd`, and `sha256:95db27d1162911222f431754a2ebe6f126f718c612cbcd47393455420882f3ec`. Current schema is `0004_pipeline_order_claim`; all three images remain locally inspectable on the VPS.
+- Immutable previous: shared suffix `previous-a964ab9c2fce-85b96af90cdf`; re-inspected bot/worker/migrate IDs exactly match the read-only capture. Server-side `previous-images.tar` is `99933696` bytes with SHA-256 `6f48c360dbddf07e6017337a9734d6f706b5cb62a95e37866a02c0652992642f`; staging remained `6/6` running and healthy throughout.
+- Transport note: after the first authenticated command, Docker Desktop bridge/host networking stopped receiving the VPS SSH banner while Windows continued to receive it. A bounded process-only Windows OpenSSH askpass transport was used after proving Docker-to-VPS and Docker-to-Windows-forward both unavailable; password/raw SSH output remained suppressed and every remote command stayed allowlisted.
 - Fresh local gate: no-cache test image, `472 passed in 332.93s`, skips `0`; standalone task-prefixed migration image reached `0006_yclients_booking_key (head)`.
 - Local cleanup: full-suite namespace `0/0/0/0`; corrected task-prefixed migration namespace/image `0/0/0/0`.
 - Local isolation note: the first standalone migration command omitted explicit `MIGRATION_IMAGE` and rebuilt the pre-existing local tag `moroz-i-solntse-migrate:local`. No shared container used it; the prior image ID was not recoverable (`dangling=0`), so no blind retag/delete was attempted. The migration gate was repeated with an exact task-prefixed image and clean teardown.
