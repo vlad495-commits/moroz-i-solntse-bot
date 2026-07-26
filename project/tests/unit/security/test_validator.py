@@ -18,8 +18,9 @@ def _facts(
     prices: frozenset[str] = frozenset({"2400"}),
     contacts: frozenset[str] = frozenset(),
     slots: frozenset[str] = frozenset(),
+    public_pii: frozenset[str] = frozenset(),
 ) -> StructuredFacts:
-    return StructuredFacts(prices, contacts, slots)
+    return StructuredFacts(prices, contacts, slots, public_pii)
 
 
 @pytest.mark.parametrize(
@@ -186,6 +187,59 @@ def test_source_owned_contact_variants_pass_and_new_contacts_fail() -> None:
         facts,
         frozenset(),
     ).code == "new_raw_contact"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Меня зовут Анна Иванова",
+        "Адрес: г. Тула, ул. Ленина, д. 1",
+        "Диагноз: сахарный диабет",
+        "Карта 4111 1111 1111 1111",
+    ],
+)
+def test_marker_shaped_raw_pii_is_rejected(text: str) -> None:
+    assert validate_output(text, _facts(), frozenset()).code == "raw_pii"
+
+
+def test_invocation_raw_values_are_rejected_but_source_owned_facts_pass() -> None:
+    private = "Анна Иванова"
+    public_source = (
+        "Название: Мороз и Солнце. "
+        "Адрес: г. Тула, ул. Демонстрации, д. 1; "
+        "медицинская история: противопоказания уточняются у специалиста"
+    )
+    facts = extract_structured_facts(public_source)
+
+    assert validate_output(
+        f"Клиента зовут {private}",
+        facts,
+        frozenset(),
+        forbidden_raw=frozenset({private}),
+    ).code == "raw_pii"
+    assert validate_output(
+        "Адрес: г. Тула, ул. Демонстрации, д. 1",
+        facts,
+        frozenset(),
+    ).ok is True
+    assert validate_output(
+        "Медицинская история: противопоказания уточняются у специалиста",
+        facts,
+        frozenset(),
+    ).ok is True
+    assert public_source not in repr(facts)
+
+
+def test_source_owned_public_contact_remains_allowed_when_seen_in_invocation() -> None:
+    public_phone = "+7 902 906-61-66"
+    facts = extract_structured_facts(f"Телефон центра: {public_phone}")
+
+    assert validate_output(
+        f"Телефон центра: {public_phone}",
+        facts,
+        frozenset(),
+        forbidden_raw=frozenset({public_phone}),
+    ).ok is True
 
 
 def test_domain_like_ordinary_prose_is_not_a_contact() -> None:

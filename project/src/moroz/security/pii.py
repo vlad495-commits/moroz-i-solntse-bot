@@ -66,6 +66,23 @@ _ADDRESS_RE = re.compile(
     re.IGNORECASE,
 )
 _HANDLE_RE = re.compile(r"(?<![\w@])@[A-Za-z0-9_]{3,32}\b")
+_PLATFORM_PROFILE_RE = re.compile(
+    r"(?<![\w@])(?:https?://)?(?:www\.)?"
+    r"(?:t\.me|telegram\.me|vk\.com|instagram\.com)/"
+    r"[A-Za-z0-9_.-]{3,64}/?",
+    re.IGNORECASE,
+)
+_PLATFORM_ID_RE = re.compile(
+    r"(?P<prefix>\b(?:"
+    r"(?:telegram|телеграм|vk|вконтакте|instagram|инстаграм|web)"
+    r"(?:\s+(?:id|аккаунт|логин|profile|профиль))?"
+    r"|(?:id|идентификатор)\s+"
+    r"(?:telegram|телеграм|vk|вконтакте|instagram|инстаграм|web)"
+    r")\s*(?::|—|-)?\s*)"
+    r"(?P<value>(?!https?://)"
+    r"(?:\d{4,15}|[A-Za-z][A-Za-z0-9_.-]{2,63}))",
+    re.IGNORECASE,
+)
 _MEDICAL_RE = re.compile(
     r"(?P<prefix>\b(?:диагноз|анамнез|история\s+болезни|"
     r"медицинская\s+история)\s*(?::|—|-)?\s*)"
@@ -76,6 +93,8 @@ _MEDICAL_RE = re.compile(
 
 _RULES = (
     _Rule("email", _EMAIL_RE),
+    _Rule("handle", _PLATFORM_PROFILE_RE),
+    _Rule("handle", _PLATFORM_ID_RE, "value"),
     _Rule("payment", _PAYMENT_RE),
     _Rule("phone", _PHONE_RE),
     _Rule("name", _NAME_RE, "value"),
@@ -201,6 +220,16 @@ class PiiSession:
         for placeholder in sorted(present, key=len, reverse=True):
             text = text.replace(placeholder, self._mapping[placeholder])
         return text
+
+    def raw_values(
+        self,
+        kinds: AbstractSet[str] | None = None,
+    ) -> frozenset[str]:
+        return frozenset(
+            value
+            for kind, value in self._reverse
+            if kinds is None or kind in kinds
+        )
 
 
 def find_raw_pii(text: str) -> frozenset[str]:

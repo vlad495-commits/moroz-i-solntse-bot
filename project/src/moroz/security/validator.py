@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AbstractSet, Iterable
 
-from moroz.security.pii import PLACEHOLDER_RE
+from moroz.security.pii import PLACEHOLDER_RE, PiiSession
 
 
 INTERNAL_CANARY = "MOROZ_INTERNAL_CANARY_V1"
@@ -286,6 +286,10 @@ def _contacts(text: str) -> frozenset[str]:
     return frozenset(found)
 
 
+def _normalize_public_pii(value: str) -> str:
+    return " ".join(value.strip().split()).casefold()
+
+
 def _matches_after_removing(
     text: str,
     *,
@@ -302,6 +306,10 @@ class StructuredFacts:
     prices: frozenset[str]
     public_contacts: frozenset[str]
     slots: frozenset[str]
+    public_pii: frozenset[str] = field(
+        default_factory=frozenset,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -323,6 +331,15 @@ class StructuredFacts:
             "slots",
             frozenset(_normalize_slot(slot) for slot in self.slots if slot.strip()),
         )
+        object.__setattr__(
+            self,
+            "public_pii",
+            frozenset(
+                _normalize_public_pii(value)
+                for value in self.public_pii
+                if value.strip()
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +352,13 @@ def extract_structured_facts(
     *sources: str,
     slots: Iterable[str] = (),
 ) -> StructuredFacts:
+    public_pii: set[str] = set()
+    for source in sources:
+        session = PiiSession()
+        session.mask(source)
+        public_pii.update(
+            session.raw_values(frozenset({"name", "address", "medical"}))
+        )
     return StructuredFacts(
         prices=frozenset(
             price
@@ -345,6 +369,7 @@ def extract_structured_facts(
             contact for source in sources for contact in _contacts(source)
         ),
         slots=frozenset(slots),
+        public_pii=frozenset(public_pii),
     )
 
 
@@ -352,6 +377,8 @@ def validate_output(
     text: str,
     facts: StructuredFacts,
     allowed_placeholders: AbstractSet[str],
+    *,
+    forbidden_raw: AbstractSet[str] = frozenset(),
 ) -> ValidationVerdict:
     if not text.strip():
         return ValidationVerdict(False, "empty_output")
@@ -372,6 +399,27 @@ def validate_output(
         )
     ):
         return ValidationVerdict(False, "unknown_placeholder")
+    folded_text = text.casefold()
+    for value in forbidden_raw:
+        if not value or value.casefold() not in folded_text:
+            continue
+        public_contact = _contacts(value)
+        if (
+            _normalize_public_pii(value) not in facts.public_pii
+            and not (public_contact and public_contact <= facts.public_contacts)
+        ):
+            return ValidationVerdict(False, "raw_pii")
+    output_pii = PiiSession()
+    output_pii.mask(text)
+    if output_pii.raw_values(frozenset({"payment"})):
+        return ValidationVerdict(False, "raw_pii")
+    if any(
+        _normalize_public_pii(value) not in facts.public_pii
+        for value in output_pii.raw_values(
+            frozenset({"name", "address", "medical"})
+        )
+    ):
+        return ValidationVerdict(False, "raw_pii")
     if _contacts(text) - facts.public_contacts:
         return ValidationVerdict(False, "new_raw_contact")
     if _matches_after_removing(

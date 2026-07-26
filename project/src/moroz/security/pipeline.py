@@ -88,6 +88,7 @@ class SecurityPipeline:
             if message.get("role") in {"user", "assistant"}
         ]
         masked_current = session.mask(user_message)
+        forbidden_raw = session.raw_values()
         accumulated: list[LLMResponse] = []
 
         if decision.action == "review":
@@ -159,6 +160,7 @@ class SecurityPipeline:
                 answer.text,
                 self.facts,
                 masked_current.placeholders,
+                forbidden_raw=forbidden_raw,
             )
             if verdict.ok:
                 try:

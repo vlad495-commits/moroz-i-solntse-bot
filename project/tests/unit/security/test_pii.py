@@ -56,6 +56,64 @@ def test_session_masks_explicit_address_handle_valid_card_and_medical_detail():
     )
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "Telegram ID: 123456789",
+            "Telegram ID: <PII_HANDLE_1>",
+        ),
+        (
+            "VK id 987654321",
+            "VK id <PII_HANDLE_1>",
+        ),
+        (
+            "Instagram: anna_client",
+            "Instagram: <PII_HANDLE_1>",
+        ),
+        (
+            "Web ID: client-42",
+            "Web ID: <PII_HANDLE_1>",
+        ),
+        (
+            "Профиль https://t.me/anna_client",
+            "Профиль <PII_HANDLE_1>",
+        ),
+        (
+            "Профиль vk.com/id123456",
+            "Профиль <PII_HANDLE_1>",
+        ),
+        (
+            "Профиль https://instagram.com/anna.client/",
+            "Профиль <PII_HANDLE_1>",
+        ),
+    ],
+)
+def test_session_masks_marker_scoped_platform_ids_and_profile_urls(
+    text: str,
+    expected: str,
+) -> None:
+    masked = PiiSession().mask(text)
+
+    assert masked.text == expected
+    assert masked.placeholders == frozenset({"<PII_HANDLE_1>"})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Заказ 123456789",
+        "Цена 2400 руб.",
+        "Свободно 2026-07-30 в 15:00",
+        "Документация https://example.org/help",
+    ],
+)
+def test_platform_id_detection_keeps_unmarked_numbers_prices_slots_and_urls(
+    text: str,
+) -> None:
+    assert PiiSession().mask(text).placeholders == frozenset()
+
+
 def test_session_masks_international_phone_with_enough_digits():
     masked = PiiSession().mask("Мой номер +49 (30) 1234-5678")
 

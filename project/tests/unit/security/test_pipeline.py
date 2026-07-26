@@ -260,6 +260,48 @@ async def test_invalid_output_retries_once_then_returns_safe_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_raw_context_pii_output_retries_once_then_falls_back() -> None:
+    raw_history_name = "Анна Иванова"
+    gateway = CapturingGateway(
+        f"Клиента зовут {raw_history_name}",
+        f"Повторю: {raw_history_name}",
+    )
+
+    result = await pipeline(gateway).respond(
+        "Подскажите цену",
+        [{"role": "user", "content": f"Меня зовут {raw_history_name}"}],
+    )
+
+    assert [request.purpose for request in gateway.requests] == [
+        "answer",
+        "answer",
+    ]
+    assert "VALIDATOR_RETRY code=raw_pii" in repr(gateway.requests[1])
+    assert result.text == SAFE_OUTPUT_FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_source_owned_center_address_passes_output_validation() -> None:
+    address = "г. Тула, ул. Демонстрации, д. 1"
+    facts = StructuredFacts(
+        frozenset(),
+        frozenset(),
+        frozenset(),
+        frozenset({address.casefold()}),
+    )
+    gateway = CapturingGateway(f"Адрес: {address}")
+
+    result = await SecurityPipeline(
+        gateway,
+        "OWNED SYSTEM PROMPT",
+        facts,
+    ).respond("Где находится центр?", [])
+
+    assert result.text == f"Адрес: {address}"
+    assert len(gateway.requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_retry_success_preserves_final_model_and_aggregates_usage_once() -> None:
     gateway = CapturingGateway(
         response("Цена 9999 руб.", model="first"),
