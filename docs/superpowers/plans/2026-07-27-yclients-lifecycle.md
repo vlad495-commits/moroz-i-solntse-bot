@@ -671,8 +671,7 @@ git commit -m "feat: подключён lifecycle scheduler runtime"
 - [ ] **Step 1: Run focused lifecycle gate**
 
 ```powershell
-$env:COMPOSE_PROJECT_NAME='moroz_lifecycle_0008'
-docker compose --env-file ../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py tests/integration/test_migrations.py tests/integration/booking tests/unit/notifications tests/integration/notifications tests/e2e/notifications tests/unit/test_worker.py
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py tests/integration/test_migrations.py tests/integration/booking tests/unit/notifications tests/integration/notifications tests/e2e/notifications tests/unit/test_worker.py
 ```
 
 Expected: all selected tests pass with zero failed tests.
@@ -680,12 +679,12 @@ Expected: all selected tests pass with zero failed tests.
 - [ ] **Step 2: Run migration and image gates**
 
 ```powershell
-docker compose --env-file ../.env up -d postgres
-docker compose --env-file ../.env run --rm migrate
-docker compose --env-file ../.env run --rm migrate alembic -c /app/alembic.ini current
-docker compose --env-file ../.env build worker scheduler
-docker compose --env-file ../.env run --rm --no-deps worker python -m compileall -q /app
-docker compose --env-file ../.env run --rm --no-deps scheduler python -m compileall -q /app
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env up -d postgres
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm migrate
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm migrate alembic -c /app/alembic.ini current
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env build worker scheduler
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --no-deps worker python -m compileall -q /app
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --no-deps scheduler python -m compileall -q /app
 ```
 
 Expected: current revision is `0008_yclients_lifecycle (head)`; build and
@@ -694,7 +693,7 @@ compile commands exit `0`.
 - [ ] **Step 3: Run complete Docker pytest suite**
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm test pytest -q
 ```
 
 Expected: all tests pass, no unexpected skips, and no network call reaches
@@ -734,7 +733,7 @@ time.
 - [ ] **Step 6: Cleanup exact Docker namespace**
 
 ```powershell
-docker compose --env-file ../.env down --volumes --remove-orphans --rmi local
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env down --volumes --remove-orphans --rmi local
 docker ps -a --filter "label=com.docker.compose.project=moroz_lifecycle_0008" -q
 docker volume ls --filter "label=com.docker.compose.project=moroz_lifecycle_0008" -q
 docker network ls --filter "label=com.docker.compose.project=moroz_lifecycle_0008" -q
