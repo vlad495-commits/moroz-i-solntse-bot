@@ -1,9 +1,10 @@
 import json
 from datetime import datetime
 from types import MappingProxyType
+from uuid import uuid4
 
 from moroz.common.db import Database
-from moroz.notifications.models import JobResult, SchedulerJob
+from moroz.notifications.models import JobResult, PlannedSchedulerJob, SchedulerJob
 
 
 def _load_payload(value: object) -> MappingProxyType:
@@ -14,6 +15,28 @@ def _load_payload(value: object) -> MappingProxyType:
 class SchedulerJobRepository:
     def __init__(self, database: Database):
         self._database = database
+
+    async def schedule(self, job: PlannedSchedulerJob) -> bool:
+        async with self._database.acquire() as connection:
+            await connection.execute(
+                """
+                INSERT INTO scheduler_jobs
+                    (id, kind, run_at, payload, idempotency_key, status,
+                     attempts, booking_key, booking_starts_at,
+                     created_at, updated_at)
+                VALUES ($1, $2, $3, $4::jsonb, $5, 'pending',
+                        0, $6, $7, now(), now())
+                ON CONFLICT (idempotency_key) DO NOTHING
+                """,
+                uuid4(),
+                job.kind,
+                job.run_at,
+                json.dumps(dict(job.payload), ensure_ascii=False),
+                job.idempotency_key,
+                job.booking_key,
+                job.booking_starts_at,
+            )
+        return True
 
     async def claim_due(
         self,
