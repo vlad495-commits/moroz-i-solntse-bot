@@ -14,7 +14,7 @@ class LocalBookingPort:
             row = await connection.fetchrow(
                 """
                 SELECT external_id, customer_id, booking_key, slot_id,
-                       starts_at, status
+                       starts_at, scheduled_end_at, status
                 FROM bookings
                 WHERE booking_key = $1
                 ORDER BY updated_at DESC, id DESC
@@ -31,6 +31,7 @@ class LocalBookingPort:
             slot_id=row["slot_id"],
             starts_at=row["starts_at"],
             status=row["status"],
+            scheduled_end_at=row["scheduled_end_at"],
         )
 
 

@@ -6,6 +6,7 @@
 [2026-07-27 17:10] Task 1 focused Docker gate passed: 133 passed in 137.74s. Lifecycle mapping, scheduled end persistence, migration upgrade/downgrade normalization, and booking regressions are covered; no provider requests were made.
 [2026-07-27 17:12] Created Task 1 local checkpoint commit for YCLIENTS lifecycle 0008 after focused Docker verification and self-review.
 [2026-07-27 17:16] Task 1 follow-up TDD corrected migration downgrade: RED grouped-status test showed cancelled was incorrectly normalized; GREEN preserves cancelled and converts only completed/no_show/unknown to confirmed (1 passed, 22 deselected).
+[2026-07-27 17:21] Task reviewer Important follow-up: RED LocalBookingPort returned scheduled_end_at=None from a durable booking; GREEN added SELECT/mapping coverage and passed affected notification/booking tests (20 passed).
 
 История всех значимых действий в проекте. Формат: `[YYYY-MM-DD HH:MM] что произошло` (UTC+3, Москва).
 

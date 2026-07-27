@@ -6,6 +6,7 @@ import pytest
 import pytest_asyncio
 
 from moroz.common.db import Database
+from moroz.notifications.ports import LocalBookingPort
 from moroz.notifications.repository import SchedulerJobRepository
 
 
@@ -107,6 +108,43 @@ async def test_claimed_job_can_be_released_and_completed(database):
     assert [item.id for item in claimed] == [job_id]
     assert row["status"] == "finished"
     assert row["finished"] is True
+
+
+async def test_local_booking_port_reads_scheduled_end_at(database):
+    booking_key = uuid4()
+    scenario_id = uuid4()
+    starts_at = datetime(2026, 7, 27, 9, 0, tzinfo=UTC)
+    scheduled_end_at = starts_at + timedelta(hours=1)
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO booking_scenarios
+                (id, kind, phase, idempotency_key, customer_id, state)
+            VALUES ($1, 'create', 'confirmed', $2, 'customer-7', '{}'::jsonb)
+            """,
+            scenario_id,
+            f"notification-booking:{scenario_id}",
+        )
+        await connection.execute(
+            """
+            INSERT INTO bookings
+                (id, last_scenario_id, external_id, customer_id, booking_key,
+                 slot_id, starts_at, scheduled_end_at, status, snapshot)
+            VALUES
+                ($1, $2, 'notification-booking-1', 'customer-7', $3,
+                 'slot-1', $4, $5, 'confirmed', '{}'::jsonb)
+            """,
+            uuid4(),
+            scenario_id,
+            booking_key,
+            starts_at,
+            scheduled_end_at,
+        )
+
+    booking = await LocalBookingPort(database).get_booking(booking_key)
+
+    assert booking is not None
+    assert booking.scheduled_end_at == scheduled_end_at
 
 
 async def test_failed_attempt_stays_retryable_until_terminal_dlq(database):

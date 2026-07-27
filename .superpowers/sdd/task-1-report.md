@@ -98,3 +98,26 @@ docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run 
 2. GREEN replaced the downgrade predicate with
    `status IN ('completed', 'no_show', 'unknown')` and reran the same command.
    Result: `1 passed, 22 deselected in 6.89s`.
+
+## Follow-up RED/GREEN: LocalBookingPort Scheduled End
+
+1. RED added a real database-backed `LocalBookingPort` read-path regression.
+   It inserted a booking with `scheduled_end_at` and failed because the port
+   returned `None`:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/notifications/test_jobs.py -k scheduled_end_at
+```
+
+Result: `1 failed, 3 deselected`; expected the durable scheduled end but read
+back `None`.
+
+2. GREEN added `scheduled_end_at` to the LocalBookingPort SELECT and
+   `ExternalBooking` mapping, then ran the affected notification and booking
+   suites:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/notifications/test_jobs.py tests/unit/notifications tests/integration/booking
+```
+
+Result: `20 passed in 31.91s`.
