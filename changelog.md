@@ -1773,3 +1773,5 @@
 [2026-07-27 14:15] Task 4 GREEN: `test_feedback.py` прошёл через Docker с явным локальным `DATABASE_URL=postgresql://moroz_dummy:...@postgres:5432/moroz_dummy_db`, без staging/production/provider mutations: `4 passed in 27.86s`. Фазовый план Task 4 обновлён по выполненным пунктам.
 
 [2026-07-27 14:20] Combined focused Docker gate Task 1-4 прошёл с локальным Postgres и явным dummy DATABASE_URL: 37 passed in 156.86s. Staging/production/provider mutations не выполнялись; namespace очищен через docker compose down -v --remove-orphans.
+
+[2026-07-27 14:55] Task 5 Notifications checkpoint завершён локально через Docker: selected notification/lifecycle/DLQ gate `14 passed in 65.26s`, Alembic isolated head `0007_scheduler_notifications (head)`, full Docker pytest gate `781 passed in 908.73s` без skipped в summary. Roadmap и фазовый план обновлены; staging/production/provider mutations не выполнялись.

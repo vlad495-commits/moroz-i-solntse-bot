@@ -108,10 +108,10 @@ RETURNING id;
 
 ### Task 5: Notifications checkpoint
 
-- [ ] Run all notification tests with virtual clock; expect pass.
-- [ ] Advance test clock through a complete booking lifecycle; expect no duplicate jobs/messages.
-- [ ] Inspect DLQ behavior for a forced Telegram failure.
-- [ ] Run `docker compose --env-file ../.env run --rm test alembic -c /workspace/alembic.ini upgrade head`; expect exact head `0007_scheduler_notifications` in the isolated test database only.
-- [ ] Run the full Docker pytest gate; expect no skipped Phase 6 tests.
-- [ ] Update roadmap/changelog with evidence.
+- [x] Run all notification tests with virtual clock; expect pass.
+- [x] Advance test clock through a complete booking lifecycle; expect no duplicate jobs/messages.
+- [x] Inspect DLQ behavior for a forced Telegram failure.
+- [x] Run `docker compose --env-file ../.env run --rm test alembic -c /workspace/alembic.ini upgrade head`; expect exact head `0007_scheduler_notifications` in the isolated test database only.
+- [x] Run the full Docker pytest gate; expect no skipped Phase 6 tests.
+- [x] Update roadmap/changelog with evidence.
 - [ ] Commit `docs: зафиксирован notifications checkpoint`.
