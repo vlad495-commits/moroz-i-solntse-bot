@@ -91,9 +91,9 @@ if job.kind == "no_show_check" and booking.status == "no_show":
 
 **Files:** Create `project/src/moroz/notifications/feedback.py`, `project/src/moroz/escalation/service.py`; Reuse migration `project/migrations/versions/0007_scheduler_notifications.py` from Task 1; Test `project/tests/e2e/notifications/test_feedback.py`.
 
-- [ ] Test first completed visit schedules feedback +2h, after 21:00 moves to next 10:30, daily later visits never schedule another, rating 1–3 creates escalation.
-- [ ] Run red.
-- [ ] Atomically claim feedback in `notification_feedback_requests` instead of `customers.feedback_requested_at`:
+- [x] Test first completed visit schedules feedback +2h, after 21:00 moves to next 10:30, daily later visits never schedule another, rating 1–3 creates escalation.
+- [x] Run red.
+- [x] Atomically claim feedback in `notification_feedback_requests` instead of `customers.feedback_requested_at`:
 
 ```sql
 INSERT INTO notification_feedback_requests
@@ -103,8 +103,8 @@ ON CONFLICT (customer_id) DO NOTHING
 RETURNING id;
 ```
 
-- [ ] Run tests; expect one feedback and no sales on low rating.
-- [ ] Commit `feat: добавлены feedback once и human mode`.
+- [x] Run tests; expect one feedback and no sales on low rating.
+- [x] Commit `feat: добавлены feedback once и human mode`.
 
 ### Task 5: Notifications checkpoint
 
