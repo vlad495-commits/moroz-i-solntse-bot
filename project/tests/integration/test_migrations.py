@@ -429,7 +429,12 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
         finally:
             await conn.close()
 
-        assert set(head_catalog[0]) - set(baseline_catalog[0]) == new_tables
+        assert set(head_catalog[0]) - set(baseline_catalog[0]) == new_tables | {
+            "escalations",
+            "human_mode",
+            "notification_feedback_requests",
+            "scheduler_jobs",
+        }
 
         run_alembic(
             disposable_database_url,
@@ -450,7 +455,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0006_yclients_booking_key"
+            "0007_scheduler_notifications"
         )
     finally:
         await conn.close()
@@ -589,7 +594,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0006_yclients_booking_key"
+        assert current_revision == "0007_scheduler_notifications"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -697,6 +702,94 @@ async def test_booking_key_migration_backfills_legacy_rows_and_enforces_uniquene
             )
     finally:
         await conn.close()
+
+
+async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0006(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "0006_yclients_booking_key")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        previous_catalog = await snapshot_application_catalog(conn)
+    finally:
+        await conn.close()
+
+    try:
+        run_alembic(disposable_database_url, "upgrade", "head")
+        conn = await asyncpg.connect(disposable_database_url)
+        try:
+            current_revision = await conn.fetchval(
+                "SELECT version_num FROM alembic_version"
+            )
+            tables = {
+                row["tablename"]
+                for row in await conn.fetch(
+                    "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+                )
+            }
+            constraints = {
+                (row["table_name"], row["definition"])
+                for row in await conn.fetch(
+                    """
+                    SELECT c.relname AS table_name,
+                           pg_get_constraintdef(con.oid, true) AS definition
+                    FROM pg_constraint con
+                    JOIN pg_class c ON c.oid = con.conrelid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public'
+                      AND c.relname IN ('scheduler_jobs', 'escalations')
+                      AND con.contype = 'c'
+                    """
+                )
+            }
+            indexes = {
+                (row["tablename"], row["indexname"])
+                for row in await conn.fetch(
+                    """
+                    SELECT tablename, indexname
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND tablename IN ('scheduler_jobs',
+                                        'notification_feedback_requests')
+                    """
+                )
+            }
+        finally:
+            await conn.close()
+
+        assert current_revision == "0007_scheduler_notifications"
+        assert {
+            "scheduler_jobs",
+            "notification_feedback_requests",
+            "escalations",
+            "human_mode",
+        }.issubset(tables)
+        assert (
+            "scheduler_jobs",
+            "CHECK (status = ANY (ARRAY['pending'::text, 'claimed'::text, "
+            "'finished'::text, 'skipped'::text, 'failed'::text]))",
+        ) in constraints
+        assert (
+            "escalations",
+            "CHECK (status = ANY (ARRAY['open'::text, 'resolved'::text]))",
+        ) in constraints
+        assert ("scheduler_jobs", "ix_scheduler_jobs_status_run_at") in indexes
+        assert ("scheduler_jobs", "ix_scheduler_jobs_booking_key_status") in indexes
+
+        run_alembic(
+            disposable_database_url,
+            "downgrade",
+            "0006_yclients_booking_key",
+        )
+        conn = await asyncpg.connect(disposable_database_url)
+        try:
+            downgraded_catalog = await snapshot_application_catalog(conn)
+        finally:
+            await conn.close()
+
+        assert downgraded_catalog == previous_catalog
+    finally:
+        run_alembic(disposable_database_url, "upgrade", "head")
 
 
 async def test_cutover_audits_and_stamps_exact_unversioned_schema(

@@ -24,15 +24,15 @@
 
 **Files:** Create `project/src/moroz/notifications/models.py`, `repository.py`; Create migration `project/migrations/versions/0007_scheduler_notifications.py`; Modify `project/tests/integration/test_migrations.py`; Test `project/tests/integration/notifications/test_jobs.py`; Modify `project/scheduler/main.py`.
 
-- [ ] Write concurrent claim test proving two schedulers cannot claim the same due job.
-- [ ] Run red.
-- [ ] Add one additive migration `0007_scheduler_notifications` with `down_revision = "0006_yclients_booking_key"` that creates:
+- [x] Write concurrent claim test proving two schedulers cannot claim the same due job.
+- [x] Run red.
+- [x] Add one additive migration `0007_scheduler_notifications` with `down_revision = "0006_yclients_booking_key"` that creates:
   - `scheduler_jobs(id UUID PRIMARY KEY, kind TEXT, run_at TIMESTAMPTZ, payload JSONB, idempotency_key TEXT UNIQUE, status TEXT, attempts INTEGER, booking_key UUID NULL, booking_starts_at TIMESTAMPTZ NULL, claimed_at TIMESTAMPTZ NULL, finished_at TIMESTAMPTZ NULL, last_error_code TEXT NULL, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)`;
   - `notification_feedback_requests(id UUID PRIMARY KEY, customer_id TEXT UNIQUE, booking_key UUID NULL, requested_at TIMESTAMPTZ, created_at TIMESTAMPTZ)`;
   - `escalations(id UUID PRIMARY KEY, source TEXT, customer_id TEXT, booking_key UUID NULL, status TEXT, reason_code TEXT, payload JSONB, created_at TIMESTAMPTZ, resolved_at TIMESTAMPTZ NULL)`;
   - `human_mode(customer_id TEXT PRIMARY KEY, enabled BOOLEAN, reason_code TEXT, escalation_id UUID NULL, enabled_at TIMESTAMPTZ, expires_at TIMESTAMPTZ NULL)`.
-- [ ] Add indexes for due scheduler claims and booking invalidation: `(status, run_at)`, `(booking_key, status)`.
-- [ ] Implement claimer:
+- [x] Add indexes for due scheduler claims and booking invalidation: `(status, run_at)`, `(booking_key, status)`.
+- [x] Implement claimer:
 
 ```sql
 SELECT id FROM scheduler_jobs
@@ -42,8 +42,8 @@ FOR UPDATE SKIP LOCKED
 LIMIT $1;
 ```
 
-- [ ] Run migration/test; expect each ID claimed once.
-- [ ] Commit `feat: добавлено устойчивое хранилище scheduler jobs`.
+- [x] Run migration/test; expect each ID claimed once.
+- [x] Commit `feat: добавлено устойчивое хранилище scheduler jobs`.
 
 ### Task 2: Reminder planner
 

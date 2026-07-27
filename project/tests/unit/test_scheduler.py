@@ -2,8 +2,11 @@ import asyncio
 import importlib.util
 import os
 from pathlib import Path
+from types import MappingProxyType
+from uuid import uuid4
 
 import pytest
+from moroz.notifications.models import SchedulerJob
 
 
 MODULE_PATH = Path("/workspace/scheduler/main.py")
@@ -46,3 +49,45 @@ async def test_scheduler_updates_and_removes_heartbeat(tmp_path):
     await loop
 
     assert not heartbeat.exists()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_pump_publishes_claimed_jobs():
+    scheduler = load_scheduler()
+
+    class Repository:
+        def __init__(self):
+            self.claims = []
+            self.job_id = uuid4()
+
+        async def claim_due(self, *, limit):
+            self.claims.append(limit)
+            return [
+                SchedulerJob(
+                    id=self.job_id,
+                    kind="booking_created",
+                    run_at=None,
+                    payload=MappingProxyType({"booking_key": "booking-1"}),
+                    idempotency_key="booking:1:v1:booking_created",
+                    attempts=0,
+                    booking_key=None,
+                    booking_starts_at=None,
+                )
+            ]
+
+    class Queue:
+        def __init__(self):
+            self.tasks = []
+
+        async def publish(self, task):
+            self.tasks.append(task)
+
+    repository = Repository()
+    queue = Queue()
+
+    assert await scheduler.SchedulerPump(repository, queue, limit=25).run_once() == 1
+
+    assert repository.claims == [25]
+    assert queue.tasks[0].kind == "scheduler_job"
+    assert queue.tasks[0].payload == {"job_id": str(repository.job_id)}
+    assert queue.tasks[0].idempotency_key == f"scheduler_job:{repository.job_id}"
