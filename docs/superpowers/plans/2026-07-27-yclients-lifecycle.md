@@ -470,7 +470,7 @@ git commit -m "feat: добавлен durable lifecycle ingestion"
 - Modify: `project/worker/main.py`
 - Modify: `project/tests/e2e/notifications/test_reminders.py`
 - Modify: `project/tests/unit/test_worker.py`
-- Modify: `project/tests/unit/test_compose_env.py`
+- Modify: `project/tests/unit/test_migration_profile.py`
 
 **Interfaces:**
 - `handle_scheduler_job(..., lifecycle=None)` keeps old reminder behavior.
@@ -599,7 +599,7 @@ still receive no YCLIENTS tokens.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q tests/unit/test_worker.py tests/unit/test_compose_env.py
+docker compose --env-file ../.env run --rm test pytest -q tests/unit/test_worker.py tests/unit/test_migration_profile.py
 ```
 
 Expected: worker does not construct or pass a lifecycle service.
@@ -641,7 +641,7 @@ persistent session, so no new shutdown resource is added.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q tests/e2e/notifications tests/unit/test_worker.py tests/unit/test_compose_env.py
+docker compose --env-file ../.env run --rm test pytest -q tests/e2e/notifications tests/unit/test_worker.py tests/unit/test_migration_profile.py
 ```
 
 Expected: all selected tests pass; no Compose service count change.
@@ -649,7 +649,7 @@ Expected: all selected tests pass; no Compose service count change.
 Commit:
 
 ```powershell
-git add project/src/moroz/notifications project/worker/main.py project/tests/e2e/notifications project/tests/unit/test_worker.py project/tests/unit/test_compose_env.py
+git add project/src/moroz/notifications project/worker/main.py project/tests/e2e/notifications project/tests/unit/test_worker.py project/tests/unit/test_migration_profile.py
 git commit -m "feat: подключён lifecycle scheduler runtime"
 ```
 
