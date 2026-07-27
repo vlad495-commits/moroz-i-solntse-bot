@@ -171,7 +171,21 @@ class MessageTaskHandler:
                     {"role": row["role"], "content": row["content"]}
                     for row in reversed(rows)
                 ]
-                result = await self._llm(persisted_text, context)
+                recent_message_count = await connection.fetchval(
+                    """
+                    SELECT count(*)
+                    FROM message_inbox
+                    WHERE channel = 'telegram'
+                      AND chat_id = $1
+                      AND created_at >= now() - interval '1 minute'
+                    """,
+                    chat_id,
+                )
+                result = await self._llm(
+                    persisted_text,
+                    context,
+                    recent_message_count=int(recent_message_count),
+                )
 
                 await connection.execute(
                     """

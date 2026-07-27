@@ -65,9 +65,11 @@ class FakeTelegram:
 class FakeLLM:
     def __init__(self):
         self.calls = []
+        self.recent_counts = []
 
-    async def __call__(self, text, context):
+    async def __call__(self, text, context, *, recent_message_count=1):
         self.calls.append((text, context))
+        self.recent_counts.append(recent_message_count)
         return SimpleNamespace(
             text="Готовый ответ",
             prompt_tokens=11,
@@ -557,7 +559,7 @@ async def test_same_chat_process_tasks_are_serialized_by_postgres(database):
     release_first = asyncio.Event()
     calls = []
 
-    async def blocking_llm(text, context):
+    async def blocking_llm(text, context, *, recent_message_count=1):
         calls.append(text)
         if text == "Первый":
             first_started.set()

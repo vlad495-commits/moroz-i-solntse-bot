@@ -30,6 +30,9 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2000"))
 # Таймаут одного запроса к LLM (сек): зависший провайдер рвётся за это время,
 # а не за дефолтные ~600с SDK.
 LLM_REQUEST_TIMEOUT_SEC = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "30"))
+RESERVE_API_KEY = os.getenv("RESERVE_API_KEY", "")
+RESERVE_BASE_URL = os.getenv("RESERVE_BASE_URL", "") or None
+RESERVE_MODEL = os.getenv("RESERVE_MODEL", "")
 
 # --- Хранилища ---
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")

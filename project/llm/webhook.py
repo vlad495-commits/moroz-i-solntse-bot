@@ -23,6 +23,7 @@ from config import (
 )
 from moroz.common.db import Database
 from moroz.messaging.buffer import MessageBuffer
+from moroz.messaging.ingress import decide_ingress
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.service import MessageService
@@ -161,12 +162,17 @@ def create_app(
             )
             return Response(status_code=200)
         if message.text is None:
-            await send_static_reply(
-                update_id=update.update_id,
-                chat_id=message.chat.id,
-                text=NON_TEXT_REPLY,
-                reply_kind="non_text",
+            ingress = decide_ingress(
+                has_text=False,
+                has_processing_consent=False,
             )
+            if ingress.action == "reply" and ingress.code == "nontext":
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=message.chat.id,
+                    text=NON_TEXT_REPLY,
+                    reply_kind="non_text",
+                )
             return Response(status_code=200)
         if message.from_user is None:
             return Response(status_code=200)
@@ -181,18 +187,26 @@ def create_app(
             return Response(status_code=200)
 
         user_id = str(message.from_user.id)
-        if not await webhook_app.state.consent_service.has_processing_consent(
-            "telegram", user_id
-        ):
-            await send_static_reply(
-                update_id=update.update_id,
-                chat_id=message.chat.id,
-                text=CONSENT_PROMPT,
-                reply_kind="consent_prompt",
-                delivery_options={
-                    "reply_markup": CONSENT_KEYBOARD.model_dump(mode="json")
-                },
+        has_processing_consent = (
+            await webhook_app.state.consent_service.has_processing_consent(
+                "telegram", user_id
             )
+        )
+        ingress = decide_ingress(
+            has_text=True,
+            has_processing_consent=has_processing_consent,
+        )
+        if ingress.action == "reply":
+            if ingress.code == "consent_required":
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=message.chat.id,
+                    text=CONSENT_PROMPT,
+                    reply_kind="consent_prompt",
+                    delivery_options={
+                        "reply_markup": CONSENT_KEYBOARD.model_dump(mode="json")
+                    },
+                )
             return Response(status_code=200)
         if len(message.text) > MAX_INPUT_LENGTH:
             await send_static_reply(
