@@ -865,9 +865,18 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         )
         conn = await asyncpg.connect(disposable_database_url)
         try:
-            assert await conn.fetchval(
-                "SELECT count(*) FROM bookings WHERE status <> 'confirmed'"
-            ) == 0
+            rows = await conn.fetch(
+                """
+                SELECT status, count(*) AS total
+                FROM bookings
+                GROUP BY status
+                ORDER BY status
+                """
+            )
+            assert [(row["status"], row["total"]) for row in rows] == [
+                ("cancelled", 1),
+                ("confirmed", 4),
+            ]
         finally:
             await conn.close()
     finally:

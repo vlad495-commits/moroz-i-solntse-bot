@@ -26,7 +26,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("UPDATE bookings SET status = 'confirmed' WHERE status <> 'confirmed'")
+    op.execute(
+        "UPDATE bookings SET status = 'confirmed' "
+        "WHERE status IN ('completed', 'no_show', 'unknown')"
+    )
     op.drop_constraint("ck_bookings_status", "bookings", type_="check")
     op.create_check_constraint("ck_bookings_status", "bookings", _OLD)
     op.drop_column("bookings", "scheduled_end_at")

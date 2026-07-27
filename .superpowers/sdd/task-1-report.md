@@ -81,5 +81,20 @@ All Compose invocations set the requested synthetic process-local credentials fo
 ## Self-review and Concerns
 
 - Self-review found the read/write/snapshot paths consistent and all Task 1 focused tests green.
-- Brief conflict: its downgrade code preserves `cancelled`, while its required assertion expects no status other than `confirmed` after downgrade. The implementation follows the explicit assertion and normalizes `cancelled` together with all new statuses to `confirmed`.
+- Follow-up correction: downgrade preserves existing `cancelled` records and normalizes only `completed`, `no_show`, and `unknown` to `confirmed`, matching the approved spec and Task 1 migration sample.
 - A legacy fake YCLIENTS record omitted `attendance`; the shared fixture now explicitly represents confirmed records with `attendance=0`, while `attendance=None` is covered as `unknown`.
+
+## Follow-up RED/GREEN: Downgrade Cancellation Preservation
+
+1. RED changed the lifecycle migration assertion to require grouped results
+   `cancelled=1` and `confirmed=4` after downgrade. The focused Docker command
+   below failed with `('confirmed', 5)`, proving the old predicate incorrectly
+   normalized the existing cancellation:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/test_migrations.py -k lifecycle
+```
+
+2. GREEN replaced the downgrade predicate with
+   `status IN ('completed', 'no_show', 'unknown')` and reran the same command.
+   Result: `1 passed, 22 deselected in 6.89s`.
