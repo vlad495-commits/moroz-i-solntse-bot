@@ -47,7 +47,7 @@ class LifecycleService:
                     updated_at = now()
                 WHERE booking_key = $1
                   AND starts_at = $2
-                  AND status IN ('confirmed', 'unknown')
+                  AND status = 'confirmed'
                 RETURNING external_id, customer_id, booking_key, slot_id,
                           starts_at, status, scheduled_end_at
                 """,
@@ -63,6 +63,8 @@ class LifecycleService:
         booking: ExternalBooking,
         current_index: int,
     ) -> bool:
+        if current_index not in range(-1, len(OUTCOME_OFFSETS)):
+            raise ValueError("current index must be between -1 and 2")
         next_index = current_index + 1
         if next_index >= len(OUTCOME_OFFSETS):
             return False

@@ -138,6 +138,15 @@ async def test_schedule_next_stops_after_last_offset():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("current_index", [-2, 3])
+async def test_schedule_next_rejects_out_of_range_current_index(current_index):
+    service = LifecycleService(FakeDatabase(), FakeProvider(local_booking()), FakeFeedback())
+
+    with pytest.raises(ValueError, match="current index"):
+        await service.schedule_next(local_booking(status="completed"), current_index)
+
+
+@pytest.mark.asyncio
 async def test_schedule_next_requires_persisted_scheduled_end():
     service = LifecycleService(FakeDatabase(), FakeProvider(local_booking()), FakeFeedback())
 

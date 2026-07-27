@@ -145,6 +145,26 @@ async def test_refresh_does_not_overwrite_concurrent_cancel(database):
     assert await booking_status(database, booking_key) == "cancelled"
 
 
+async def test_refresh_does_not_overwrite_concurrent_unknown(database):
+    booking_key = uuid4()
+    local = booking(booking_key=booking_key)
+    await seed_booking(database, local)
+    provider = PausingProvider(booking(booking_key=booking_key, status="completed"))
+    service = LifecycleService(database, provider, FeedbackService(database))
+
+    refresh = asyncio.create_task(service.refresh(local))
+    await provider.read.wait()
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE bookings SET status = 'unknown' WHERE booking_key = $1",
+            booking_key,
+        )
+    provider.resume.set()
+
+    assert await refresh is None
+    assert await booking_status(database, booking_key) == "unknown"
+
+
 async def test_refresh_rejects_stale_provider_response_after_reschedule(database):
     booking_key = uuid4()
     local = booking(booking_key=booking_key)
