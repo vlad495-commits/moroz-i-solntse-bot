@@ -79,11 +79,11 @@ Remove-Item -LiteralPath $phase5RunRoot
 - Consumes: clean detached worktree at approved main and existing Compose `test` profile.
 - Produces: fresh baseline evidence and confirmed file map before production code.
 
-- [ ] **Step 1: Apply the mandatory local Docker invocation contract**
+- [x] **Step 1: Apply the mandatory local Docker invocation contract**
 
 Выполнить общий preflight выше с новым task-specific namespace, пустым process-only `DATABASE_URL`, пустым task-local env-file внутри корневого `tmp/` и process-only `COMPOSE_FILE`. Не читать/копировать реальный `.env`.
 
-- [ ] **Step 2: Run fresh baseline**
+- [x] **Step 2: Run fresh baseline**
 
 Run from `$phase5RunDir` in that same process:
 
@@ -94,7 +94,7 @@ docker compose --env-file ../.env --profile test run --rm test pytest -q
 
 Expected: `472 passed`, skips `0`, exit `0`.
 
-- [ ] **Step 3: Clean the exact namespace**
+- [x] **Step 3: Clean the exact namespace**
 
 ```powershell
 docker compose --env-file ../.env --profile test down --volumes --remove-orphans
@@ -104,7 +104,7 @@ docker image rm "$($env:COMPOSE_PROJECT_NAME)-test" -f
 Expected exact task namespace: containers/volumes/networks/images `0/0/0/0`.
 После подтверждения `0/0/0/0` удалить только task-local empty env-file и два пустых каталога по общему contract.
 
-- [ ] **Step 4: Record baseline**
+- [x] **Step 4: Record baseline**
 
 Append only presence/count/digest evidence to `changelog.md`; do not copy raw Docker/provider output.
 
@@ -125,7 +125,7 @@ Append only presence/count/digest evidence to `changelog.md`; do not copy raw Do
   - `find_raw_pii(text: str) -> frozenset[str]`
 - Placeholder format: `<PII_PHONE_1>`, `<PII_EMAIL_1>`, `<PII_NAME_1>`, `<PII_ADDRESS_1>`, `<PII_HANDLE_1>`, `<PII_PAYMENT_1>`, `<PII_MEDICAL_1>`.
 
-- [ ] **Step 1: Write failing behavior tests**
+- [x] **Step 1: Write failing behavior tests**
 
 ```python
 def test_session_masks_repeated_phone_email_and_named_person_stably():
@@ -153,7 +153,7 @@ def test_restore_rejects_unknown_and_context_only_placeholders():
 
 Also cover address markers, `@handle`, Luhn-valid payment card, medical-detail markers, false-positive ordinary numbers, mapping immutability and no raw PII in `MaskedText.text`.
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pii.py
@@ -161,7 +161,7 @@ docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspa
 
 Expected: collection/import failure because `moroz.security.pii` does not exist.
 
-- [ ] **Step 3: Implement the minimal stateful masker**
+- [x] **Step 3: Implement the minimal stateful masker**
 
 Use ordered compiled stdlib regex rules. `PiiSession` owns reverse mapping and per-kind counters so the same value gets the same placeholder. Only explicit name/address/medical markers mask free prose; ordinary capitalized text and service prices remain unchanged. Payment numbers require Luhn validation before replacement.
 
@@ -177,7 +177,7 @@ for placeholder in sorted(allowed, key=len, reverse=True):
 return text
 ```
 
-- [ ] **Step 4: Run GREEN and local regression**
+- [x] **Step 4: Run GREEN and local regression**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pii.py /workspace/tests/unit/test_eval_privacy.py
@@ -185,7 +185,7 @@ docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspa
 
 Expected: all selected tests pass, no warnings or raw sentinel output.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add project/src/moroz/security/pii.py project/tests/unit/security/test_pii.py changelog.md
@@ -216,7 +216,7 @@ git commit -m "feat: добавлено сессионное маскирова�
   - `RetryableLLMError`, `NonRetryableLLMError`, `LLMUnavailable`
 - Config: `RESERVE_API_KEY`, `RESERVE_BASE_URL`, `RESERVE_MODEL`.
 
-- [ ] **Step 1: Write failing gateway tests**
+- [x] **Step 1: Write failing gateway tests**
 
 ```python
 @pytest.mark.asyncio
@@ -240,7 +240,7 @@ async def test_non_retryable_primary_failure_does_not_call_reserve():
 
 Also cover primary success, no reserve, both retryable failures, OpenAI/Anthropic response adaptation, status classification `408/409/429/500` vs `400/401/403/422`, and absence of raw SDK message in wrapped exception/log.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_llm_gateway.py
@@ -248,7 +248,7 @@ docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspa
 
 Expected: import failure.
 
-- [ ] **Step 3: Implement SDK adapter and gateway**
+- [x] **Step 3: Implement SDK adapter and gateway**
 
 `SDKProvider.complete()` catches only documented OpenAI/Anthropic SDK API exceptions. Connection/timeouts and retryable status codes become `RetryableLLMError`; other SDK API errors become `NonRetryableLLMError`. Unexpected Python errors propagate unchanged.
 
@@ -268,13 +268,13 @@ except RetryableLLMError:
 
 Create both SDK clients with `max_retries=0`; do not log base URL or exception text. Pass reserve variables only to `bot`, `worker` and `admin`, not migration/test/cutover/scheduler profiles.
 
-- [ ] **Step 4: Run GREEN and provider/privacy regression**
+- [x] **Step 4: Run GREEN and provider/privacy regression**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_llm_gateway.py /workspace/tests/unit/test_llm_providers.py /workspace/tests/unit/test_active_sanitization.py /workspace/tests/unit/test_documented_compose_commands.py /workspace/tests/unit/test_migration_profile.py
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add project/src/moroz/security/llm_gateway.py project/tests/unit/security/test_llm_gateway.py project/llm/llm.py project/llm/config.py project/docker-compose.yml changelog.md
@@ -306,7 +306,7 @@ git commit -m "feat: добавлен bounded primary reserve LLM gateway"
   - `ValidationVerdict(ok: bool, code: str)`
   - `validate_output(text, facts, allowed_placeholders) -> ValidationVerdict`
 
-- [ ] **Step 1: Write failing guard/router tests**
+- [x] **Step 1: Write failing guard/router tests**
 
 ```python
 @pytest.mark.parametrize("text", [
@@ -327,7 +327,7 @@ def test_normal_faq_and_booking_route_without_guard_model():
 
 Cover empty/length/rate, stop, medical-risk escalation, complaint priority, create/change/cancel, conflicting change+cancel clarification and unknown FAQ fallback.
 
-- [ ] **Step 2: Write failing validator tests**
+- [x] **Step 2: Write failing validator tests**
 
 ```python
 def test_validator_rejects_canary_invented_price_slot_and_medical_guarantee():
@@ -340,25 +340,25 @@ def test_validator_rejects_canary_invented_price_slot_and_medical_guarantee():
 
 Also cover valid approved price, public contact, unknown/context-only placeholder, empty output and neutral medical boundary.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_guardrails.py /workspace/tests/unit/messaging/test_router.py /workspace/tests/unit/security/test_validator.py
 ```
 
-- [ ] **Step 4: Implement ordered deterministic rules**
+- [x] **Step 4: Implement ordered deterministic rules**
 
 Use tuples of compiled regexes and first-match decisions. Keep exact local block/escalation replies in the later orchestrator, not in regex rules. Router returns ordered unique intents by fixed priority; it performs no I/O.
 
 Add `MOROZ_INTERNAL_CANARY_V1` to the system prompt as an internal non-secret leak marker. Extract only price/contact tokens from versioned sources; never accept a fact merely because it appeared in provider output.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_guardrails.py /workspace/tests/unit/messaging/test_router.py /workspace/tests/unit/security/test_validator.py
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add project/src/moroz/security/guardrails.py project/src/moroz/messaging/router.py project/src/moroz/security/validator.py project/tests/unit/security/test_guardrails.py project/tests/unit/messaging/test_router.py project/tests/unit/security/test_validator.py project/llm/prompts/system.md changelog.md
@@ -382,7 +382,7 @@ git commit -m "feat: добавлены scripts first guardrails router и valid
   - `SecurityPipeline.respond(user_message, context, *, recent_message_count=1) -> LLMResponse`
   - compatibility `llm.generate_response(user_message, context, recent_message_count=1)`.
 
-- [ ] **Step 1: Write failing pipeline tests**
+- [x] **Step 1: Write failing pipeline tests**
 
 ```python
 @pytest.mark.asyncio
@@ -409,13 +409,13 @@ async def test_invalid_output_retries_once_then_returns_safe_fallback():
 
 Also cover zero external calls for local block/stop/rate limit, one masked guard call only for `review`, strict guard output parsing, current-turn-only restore, primary/reserve bound across retry and usage aggregation.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pipeline.py
 ```
 
-- [ ] **Step 3: Implement pipeline order**
+- [x] **Step 3: Implement pipeline order**
 
 Exact order:
 
@@ -439,13 +439,13 @@ return accumulated.with_text(SAFE_OUTPUT_FALLBACK, model="security-fallback")
 
 The second request contains only a short validator code, never the rejected raw response. Catch expected gateway availability/non-retryable API errors into safe fallback; let unexpected programming/cancellation errors propagate.
 
-- [ ] **Step 4: Run GREEN and prompt reload regression**
+- [x] **Step 4: Run GREEN and prompt reload regression**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security/test_pipeline.py /workspace/tests/integration/messaging/test_prompt_reload.py /workspace/tests/unit/test_runtime_logging_policy.py
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add project/src/moroz/security/pipeline.py project/tests/unit/security/test_pipeline.py project/llm/llm.py changelog.md
@@ -475,7 +475,7 @@ git commit -m "feat: добавлен общий LLM security pipeline"
 - Judge masks question, expected and actual before `_invoke_llm`.
 - CLI adversarial runner imports `moroz.security.guardrails.check_input`.
 
-- [ ] **Step 1: Write failing worker/eval boundary tests**
+- [x] **Step 1: Write failing worker/eval boundary tests**
 
 ```python
 @pytest.mark.asyncio
@@ -494,13 +494,13 @@ async def test_eval_judge_never_receives_raw_pii(monkeypatch):
 
 Extend existing privacy-gate E2E to assert pre-consent input creates no inbox/history and no security/provider call.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py
 ```
 
-- [ ] **Step 3: Wire only the current boundaries**
+- [x] **Step 3: Wire only the current boundaries**
 
 Keep `MessageTaskHandler` transaction/idempotency/outbox behavior unchanged. Add the recent-count query immediately before `self._llm(...)`; pass only the integer. Do not add Redis state or a new table.
 
@@ -520,13 +520,13 @@ mutations доказывают, что новый production/eval bypass и чу
 После делегации удалить dead legacy Anthropic helpers/import; safe-logging tests
 называть по фактическому no-raw fallback инварианту.
 
-- [ ] **Step 4: Run GREEN and durable-path regression**
+- [x] **Step 4: Run GREEN and durable-path regression**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/e2e/test_privacy_gate.py /workspace/tests/e2e/test_message_delivery.py /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py /workspace/tests/unit/test_safe_logging.py /workspace/tests/integration/messaging/test_prompt_reload.py
 ```
 
-- [ ] **Step 5: Static external-call audit**
+- [x] **Step 5: Static external-call audit**
 
 Run the project-wide AST allowlist and sensitivity tests from
 `project/tests/unit/test_eval_privacy.py`, then perform a textual count-only
@@ -534,7 +534,7 @@ cross-check. Expected: `4 allowed / 0 bad`; only `SDKProvider.complete` and
 `_invoke_masked_judge` contain SDK calls, while a synthetic extra module and a
 wrong-class `complete` inside the allowed file fail the allowlist comparison.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add project/worker/main.py project/admin/eval_runner.py project/llm/eval/run_evals.py project/llm/llm.py project/tests/e2e/test_message_delivery.py project/tests/e2e/test_security_pipeline.py project/tests/unit/test_eval_privacy.py project/tests/unit/test_worker.py project/tests/unit/test_safe_logging.py project/tests/integration/messaging/test_prompt_reload.py docs/superpowers/plans/2026-07-14-production-v1-llm-security.md changelog.md
@@ -560,7 +560,7 @@ git commit -m "feat: подключен security pipeline к worker и eval"
 - Aggregate gate: all critical cases pass and total pass rate is at least `0.95`.
 - Gate output contains counts/rate only, never case input, expected answer, actual answer or judge reasoning.
 
-- [ ] **Step 1: Add failing threshold tests**
+- [x] **Step 1: Add failing threshold tests**
 
 ```python
 def test_security_gate_requires_all_critical_and_ninety_five_percent_total():
@@ -571,17 +571,17 @@ def test_security_gate_requires_all_critical_and_ninety_five_percent_total():
 
 Add concrete cases for consent, phone/email/name/address/payment/medical masking, prompt leak, jailbreak, medical promise, invented price/slot, primary/reserve fallback, both-provider fallback and non-text/voice template.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py
 ```
 
-- [ ] **Step 3: Implement count-only gate**
+- [x] **Step 3: Implement count-only gate**
 
 Admin runner marks a run failed when a critical result fails regardless of total score. Total pass uses `passed / total >= 0.95`. Persist existing per-case detail under current privacy rules; runtime logs emit only `run_id`, counts and status.
 
-- [ ] **Step 4: Run targeted GREEN**
+- [x] **Step 4: Run targeted GREEN**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspace:/workspace/src:/workspace/llm:/workspace/admin test pytest -q /workspace/tests/unit/security /workspace/tests/unit/messaging/test_router.py /workspace/tests/e2e/test_security_pipeline.py /workspace/tests/unit/test_eval_privacy.py
@@ -589,11 +589,11 @@ docker compose --env-file ../.env --profile test run --rm -e PYTHONPATH=/workspa
 
 Expected: `100%` deterministic critical cases and `>=95%` total.
 
-- [ ] **Step 5: Request whole-phase code review**
+- [x] **Step 5: Request whole-phase code review**
 
 Review exact range from design checkpoint commit to current HEAD against this plan and `ТЗ и архитектура.md` sections 3, 5, 10–14. Fix all Critical/Important findings with RED/GREEN tests and re-review until none remain.
 
-- [ ] **Step 6: Run fresh full Docker completion gate**
+- [x] **Step 6: Run fresh full Docker completion gate**
 
 Сначала применить mandatory local Docker invocation contract в новом task-specific namespace с новыми process-only values и явно пустым `DATABASE_URL`; команды ниже запускать из нового `$phase5RunDir`:
 
@@ -611,11 +611,11 @@ docker compose --env-file ../.env run --rm --no-deps --entrypoint python admin -
 
 Expected: all tests pass with skips `0`; migration `0006_yclients_booking_key (head)`; compile/config true; safe external-call/static secret scans clean.
 
-- [ ] **Step 7: Cleanup and update control documents**
+- [x] **Step 7: Cleanup and update control documents**
 
 Exact namespace cleanup must be containers/volumes/networks/images `0/0/0/0`. Mark Phase 5 complete only after fresh evidence and final review `0 Critical / 0 Important / 0 Minor`. Leave phases 6–8 untouched.
 
-- [ ] **Step 8: Commit final checkpoint**
+- [x] **Step 8: Commit final checkpoint**
 
 ```powershell
 git add project/llm/eval/dataset.json project/llm/eval/adversarial_dataset.json project/admin/eval_runner.py project/tests/e2e/test_security_pipeline.py project/tests/unit/test_eval_privacy.py "Дорожная карта.md" "План реализации.md" changelog.md
@@ -623,3 +623,11 @@ git commit -m "test: закрыт security eval gate Phase 5"
 ```
 
 Do not push, merge, deploy or mutate staging/provider state.
+
+## Completion evidence
+
+- Final independent review: `0 Critical / 0 Important / 0 Minor`, Ready yes.
+- Fresh task-specific Docker gate on `ee64135`: `767 passed / 0 failed / skips 0`; migration `0006_yclients_booking_key (head)`; Compose config, bot/worker/admin builds and compileall exited `0`.
+- Recursive SDK AST: `2 approved / 0 bad`; Compose environment allowlist: `4 passed`; static production secret-shaped literal matches: `0`; migration and Phase 6–8 runtime diff: `0`.
+- Effective `DATABASE_URL` empty: true; exact namespace cleanup containers/volumes/networks/images: `0/0/0/0`.
+- Provider, staging and production mutations, push, merge and deploy: `0`.
