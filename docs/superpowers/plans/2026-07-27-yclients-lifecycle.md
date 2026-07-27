@@ -40,7 +40,7 @@
 - Produces: `_visit_status(record: Mapping[str, object]) -> BookingStatus`.
 - Persists: `bookings.scheduled_end_at TIMESTAMPTZ NULL`.
 
-- [ ] **Step 1: Write failing adapter mapping tests**
+- [x] **Step 1: Write failing adapter mapping tests**
 
 Add parameterized fake-HTTP contract cases that call `YclientsAdapter.get_booking`
 with exact owned records:
@@ -90,7 +90,7 @@ async def test_get_booking_rejects_non_integer_attendance(yclients_config, serve
         await adapter(yclients_config, server).get_booking(get_command())
 ```
 
-- [ ] **Step 2: Run adapter tests and observe RED**
+- [x] **Step 2: Run adapter tests and observe RED**
 
 Run:
 
@@ -102,7 +102,7 @@ docker compose --env-file ../.env run --rm --build test pytest -q tests/contract
 Expected: failures show `confirmed` for lifecycle outcomes and missing
 `scheduled_end_at`.
 
-- [ ] **Step 3: Implement minimal immutable domain and mapping**
+- [x] **Step 3: Implement minimal immutable domain and mapping**
 
 Use one status alias and one optional durable field:
 
@@ -162,7 +162,7 @@ Pass `_visit_status(record)` and `scheduled_end_at` to `ExternalBooking`.
 Populate the same field from mock slot duration and preserve it in mock
 reschedule/cancel/get operations.
 
-- [ ] **Step 4: Run adapter and booking regressions GREEN**
+- [x] **Step 4: Run adapter and booking regressions GREEN**
 
 Run:
 
@@ -173,7 +173,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/contract/booking
 Expected: all selected tests pass and fake HTTP request methods remain GET-only
 for lifecycle reads.
 
-- [ ] **Step 5: Write failing migration and repository tests**
+- [x] **Step 5: Write failing migration and repository tests**
 
 Add a migration test that upgrades from `0007_scheduler_notifications`, checks
 the new column and constraint, inserts all five statuses, downgrades to `0007`,
@@ -203,7 +203,7 @@ stored = await repo.get_booking_for_scenario(scenario.id)
 assert stored.scheduled_end_at == booking.scheduled_end_at
 ```
 
-- [ ] **Step 6: Run migration/repository tests and observe RED**
+- [x] **Step 6: Run migration/repository tests and observe RED**
 
 Run:
 
@@ -215,7 +215,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/integration/book
 Expected: first command cannot reach revision `0008`; second command loses the
 scheduled end.
 
-- [ ] **Step 7: Implement migration and persistence**
+- [x] **Step 7: Implement migration and persistence**
 
 Create:
 
@@ -258,7 +258,7 @@ def downgrade() -> None:
 Add `scheduled_end_at` to booking INSERT/UPDATE, snapshots, and all repository
 SELECT-to-`ExternalBooking` mappings.
 
-- [ ] **Step 8: Run focused Task 1 GREEN and commit**
+- [x] **Step 8: Run focused Task 1 GREEN and commit**
 
 Run:
 
