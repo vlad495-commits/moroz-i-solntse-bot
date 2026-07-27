@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -147,6 +148,7 @@ async def test_unknown_task_fails_closed_without_logging_payload_or_identifiers(
 async def test_message_task_handler_processes_scheduler_job():
     job_id = uuid4()
     completed = []
+    lifecycle = object()
 
     class SchedulerRepository:
         async def get_claimed(self, requested):
@@ -165,11 +167,7 @@ async def test_message_task_handler_processes_scheduler_job():
         async def complete(self, job, result):
             completed.append((job.id, result))
 
-    async def scheduler_handler(job, *, booking_port, outbox):
-        assert booking_port == "booking-port"
-        assert outbox == "outbox"
-        assert job.id == job_id
-        return JobResult.sent()
+    scheduler_handler = AsyncMock(return_value=JobResult.sent())
 
     handler = worker_main.MessageTaskHandler(
         object(),
@@ -178,6 +176,7 @@ async def test_message_task_handler_processes_scheduler_job():
         scheduler_repository=SchedulerRepository(),
         booking_port="booking-port",
         notification_outbox="outbox",
+        lifecycle=lifecycle,
         scheduler_handler=scheduler_handler,
     )
 
@@ -190,6 +189,86 @@ async def test_message_task_handler_processes_scheduler_job():
     )
 
     assert completed == [(job_id, JobResult.sent())]
+    assert scheduler_handler.await_args.args[0].id == job_id
+    assert scheduler_handler.await_args.kwargs == {
+        "booking_port": "booking-port",
+        "outbox": "outbox",
+        "lifecycle": lifecycle,
+    }
+
+
+def test_lifecycle_service_is_disabled_when_required_config_is_empty(
+    monkeypatch,
+):
+    for name in (
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+    ):
+        monkeypatch.setenv(name, "")
+
+    assert worker_main._build_lifecycle_service(object()) is None
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        {"YCLIENTS_PARTNER_TOKEN": "partner"},
+        {"YCLIENTS_USER_TOKEN": "user"},
+        {"YCLIENTS_COMPANY_ID": "17"},
+        {
+            "YCLIENTS_PARTNER_TOKEN": "partner",
+            "YCLIENTS_USER_TOKEN": "user",
+        },
+    ],
+)
+def test_lifecycle_service_rejects_partial_required_config(
+    monkeypatch,
+    configured,
+):
+    for name in (
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+    ):
+        monkeypatch.setenv(name, configured.get(name, ""))
+
+    with pytest.raises(
+        ValueError,
+        match="YCLIENTS lifecycle configuration is incomplete",
+    ):
+        worker_main._build_lifecycle_service(object())
+
+
+def test_lifecycle_service_builds_one_real_adapter_graph(monkeypatch):
+    database = object()
+    built = []
+
+    class Adapter:
+        def __init__(self, config):
+            built.append(("adapter", config))
+
+    class Feedback:
+        def __init__(self, received_database):
+            assert received_database is database
+            built.append(("feedback", received_database))
+
+    class Lifecycle:
+        def __init__(self, received_database, adapter, feedback):
+            assert received_database is database
+            built.append(("lifecycle", adapter, feedback))
+
+    monkeypatch.setenv("YCLIENTS_PARTNER_TOKEN", "partner")
+    monkeypatch.setenv("YCLIENTS_USER_TOKEN", "user")
+    monkeypatch.setenv("YCLIENTS_COMPANY_ID", "17")
+    monkeypatch.setattr(worker_main, "YclientsAdapter", Adapter)
+    monkeypatch.setattr(worker_main, "FeedbackService", Feedback)
+    monkeypatch.setattr(worker_main, "LifecycleService", Lifecycle)
+
+    service = worker_main._build_lifecycle_service(database)
+
+    assert isinstance(service, Lifecycle)
+    assert [entry[0] for entry in built] == ["adapter", "feedback", "lifecycle"]
 
 
 @pytest.mark.asyncio
@@ -243,6 +322,63 @@ async def test_scheduler_job_failure_tracks_retry_and_terminal_dlq(
         )
 
     assert failures == [(job_id, "RuntimeError", terminal)]
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_job_without_service_uses_existing_failure_path():
+    job_id = uuid4()
+    booking_key = uuid4()
+    starts_at = object()
+    failures = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, _requested):
+            return SchedulerJob(
+                id=job_id,
+                kind="no_show_check",
+                run_at=None,
+                payload={},
+                idempotency_key="booking:1:no_show_check",
+                attempts=0,
+                booking_key=booking_key,
+                booking_starts_at=starts_at,
+            )
+
+        async def record_failure(self, job, *, error_code, terminal):
+            failures.append((job.id, error_code, terminal))
+
+    class BookingPort:
+        async def get_booking(self, requested):
+            assert requested == booking_key
+            return SimpleNamespace(
+                booking_key=booking_key,
+                starts_at=starts_at,
+                status="confirmed",
+            )
+
+    handler = worker_main.MessageTaskHandler(
+        object(),
+        object(),
+        object(),
+        scheduler_repository=SchedulerRepository(),
+        booking_port=BookingPort(),
+        notification_outbox=object(),
+        lifecycle=None,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="lifecycle service is not configured",
+    ):
+        await handler.handle(
+            QueueTask(
+                kind="scheduler_job",
+                payload={"job_id": str(job_id)},
+                idempotency_key=f"scheduler_job:{job_id}",
+            )
+        )
+
+    assert failures == [(job_id, "RuntimeError", False)]
 
 
 @pytest.mark.asyncio

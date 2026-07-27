@@ -12,6 +12,8 @@ from redis.exceptions import RedisError
 
 from config import CONTEXT_MESSAGES_LIMIT
 from llm import generate_response, init_llm, prompt_reload_listener
+from moroz.booking.yclients import YclientsAdapter
+from moroz.booking.yclients_http import YclientsConfig
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
 from moroz.common.queue import MAX_RETRIES, QueueTask, RabbitQueue
@@ -19,7 +21,9 @@ from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
+from moroz.notifications.feedback import FeedbackService
 from moroz.notifications.handlers import handle_scheduler_job
+from moroz.notifications.lifecycle import LifecycleService
 from moroz.notifications.ports import LocalBookingPort, NotificationOutbox
 from moroz.notifications.repository import SchedulerJobRepository
 
@@ -51,6 +55,7 @@ class MessageTaskHandler:
         scheduler_repository: SchedulerJobRepository | None = None,
         booking_port=None,
         notification_outbox=None,
+        lifecycle=None,
         scheduler_handler=handle_scheduler_job,
     ):
         self._database = database
@@ -60,6 +65,7 @@ class MessageTaskHandler:
         self._scheduler_repository = scheduler_repository
         self._booking_port = booking_port
         self._notification_outbox = notification_outbox
+        self._lifecycle = lifecycle
         self._scheduler_handler = scheduler_handler
 
     async def handle(self, task: QueueTask) -> None:
@@ -99,6 +105,7 @@ class MessageTaskHandler:
                 job,
                 booking_port=self._booking_port,
                 outbox=self._notification_outbox,
+                lifecycle=self._lifecycle,
             )
         except Exception as error:
             await self._scheduler_repository.record_failure(
@@ -530,6 +537,25 @@ async def _supervise(
         _raise_after_cleanup(primary_error, cleanup_results)
 
 
+def _build_lifecycle_service(database: Database):
+    required = (
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+    )
+    present = tuple(bool(os.environ.get(name, "").strip()) for name in required)
+    if not any(present):
+        return None
+    if not all(present):
+        raise ValueError("YCLIENTS lifecycle configuration is incomplete")
+    config = YclientsConfig.from_env(os.environ)
+    return LifecycleService(
+        database,
+        YclientsAdapter(config),
+        FeedbackService(database),
+    )
+
+
 async def run() -> None:
     _remove_readiness(READINESS_PATH)
     stop = asyncio.Event()
@@ -552,6 +578,7 @@ async def run() -> None:
     try:
         await database.connect()
         worker_lock = await _acquire_worker_lock(database)
+        lifecycle = _build_lifecycle_service(database)
         repository = MessageRepository(database)
         reconciled = await repository.reconcile_stale_outbound_deliveries()
         if reconciled:
@@ -570,6 +597,7 @@ async def run() -> None:
                 repository,
                 staff_chat_id=os.environ.get("STAFF_TELEGRAM_CHAT_ID", ""),
             ),
+            lifecycle=lifecycle,
         )
         pump = PipelinePump(
             MessageBuffer(redis_client, database),

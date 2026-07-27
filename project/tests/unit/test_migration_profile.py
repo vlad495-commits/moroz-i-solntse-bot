@@ -192,6 +192,19 @@ def test_reserve_llm_environment_is_limited_to_runtime_llm_services():
 
 def test_yclients_environment_is_passed_only_to_worker_and_smoke():
     services = compose_services()
+    assert set(services) == {
+        "test",
+        "migrate",
+        "cutover",
+        "worker",
+        "yclients-smoke",
+        "scheduler",
+        "bot",
+        "admin",
+        "redis",
+        "postgres",
+        "rabbitmq",
+    }
     runtime_keys = {
         "YCLIENTS_PARTNER_TOKEN",
         "YCLIENTS_USER_TOKEN",
@@ -212,6 +225,8 @@ def test_yclients_environment_is_passed_only_to_worker_and_smoke():
     assert runtime_keys | smoke_only_keys <= set(
         services["yclients-smoke"]["environment"]
     )
+    for name in ("test", "migrate", "cutover"):
+        assert not runtime_keys & set(services[name]["environment"])
     for name, service in services.items():
         if name not in {"worker", "yclients-smoke"}:
             assert not (runtime_keys | smoke_only_keys) & set(
