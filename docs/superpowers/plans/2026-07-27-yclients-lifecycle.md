@@ -292,7 +292,7 @@ git commit -m "feat: добавлены lifecycle статусы YCLIENTS"
 - Produces: `LifecycleService.schedule_next(booking: ExternalBooking, current_index: int) -> bool`.
 - Produces: `LifecycleService.schedule_feedback(booking: ExternalBooking) -> UUID | None`.
 
-- [ ] **Step 1: Write failing service unit tests**
+- [x] **Step 1: Write failing service unit tests**
 
 Use a fake provider and fake storage boundary to prove:
 
@@ -324,7 +324,7 @@ async def test_schedule_next_uses_fixed_end_relative_offsets():
 Also test `current_index` 0/1 schedules the next offset, index 2 returns `False`,
 and missing `scheduled_end_at` raises a safe `RuntimeError`.
 
-- [ ] **Step 2: Run unit tests and observe RED**
+- [x] **Step 2: Run unit tests and observe RED**
 
 Run:
 
@@ -334,7 +334,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/notificatio
 
 Expected: import failure because `moroz.notifications.lifecycle` does not exist.
 
-- [ ] **Step 3: Implement the minimal lifecycle service**
+- [x] **Step 3: Implement the minimal lifecycle service**
 
 Create a focused class:
 
@@ -405,7 +405,7 @@ await self._feedback.schedule_after_visit(
 )
 ```
 
-- [ ] **Step 4: Run unit tests GREEN**
+- [x] **Step 4: Run unit tests GREEN**
 
 Run:
 
@@ -415,7 +415,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/notificatio
 
 Expected: all lifecycle unit tests pass.
 
-- [ ] **Step 5: Write failing PostgreSQL concurrency/idempotency tests**
+- [x] **Step 5: Write failing PostgreSQL concurrency/idempotency tests**
 
 Cover real database behavior:
 
@@ -442,7 +442,7 @@ Also prove a changed `starts_at` rejects a stale provider response and a
 duplicate completed refresh can still schedule feedback from persisted
 `scheduled_end_at`.
 
-- [ ] **Step 6: Run integration tests RED, implement repository helpers, rerun GREEN**
+- [x] **Step 6: Run integration tests RED, implement repository helpers, rerun GREEN**
 
 Run RED and GREEN with:
 
@@ -453,7 +453,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/integration/noti
 Expected RED: missing persistence/scheduling behavior. Expected GREEN: all
 tests pass with one job per key and terminal local states preserved.
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```powershell
 git add project/src/moroz/notifications/lifecycle.py project/src/moroz/notifications/repository.py project/tests/unit/notifications/test_lifecycle.py project/tests/integration/notifications/test_lifecycle.py
