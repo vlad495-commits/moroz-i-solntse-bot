@@ -166,12 +166,13 @@ def create_app(
                 has_text=False,
                 has_processing_consent=False,
             )
-            await send_static_reply(
-                update_id=update.update_id,
-                chat_id=message.chat.id,
-                text=NON_TEXT_REPLY,
-                reply_kind="non_text",
-            )
+            if ingress.action == "reply" and ingress.code == "nontext":
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=message.chat.id,
+                    text=NON_TEXT_REPLY,
+                    reply_kind="non_text",
+                )
             return Response(status_code=200)
         if message.from_user is None:
             return Response(status_code=200)
@@ -195,16 +196,17 @@ def create_app(
             has_text=True,
             has_processing_consent=has_processing_consent,
         )
-        if ingress.code == "consent_required":
-            await send_static_reply(
-                update_id=update.update_id,
-                chat_id=message.chat.id,
-                text=CONSENT_PROMPT,
-                reply_kind="consent_prompt",
-                delivery_options={
-                    "reply_markup": CONSENT_KEYBOARD.model_dump(mode="json")
-                },
-            )
+        if ingress.action == "reply":
+            if ingress.code == "consent_required":
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=message.chat.id,
+                    text=CONSENT_PROMPT,
+                    reply_kind="consent_prompt",
+                    delivery_options={
+                        "reply_markup": CONSENT_KEYBOARD.model_dump(mode="json")
+                    },
+                )
             return Response(status_code=200)
         if len(message.text) > MAX_INPUT_LENGTH:
             await send_static_reply(

@@ -72,6 +72,22 @@ def test_session_masks_explicit_address_handle_valid_card_and_medical_detail():
             "Instagram: <PII_HANDLE_1>",
         ),
         (
+            "Telegram: 123456789",
+            "Telegram: <PII_HANDLE_1>",
+        ),
+        (
+            "Telegram — 987654321",
+            "Telegram — <PII_HANDLE_1>",
+        ),
+        (
+            "VK: id123456",
+            "VK: <PII_HANDLE_1>",
+        ),
+        (
+            "Web: client-42",
+            "Web: <PII_HANDLE_1>",
+        ),
+        (
             "Web ID: client-42",
             "Web ID: <PII_HANDLE_1>",
         ),
@@ -106,6 +122,9 @@ def test_session_masks_marker_scoped_platform_ids_and_profile_urls(
         "Цена 2400 руб.",
         "Свободно 2026-07-30 в 15:00",
         "Документация https://example.org/help",
+        "Telegram bot",
+        "Instagram photo",
+        "Web booking",
     ],
 )
 def test_platform_id_detection_keeps_unmarked_numbers_prices_slots_and_urls(

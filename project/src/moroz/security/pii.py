@@ -75,10 +75,15 @@ _PLATFORM_PROFILE_RE = re.compile(
 _PLATFORM_ID_RE = re.compile(
     r"(?P<prefix>\b(?:"
     r"(?:telegram|телеграм|vk|вконтакте|instagram|инстаграм|web)"
-    r"(?:\s+(?:id|аккаунт|логин|profile|профиль))?"
+    r"(?:"
+    r"\s+(?:id|аккаунт|логин|login|profile|профиль)"
+    r"\s*(?::|—|-)?"
+    r"|\s*(?::|—)"
+    r")"
     r"|(?:id|идентификатор)\s+"
     r"(?:telegram|телеграм|vk|вконтакте|instagram|инстаграм|web)"
-    r")\s*(?::|—|-)?\s*)"
+    r"\s*(?::|—|-)?"
+    r")\s*)"
     r"(?P<value>(?!https?://)"
     r"(?:\d{4,15}|[A-Za-z][A-Za-z0-9_.-]{2,63}))",
     re.IGNORECASE,

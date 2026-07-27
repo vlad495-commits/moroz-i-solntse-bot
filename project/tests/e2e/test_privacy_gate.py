@@ -19,6 +19,7 @@ from config import (
     START_REPLY,
 )
 from moroz.common.db import Database
+from moroz.messaging.ingress import IngressDecision
 from moroz.messaging.repository import MessageRepository
 import webhook as webhook_module
 from webhook import create_app
@@ -536,6 +537,26 @@ async def test_webhook_uses_shared_ingress_decision_for_nontext(
     ]
 
 
+async def test_webhook_nontext_behavior_changes_with_substituted_ingress_decision(
+    client,
+    fake_telegram,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        webhook_module,
+        "decide_ingress",
+        lambda **_: IngressDecision("accept", None),
+    )
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_photo_update(update_id=918),
+    )
+
+    assert response.status_code == 200
+    assert fake_telegram.sent_messages == []
+
+
 async def test_webhook_uses_shared_ingress_decision_for_missing_consent(
     client,
     fake_telegram,
@@ -563,6 +584,28 @@ async def test_webhook_uses_shared_ingress_decision_for_missing_consent(
             "has_processing_consent": False,
         }
     ]
+
+
+async def test_webhook_text_behavior_changes_with_substituted_ingress_decision(
+    client,
+    db,
+    fake_telegram,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        webhook_module,
+        "decide_ingress",
+        lambda **_: IngressDecision("reply", "nontext"),
+    )
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_text_update(update_id=919),
+    )
+
+    assert response.status_code == 200
+    assert fake_telegram.sent_messages == []
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
 
 
 async def test_claimed_consent_outbound_rebuilds_keyboard_from_database(
