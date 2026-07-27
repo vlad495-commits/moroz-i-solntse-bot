@@ -96,7 +96,7 @@ Run:
 
 ```powershell
 $env:COMPOSE_PROJECT_NAME='moroz_lifecycle_0008'
-docker compose --env-file ../.env run --rm --build test pytest -q project/tests/contract/booking/test_yclients_adapter.py -k lifecycle
+docker compose --env-file ../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py -k lifecycle
 ```
 
 Expected: failures show `confirmed` for lifecycle outcomes and missing
@@ -167,7 +167,7 @@ reschedule/cancel/get operations.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/contract/booking/test_yclients_adapter.py project/tests/unit/booking project/tests/integration/booking
+docker compose --env-file ../.env run --rm test pytest -q tests/contract/booking/test_yclients_adapter.py tests/unit/booking tests/integration/booking
 ```
 
 Expected: all selected tests pass and fake HTTP request methods remain GET-only
@@ -208,8 +208,8 @@ assert stored.scheduled_end_at == booking.scheduled_end_at
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/integration/test_migrations.py -k lifecycle
-docker compose --env-file ../.env run --rm test pytest -q project/tests/integration/booking/test_booking_repository.py -k scheduled_end
+docker compose --env-file ../.env run --rm test pytest -q tests/integration/test_migrations.py -k lifecycle
+docker compose --env-file ../.env run --rm test pytest -q tests/integration/booking/test_booking_repository.py -k scheduled_end
 ```
 
 Expected: first command cannot reach revision `0008`; second command loses the
@@ -263,7 +263,7 @@ SELECT-to-`ExternalBooking` mappings.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/contract/booking/test_yclients_adapter.py project/tests/integration/test_migrations.py project/tests/integration/booking
+docker compose --env-file ../.env run --rm test pytest -q tests/contract/booking/test_yclients_adapter.py tests/integration/test_migrations.py tests/integration/booking
 ```
 
 Expected: all selected tests pass; Alembic reports
@@ -329,7 +329,7 @@ and missing `scheduled_end_at` raises a safe `RuntimeError`.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/unit/notifications/test_lifecycle.py
+docker compose --env-file ../.env run --rm test pytest -q tests/unit/notifications/test_lifecycle.py
 ```
 
 Expected: import failure because `moroz.notifications.lifecycle` does not exist.
@@ -410,7 +410,7 @@ await self._feedback.schedule_after_visit(
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/unit/notifications/test_lifecycle.py
+docker compose --env-file ../.env run --rm test pytest -q tests/unit/notifications/test_lifecycle.py
 ```
 
 Expected: all lifecycle unit tests pass.
@@ -447,7 +447,7 @@ duplicate completed refresh can still schedule feedback from persisted
 Run RED and GREEN with:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/integration/notifications/test_lifecycle.py
+docker compose --env-file ../.env run --rm test pytest -q tests/integration/notifications/test_lifecycle.py
 ```
 
 Expected RED: missing persistence/scheduling behavior. Expected GREEN: all
@@ -523,7 +523,7 @@ Retain existing no-show, unknown, cancelled, and reminder tests.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/e2e/notifications/test_reminders.py
+docker compose --env-file ../.env run --rm test pytest -q tests/e2e/notifications/test_reminders.py
 ```
 
 Expected: `visit_outcome_check` is unsupported and lifecycle dependency is not
@@ -577,7 +577,7 @@ malformed payload returns `JobResult.skipped("invalid_outcome_payload")`.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/e2e/notifications/test_reminders.py project/tests/e2e/notifications/test_feedback.py
+docker compose --env-file ../.env run --rm test pytest -q tests/e2e/notifications/test_reminders.py tests/e2e/notifications/test_feedback.py
 ```
 
 Expected: all selected notification E2E tests pass.
@@ -599,7 +599,7 @@ still receive no YCLIENTS tokens.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/unit/test_worker.py project/tests/unit/test_compose_env.py
+docker compose --env-file ../.env run --rm test pytest -q tests/unit/test_worker.py tests/unit/test_compose_env.py
 ```
 
 Expected: worker does not construct or pass a lifecycle service.
@@ -641,7 +641,7 @@ persistent session, so no new shutdown resource is added.
 Run:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q project/tests/e2e/notifications project/tests/unit/test_worker.py project/tests/unit/test_compose_env.py
+docker compose --env-file ../.env run --rm test pytest -q tests/e2e/notifications tests/unit/test_worker.py tests/unit/test_compose_env.py
 ```
 
 Expected: all selected tests pass; no Compose service count change.
@@ -672,7 +672,7 @@ git commit -m "feat: подключён lifecycle scheduler runtime"
 
 ```powershell
 $env:COMPOSE_PROJECT_NAME='moroz_lifecycle_0008'
-docker compose --env-file ../.env run --rm --build test pytest -q project/tests/contract/booking/test_yclients_adapter.py project/tests/integration/test_migrations.py project/tests/integration/booking project/tests/unit/notifications project/tests/integration/notifications project/tests/e2e/notifications project/tests/unit/test_worker.py
+docker compose --env-file ../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py tests/integration/test_migrations.py tests/integration/booking tests/unit/notifications tests/integration/notifications tests/e2e/notifications tests/unit/test_worker.py
 ```
 
 Expected: all selected tests pass with zero failed tests.
