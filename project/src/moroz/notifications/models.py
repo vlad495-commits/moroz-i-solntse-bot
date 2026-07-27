@@ -24,3 +24,17 @@ class PlannedSchedulerJob:
     idempotency_key: str
     booking_key: UUID
     booking_starts_at: datetime
+
+
+@dataclass(frozen=True)
+class JobResult:
+    status: str
+    reason: str | None = None
+
+    @classmethod
+    def sent(cls) -> "JobResult":
+        return cls("sent")
+
+    @classmethod
+    def skipped(cls, reason: str) -> "JobResult":
+        return cls("skipped", reason)

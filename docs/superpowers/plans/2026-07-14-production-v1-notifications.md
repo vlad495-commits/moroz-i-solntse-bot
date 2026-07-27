@@ -71,9 +71,9 @@ return merge_close_jobs([job for job in times.items() if job[1] >= now], within=
 
 **Files:** Create `project/src/moroz/notifications/handlers.py`; Test `project/tests/e2e/notifications/test_reminders.py`.
 
-- [ ] Test normal reminder, cancelled booking skip, no-show client+staff, unknown status staff technical alert only.
-- [ ] Run red.
-- [ ] Implement status recheck before send:
+- [x] Test normal reminder, cancelled booking skip, no-show client+staff, unknown status staff technical alert only.
+- [x] Run red.
+- [x] Implement status recheck before send:
 
 ```python
 booking = await booking_port.get_booking(job.external_booking_id)
@@ -84,8 +84,8 @@ if job.kind == "no_show_check" and booking.status == "no_show":
     await outbox.staff_no_show(booking)
 ```
 
-- [ ] Run E2E; expect exact recipient counts.
-- [ ] Commit `feat: добавлены reminder и no-show handlers`.
+- [x] Run E2E; expect exact recipient counts.
+- [x] Commit `feat: добавлены reminder и no-show handlers`.
 
 ### Task 4: Feedback once and escalation human mode
 
