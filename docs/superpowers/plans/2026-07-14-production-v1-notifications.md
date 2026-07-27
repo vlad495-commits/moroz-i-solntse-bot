@@ -4,7 +4,7 @@
 
 **Goal:** Реализовать устойчивые scheduler jobs для напоминаний, no-show, единственного feedback и эскалаций.
 
-**Architecture:** Scheduler только claim-ит наступившие PostgreSQL jobs и публикует QueueTask; worker проверяет актуальную запись, выполняет действие и фиксирует результат. Виртуальные часы делают расписание детерминированно тестируемым.
+**Architecture:** Стартовая точка фазы — `origin/main` / `HEAD` `e8d95de3a580cd2b90feabaf91e43db611fcb8b2`, текущий Alembic head — `0006_yclients_booking_key`; следующая schema migration должна быть ровно `0007_scheduler_notifications` с `down_revision = "0006_yclients_booking_key"`. Scheduler только claim-ит наступившие PostgreSQL jobs и публикует QueueTask; worker проверяет актуальную запись через существующую локальную booking-модель и mock/fake ports, выполняет действие и фиксирует результат. Виртуальные часы делают расписание детерминированно тестируемым.
 
 **Tech Stack:** Python datetime/zoneinfo, asyncpg, RabbitMQ, Telegram/YCLIENTS ports, pytest.
 
@@ -15,16 +15,24 @@
 - Совпавшие утреннее и часовое сообщения объединяются.
 - Неизвестный YCLIENTS status не считается no-show.
 - Feedback отправляется один раз на customer.
+- Работать локально только через Docker/Compose test profiles; не выполнять staging, production, live Telegram, live YCLIENTS или LLM-provider mutations.
+- Использовать существующие `bookings.booking_key`, `bookings.status`, `bookings.starts_at`, `bookings.customer_id` и `booking_events`; не вводить зависимость от несуществующей таблицы `customers`.
 
 ---
 
 ### Task 1: Scheduler job repository and claimer
 
-**Files:** Create `project/src/moroz/notifications/models.py`, `repository.py`; Create migration `0004_scheduler_jobs.py`; Test `project/tests/integration/notifications/test_jobs.py`; Modify `project/scheduler/main.py`.
+**Files:** Create `project/src/moroz/notifications/models.py`, `repository.py`; Create migration `project/migrations/versions/0007_scheduler_notifications.py`; Modify `project/tests/integration/test_migrations.py`; Test `project/tests/integration/notifications/test_jobs.py`; Modify `project/scheduler/main.py`.
 
 - [ ] Write concurrent claim test proving two schedulers cannot claim the same due job.
 - [ ] Run red.
-- [ ] Add `scheduler_jobs(id, kind, run_at, payload, idempotency_key UNIQUE, status, attempts, booking_version, created_at)` and implement:
+- [ ] Add one additive migration `0007_scheduler_notifications` with `down_revision = "0006_yclients_booking_key"` that creates:
+  - `scheduler_jobs(id UUID PRIMARY KEY, kind TEXT, run_at TIMESTAMPTZ, payload JSONB, idempotency_key TEXT UNIQUE, status TEXT, attempts INTEGER, booking_key UUID NULL, booking_starts_at TIMESTAMPTZ NULL, claimed_at TIMESTAMPTZ NULL, finished_at TIMESTAMPTZ NULL, last_error_code TEXT NULL, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)`;
+  - `notification_feedback_requests(id UUID PRIMARY KEY, customer_id TEXT UNIQUE, booking_key UUID NULL, requested_at TIMESTAMPTZ, created_at TIMESTAMPTZ)`;
+  - `escalations(id UUID PRIMARY KEY, source TEXT, customer_id TEXT, booking_key UUID NULL, status TEXT, reason_code TEXT, payload JSONB, created_at TIMESTAMPTZ, resolved_at TIMESTAMPTZ NULL)`;
+  - `human_mode(customer_id TEXT PRIMARY KEY, enabled BOOLEAN, reason_code TEXT, escalation_id UUID NULL, enabled_at TIMESTAMPTZ, expires_at TIMESTAMPTZ NULL)`.
+- [ ] Add indexes for due scheduler claims and booking invalidation: `(status, run_at)`, `(booking_key, status)`.
+- [ ] Implement claimer:
 
 ```sql
 SELECT id FROM scheduler_jobs
@@ -81,15 +89,17 @@ if job.kind == "no_show_check" and booking.status == "no_show":
 
 ### Task 4: Feedback once and escalation human mode
 
-**Files:** Create `project/src/moroz/notifications/feedback.py`, `project/src/moroz/escalation/service.py`; Create migration `0005_feedback_escalations.py`; Test `project/tests/e2e/notifications/test_feedback.py`.
+**Files:** Create `project/src/moroz/notifications/feedback.py`, `project/src/moroz/escalation/service.py`; Reuse migration `project/migrations/versions/0007_scheduler_notifications.py` from Task 1; Test `project/tests/e2e/notifications/test_feedback.py`.
 
 - [ ] Test first completed visit schedules feedback +2h, after 21:00 moves to next 10:30, daily later visits never schedule another, rating 1–3 creates escalation.
 - [ ] Run red.
-- [ ] Add `customers.feedback_requested_at`, `escalations`, `human_mode`; atomically claim feedback:
+- [ ] Atomically claim feedback in `notification_feedback_requests` instead of `customers.feedback_requested_at`:
 
 ```sql
-UPDATE customers SET feedback_requested_at=now()
-WHERE id=$1 AND feedback_requested_at IS NULL
+INSERT INTO notification_feedback_requests
+    (id, customer_id, booking_key, requested_at, created_at)
+VALUES ($1, $2, $3, now(), now())
+ON CONFLICT (customer_id) DO NOTHING
 RETURNING id;
 ```
 
@@ -101,5 +111,7 @@ RETURNING id;
 - [ ] Run all notification tests with virtual clock; expect pass.
 - [ ] Advance test clock through a complete booking lifecycle; expect no duplicate jobs/messages.
 - [ ] Inspect DLQ behavior for a forced Telegram failure.
+- [ ] Run `docker compose --env-file ../.env run --rm test alembic -c /workspace/alembic.ini upgrade head`; expect exact head `0007_scheduler_notifications` in the isolated test database only.
+- [ ] Run the full Docker pytest gate; expect no skipped Phase 6 tests.
 - [ ] Update roadmap/changelog with evidence.
 - [ ] Commit `docs: зафиксирован notifications checkpoint`.
