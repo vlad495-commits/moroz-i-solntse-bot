@@ -49,9 +49,9 @@ LIMIT $1;
 
 **Files:** Create `project/src/moroz/notifications/planner.py`; Test `project/tests/unit/notifications/test_planner.py`.
 
-- [ ] Test booking at 15:00 creates immediate, -24h, 09:00 and -1h jobs; booking at 09:30 merges morning/hour job; late booking skips past jobs.
-- [ ] Run red.
-- [ ] Implement:
+- [x] Test booking at 15:00 creates immediate, -24h, 09:00 and -1h jobs; booking at 09:30 merges morning/hour job; late booking skips past jobs.
+- [x] Run red.
+- [x] Implement:
 
 ```python
 times = {
@@ -64,8 +64,8 @@ times = {
 return merge_close_jobs([job for job in times.items() if job[1] >= now], within=timedelta(minutes=15))
 ```
 
-- [ ] Run test; expect exact timestamps and stable idempotency keys `booking:{id}:v{version}:{kind}`.
-- [ ] Commit `feat: добавлен график напоминаний`.
+- [x] Run test; expect exact timestamps and stable idempotency keys `booking:{booking_key}:{starts_at}:{kind}`.
+- [x] Commit `feat: добавлен график напоминаний`.
 
 ### Task 3: Reminder and no-show workers
 
