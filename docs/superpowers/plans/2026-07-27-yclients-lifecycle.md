@@ -477,7 +477,7 @@ git commit -m "feat: добавлен durable lifecycle ingestion"
 - Lifecycle kinds are `no_show_check` and `visit_outcome_check`.
 - Worker constructs one real `YclientsAdapter` and one `LifecycleService`.
 
-- [ ] **Step 1: Write failing handler tests**
+- [x] **Step 1: Write failing handler tests**
 
 Add outcome scenarios:
 
@@ -518,7 +518,7 @@ async def test_final_confirmed_visit_alerts_staff_once():
 
 Retain existing no-show, unknown, cancelled, and reminder tests.
 
-- [ ] **Step 2: Run handler tests and observe RED**
+- [x] **Step 2: Run handler tests and observe RED**
 
 Run:
 
@@ -529,7 +529,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/e2e/notification
 Expected: `visit_outcome_check` is unsupported and lifecycle dependency is not
 accepted.
 
-- [ ] **Step 3: Implement minimal lifecycle routing**
+- [x] **Step 3: Implement minimal lifecycle routing**
 
 Preserve the local stale check first, then refresh only lifecycle kinds:
 
@@ -572,7 +572,7 @@ async def handle_scheduler_job(
 Validate `outcome_check_index` with `type(value) is int` and range `0..2`;
 malformed payload returns `JobResult.skipped("invalid_outcome_payload")`.
 
-- [ ] **Step 4: Run handler tests GREEN**
+- [x] **Step 4: Run handler tests GREEN**
 
 Run:
 
@@ -582,7 +582,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/e2e/notification
 
 Expected: all selected notification E2E tests pass.
 
-- [ ] **Step 5: Write failing worker wiring tests**
+- [x] **Step 5: Write failing worker wiring tests**
 
 Assert scheduler handler receives the lifecycle dependency:
 
@@ -594,7 +594,7 @@ Assert Compose continues to expose only the already allowlisted YCLIENTS
 variables to worker and adds no new service. Assert test/migrate/cutover profiles
 still receive no YCLIENTS tokens.
 
-- [ ] **Step 6: Run worker/Compose tests and observe RED**
+- [x] **Step 6: Run worker/Compose tests and observe RED**
 
 Run:
 
@@ -604,7 +604,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/test_worker
 
 Expected: worker does not construct or pass a lifecycle service.
 
-- [ ] **Step 7: Wire the existing adapter and lifecycle service**
+- [x] **Step 7: Wire the existing adapter and lifecycle service**
 
 Construct only inside worker startup when all required YCLIENTS values are
 present:
@@ -636,7 +636,7 @@ lifecycle job with no service raises the existing safe runtime error and uses
 Rabbit retry/DLQ. `YclientsHttpClient` uses bounded `urllib` calls and owns no
 persistent session, so no new shutdown resource is added.
 
-- [ ] **Step 8: Run Task 3 GREEN and commit**
+- [x] **Step 8: Run Task 3 GREEN and commit**
 
 Run:
 
