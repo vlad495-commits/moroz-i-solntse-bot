@@ -455,7 +455,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0007_scheduler_notifications"
+            "0008_yclients_lifecycle"
         )
     finally:
         await conn.close()
@@ -594,7 +594,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0007_scheduler_notifications"
+        assert current_revision == "0008_yclients_lifecycle"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -757,7 +757,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0007_scheduler_notifications"
+        assert current_revision == "0008_yclients_lifecycle"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -788,6 +788,88 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
             await conn.close()
 
         assert downgraded_catalog == previous_catalog
+    finally:
+        run_alembic(disposable_database_url, "upgrade", "head")
+
+
+async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalizes_downgrade(
+    disposable_database_url,
+):
+    run_alembic(
+        disposable_database_url,
+        "upgrade",
+        "0007_scheduler_notifications",
+    )
+    try:
+        run_alembic(disposable_database_url, "upgrade", "head")
+        conn = await asyncpg.connect(disposable_database_url)
+        try:
+            current_revision = await conn.fetchval(
+                "SELECT version_num FROM alembic_version"
+            )
+            columns = {
+                row["column_name"]: (row["data_type"], row["is_nullable"])
+                for row in await conn.fetch(
+                    """
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'bookings'
+                    """
+                )
+            }
+            constraint = await conn.fetchval(
+                """
+                SELECT pg_get_constraintdef(oid, true)
+                FROM pg_constraint
+                WHERE conname = 'ck_bookings_status'
+                """
+            )
+            scenario_id = uuid4()
+            await conn.execute(
+                """
+                INSERT INTO booking_scenarios
+                    (id, kind, phase, idempotency_key, customer_id, state)
+                VALUES ($1, 'create', 'confirmed', $2, 'customer-7', '{}'::jsonb)
+                """,
+                scenario_id,
+                f"lifecycle-{scenario_id}",
+            )
+            for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"):
+                await conn.execute(
+                    """
+                    INSERT INTO bookings
+                        (id, last_scenario_id, external_id, customer_id,
+                         slot_id, starts_at, scheduled_end_at, status,
+                         snapshot, booking_key)
+                    VALUES
+                        ($1, $2, $3, 'customer-7', 'slot-9', now(),
+                         now() + interval '1 hour', $4, '{}'::jsonb, $5)
+                    """,
+                    uuid4(),
+                    scenario_id,
+                    f"lifecycle-{status}",
+                    status,
+                    uuid4(),
+                )
+        finally:
+            await conn.close()
+
+        assert current_revision == "0008_yclients_lifecycle"
+        assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
+        assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
+
+        run_alembic(
+            disposable_database_url,
+            "downgrade",
+            "0007_scheduler_notifications",
+        )
+        conn = await asyncpg.connect(disposable_database_url)
+        try:
+            assert await conn.fetchval(
+                "SELECT count(*) FROM bookings WHERE status <> 'confirmed'"
+            ) == 0
+        finally:
+            await conn.close()
     finally:
         run_alembic(disposable_database_url, "upgrade", "head")
 

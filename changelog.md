@@ -1,4 +1,10 @@
 # Changelog
+[2026-07-27 16:55] Task 1 YCLIENTS lifecycle 0008: added RED tests for provider mapping, mock duration, repository round-trip, and migration downgrade normalization; no provider requests were made.
+[2026-07-27 16:58] Task 1 RED evidence: lifecycle adapter failed 7 cases (mapping, scheduled end, invalid attendance); migration lacked scheduled_end_at; repository lost scheduled_end_at. Reimplemented in separate TDD cycles.
+[2026-07-27 17:01] Focused booking regression exposed legacy fake YCLIENTS records without attendance. Updated the shared owned-record fixture to explicit confirmed attendance=0 and added absent-attendance -> unknown coverage.
+[2026-07-27 17:05] Full focused gate failed only because migration regression still expected prior head 0007. Root cause: new 0008 migration advances Alembic head; updated the stale assertion to 0008 before rerun.
+[2026-07-27 17:10] Task 1 focused Docker gate passed: 133 passed in 137.74s. Lifecycle mapping, scheduled end persistence, migration upgrade/downgrade normalization, and booking regressions are covered; no provider requests were made.
+[2026-07-27 17:12] Created Task 1 local checkpoint commit for YCLIENTS lifecycle 0008 after focused Docker verification and self-review.
 
 История всех значимых действий в проекте. Формат: `[YYYY-MM-DD HH:MM] что произошло` (UTC+3, Москва).
 

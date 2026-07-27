@@ -127,6 +127,7 @@ def _record(
         "services": [{"id": "331"}],
         "datetime": "2026-07-29T12:00:00+03:00",
         "seance_length": 3600,
+        "attendance": 0,
         "custom_fields": {"moroz_booking_key": str(BOOKING_KEY)},
         "deleted": deleted,
     }
@@ -229,6 +230,53 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
     assert "api_id" not in server.requests[4][3]
     assert all("Idempotency-Key" not in request[2] for request in server.requests)
     assert "local-key-only" not in json.dumps(server.requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attendance", "deleted", "expected"),
+    [
+        (-1, False, "no_show"),
+        (0, False, "confirmed"),
+        (1, False, "completed"),
+        (2, False, "confirmed"),
+        (77, False, "unknown"),
+        (None, False, "unknown"),
+        (1, True, "cancelled"),
+    ],
+)
+async def test_get_booking_maps_visit_lifecycle(
+    server: ScriptedServer,
+    attendance: int | None,
+    deleted: bool,
+    expected: str,
+) -> None:
+    server.responses.append((200, {"success": True, "data": _record(
+        attendance=attendance,
+        deleted=deleted,
+    )}))
+
+    booking = await YclientsAdapter(_config(server)).get_booking(
+        GetBooking("9001", "customer-7", BOOKING_KEY)
+    )
+
+    assert booking.status == expected
+    assert booking.scheduled_end_at == datetime(
+        2026, 7, 29, 13, 0, tzinfo=ZoneInfo("Europe/Moscow")
+    )
+    assert [request[0] for request in server.requests] == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_get_booking_lifecycle_rejects_non_integer_attendance(
+    server: ScriptedServer,
+) -> None:
+    server.responses.append((200, {"success": True, "data": _record(attendance="1")}))
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).get_booking(
+            GetBooking("9001", "customer-7", BOOKING_KEY)
+        )
 
 
 @pytest.mark.asyncio

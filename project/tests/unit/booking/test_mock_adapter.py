@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -129,6 +129,7 @@ async def test_reschedule_checks_availability_and_is_idempotent():
 
     assert repeated == first
     assert first.slot_id == "slot-next"
+    assert first.scheduled_end_at == first.starts_at + timedelta(hours=1)
     with pytest.raises(SlotUnavailable):
         await adapter.create_booking(_create_command("customer-2", "slot-next", "create-2"))
 

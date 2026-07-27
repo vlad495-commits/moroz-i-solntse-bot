@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import uuid4
 
 from moroz.booking.models import (
@@ -44,6 +45,7 @@ class MockYclientsAdapter(BookingPort):
             slot_id=slot.id,
             starts_at=slot.starts_at,
             status="confirmed",
+            scheduled_end_at=slot.starts_at + timedelta(minutes=slot.duration_minutes),
         )
         self._bookings[booking.external_id] = booking
         self._create_results[command.idempotency_key] = booking
@@ -67,6 +69,7 @@ class MockYclientsAdapter(BookingPort):
             slot_id=slot.id,
             starts_at=slot.starts_at,
             status="confirmed",
+            scheduled_end_at=slot.starts_at + timedelta(minutes=slot.duration_minutes),
         )
         self._bookings[updated.external_id] = updated
         self._reschedule_results[command.idempotency_key] = updated
@@ -89,6 +92,7 @@ class MockYclientsAdapter(BookingPort):
             slot_id=booking.slot_id,
             starts_at=booking.starts_at,
             status="cancelled",
+            scheduled_end_at=booking.scheduled_end_at,
         )
         self._cancel_keys.add(command.idempotency_key)
 
@@ -109,6 +113,7 @@ class MockYclientsAdapter(BookingPort):
             slot_id=booking.slot_id,
             starts_at=booking.starts_at,
             status=booking.status,
+            scheduled_end_at=booking.scheduled_end_at,
         )
 
     def _available_slot(self, slot_id: str, *, excluding_external_id: str | None = None) -> Slot:

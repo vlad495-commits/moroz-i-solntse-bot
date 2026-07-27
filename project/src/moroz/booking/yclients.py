@@ -4,7 +4,7 @@ import hmac
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -12,6 +12,7 @@ from moroz.booking.models import (
     BookingNotFound,
     BookingOutcomeUnknown,
     BookingTemporaryError,
+    BookingStatus,
     CancelBooking,
     CreateBooking,
     ExternalBooking,
@@ -595,20 +596,38 @@ def _external_booking(
     }))
     starts_at = _datetime(record.get("datetime"), timezone)
     duration = _positive_int(record.get("seance_length"))
-    deleted = record.get("deleted", False)
-    if type(deleted) is not bool:
-        raise BookingTemporaryError()
+    scheduled_end_at = starts_at + timedelta(seconds=duration)
     slot_id = _encode_slot(
         _SlotPayload(services, staff, int(starts_at.timestamp()), duration), config,
     )
     return ExternalBooking(
-        external_id,
-        customer_id,
-        booking_key,
-        slot_id,
-        starts_at,
-        "cancelled" if deleted else "confirmed",
+        external_id=external_id,
+        customer_id=customer_id,
+        booking_key=booking_key,
+        slot_id=slot_id,
+        starts_at=starts_at,
+        status=_visit_status(record),
+        scheduled_end_at=scheduled_end_at,
     )
+
+
+def _visit_status(record: Mapping[str, object]) -> BookingStatus:
+    deleted = record.get("deleted", False)
+    if type(deleted) is not bool:
+        raise BookingTemporaryError()
+    if deleted:
+        return "cancelled"
+    attendance = record.get("attendance")
+    if attendance is None:
+        return "unknown"
+    if type(attendance) is not int:
+        raise BookingTemporaryError()
+    return {
+        -1: "no_show",
+        0: "confirmed",
+        1: "completed",
+        2: "confirmed",
+    }.get(attendance, "unknown")
 
 
 def _has_conflict_code(value: object) -> bool:

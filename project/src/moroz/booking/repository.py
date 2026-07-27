@@ -178,7 +178,7 @@ class BookingRepository:
         row = await connection.fetchrow(
             """
             SELECT b.external_id, b.customer_id, b.booking_key, b.slot_id,
-                   b.starts_at, b.status
+                   b.starts_at, b.scheduled_end_at, b.status
             FROM booking_scenarios AS s
             JOIN bookings AS b
               ON b.external_id = s.state->>'external_id'
@@ -195,6 +195,7 @@ class BookingRepository:
             slot_id=row["slot_id"],
             starts_at=row["starts_at"],
             status=row["status"],
+            scheduled_end_at=row["scheduled_end_at"],
         )
 
     @staticmethod
@@ -270,6 +271,11 @@ class BookingRepository:
             "booking_key": str(booking.booking_key),
             "slot_id": booking.slot_id,
             "starts_at": booking.starts_at.isoformat(),
+            "scheduled_end_at": (
+                booking.scheduled_end_at.isoformat()
+                if booking.scheduled_end_at is not None
+                else None
+            ),
             "status": booking.status,
         }
         await self._update_scenario(connection, scenario, state=state)
@@ -277,12 +283,13 @@ class BookingRepository:
             """
             INSERT INTO bookings
                 (id, last_scenario_id, external_id, customer_id,
-                 booking_key, slot_id, starts_at, status, snapshot)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+                 booking_key, slot_id, starts_at, scheduled_end_at, status, snapshot)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
             ON CONFLICT (external_id) DO UPDATE SET
                 last_scenario_id = EXCLUDED.last_scenario_id,
                 slot_id = EXCLUDED.slot_id,
                 starts_at = EXCLUDED.starts_at,
+                scheduled_end_at = EXCLUDED.scheduled_end_at,
                 status = EXCLUDED.status,
                 snapshot = EXCLUDED.snapshot,
                 updated_at = now()
@@ -297,6 +304,7 @@ class BookingRepository:
             booking.booking_key,
             booking.slot_id,
             booking.starts_at,
+            booking.scheduled_end_at,
             booking.status,
             _dump_json(snapshot),
         )

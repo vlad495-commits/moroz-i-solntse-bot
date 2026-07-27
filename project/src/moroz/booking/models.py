@@ -84,6 +84,11 @@ class CancelBooking:
     idempotency_key: str
 
 
+BookingStatus = Literal[
+    "confirmed", "cancelled", "completed", "no_show", "unknown"
+]
+
+
 @dataclass(frozen=True, slots=True)
 class ExternalBooking:
     external_id: str
@@ -91,10 +96,15 @@ class ExternalBooking:
     booking_key: UUID
     slot_id: str
     starts_at: datetime
-    status: Literal["confirmed", "cancelled"]
+    status: BookingStatus
+    scheduled_end_at: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.starts_at)
+        if self.scheduled_end_at is not None:
+            _require_aware(self.scheduled_end_at)
+            if self.scheduled_end_at <= self.starts_at:
+                raise ValueError("scheduled_end_at must be after starts_at")
 
 
 @dataclass(frozen=True, slots=True)

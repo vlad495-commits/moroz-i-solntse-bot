@@ -153,6 +153,22 @@ async def test_confirm_atomically_persists_terminal_scenario_and_booking(
     assert snapshot["starts_at"] == booking.starts_at.isoformat()
 
 
+async def test_confirm_round_trips_scheduled_end_at(repo, scenario):
+    executing = replace(scenario, phase="executing")
+    await repo.create_scenario(executing)
+    original = confirmed_booking()
+    booking = replace(
+        original,
+        scheduled_end_at=original.starts_at + timedelta(hours=1),
+    )
+
+    await repo.confirm(replace(executing, phase="confirmed"), booking)
+
+    stored = await repo.get_local_booking(scenario.id)
+    assert stored is not None
+    assert stored.scheduled_end_at == booking.scheduled_end_at
+
+
 async def test_confirm_schedules_notifications_in_same_transaction(
     database, repo, scenario
 ):
