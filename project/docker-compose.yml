@@ -73,6 +73,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      STAFF_TELEGRAM_CHAT_ID: ${STAFF_TELEGRAM_CHAT_ID:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -135,9 +136,17 @@ services:
       context: .
       dockerfile: scheduler/Dockerfile
     restart: unless-stopped
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL outside Git}
+      DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER outside Git}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
     stop_grace_period: 30s
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     logging:
       driver: "json-file"

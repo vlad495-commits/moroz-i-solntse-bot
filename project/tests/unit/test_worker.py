@@ -1,10 +1,12 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
-from moroz.common.queue import QueueTask
+from moroz.common.queue import MAX_RETRIES, QueueTask
+from moroz.notifications.models import JobResult, SchedulerJob
 from worker import main as worker_main
 
 
@@ -36,6 +38,12 @@ def test_worker_reads_explicit_pipeline_settings_without_aggregate_settings():
     ):
         assert f'os.environ["{name}"]' in source
     assert "os.getenv" not in source
+
+
+def test_worker_compose_forwards_staff_chat_id():
+    compose = Path("/workspace/docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "STAFF_TELEGRAM_CHAT_ID: ${STAFF_TELEGRAM_CHAT_ID:-}" in compose
 
 
 class FakeQueue:
@@ -133,6 +141,108 @@ async def test_unknown_task_fails_closed_without_logging_payload_or_identifiers(
 
     assert "private payload" not in caplog.text
     assert "private identifier" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_message_task_handler_processes_scheduler_job():
+    job_id = uuid4()
+    completed = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, requested):
+            assert requested == job_id
+            return SchedulerJob(
+                id=job_id,
+                kind="booking_created",
+                run_at=None,
+                payload={},
+                idempotency_key="booking:1:booking_created",
+                attempts=0,
+                booking_key=uuid4(),
+                booking_starts_at=None,
+            )
+
+        async def complete(self, job, result):
+            completed.append((job.id, result))
+
+    async def scheduler_handler(job, *, booking_port, outbox):
+        assert booking_port == "booking-port"
+        assert outbox == "outbox"
+        assert job.id == job_id
+        return JobResult.sent()
+
+    handler = worker_main.MessageTaskHandler(
+        object(),
+        object(),
+        object(),
+        scheduler_repository=SchedulerRepository(),
+        booking_port="booking-port",
+        notification_outbox="outbox",
+        scheduler_handler=scheduler_handler,
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="scheduler_job",
+            payload={"job_id": str(job_id)},
+            idempotency_key=f"scheduler_job:{job_id}",
+        )
+    )
+
+    assert completed == [(job_id, JobResult.sent())]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attempts", "terminal"),
+    [(0, False), (MAX_RETRIES, True)],
+)
+async def test_scheduler_job_failure_tracks_retry_and_terminal_dlq(
+    attempts,
+    terminal,
+):
+    job_id = uuid4()
+    failures = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, _requested):
+            return SchedulerJob(
+                id=job_id,
+                kind="booking_created",
+                run_at=None,
+                payload={},
+                idempotency_key="booking:1:booking_created",
+                attempts=attempts,
+                booking_key=uuid4(),
+                booking_starts_at=None,
+            )
+
+        async def record_failure(self, job, *, error_code, terminal):
+            failures.append((job.id, error_code, terminal))
+
+    async def failing_handler(_job, **_kwargs):
+        raise RuntimeError("private provider details")
+
+    handler = worker_main.MessageTaskHandler(
+        object(),
+        object(),
+        object(),
+        scheduler_repository=SchedulerRepository(),
+        booking_port="booking-port",
+        notification_outbox="outbox",
+        scheduler_handler=failing_handler,
+    )
+
+    with pytest.raises(RuntimeError, match="private provider details"):
+        await handler.handle(
+            QueueTask(
+                kind="scheduler_job",
+                payload={"job_id": str(job_id)},
+                idempotency_key=f"scheduler_job:{job_id}",
+            )
+        )
+
+    assert failures == [(job_id, "RuntimeError", terminal)]
 
 
 @pytest.mark.asyncio

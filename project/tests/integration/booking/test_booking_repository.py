@@ -153,6 +153,118 @@ async def test_confirm_atomically_persists_terminal_scenario_and_booking(
     assert snapshot["starts_at"] == booking.starts_at.isoformat()
 
 
+async def test_confirm_schedules_notifications_in_same_transaction(
+    database, repo, scenario
+):
+    executing = replace(scenario, phase="executing")
+    await repo.create_scenario(executing)
+    terminal = replace(executing, phase="confirmed")
+    booking = confirmed_booking()
+
+    await repo.confirm(terminal, booking)
+
+    async with database.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            SELECT kind, booking_starts_at, status
+            FROM scheduler_jobs
+            WHERE booking_key = $1
+            ORDER BY run_at, kind
+            """,
+            booking.booking_key,
+        )
+
+    assert {row["kind"] for row in rows} == {
+        "booking_created",
+        "day_before",
+        "morning",
+        "hour_before",
+        "no_show_check",
+    }
+    assert {row["booking_starts_at"] for row in rows} == {booking.starts_at}
+    assert {row["status"] for row in rows} == {"pending"}
+
+
+async def test_reschedule_replaces_old_notification_schedule(
+    database, repo, scenario
+):
+    create_scenario = replace(scenario, phase="executing")
+    await repo.create_scenario(create_scenario)
+    original = confirmed_booking()
+    await repo.confirm(replace(create_scenario, phase="confirmed"), original)
+
+    reschedule_scenario = replace(
+        scenario,
+        id=uuid4(),
+        kind="reschedule",
+        phase="executing",
+        idempotency_key=f"reschedule:{uuid4()}",
+        updated_at=scenario.updated_at + timedelta(hours=1),
+    )
+    await repo.create_scenario(reschedule_scenario)
+    moved = replace(original, starts_at=original.starts_at + timedelta(days=1))
+
+    await repo.confirm(
+        replace(reschedule_scenario, phase="confirmed"),
+        moved,
+    )
+
+    async with database.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            SELECT booking_starts_at, status, count(*) AS jobs
+            FROM scheduler_jobs
+            WHERE booking_key = $1
+            GROUP BY booking_starts_at, status
+            ORDER BY booking_starts_at, status
+            """,
+            original.booking_key,
+        )
+
+    assert [
+        (row["booking_starts_at"], row["status"], row["jobs"])
+        for row in rows
+    ] == [
+        (original.starts_at, "skipped", 5),
+        (moved.starts_at, "pending", 5),
+    ]
+
+
+async def test_cancellation_invalidates_pending_notifications(
+    database, repo, scenario
+):
+    create_scenario = replace(scenario, phase="executing")
+    await repo.create_scenario(create_scenario)
+    booking = confirmed_booking()
+    await repo.confirm(replace(create_scenario, phase="confirmed"), booking)
+
+    cancel_scenario = replace(
+        scenario,
+        id=uuid4(),
+        kind="cancel",
+        phase="executing",
+        idempotency_key=f"cancel:{uuid4()}",
+    )
+    await repo.create_scenario(cancel_scenario)
+
+    await repo.complete_cancellation(
+        replace(cancel_scenario, phase="confirmed"),
+        replace(booking, status="cancelled"),
+    )
+
+    async with database.acquire() as connection:
+        statuses = await connection.fetch(
+            """
+            SELECT DISTINCT status
+            FROM scheduler_jobs
+            WHERE booking_key = $1
+            """,
+            booking.booking_key,
+        )
+
+    assert [row["status"] for row in statuses] == ["skipped"]
+
+
 async def test_confirm_rolls_back_booking_and_scenario_when_event_fails(
     database, repo, scenario
 ):

@@ -14,11 +14,14 @@ from config import CONTEXT_MESSAGES_LIMIT
 from llm import generate_response, init_llm, prompt_reload_listener
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
-from moroz.common.queue import QueueTask, RabbitQueue
+from moroz.common.queue import MAX_RETRIES, QueueTask, RabbitQueue
 from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
+from moroz.notifications.handlers import handle_scheduler_job
+from moroz.notifications.ports import LocalBookingPort, NotificationOutbox
+from moroz.notifications.repository import SchedulerJobRepository
 
 
 logging.basicConfig(
@@ -39,11 +42,25 @@ async def handle(task: QueueTask) -> None:
 
 
 class MessageTaskHandler:
-    def __init__(self, database: Database, llm, telegram: TelegramSender):
+    def __init__(
+        self,
+        database: Database,
+        llm,
+        telegram: TelegramSender,
+        *,
+        scheduler_repository: SchedulerJobRepository | None = None,
+        booking_port=None,
+        notification_outbox=None,
+        scheduler_handler=handle_scheduler_job,
+    ):
         self._database = database
         self._llm = llm
         self._telegram = telegram
         self._repository = MessageRepository(database)
+        self._scheduler_repository = scheduler_repository
+        self._booking_port = booking_port
+        self._notification_outbox = notification_outbox
+        self._scheduler_handler = scheduler_handler
 
     async def handle(self, task: QueueTask) -> None:
         if task.kind == "process_message":
@@ -55,8 +72,42 @@ class MessageTaskHandler:
                 raise ValueError("send_outbound requires outbound_id")
             await self._telegram.send(UUID(outbound_id))
             return
+        if task.kind == "scheduler_job":
+            await self._process_scheduler_job(task)
+            return
         logger.error("Unsupported worker task kind")
         raise NotImplementedError("Unsupported worker task")
+
+    async def _process_scheduler_job(self, task: QueueTask) -> None:
+        raw_job_id = task.payload.get("job_id")
+        if not isinstance(raw_job_id, str):
+            raise ValueError("scheduler_job requires job_id")
+        job_id = UUID(raw_job_id)
+        if task.idempotency_key != f"scheduler_job:{job_id}":
+            raise ValueError("scheduler_job idempotency key does not match job_id")
+        if (
+            self._scheduler_repository is None
+            or self._booking_port is None
+            or self._notification_outbox is None
+        ):
+            raise RuntimeError("scheduler job dependencies are not configured")
+        job = await self._scheduler_repository.get_claimed(job_id)
+        if job is None:
+            return
+        try:
+            result = await self._scheduler_handler(
+                job,
+                booking_port=self._booking_port,
+                outbox=self._notification_outbox,
+            )
+        except Exception as error:
+            await self._scheduler_repository.record_failure(
+                job,
+                error_code=type(error).__name__,
+                terminal=job.attempts >= MAX_RETRIES,
+            )
+            raise
+        await self._scheduler_repository.complete(job, result)
 
     async def _process_message(self, task: QueueTask) -> None:
         chat_id = task.payload.get("chat_id")
@@ -513,6 +564,12 @@ async def run() -> None:
             database,
             generate_response,
             TelegramSender(telegram, repository),
+            scheduler_repository=SchedulerJobRepository(database),
+            booking_port=LocalBookingPort(database),
+            notification_outbox=NotificationOutbox(
+                repository,
+                staff_chat_id=os.environ.get("STAFF_TELEGRAM_CHAT_ID", ""),
+            ),
         )
         pump = PipelinePump(
             MessageBuffer(redis_client, database),

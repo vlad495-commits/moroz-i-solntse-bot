@@ -67,3 +67,92 @@ async def test_concurrent_claimers_do_not_claim_the_same_due_job(database):
             "SELECT status FROM scheduler_jobs WHERE id = $1",
             future_id,
         ) == "pending"
+
+
+async def test_claimed_job_can_be_released_and_completed(database):
+    due_at = datetime(2026, 7, 27, 9, 0, tzinfo=UTC)
+    job_id = uuid4()
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status,
+                 attempts, created_at, updated_at)
+            VALUES ($1, 'booking_created', $2, '{}'::jsonb, 'release:1',
+                    'pending', 0, $2, $2)
+            """,
+            job_id,
+            due_at,
+        )
+
+    repository = SchedulerJobRepository(database)
+    claimed = await repository.claim_due(limit=1, now=due_at + timedelta(minutes=1))
+    assert [job.id for job in claimed] == [job_id]
+    await repository.release_claim(job_id)
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT status FROM scheduler_jobs WHERE id = $1", job_id
+        ) == "pending"
+
+    claimed = await repository.claim_due(limit=1, now=due_at + timedelta(minutes=1))
+    job = await repository.get_claimed(job_id)
+    await repository.complete(job, result_status="finished")
+
+    async with database.acquire() as connection:
+        row = await connection.fetchrow(
+            "SELECT status, finished_at IS NOT NULL AS finished FROM scheduler_jobs WHERE id = $1",
+            job_id,
+        )
+    assert [item.id for item in claimed] == [job_id]
+    assert row["status"] == "finished"
+    assert row["finished"] is True
+
+
+async def test_failed_attempt_stays_retryable_until_terminal_dlq(database):
+    due_at = datetime(2026, 7, 27, 9, 0, tzinfo=UTC)
+    job_id = uuid4()
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status,
+                 attempts, created_at, updated_at)
+            VALUES ($1, 'booking_created', $2, '{}'::jsonb, 'failure:1',
+                    'pending', 0, $2, $2)
+            """,
+            job_id,
+            due_at,
+        )
+
+    repository = SchedulerJobRepository(database)
+    [job] = await repository.claim_due(
+        limit=1,
+        now=due_at + timedelta(minutes=1),
+    )
+    await repository.record_failure(
+        job,
+        error_code="RuntimeError",
+        terminal=False,
+    )
+
+    retry = await repository.get_claimed(job_id)
+    assert retry.attempts == 1
+
+    await repository.record_failure(
+        retry,
+        error_code="RuntimeError",
+        terminal=True,
+    )
+
+    async with database.acquire() as connection:
+        row = await connection.fetchrow(
+            """
+            SELECT status, attempts, last_error_code,
+                   finished_at IS NOT NULL AS finished
+            FROM scheduler_jobs
+            WHERE id = $1
+            """,
+            job_id,
+        )
+    assert tuple(row.values()) == ("failed", 2, "RuntimeError", True)

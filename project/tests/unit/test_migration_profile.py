@@ -155,6 +155,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "POSTGRES_DB": "${POSTGRES_DB:?set POSTGRES_DB outside Git}",
         "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
         "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN:-}",
+        "STAFF_TELEGRAM_CHAT_ID": "${STAFF_TELEGRAM_CHAT_ID:-}",
         "LLM_API_KEY": "${LLM_API_KEY:-}",
         "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
         "LLM_BASE_URL": "${LLM_BASE_URL:-}",

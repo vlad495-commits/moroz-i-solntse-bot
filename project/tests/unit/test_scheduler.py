@@ -91,3 +91,86 @@ async def test_scheduler_pump_publishes_claimed_jobs():
     assert queue.tasks[0].kind == "scheduler_job"
     assert queue.tasks[0].payload == {"job_id": str(repository.job_id)}
     assert queue.tasks[0].idempotency_key == f"scheduler_job:{repository.job_id}"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_pump_releases_claim_when_publish_fails():
+    scheduler = load_scheduler()
+
+    class Repository:
+        def __init__(self):
+            self.job_ids = [uuid4(), uuid4()]
+            self.released = []
+
+        async def claim_due(self, *, limit):
+            return [
+                SchedulerJob(
+                    id=job_id,
+                    kind="booking_created",
+                    run_at=None,
+                    payload=MappingProxyType({}),
+                    idempotency_key=f"booking:{job_id}:booking_created",
+                    attempts=0,
+                    booking_key=None,
+                    booking_starts_at=None,
+                )
+                for job_id in self.job_ids
+            ]
+
+        async def release_claim(self, job_id):
+            self.released.append(job_id)
+
+    class FailingQueue:
+        async def publish(self, _task):
+            raise RuntimeError("broker down")
+
+    repository = Repository()
+
+    with pytest.raises(RuntimeError, match="broker down"):
+        await scheduler.SchedulerPump(repository, FailingQueue()).run_once()
+
+    assert repository.released == repository.job_ids
+
+
+@pytest.mark.asyncio
+async def test_scheduler_run_wires_runtime_resources(monkeypatch):
+    scheduler = load_scheduler()
+    closed = []
+    captured = {}
+
+    class RuntimeDatabase:
+        def __init__(self, url, **kwargs):
+            self.url = url
+
+        async def connect(self):
+            captured["database_connected"] = self.url
+
+        async def close(self):
+            closed.append("database")
+
+    class RuntimeQueue:
+        def __init__(self, url):
+            self.url = url
+
+        async def connect(self):
+            captured["queue_connected"] = self.url
+
+        async def close(self):
+            closed.append("queue")
+
+    async def run_loop(stop, **kwargs):
+        captured["pump"] = kwargs["pump"]
+        stop.set()
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://local")
+    monkeypatch.setenv("RABBITMQ_URL", "amqp://local")
+    monkeypatch.setattr(scheduler, "Database", RuntimeDatabase)
+    monkeypatch.setattr(scheduler, "RabbitQueue", RuntimeQueue)
+    monkeypatch.setattr(scheduler, "run_loop", run_loop)
+
+    await scheduler.run()
+
+    assert captured["database_connected"] == "postgresql://local"
+    assert captured["queue_connected"] == "amqp://local"
+    assert isinstance(captured["pump"], scheduler.SchedulerPump)
+    assert set(closed) == {"database", "queue"}

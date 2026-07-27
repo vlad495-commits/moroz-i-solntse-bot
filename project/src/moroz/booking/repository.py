@@ -7,6 +7,7 @@ import asyncpg
 
 from moroz.booking.models import BookingEvent, BookingScenario, ExternalBooking
 from moroz.common.db import Database
+from moroz.notifications.planner import plan_booking_notifications
 
 
 def _thaw_json(value: object) -> object:
@@ -309,6 +310,64 @@ class BookingRepository:
                 "external_id": booking.external_id,
                 "status": booking.status,
             },
+        )
+        await self._sync_notification_jobs(
+            connection,
+            booking,
+            now=scenario.updated_at,
+        )
+
+    @staticmethod
+    async def _sync_notification_jobs(
+        connection: asyncpg.Connection,
+        booking: ExternalBooking,
+        *,
+        now,
+    ) -> None:
+        await connection.execute(
+            """
+            UPDATE scheduler_jobs
+            SET status = 'skipped',
+                finished_at = now(),
+                last_error_code = 'stale',
+                updated_at = now()
+            WHERE booking_key = $1
+              AND status IN ('pending', 'claimed')
+              AND ($2::timestamptz IS NULL
+                   OR booking_starts_at IS DISTINCT FROM $2)
+            """,
+            booking.booking_key,
+            booking.starts_at if booking.status == "confirmed" else None,
+        )
+        if booking.status != "confirmed":
+            return
+        jobs = plan_booking_notifications(
+            booking_key=booking.booking_key,
+            starts_at=booking.starts_at,
+            now=now,
+        )
+        await connection.executemany(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status,
+                 attempts, booking_key, booking_starts_at,
+                 created_at, updated_at)
+            VALUES ($1, $2, $3, $4::jsonb, $5, 'pending', 0, $6, $7, $8, $8)
+            ON CONFLICT (idempotency_key) DO NOTHING
+            """,
+            [
+                (
+                    uuid4(),
+                    job.kind,
+                    job.run_at,
+                    _dump_json(job.payload),
+                    job.idempotency_key,
+                    job.booking_key,
+                    job.booking_starts_at,
+                    now,
+                )
+                for job in jobs
+            ],
         )
 
     async def _checkpoint_with_connection(

@@ -5,7 +5,11 @@ import signal
 import time
 from pathlib import Path
 
+from moroz.common.config import database_url_from_env
+from moroz.common.db import Database
 from moroz.common.queue import QueueTask
+from moroz.common.queue import RabbitQueue
+from moroz.notifications.repository import SchedulerJobRepository
 
 
 logging.basicConfig(
@@ -26,14 +30,32 @@ class SchedulerPump:
 
     async def run_once(self) -> int:
         jobs = await self._repository.claim_due(limit=self._limit)
-        for job in jobs:
-            await self._queue.publish(
-                QueueTask(
-                    kind="scheduler_job",
-                    payload={"job_id": str(job.id)},
-                    idempotency_key=f"scheduler_job:{job.id}",
+        for index, job in enumerate(jobs):
+            try:
+                await self._queue.publish(
+                    QueueTask(
+                        kind="scheduler_job",
+                        payload={"job_id": str(job.id)},
+                        idempotency_key=f"scheduler_job:{job.id}",
+                    )
                 )
-            )
+            except BaseException:
+                results = await asyncio.gather(
+                    *(
+                        self._repository.release_claim(unpublished.id)
+                        for unpublished in jobs[index:]
+                    ),
+                    return_exceptions=True,
+                )
+                failures = sum(
+                    isinstance(result, BaseException) for result in results
+                )
+                if failures:
+                    logger.error(
+                        "Scheduler failed to release claims count=%d",
+                        failures,
+                    )
+                raise
         return len(jobs)
 
 
@@ -81,10 +103,22 @@ async def run() -> None:
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop.set)
 
+    database_url = os.environ["DATABASE_URL"] or database_url_from_env(
+        os.environ, required=True
+    )
+    database = Database(database_url, min_size=1, max_size=2)
+    queue = RabbitQueue(os.environ["RABBITMQ_URL"])
     logger.info("Scheduler started")
     try:
-        await run_loop(stop)
+        await database.connect()
+        await queue.connect()
+        await run_loop(
+            stop,
+            pump=SchedulerPump(SchedulerJobRepository(database), queue),
+        )
     finally:
+        await queue.close()
+        await database.close()
         logger.info("Scheduler stopped")
 
 

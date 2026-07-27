@@ -15,6 +15,11 @@
 - Совпавшие утреннее и часовое сообщения объединяются.
 - Неизвестный YCLIENTS status не считается no-show.
 - Feedback отправляется один раз на customer.
+- Локальная CRUD-модель записи остаётся `confirmed/cancelled`. Статусы
+  `completed`, `no_show` и неизвестные provider statuses являются входом
+  отдельного lifecycle-ingestion контракта: scheduler их не угадывает и не
+  выполняет live provider polling. Этот контракт должен быть подключён до
+  production-активации post-visit/no-show уведомлений.
 - Работать локально только через Docker/Compose test profiles; не выполнять staging, production, live Telegram, live YCLIENTS или LLM-provider mutations.
 - Использовать существующие `bookings.booking_key`, `bookings.status`, `bookings.starts_at`, `bookings.customer_id` и `booking_events`; не вводить зависимость от несуществующей таблицы `customers`.
 
@@ -114,4 +119,19 @@ RETURNING id;
 - [x] Run `docker compose --env-file ../.env run --rm test alembic -c /workspace/alembic.ini upgrade head`; expect exact head `0007_scheduler_notifications` in the isolated test database only.
 - [x] Run the full Docker pytest gate; expect no skipped Phase 6 tests.
 - [x] Update roadmap/changelog with evidence.
-- [ ] Commit `docs: зафиксирован notifications checkpoint`.
+- [x] Commit `docs: зафиксирован notifications checkpoint`.
+
+### Post-review runtime closure
+
+- [x] Scheduler runtime подключён к PostgreSQL/RabbitMQ и освобождает весь
+  неопубликованный хвост batch при publish failure.
+- [x] Worker обрабатывает `scheduler_job`, фиксирует terminal result и после
+  четырёх неудачных handler attempts переводит job в `failed` перед DLQ.
+- [x] Booking confirm/reschedule/cancel создают или инвалидируют reminder jobs
+  в той же PostgreSQL transaction.
+- [x] `feedback_request` проходит через worker/outbox; отсутствие staff chat id
+  fail-closed, а не считается успешным staff alert.
+- [x] Пройти свежий Docker gate и независимый re-review runtime closure:
+  focused `54 passed`, full `793 passed`, Alembic
+  `0007_scheduler_notifications (head)`, scheduler/worker build и compileall
+  exit `0`, review `0 Critical / 0 Important / 0 Minor`, cleanup `0/0/0/0`.

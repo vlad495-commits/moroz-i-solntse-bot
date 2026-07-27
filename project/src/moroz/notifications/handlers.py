@@ -16,6 +16,13 @@ async def handle_scheduler_job(
     booking_port,
     outbox,
 ) -> JobResult:
+    if job.kind == "feedback_request":
+        customer_id = job.payload.get("customer_id")
+        if not isinstance(customer_id, str) or job.booking_key is None:
+            return JobResult.skipped("invalid_feedback_payload")
+        await outbox.feedback_request(customer_id, job.booking_key)
+        return JobResult.sent()
+
     booking = await booking_port.get_booking(job.booking_key)
     if booking is None or booking.starts_at != job.booking_starts_at:
         return JobResult.skipped("stale")
@@ -39,4 +46,3 @@ async def _handle_no_show_check(booking, outbox) -> JobResult:
         await outbox.staff_status_unknown(booking, booking.status)
         return JobResult.skipped("unknown_status")
     return JobResult.skipped("not_no_show")
-

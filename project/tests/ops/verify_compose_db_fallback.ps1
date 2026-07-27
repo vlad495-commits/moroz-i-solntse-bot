@@ -38,6 +38,7 @@ $expectedEnvironment = @{
         "RESERVE_API_KEY",
         "RESERVE_BASE_URL",
         "RESERVE_MODEL",
+        "STAFF_TELEGRAM_CHAT_ID",
         "TELEGRAM_BOT_TOKEN",
         "YCLIENTS_BASE_URL",
         "YCLIENTS_COMPANY_ID",
