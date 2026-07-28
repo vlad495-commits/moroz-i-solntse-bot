@@ -7,6 +7,7 @@
     <form method="post" action="/login">
         <label>Логин<input type="text" name="username" required autofocus></label>
         <label>Пароль<input type="password" name="password" required></label>
+        <label>TOTP-код<input type="text" name="totp_code" inputmode="numeric" autocomplete="one-time-code"></label>
         <button type="submit">Войти</button>
     </form>
 </div>

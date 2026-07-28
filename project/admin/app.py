@@ -23,7 +23,7 @@ from auth import (  # noqa: E402
     _LoginRequired,
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE,
-    authenticate,
+    authenticate_admin,
     create_session_token,
     get_current_user,
 )
@@ -90,10 +90,12 @@ async def login_submit(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
+    totp_code: str = Form(""),
 ):
-    if not authenticate(username, password):
+    user = await authenticate_admin(username, password, totp_code)
+    if not user:
         return RedirectResponse(url="/login?error=invalid", status_code=302)
-    token = create_session_token(username)
+    token = create_session_token(user)
     response = RedirectResponse(url="/", status_code=302)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -101,6 +103,7 @@ async def login_submit(
         max_age=SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
+        secure=request.url.scheme == "https",
     )
     return response
 
