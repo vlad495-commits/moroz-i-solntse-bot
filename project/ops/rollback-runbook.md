@@ -3,6 +3,8 @@
 Rollback app containers to the previous image first. Treat schema as forward-only unless a fresh backup exists and restore has been rehearsed.
 
 ```bash
+set -eu
+. /opt/moroz-release-state/rollback-images.env
 export BOT_IMAGE="${PREVIOUS_BOT_IMAGE:?set immutable previous bot image}"
 export WORKER_IMAGE="${PREVIOUS_WORKER_IMAGE:?set immutable previous worker image}"
 export SCHEDULER_IMAGE="${PREVIOUS_SCHEDULER_IMAGE:?set immutable previous scheduler image}"

@@ -20,6 +20,11 @@ def test_deploy_runbook_has_exact_local_release_commands():
     assert "alembic" in doc
     assert "smoke.ps1" in doc
     assert "No push or merge" in doc
+    assert "docker inspect --format '{{.Image}}'" in doc
+    assert "/opt/moroz-release-state/rollback-images.env" in doc
+    assert doc.index("docker inspect --format '{{.Image}}'") < doc.index(
+        "build bot worker scheduler admin"
+    )
 
 
 def test_rollback_runbook_forbids_destructive_downgrade_without_backup():
@@ -35,6 +40,8 @@ def test_rollback_runbook_forbids_destructive_downgrade_without_backup():
     for variable in ("BOT_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE", "ADMIN_IMAGE"):
         assert f"{variable}=" in doc
         assert f"${{{variable}:" in compose
+        assert f"PREVIOUS_{variable}=" in read("deploy-runbook.md")
+    assert ". /opt/moroz-release-state/rollback-images.env" in doc
     assert "up -d --no-build bot worker scheduler admin" in doc
     assert "docker image tag" not in doc
 

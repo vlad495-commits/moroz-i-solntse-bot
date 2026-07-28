@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from starlette.requests import Request
@@ -52,6 +53,40 @@ async def test_login_template_posts_and_loads_assets_under_admin_prefix():
 
     assert 'action="/admin/login"' in body
     assert 'href="/admin/static/styles.css"' in body
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_action"),
+    (
+        (None, "/admin/eval/cases"),
+        (
+            SimpleNamespace(
+                id=7,
+                category="faq",
+                question="q",
+                expected_answer="a",
+                expected_keywords=[],
+                forbidden_keywords=[],
+            ),
+            "/admin/eval/cases/7",
+        ),
+    ),
+)
+def test_eval_case_form_action_stays_under_admin_prefix(case, expected_action):
+    import eval_routes
+
+    response = eval_routes.templates.TemplateResponse(
+        request("/eval/cases/new"),
+        "eval_case_edit.html",
+        {
+            "user": SimpleNamespace(
+                username="owner", role="owner", csrf_token="csrf"
+            ),
+            "case": case,
+        },
+    )
+
+    assert f'action="{expected_action}"' in response.body.decode("utf-8")
 
 
 def test_admin_templates_do_not_escape_public_prefix():

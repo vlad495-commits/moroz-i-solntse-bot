@@ -5,7 +5,7 @@
 
 <h1>{% if case %}Редактирование кейса #{{ case.id }}{% else %}Новый тест-кейс{% endif %}</h1>
 
-<form method="post" action="{% if case %}/eval/cases/{{ case.id }}{% else %}/eval/cases{% endif %}" class="eval-form">
+<form method="post" action="{{ request.scope.get('root_path', '') }}{% if case %}/eval/cases/{{ case.id }}{% else %}/eval/cases{% endif %}" class="eval-form">
     <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
     <label>
         Категория
