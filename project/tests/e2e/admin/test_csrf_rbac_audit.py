@@ -44,7 +44,10 @@ async def test_bot_toggle_rejects_missing_csrf_before_redis(monkeypatch):
     async def redis_must_not_be_called():
         raise AssertionError("redis should not be touched before CSRF passes")
 
-    monkeypatch.setattr(bot_control_routes, "get_current_user", lambda request: user())
+    async def current_user(_request):
+        return user()
+
+    monkeypatch.setattr(bot_control_routes, "get_current_user", current_user)
     monkeypatch.setattr(bot_control_routes, "_redis_client", redis_must_not_be_called)
     app = FastAPI()
     app.include_router(bot_control_routes.router)

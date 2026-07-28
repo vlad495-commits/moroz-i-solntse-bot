@@ -49,3 +49,49 @@ async def create_session(user_id: int, session_id: str, ttl_seconds: int) -> str
             )
     return csrf_token
 
+
+async def get_active_session(session_id: str) -> dict[str, Any] | None:
+    if not database._pool:
+        return None
+    async with database._pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                s.id AS session_id,
+                s.user_id,
+                s.csrf_token,
+                s.expires_at,
+                u.username,
+                u.role
+            FROM admin_sessions s
+            JOIN admin_users u ON u.id = s.user_id
+            WHERE s.id = $1
+              AND s.expires_at > now()
+              AND u.enabled = TRUE
+            """,
+            session_id,
+        )
+        if not row:
+            return None
+        await conn.execute(
+            """
+            UPDATE admin_sessions
+            SET last_seen_at = now()
+            WHERE id = $1
+            """,
+            session_id,
+        )
+    return dict(row)
+
+
+async def delete_session(session_id: str) -> None:
+    if not database._pool:
+        return
+    async with database._pool.acquire() as conn:
+        await conn.execute(
+            """
+            DELETE FROM admin_sessions
+            WHERE id = $1
+            """,
+            session_id,
+        )

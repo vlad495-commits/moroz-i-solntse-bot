@@ -33,7 +33,7 @@ async def _redis_client():
 
 @router.get("/", response_class=HTMLResponse)
 async def bot_control_page(request: Request):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     paused = False
     error = ""
     client = None
@@ -63,7 +63,7 @@ async def bot_control_page(request: Request):
 
 @router.post("/toggle")
 async def bot_control_toggle(request: Request, csrf_token: str = Form("")):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     client = None
     before = None

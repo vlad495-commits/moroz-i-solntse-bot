@@ -18,7 +18,7 @@ templates = Jinja2Templates(directory=_BASE_DIR / "templates")
 
 @router.get("/evals", response_class=HTMLResponse)
 async def review_evals(request: Request, status: str = "all"):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     status = status if status in {"all", "pending", "ok", "needs_edit", "delete"} else "all"
     cases = await rvdb.list_review_cases(status=status)
     suggestions = await rvdb.list_suggestions()
@@ -46,7 +46,7 @@ async def review_case_save(
     proposed_answer: str = Form(""),
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     await rvdb.save_case_review(
         case_id=case_id,
@@ -76,7 +76,7 @@ async def review_suggestion_create(
     comment: str = Form(""),
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     await rvdb.create_suggestion(
         question=question,
@@ -103,7 +103,7 @@ async def review_suggestion_delete(
     suggestion_id: int,
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     await rvdb.delete_suggestion(suggestion_id)
     await record_audit(

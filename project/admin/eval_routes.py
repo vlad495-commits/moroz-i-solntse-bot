@@ -57,7 +57,7 @@ def _split_keywords(text: str) -> list[str]:
 
 @router.get("/", response_class=HTMLResponse)
 async def eval_index(request: Request):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     cases = await evdb.list_cases()
     problem_cases = await evdb.list_problem_cases()
     runs = await evdb.list_runs(limit=10)
@@ -70,7 +70,7 @@ async def eval_index(request: Request):
 
 @router.get("/cases/new", response_class=HTMLResponse)
 async def eval_case_new(request: Request):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     return templates.TemplateResponse(
         request,
         "eval_case_edit.html",
@@ -80,7 +80,7 @@ async def eval_case_new(request: Request):
 
 @router.get("/cases/{case_id}", response_class=HTMLResponse)
 async def eval_case_edit(request: Request, case_id: int):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     case = await evdb.get_case(case_id)
     if not case:
         return RedirectResponse(url="/eval/", status_code=302)
@@ -101,7 +101,7 @@ async def eval_case_create(
     expected_answer: str = Form(...),
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     await evdb.create_case(
         category=category.strip() or "general",
@@ -134,7 +134,7 @@ async def eval_case_update(
     expected_answer: str = Form(...),
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     await evdb.update_case(
         case_id=case_id,
@@ -163,7 +163,7 @@ async def eval_case_delete(
     case_id: int,
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     await evdb.delete_case(case_id)
     await record_audit(
@@ -185,7 +185,7 @@ async def eval_run_start(
     background_tasks: BackgroundTasks,
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     cases = await evdb.list_cases()
     if not cases:
@@ -214,7 +214,7 @@ async def eval_problem_run_start(
     request: Request,
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     cases = await evdb.list_problem_cases()
     if not cases:
@@ -240,7 +240,7 @@ async def eval_problem_run_start(
 
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
 async def eval_run_detail(request: Request, run_id: int):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     run = await evdb.get_run(run_id)
     if not run:
         return RedirectResponse(url="/eval/", status_code=302)
@@ -255,7 +255,7 @@ async def eval_run_detail(request: Request, run_id: int):
 @router.get("/runs/{run_id}/stream")
 async def eval_run_stream(request: Request, run_id: int):
     """SSE-стрим для прогресс-бара. Шлёт обновления статуса прогона + новые результаты."""
-    get_current_user(request)
+    await get_current_user(request)
 
     async def _gen():
         last_id = 0

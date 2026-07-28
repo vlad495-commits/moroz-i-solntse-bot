@@ -58,6 +58,10 @@ def admin_user() -> AuthenticatedUser:
     )
 
 
+async def current_admin_user(_request):
+    return admin_user()
+
+
 @pytest.mark.asyncio
 async def test_llm_status_failure_is_redacted_and_client_closes_once(
     monkeypatch, caplog
@@ -88,7 +92,7 @@ async def test_bot_control_page_uses_generic_error_and_closes_client(
     monkeypatch.setattr(
         bot_control_routes,
         "get_current_user",
-        lambda _request: admin_user(),
+        current_admin_user,
     )
 
     async def redis_client():
@@ -118,7 +122,7 @@ async def test_bot_control_toggle_failure_is_redacted_and_client_closes(
     monkeypatch.setattr(
         bot_control_routes,
         "get_current_user",
-        lambda _request: admin_user(),
+        current_admin_user,
     )
 
     async def redis_client():

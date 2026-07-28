@@ -79,7 +79,7 @@ def _write_prompt(content: str) -> bool:
 
 @router.get("/", response_class=HTMLResponse)
 async def prompt_editor(request: Request, saved: str = "", error: str = ""):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     current = _read_current_prompt()
     versions = await pdb.list_versions(limit=50)
     return templates.TemplateResponse(
@@ -102,7 +102,7 @@ async def prompt_save(
     comment: str = Form(""),
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     content = content.replace("\r\n", "\n").rstrip() + "\n"
 
@@ -133,7 +133,7 @@ async def prompt_save(
 
 @router.get("/versions/{version_id}", response_class=HTMLResponse)
 async def prompt_version_view(request: Request, version_id: int):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     version = await pdb.get_version(version_id)
     if not version:
         return RedirectResponse(url="/prompt/", status_code=302)
@@ -149,7 +149,7 @@ async def prompt_rollback(
     version_id: int,
     csrf_token: str = Form(""),
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     validate_csrf(user, csrf_token)
     version = await pdb.get_version(version_id)
     if not version:

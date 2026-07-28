@@ -74,7 +74,7 @@ async def logs_page(
     level: str = "ALL",
     search: str = "",
 ):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     raw = _read_tail(LOG_FILE, TAIL_LINES)
     rows = _filter_lines(raw, level, search)
     return templates.TemplateResponse(

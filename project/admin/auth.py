@@ -128,7 +128,7 @@ def verify_session_token(token: str) -> AuthenticatedUser | None:
         return None
 
 
-def get_current_user(request: Request) -> AuthenticatedUser:
+async def get_current_user(request: Request) -> AuthenticatedUser:
     """FastAPI dependency: return current user or redirect to login."""
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if not token:
@@ -136,4 +136,21 @@ def get_current_user(request: Request) -> AuthenticatedUser:
     user = verify_session_token(token)
     if not user:
         raise _LoginRequired()
-    return user
+    if not user.session_id:
+        if user.id is None and await user_repository.count_admin_users() == 0:
+            return user
+        raise _LoginRequired()
+    session = await user_repository.get_active_session(user.session_id)
+    if not session:
+        raise _LoginRequired()
+    if user.id is not None and int(session["user_id"]) != int(user.id):
+        raise _LoginRequired()
+    if session["username"] != user.username:
+        raise _LoginRequired()
+    return AuthenticatedUser(
+        id=int(session["user_id"]),
+        username=session["username"],
+        role=session["role"],
+        csrf_token=session["csrf_token"],
+        session_id=session["session_id"],
+    )

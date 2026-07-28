@@ -494,17 +494,16 @@ async def test_eval_route_owns_and_retrieves_background_task(monkeypatch, caplog
     exception_contexts = []
     loop.set_exception_handler(lambda _loop, context: exception_contexts.append(context))
 
-    monkeypatch.setattr(
-        eval_routes,
-        "get_current_user",
-        lambda _request: AuthenticatedUser(
+    async def current_user(_request):
+        return AuthenticatedUser(
             id=7,
             username="admin",
             role="owner",
             csrf_token="csrf-token",
             session_id="session-id",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(eval_routes, "get_current_user", current_user)
 
     async def list_cases():
         return [{"id": 1}]

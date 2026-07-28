@@ -8,6 +8,11 @@ admin_app = importlib.import_module("app")
 auth = importlib.import_module("auth")
 
 
+class RequestStub:
+    def __init__(self, token):
+        self.cookies = {auth.SESSION_COOKIE_NAME: token}
+
+
 @pytest.mark.asyncio
 async def test_login_page_requires_totp_code():
     transport = ASGITransport(app=admin_app.app)
@@ -95,6 +100,91 @@ def test_session_token_round_trip_returns_authenticated_user():
 
     assert restored == user
     assert str(restored) == "owner"
+
+
+@pytest.mark.asyncio
+async def test_current_user_rejects_cookie_when_db_session_is_missing(monkeypatch):
+    async def missing_session(session_id):
+        return None
+
+    token = auth.create_session_token(
+        auth.AuthenticatedUser(
+            id=7,
+            username="owner",
+            role="owner",
+            csrf_token="csrf-token",
+            session_id="stale-session",
+        )
+    )
+    monkeypatch.setattr(auth.user_repository, "get_active_session", missing_session)
+
+    with pytest.raises(auth._LoginRequired):
+        await auth.get_current_user(RequestStub(token))
+
+
+@pytest.mark.asyncio
+async def test_current_user_uses_active_db_session(monkeypatch):
+    async def active_session(session_id):
+        return {
+            "session_id": session_id,
+            "user_id": 7,
+            "username": "owner",
+            "role": "owner",
+            "csrf_token": "fresh-csrf",
+        }
+
+    token = auth.create_session_token(
+        auth.AuthenticatedUser(
+            id=7,
+            username="owner",
+            role="owner",
+            csrf_token="old-csrf",
+            session_id="live-session",
+        )
+    )
+    monkeypatch.setattr(auth.user_repository, "get_active_session", active_session)
+
+    user = await auth.get_current_user(RequestStub(token))
+
+    assert user == auth.AuthenticatedUser(
+        id=7,
+        username="owner",
+        role="owner",
+        csrf_token="fresh-csrf",
+        session_id="live-session",
+    )
+
+
+@pytest.mark.asyncio
+async def test_logout_deletes_db_session(monkeypatch):
+    deleted = []
+    token = auth.create_session_token(
+        auth.AuthenticatedUser(
+            id=7,
+            username="owner",
+            role="owner",
+            csrf_token="csrf-token",
+            session_id="session-to-delete",
+        )
+    )
+
+    async def delete_session(session_id):
+        deleted.append(session_id)
+
+    monkeypatch.setattr(admin_app.user_repository, "delete_session", delete_session)
+    transport = ASGITransport(app=admin_app.app)
+
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=False,
+    ) as client:
+        client.cookies.set(auth.SESSION_COOKIE_NAME, token)
+        response = await client.get("/logout")
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+    assert deleted == ["session-to-delete"]
 
 
 @pytest.mark.asyncio

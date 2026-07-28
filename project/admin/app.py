@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.templating import Jinja2Templates  # noqa: E402
 
 import database  # noqa: E402
+import user_repository  # noqa: E402
 from audit_repository import (  # noqa: E402
     record_audit,
     request_ip_address,
@@ -31,6 +32,7 @@ from auth import (  # noqa: E402
     authenticate_admin,
     create_session_token,
     get_current_user,
+    verify_session_token,
 )
 from pricing import calculate_cost  # noqa: E402
 from prompt_routes import router as prompt_router  # noqa: E402
@@ -116,12 +118,16 @@ async def login_submit(
 @app.get("/api/llm-status")
 async def llm_status_api(request: Request):
     """JSON статус LLM-провайдеров для polling из навбара."""
-    get_current_user(request)  # требует авторизации
+    await get_current_user(request)  # требует авторизации
     return JSONResponse(await get_llm_status())
 
 
 @app.get("/logout")
-async def logout():
+async def logout(request: Request):
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    user = verify_session_token(token) if token else None
+    if user and user.session_id:
+        await user_repository.delete_session(user.session_id)
     response = RedirectResponse(url="/login", status_code=302)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
@@ -129,7 +135,7 @@ async def logout():
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    user = get_current_user(request)
+    user = await get_current_user(request)
 
     chats = await database.get_chats_list(limit=100)
     total = await database.get_chats_total()
@@ -170,7 +176,7 @@ async def index(request: Request):
 
 @app.get("/chats/{chat_id}", response_class=HTMLResponse)
 async def chat_detail(request: Request, chat_id: int):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     detail = await database.get_chat_detail(chat_id)
     if not detail:
         return RedirectResponse(url="/", status_code=302)
@@ -204,7 +210,7 @@ async def chat_detail(request: Request, chat_id: int):
 
 @app.get("/stats", response_class=HTMLResponse)
 async def stats_page(request: Request):
-    user = get_current_user(request)
+    user = await get_current_user(request)
     stats = await database.get_global_stats()
     incidents = await database.get_recent_incidents(limit=20)
 
