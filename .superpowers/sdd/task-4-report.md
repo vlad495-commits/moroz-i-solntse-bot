@@ -2,12 +2,11 @@
 
 ## Status
 
-`DONE_WITH_CONCERNS`
+`DONE`
 
-The lifecycle regression gates are complete and the final full Docker suite is
-green. Per the explicit handoff scope, the roadmap and phase plan remain open,
-the `moroz_lifecycle_0008` namespace remains intact, and the broad review is
-deferred.
+The lifecycle regression gates, independent review/fix-loop, project records,
+and exact Docker cleanup are complete. The lifecycle roadmap item and Phase 6
+status are marked complete; no external environment changed.
 
 ## Verified Docker gates
 
@@ -39,22 +38,23 @@ deferred.
   `moroz_lifecycle_0008` with process-local test credentials.
 - No external/provider, YCLIENTS mutation, Telegram, staging, or production
   action was run.
-- No production source was changed in this handoff. The only test change is
-  the collection-safe integration-test rename.
+- The final fix wave changed the lifecycle reminder guard and its focused
+  regression coverage; the integration-test rename remains collection-safe.
 
-## Deferred by request
+## Final scope
 
-- No roadmap or phase-plan completion update.
-- No namespace cleanup or image/volume removal.
-- No push or merge.
-- Broad independent review remains pending.
+- The lifecycle roadmap item, Phase 6 status, and all Task 4 plan steps are
+  complete.
+- The isolated namespace is removed; its exact leftovers are `0/0/0/0`.
+- Broad independent review is complete with `0 Critical / 0 Important / 0
+  Minor`; Ready to merge Yes.
+- No push or merge occurred.
 
-## Concerns
+## Notes
 
 Docker Compose emits normal container lifecycle status lines through stderr;
-PowerShell labels those lines `NativeCommandError`, although the final Compose
-command and pytest both exited `0`. The saved log contains the authoritative
-pytest result and `PYTEST_EXIT_CODE=0`.
+PowerShell may label them `NativeCommandError`, although the final Compose
+command and pytest exit code remain authoritative.
 
 ## Post-review fix wave - 2026-07-28
 
@@ -83,6 +83,16 @@ All runs used only the existing `moroz_lifecycle_0008` namespace and the
 specified process-local local-test credentials. This worktree has no ignored
 `../.env`, so actual Compose executions intentionally relied on those
 process-local variables; the documented-command gate confirms the checked-in
-documentation still uses the required `--env-file ../.env` form. No cleanup,
-external/provider/Telegram, staging, production, push, or merge action was
-performed.
+documentation still uses the required `--env-file ../.env` form.
+
+## Finalization - 2026-07-28
+
+- Fresh final re-review: `0 Critical / 0 Important / 0 Minor`; Ready to merge
+  Yes.
+- Fresh documented Compose Docker gate: `6 passed in 0.13s`.
+- Exact cleanup command used the same process-local credentials:
+  `docker compose --env-file ../../../.env --project-name moroz_lifecycle_0008 down --volumes --remove-orphans --rmi local`.
+  Label-scoped leftovers are `0/0/0/0` for containers, volumes, networks, and
+  images.
+- No staging, production, provider, YCLIENTS, Telegram, push, or merge action
+  was performed.

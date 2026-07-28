@@ -668,7 +668,7 @@ git commit -m "feat: подключён lifecycle scheduler runtime"
 - Produces a locally merge-ready `codex/yclients-lifecycle-0008` branch.
 - Does not push or change any external environment.
 
-- [ ] **Step 1: Run focused lifecycle gate**
+- [x] **Step 1: Run focused lifecycle gate**
 
 ```powershell
 docker compose --env-file ../.env --project-name moroz_lifecycle_0008 run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py tests/integration/test_migrations.py tests/integration/booking tests/unit/notifications tests/integration/notifications tests/e2e/notifications tests/unit/test_worker.py
@@ -676,7 +676,7 @@ docker compose --env-file ../.env --project-name moroz_lifecycle_0008 run --rm -
 
 Expected: all selected tests pass with zero failed tests.
 
-- [ ] **Step 2: Run migration and image gates**
+- [x] **Step 2: Run migration and image gates**
 
 ```powershell
 docker compose --env-file ../.env --project-name moroz_lifecycle_0008 up -d postgres
@@ -690,7 +690,7 @@ docker compose --env-file ../.env --project-name moroz_lifecycle_0008 run --rm -
 Expected: current revision is `0008_yclients_lifecycle (head)`; build and
 compile commands exit `0`.
 
-- [ ] **Step 3: Run complete Docker pytest suite**
+- [x] **Step 3: Run complete Docker pytest suite**
 
 ```powershell
 docker compose --env-file ../.env --project-name moroz_lifecycle_0008 run --rm test pytest -q
@@ -699,7 +699,7 @@ docker compose --env-file ../.env --project-name moroz_lifecycle_0008 run --rm t
 Expected: all tests pass, no unexpected skips, and no network call reaches
 YCLIENTS because the test profile has no provider credentials.
 
-- [ ] **Step 4: Request independent code review and fix through TDD**
+- [x] **Step 4: Request independent code review and fix through TDD**
 
 Review the complete diff from design checkpoint `e9841da` for:
 
@@ -716,7 +716,7 @@ Review the complete diff from design checkpoint `e9841da` for:
 For every valid finding, first add a focused failing Docker test, observe RED,
 then implement the minimal fix and rerun the affected and full suites.
 
-- [ ] **Step 5: Update project records**
+- [x] **Step 5: Update project records**
 
 Mark the lifecycle roadmap item complete only after all gates pass. Update the
 Phase 6 status in `План реализации.md` with:
@@ -730,7 +730,7 @@ Phase 6 status in `План реализации.md` with:
 Append each action and any encountered failure to `changelog.md` using Moscow
 time.
 
-- [ ] **Step 6: Cleanup exact Docker namespace**
+- [x] **Step 6: Cleanup exact Docker namespace**
 
 ```powershell
 docker compose --env-file ../.env --project-name moroz_lifecycle_0008 down --volumes --remove-orphans --rmi local
@@ -742,7 +742,7 @@ docker images --filter "label=com.docker.compose.project=moroz_lifecycle_0008" -
 
 Expected leftovers: `0/0/0/0`.
 
-- [ ] **Step 7: Commit completion checkpoint**
+- [x] **Step 7: Commit completion checkpoint**
 
 ```powershell
 git add -A
