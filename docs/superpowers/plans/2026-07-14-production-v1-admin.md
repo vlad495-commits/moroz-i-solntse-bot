@@ -1,5 +1,7 @@
 # Production Admin Implementation Plan
 
+> **2026-07-28 update:** This original Phase 7 plan was written before later phases added migrations `0006` through `0008`. Execute the current Phase 7 plan instead: `docs/superpowers/plans/2026-07-28-production-admin-phase7.md`. The current migration head is `0008_yclients_lifecycle`; the next admin migration must be `0009_production_admin`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Превратить текущую тестовую FastAPI/Jinja2-панель в безопасную операционную админку собственницы и администраторов.
