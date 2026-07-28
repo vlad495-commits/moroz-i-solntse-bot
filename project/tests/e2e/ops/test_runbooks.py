@@ -55,6 +55,8 @@ def test_incident_runbook_splits_technical_and_business_actions():
     assert "PII" in doc
     assert "YCLIENTS" in doc
     assert "Telegram" in doc
+    assert "GET /healthz" in doc
+    assert "owner-only `/admin/metrics`" in doc
 
 
 def test_launch_checklist_names_blocking_evidence():
@@ -74,3 +76,6 @@ def test_launch_checklist_names_blocking_evidence():
     ):
         assert item in doc
     assert "- [ ]" in doc
+    assert "external uptime monitor" in doc
+    assert "GET /healthz" in doc
+    assert "owner-only `/admin/metrics`" in doc

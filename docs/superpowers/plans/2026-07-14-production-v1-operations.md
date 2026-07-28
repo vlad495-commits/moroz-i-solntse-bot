@@ -1,6 +1,6 @@
 # Production Operations and Release Implementation Plan
 
-> **Readiness status (2026-07-28):** local artifacts and Docker gates are ready; production launch is blocked. Real credentials/access, TLS/domain, staging smoke/load/failure, restore drill, alert recipients, eval/security evidence, health/counters, and signed launch checklist are not replaced by local acceptance.
+> **Readiness status (2026-07-28):** local artifacts, safe public `/healthz`, real owner-only system counters and Docker gates are ready; production launch is blocked. Real credentials/access, TLS/domain, external uptime-monitor evidence, staging smoke/load/failure, restore drill, alert recipients, eval/security evidence, and signed launch checklist are not replaced by local acceptance.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -31,6 +31,8 @@
 - [ ] Commit `ops: добавлены production compose TLS и проверка секретов`.
 
 ### Task 2: Metrics and alert routing
+
+> **2026-07-28 local closure:** `/admin/metrics` no longer exports a process-local placeholder registry. It reads restart-safe PostgreSQL bot/worker/scheduler/token/escalation counters, Redis availability and live RabbitMQ queue/DLQ depth. Broader container, provider latency and calculated cost telemetry remains an observability backlog beyond the approved minimal first-launch boundary.
 
 **Files:** Create `project/src/moroz/common/metrics.py`, `project/src/moroz/common/alerts.py`; Create `project/admin/metrics_routes.py`; Test `project/tests/integration/test_alerts.py`.
 

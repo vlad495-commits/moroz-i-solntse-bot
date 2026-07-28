@@ -3,6 +3,8 @@
 Every unchecked item blocks launch.
 
 - [ ] TLS works on the client domain and HTTP redirects safely.
+- [ ] external uptime monitor probes `GET /healthz` and alert evidence is recorded.
+- [ ] owner-only `/admin/metrics` shows real PostgreSQL, Redis and RabbitMQ counters without PII.
 - [ ] rotated secrets are present only in server `.env`.
 - [ ] TOTP is enabled for owner/admin accounts.
 - [ ] YCLIENTS tokens, company ID, services, staff and booking permissions are verified.
