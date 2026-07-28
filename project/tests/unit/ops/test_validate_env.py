@@ -36,6 +36,7 @@ def valid_env():
         "YCLIENTS_USER_TOKEN": "user-token",
         "YCLIENTS_COMPANY_ID": "12345",
         "YCLIENTS_BASE_URL": "https://api.yclients.com",
+        "BACKUP_ENCRYPTION_KEY": "backup-secret-value-min-32-characters",
     }
 
 
@@ -71,6 +72,7 @@ def test_validate_env_rejects_missing_webhook_yclients_and_http_public_url():
             "PUBLIC_BASE_URL": "http://bot.example.ru",
             "TELEGRAM_WEBHOOK_SECRET": "",
             "YCLIENTS_PARTNER_TOKEN": "",
+            "BACKUP_ENCRYPTION_KEY": "",
         }
     )
 
@@ -79,6 +81,7 @@ def test_validate_env_rejects_missing_webhook_yclients_and_http_public_url():
     assert "PUBLIC_BASE_URL must start with https://" in errors
     assert "TELEGRAM_WEBHOOK_SECRET is required" in errors
     assert "YCLIENTS_PARTNER_TOKEN is required" in errors
+    assert "BACKUP_ENCRYPTION_KEY is required" in errors
 
 
 def test_production_compose_adds_caddy_and_keeps_admin_localhost_only():
@@ -91,6 +94,8 @@ def test_production_compose_adds_caddy_and_keeps_admin_localhost_only():
     assert "ports: !override" in compose
     assert "127.0.0.1:${ADMIN_PORT:-8080}:8080" in compose
     assert "ops/Caddyfile:/etc/caddy/Caddyfile:ro" in compose
+    assert "./ops:/ops:ro" in compose
+    assert "pgbackups:/backups/postgres" in compose
 
 
 def test_caddyfile_routes_only_webhook_and_admin_prefix():

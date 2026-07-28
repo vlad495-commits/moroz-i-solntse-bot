@@ -29,6 +29,13 @@ services:
   bot:
     ports: []
 
+  postgres:
+    volumes: !override
+      - pgdata:/var/lib/postgresql/data
+      - ./ops:/ops:ro
+      - pgbackups:/backups/postgres
+
 volumes:
   caddydata:
   caddyconfig:
+  pgbackups:
