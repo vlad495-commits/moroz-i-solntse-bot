@@ -39,6 +39,8 @@ async def handle_scheduler_job(
             return JobResult.skipped("stale")
         return await _handle_lifecycle(job, booking, outbox, lifecycle)
     if job.kind in REMINDER_KINDS:
+        if booking.status != "confirmed":
+            return JobResult.skipped("stale")
         await outbox.reminder(booking, job.kind)
         return JobResult.sent()
     return JobResult.skipped("unsupported_kind")

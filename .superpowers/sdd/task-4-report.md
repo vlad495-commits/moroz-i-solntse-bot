@@ -55,3 +55,34 @@ Docker Compose emits normal container lifecycle status lines through stderr;
 PowerShell labels those lines `NativeCommandError`, although the final Compose
 command and pytest both exited `0`. The saved log contains the authoritative
 pytest result and `PYTEST_EXIT_CODE=0`.
+
+## Post-review fix wave - 2026-07-28
+
+### Implemented findings
+
+- Important: `REMINDER_KINDS` now skip bookings whose status is not
+  `confirmed`, so completed, no-show, and unknown lifecycle bookings cannot
+  receive reminders.
+- Minor: direct `ExternalBooking.scheduled_end_at` boundary coverage rejects a
+  naive value, a value equal to `starts_at`, and a value before `starts_at`;
+  an aware end after the start remains valid.
+- Minor docs: the lifecycle plan now uses
+  `test_lifecycle_persistence.py` for its integration-test references and its
+  conditional-update example matches the confirmed-only implementation.
+
+### TDD and verification evidence
+
+- RED, after building the local test image: focused handler/model run exited
+  `1` with `3 failed, 17 passed in 0.11s`. The three parameterized statuses
+  (`completed`, `no_show`, `unknown`) each showed an incorrect reminder send.
+- GREEN: the same focused Docker run exited `0` with `20 passed in 0.13s`.
+- Documented Compose command tests: exit `0`, `6 passed in 0.14s`.
+- Fresh full Docker suite: exit `0`, `843 passed in 421.56s (0:07:01)`.
+
+All runs used only the existing `moroz_lifecycle_0008` namespace and the
+specified process-local local-test credentials. This worktree has no ignored
+`../.env`, so actual Compose executions intentionally relied on those
+process-local variables; the documented-command gate confirms the checked-in
+documentation still uses the required `--env-file ../.env` form. No cleanup,
+external/provider/Telegram, staging, production, push, or merge action was
+performed.

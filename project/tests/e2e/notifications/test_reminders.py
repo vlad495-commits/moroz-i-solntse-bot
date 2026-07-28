@@ -111,6 +111,21 @@ async def test_normal_reminder_sends_one_customer_message():
     assert outbox.calls == [("reminder", "customer-7", "hour_before")]
 
 
+@pytest.mark.parametrize("status", ["completed", "no_show", "unknown"])
+async def test_reminder_skips_non_confirmed_lifecycle_status(status):
+    booking = Booking(status=status)
+    outbox = Outbox()
+
+    result = await handle_scheduler_job(
+        scheduler_job("hour_before", booking),
+        booking_port=BookingPort(booking),
+        outbox=outbox,
+    )
+
+    assert result == JobResult.skipped("stale")
+    assert outbox.calls == []
+
+
 async def test_cancelled_booking_is_skipped_without_messages():
     booking = Booking(status="cancelled")
     outbox = Outbox()

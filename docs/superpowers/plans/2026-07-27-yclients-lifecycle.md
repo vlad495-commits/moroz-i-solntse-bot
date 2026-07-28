@@ -283,7 +283,7 @@ git commit -m "feat: добавлены lifecycle статусы YCLIENTS"
 **Files:**
 - Create: `project/src/moroz/notifications/lifecycle.py`
 - Create: `project/tests/unit/notifications/test_lifecycle.py`
-- Create: `project/tests/integration/notifications/test_lifecycle.py`
+- Create: `project/tests/integration/notifications/test_lifecycle_persistence.py`
 - Modify: `project/src/moroz/notifications/repository.py`
 
 **Interfaces:**
@@ -375,7 +375,7 @@ class LifecycleService:
                     updated_at = now()
                 WHERE booking_key = $1
                   AND starts_at = $2
-                  AND status IN ('confirmed', 'unknown')
+                  AND status = 'confirmed'
                 RETURNING external_id, customer_id, booking_key, slot_id,
                           starts_at, status, scheduled_end_at
                 """,
@@ -447,7 +447,7 @@ duplicate completed refresh can still schedule feedback from persisted
 Run RED and GREEN with:
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q tests/integration/notifications/test_lifecycle.py
+docker compose --env-file ../.env run --rm test pytest -q tests/integration/notifications/test_lifecycle_persistence.py
 ```
 
 Expected RED: missing persistence/scheduling behavior. Expected GREEN: all
@@ -456,7 +456,7 @@ tests pass with one job per key and terminal local states preserved.
 - [x] **Step 7: Commit Task 2**
 
 ```powershell
-git add project/src/moroz/notifications/lifecycle.py project/src/moroz/notifications/repository.py project/tests/unit/notifications/test_lifecycle.py project/tests/integration/notifications/test_lifecycle.py
+git add project/src/moroz/notifications/lifecycle.py project/src/moroz/notifications/repository.py project/tests/unit/notifications/test_lifecycle.py project/tests/integration/notifications/test_lifecycle_persistence.py
 git commit -m "feat: добавлен durable lifecycle ingestion"
 ```
 
