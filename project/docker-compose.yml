@@ -218,7 +218,7 @@ services:
         max-size: "10m"
         max-file: "5"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=3).status == 200 else 1)\""]
+      test: ["CMD-SHELL", "if [ \"$${TELEGRAM_MODE:-webhook}\" = polling ]; then tr '\\0' ' ' < /proc/1/cmdline | grep -q 'python bot.py'; else python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=3).status == 200 else 1)\"; fi"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -235,9 +235,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
-      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER outside Git}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD outside Git}
-      RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL:-http://rabbitmq:15672}
+      RABBITMQ_METRICS_URL: ${RABBITMQ_METRICS_URL:-http://rabbitmq:15692}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-me-min-32-chars-please}

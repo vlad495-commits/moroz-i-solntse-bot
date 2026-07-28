@@ -132,18 +132,12 @@ def test_compose_process_environment_overrides_external_test_credentials():
     assert {
         "DATABASE_URL",
         "REDIS_URL",
-        "RABBITMQ_USER",
-        "RABBITMQ_PASSWORD",
-        "RABBITMQ_MANAGEMENT_URL",
+        "RABBITMQ_METRICS_URL",
     } <= set(services["admin"]["environment"])
-    assert services["admin"]["environment"]["RABBITMQ_USER"] == (
-        "${RABBITMQ_USER:?set RABBITMQ_USER outside Git}"
-    )
-    assert services["admin"]["environment"]["RABBITMQ_PASSWORD"] == (
-        "${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD outside Git}"
-    )
-    assert services["admin"]["environment"]["RABBITMQ_MANAGEMENT_URL"] == (
-        "${RABBITMQ_MANAGEMENT_URL:-http://rabbitmq:15672}"
+    assert "RABBITMQ_USER" not in services["admin"]["environment"]
+    assert "RABBITMQ_PASSWORD" not in services["admin"]["environment"]
+    assert services["admin"]["environment"]["RABBITMQ_METRICS_URL"] == (
+        "${RABBITMQ_METRICS_URL:-http://rabbitmq:15692}"
     )
     assert {"DATABASE_URL", "REDIS_URL", "TELEGRAM_WEBHOOK_SECRET"} <= set(
         services["bot"]["environment"]
@@ -324,12 +318,14 @@ def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
     assert "75" in scheduler_health
 
 
-def test_bot_healthcheck_probes_safe_health_endpoint():
+def test_bot_healthcheck_supports_webhook_and_polling_modes():
     health = " ".join(compose_services()["bot"]["healthcheck"]["test"])
 
+    assert "$${TELEGRAM_MODE:-webhook}" in health
     assert "http://127.0.0.1:8081/healthz" in health
     assert "/openapi.json" not in health
-    assert "/proc/1/cmdline" not in health
+    assert "/proc/1/cmdline" in health
+    assert "python bot.py" in health
 
 
 def test_admin_port_is_isolatable_without_changing_default_url():

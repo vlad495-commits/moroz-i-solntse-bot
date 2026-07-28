@@ -33,6 +33,8 @@ services:
   bot:
     image: ${BOT_IMAGE:-moroz-i-solntse-bot:local}
     ports: []
+    environment:
+      TELEGRAM_MODE: webhook
 
   worker:
     image: ${WORKER_IMAGE:-moroz-i-solntse-worker:local}

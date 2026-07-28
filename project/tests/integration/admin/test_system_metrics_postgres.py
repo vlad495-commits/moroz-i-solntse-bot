@@ -107,6 +107,6 @@ async def test_system_metrics_snapshot_counts_durable_runtime_state(
         "sent": 1,
     }
     assert result["scheduler_jobs"] == {"failed": 1, "finished": 1}
-    assert result["llm_calls_total"] == 2
-    assert result["llm_tokens_total"] == 45
+    assert result["retained_llm_calls"] == 2
+    assert result["retained_llm_tokens"] == 45
     assert result["open_escalations"] == 1

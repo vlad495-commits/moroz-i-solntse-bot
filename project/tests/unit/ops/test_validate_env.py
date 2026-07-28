@@ -134,6 +134,7 @@ def test_production_compose_adds_caddy_and_keeps_admin_localhost_only():
     assert "BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY outside Git}" in compose
     assert "ADMIN_ROOT_PATH: /admin" in compose
     assert "ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:?set ADMIN_COOKIE_SECURE outside Git}" in compose
+    assert "TELEGRAM_MODE: webhook" in compose
 
 
 def test_caddyfile_routes_only_webhook_and_admin_prefix():

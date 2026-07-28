@@ -86,11 +86,11 @@ PostgreSQL supplies:
 - pending and published `task_outbox` totals;
 - outbound totals grouped by allowlisted status;
 - scheduler job totals grouped by allowlisted status;
-- total LLM calls and token usage;
+- retained LLM calls and token usage (gauges, not monotonic totals);
 - open escalation count.
 
 RabbitMQ supplies live ready-message counts for `tasks` and `tasks.dlq` through
-its existing management endpoint. Redis supplies a bounded `PING`.
+its existing internal Prometheus endpoint. Redis supplies a bounded `PING`.
 
 The output also contains one `*_available` gauge for PostgreSQL, Redis, and
 RabbitMQ. If an optional source cannot be queried, the endpoint still returns
@@ -104,15 +104,14 @@ phone numbers, usernames, error text, URLs, and credentials are forbidden.
 
 ## RabbitMQ access
 
-The existing `rabbitmq:*management-alpine` service already exposes the
-management API on the internal Compose network. The admin uses its existing
-`httpx` dependency and receives the existing RabbitMQ username/password through
-Compose. No management port is published publicly and credentials never appear
-in metric labels, responses, or logs.
+The existing `rabbitmq:*management-alpine` service already exposes the built-in
+Prometheus detailed metrics endpoint on the internal Compose network. The admin
+uses its existing `httpx` dependency and needs no RabbitMQ credentials. No
+RabbitMQ metrics or management port is published publicly.
 
-Production validation continues to require the RabbitMQ credentials outside
-Git. Requests use a short timeout and target only the fixed virtual host and
-queue names `tasks` and `tasks.dlq`.
+Requests use a short timeout, request only the `queue_coarse_metrics` family for
+the fixed `/` virtual host, and parse only the fixed queue names `tasks` and
+`tasks.dlq`.
 
 ## Error handling
 

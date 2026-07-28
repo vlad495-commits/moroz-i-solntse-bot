@@ -32,8 +32,9 @@ def admin():
 
 
 class FakeRedis:
-    def __init__(self, error=None):
+    def __init__(self, error=None, close_error=None):
         self.error = error
+        self.close_error = close_error
         self.closed = False
 
     async def ping(self):
@@ -43,24 +44,24 @@ class FakeRedis:
 
     async def aclose(self):
         self.closed = True
+        if self.close_error:
+            raise self.close_error
 
 
 class FakeResponse:
-    def __init__(self, payload=None, error=None):
-        self.payload = payload
+    def __init__(self, text="", error=None):
+        self.text = text
         self.error = error
 
     def raise_for_status(self):
         if self.error:
             raise self.error
 
-    def json(self):
-        return self.payload
-
 
 class FakeHttpClient:
-    def __init__(self, responses):
+    def __init__(self, responses, close_error=None):
         self.responses = list(responses)
+        self.close_error = close_error
         self.urls = []
         self.closed = False
 
@@ -70,6 +71,8 @@ class FakeHttpClient:
 
     async def aclose(self):
         self.closed = True
+        if self.close_error:
+            raise self.close_error
 
 
 def snapshot():
@@ -90,8 +93,8 @@ def snapshot():
             "finished": 7,
             "failed": 1,
         },
-        "llm_calls_total": 6,
-        "llm_tokens_total": 1234,
+        "retained_llm_calls": 6,
+        "retained_llm_tokens": 1234,
         "open_escalations": 2,
     }
 
@@ -101,8 +104,16 @@ async def test_collector_exports_real_postgres_redis_and_rabbit_metrics():
     redis_client = FakeRedis()
     rabbit_client = FakeHttpClient(
         [
-            FakeResponse({"messages_ready": 4}),
-            FakeResponse({"messages_ready": 2}),
+            FakeResponse(
+                "\n".join(
+                    (
+                        '# TYPE rabbitmq_detailed_queue_messages_ready gauge',
+                        'rabbitmq_detailed_queue_messages_ready{vhost="/",queue="tasks"} 4',
+                        'rabbitmq_detailed_queue_messages_ready{vhost="/",queue="tasks.dlq"} 2',
+                        'rabbitmq_detailed_queue_messages{vhost="/",queue="other"} 99',
+                    )
+                )
+            ),
         ]
     )
 
@@ -110,7 +121,7 @@ async def test_collector_exports_real_postgres_redis_and_rabbit_metrics():
         postgres_loader=lambda: _async_value(snapshot()),
         redis_client=redis_client,
         rabbit_client=rabbit_client,
-        rabbitmq_management_url="http://rabbitmq:15672",
+        rabbitmq_metrics_url="http://rabbitmq:15692",
     )
     text = registry.to_prometheus()
 
@@ -125,14 +136,16 @@ async def test_collector_exports_real_postgres_redis_and_rabbit_metrics():
     assert "moroz_task_outbox_published_total 10.0" in text
     assert 'moroz_outbound_messages{status="sent"} 8.0' in text
     assert 'moroz_scheduler_jobs{status="failed"} 1.0' in text
-    assert "moroz_llm_calls_total 6.0" in text
-    assert "moroz_llm_tokens_total 1234.0" in text
+    assert "moroz_retained_llm_calls 6.0" in text
+    assert "moroz_retained_llm_tokens 1234.0" in text
     assert "moroz_open_escalations 2.0" in text
     assert 'moroz_queue_ready_messages{queue="tasks"} 4.0' in text
     assert 'moroz_queue_ready_messages{queue="tasks.dlq"} 2.0' in text
     assert rabbit_client.urls == [
-        "http://rabbitmq:15672/api/queues/%2F/tasks",
-        "http://rabbitmq:15672/api/queues/%2F/tasks.dlq",
+        (
+            "http://rabbitmq:15692/metrics/detailed"
+            "?family=queue_coarse_metrics&vhost=%2F"
+        ),
     ]
     assert redis_client.closed is True
     assert rabbit_client.closed is True
@@ -152,7 +165,7 @@ async def test_collector_marks_failed_sources_without_inventing_samples():
         postgres_loader=broken_postgres,
         redis_client=FakeRedis(error=sensitive),
         rabbit_client=rabbit_client,
-        rabbitmq_management_url="http://rabbitmq:15672",
+        rabbitmq_metrics_url="http://rabbitmq:15692",
     )
     text = registry.to_prometheus()
 
@@ -173,19 +186,50 @@ async def test_collector_degrades_when_redis_client_cannot_be_created(monkeypatc
     monkeypatch.setattr(system_metrics.redis, "from_url", fail_redis_client)
     rabbit_client = FakeHttpClient(
         [
-            FakeResponse({"messages_ready": 0}),
-            FakeResponse({"messages_ready": 0}),
+            FakeResponse(
+                'rabbitmq_detailed_queue_messages_ready{vhost="/",queue="tasks"} 0\n'
+                'rabbitmq_detailed_queue_messages_ready{vhost="/",queue="tasks.dlq"} 0\n'
+            ),
         ]
     )
 
     registry = await system_metrics.collect_system_metrics(
         postgres_loader=lambda: _async_value(snapshot()),
         rabbit_client=rabbit_client,
-        rabbitmq_management_url="http://rabbitmq:15672",
+        rabbitmq_metrics_url="http://rabbitmq:15692",
     )
 
     assert "moroz_redis_available 0.0" in registry.to_prometheus()
     assert "secret" not in registry.to_prometheus()
+
+
+@pytest.mark.asyncio
+async def test_collector_ignores_dependency_cleanup_errors():
+    sensitive = RuntimeError("secret cleanup detail")
+    redis_client = FakeRedis(close_error=sensitive)
+    rabbit_client = FakeHttpClient(
+        [
+            FakeResponse(
+                'rabbitmq_detailed_queue_messages_ready{vhost="/",queue="tasks"} 0\n'
+                'rabbitmq_detailed_queue_messages_ready{vhost="/",queue="tasks.dlq"} 0\n'
+            ),
+        ],
+        close_error=sensitive,
+    )
+
+    registry = await system_metrics.collect_system_metrics(
+        postgres_loader=lambda: _async_value(snapshot()),
+        redis_client=redis_client,
+        rabbit_client=rabbit_client,
+        rabbitmq_metrics_url="http://rabbitmq:15692",
+    )
+    text = registry.to_prometheus()
+
+    assert "moroz_redis_available 1.0" in text
+    assert "moroz_rabbitmq_available 1.0" in text
+    assert redis_client.closed is True
+    assert rabbit_client.closed is True
+    assert "secret" not in text
 
 
 @pytest.mark.asyncio

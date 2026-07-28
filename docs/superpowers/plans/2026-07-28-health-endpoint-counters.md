@@ -11,11 +11,11 @@ and owner-only metrics derived from real PostgreSQL, Redis, and RabbitMQ state.
 critical PostgreSQL dependency. The admin builds a fresh metrics registry for
 each authenticated scrape: durable counters come from PostgreSQL, Redis is
 pinged, and live queue/DLQ depths come from RabbitMQ's existing internal
-management API. Caddy exposes only the exact health path; detailed metrics stay
+Prometheus endpoint. Caddy exposes only the exact health path; detailed metrics stay
 under the existing `/admin` security boundary.
 
 **Tech stack:** Python 3.12, FastAPI 0.136, asyncpg, redis-py, httpx, RabbitMQ
-management API, Caddy, Docker Compose, pytest.
+Prometheus endpoint, Caddy, Docker Compose, pytest.
 
 **Constraints:** Docker only; no new service or project dependency; no
 staging/production/provider/YCLIENTS/Telegram mutation; no merge or push; no PII
@@ -212,14 +212,15 @@ Expected: fail because live probes and required admin environment are absent.
 ### Step 3: Implement bounded probes
 
 - use existing `redis-py` and `httpx`;
-- target fixed `RABBITMQ_MANAGEMENT_URL`, defaulting internally to
-  `http://rabbitmq:15672`;
-- pass existing `RABBITMQ_USER` and `RABBITMQ_PASSWORD` into `admin`;
-- query only `/api/queues/%2F/tasks` and `/api/queues/%2F/tasks.dlq`;
+- target fixed `RABBITMQ_METRICS_URL`, defaulting internally to
+  `http://rabbitmq:15692`;
+- do not pass RabbitMQ credentials into `admin`;
+- query only `/metrics/detailed?family=queue_coarse_metrics&vhost=%2F` and
+  parse only `tasks` and `tasks.dlq`;
 - use short connect/read timeouts and close clients reliably;
 - add availability gauges and queue ready-message gauges.
 
-Do not publish RabbitMQ management ports or add a collector service.
+Do not publish RabbitMQ metrics/management ports or add a collector service.
 
 ### Step 4: Run Docker GREEN and config gates
 

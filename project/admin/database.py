@@ -184,31 +184,47 @@ async def get_system_metrics_snapshot() -> dict[str, Any]:
     async with _pool.acquire() as conn:
         totals = await conn.fetchrow(
             """
+            WITH inbox AS (
+                SELECT
+                    COUNT(*) AS inbound,
+                    COUNT(*) FILTER (WHERE status = 'processed') AS processed,
+                    COUNT(*) FILTER (WHERE status = 'accepted') AS accepted,
+                    EXTRACT(EPOCH FROM (
+                        now() - MIN(created_at)
+                            FILTER (WHERE status = 'accepted')
+                    )) AS oldest_age
+                FROM message_inbox
+            ),
+            tasks AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                    COUNT(*) FILTER (WHERE status = 'published') AS published
+                FROM task_outbox
+            ),
+            usage AS (
+                SELECT
+                    COUNT(*) AS retained_calls,
+                    COALESCE(SUM(total_tokens), 0) AS retained_tokens
+                FROM token_usage
+            ),
+            escalation AS (
+                SELECT COUNT(*) FILTER (WHERE status = 'open') AS open_count
+                FROM escalations
+            )
             SELECT
-                (SELECT COUNT(*) FROM message_inbox)
-                    AS bot_inbound_messages_total,
-                (SELECT COUNT(*) FROM message_inbox
-                 WHERE status = 'processed')
-                    AS worker_processed_messages_total,
-                (SELECT COUNT(*) FROM message_inbox
-                 WHERE status = 'accepted')
-                    AS inbox_accepted_messages,
-                (SELECT EXTRACT(EPOCH FROM (now() - MIN(created_at)))
-                 FROM message_inbox WHERE status = 'accepted')
-                    AS inbox_oldest_age_seconds,
-                (SELECT COUNT(*) FROM task_outbox
-                 WHERE status = 'pending')
-                    AS task_outbox_pending_messages,
-                (SELECT COUNT(*) FROM task_outbox
-                 WHERE status = 'published')
-                    AS task_outbox_published_total,
-                (SELECT COUNT(*) FROM token_usage)
-                    AS llm_calls_total,
-                (SELECT COALESCE(SUM(total_tokens), 0) FROM token_usage)
-                    AS llm_tokens_total,
-                (SELECT COUNT(*) FROM escalations
-                 WHERE status = 'open')
-                    AS open_escalations
+                inbox.inbound AS bot_inbound_messages_total,
+                inbox.processed AS worker_processed_messages_total,
+                inbox.accepted AS inbox_accepted_messages,
+                inbox.oldest_age AS inbox_oldest_age_seconds,
+                tasks.pending AS task_outbox_pending_messages,
+                tasks.published AS task_outbox_published_total,
+                usage.retained_calls AS retained_llm_calls,
+                usage.retained_tokens AS retained_llm_tokens,
+                escalation.open_count AS open_escalations
+            FROM inbox
+            CROSS JOIN tasks
+            CROSS JOIN usage
+            CROSS JOIN escalation
             """
         )
         outbound_rows = await conn.fetch(
