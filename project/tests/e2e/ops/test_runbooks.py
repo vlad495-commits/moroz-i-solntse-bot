@@ -31,6 +31,7 @@ def test_rollback_runbook_forbids_destructive_downgrade_without_backup():
     doc = read("rollback-runbook.md")
     compose = (PROJECT_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
 
+    assert "cd /opt/moroz-i-solntse-bot/project" in doc
     assert "previous image" in doc
     assert "destructive downgrade" in doc
     assert "backup" in doc

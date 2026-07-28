@@ -4,6 +4,7 @@ Rollback app containers to the previous image first. Treat schema as forward-onl
 
 ```bash
 set -eu
+cd /opt/moroz-i-solntse-bot/project
 . /opt/moroz-release-state/rollback-images.env
 export BOT_IMAGE="${PREVIOUS_BOT_IMAGE:?set immutable previous bot image}"
 export WORKER_IMAGE="${PREVIOUS_WORKER_IMAGE:?set immutable previous worker image}"
