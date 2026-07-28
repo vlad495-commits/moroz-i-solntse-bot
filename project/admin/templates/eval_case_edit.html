@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{% if case %}Редактирование кейса #{{ case.id }}{% else %}Новый кейс{% endif %} — Admin{% endblock %}
 {% block content %}
-<a href="/eval/" class="back">← К списку эвалов</a>
+<a href="{{ request.scope.get('root_path', '') }}/eval/" class="back">← К списку эвалов</a>
 
 <h1>{% if case %}Редактирование кейса #{{ case.id }}{% else %}Новый тест-кейс{% endif %}</h1>
 
@@ -46,7 +46,7 @@ r:плазм[аы]">{% if case %}{{ case.expected_keywords|join('\n') }}{% endif
 
     <div class="form-actions">
         <button type="submit" class="btn btn-primary">{% if case %}Сохранить{% else %}Создать{% endif %}</button>
-        <a href="/eval/" class="btn">Отмена</a>
+    <a href="{{ request.scope.get('root_path', '') }}/eval/" class="btn">Отмена</a>
     </div>
 </form>
 {% endblock %}

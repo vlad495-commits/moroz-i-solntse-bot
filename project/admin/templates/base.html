@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Admin{% endblock %}</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/styles.css">
 </head>
 <body class="{% if user %}is-authenticated{% else %}is-login{% endif %}">
     {% if user %}
@@ -12,36 +12,36 @@
     <nav class="sidebar">
         <div class="nav-brand">
             <span class="brand-mark">
-                <img src="/static/moroz-solntse-logo.png" alt="Мороз и Солнце">
+                <img src="{{ request.scope.get('root_path', '') }}/static/moroz-solntse-logo.png" alt="Мороз и Солнце">
             </span>
             <span class="brand-title">
                 <span>Мороз и Солнце | bot</span>
             </span>
         </div>
         <div class="nav-links">
-            <a href="/" class="{% if path == '/' or path.startswith('/chats') %}active{% endif %}">
+            <a href="{{ request.scope.get('root_path', '') }}/" class="{% if path == '/' or path.startswith('/chats') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7.5h14v8H10l-5 4v-12Z"/></svg></span>Диалоги
             </a>
             {% if user.role == 'owner' %}
-                <a href="/stats" class="{% if path.startswith('/stats') %}active{% endif %}">
+                <a href="{{ request.scope.get('root_path', '') }}/stats" class="{% if path.startswith('/stats') %}active{% endif %}">
                     <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 18h14"/><path d="M7 18v-5"/><path d="M12 18V7"/><path d="M17 18v-8"/></svg></span>Статистика
                 </a>
-                <a href="/prompt/" class="{% if path.startswith('/prompt') %}active{% endif %}">
+                <a href="{{ request.scope.get('root_path', '') }}/prompt/" class="{% if path.startswith('/prompt') %}active{% endif %}">
                     <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M8 14a6 6 0 1 1 8 0c-.8.7-1.2 1.4-1.2 2.3H9.2c0-.9-.4-1.6-1.2-2.3Z"/><path d="M12 8v4"/><path d="M10 10h4"/></svg></span>Промпт
                 </a>
             {% endif %}
-            <a href="/eval/" class="{% if path.startswith('/eval') %}active{% endif %}">
+            <a href="{{ request.scope.get('root_path', '') }}/eval/" class="{% if path.startswith('/eval') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg></span>Evaluations
             </a>
-            <a href="/review/evals" class="{% if path.startswith('/review') %}active{% endif %}">
+            <a href="{{ request.scope.get('root_path', '') }}/review/evals" class="{% if path.startswith('/review') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4Z"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="m15 17 2 2 4-4"/></svg></span>Review кейсов
             </a>
             {% if user.role == 'owner' %}
-                <a href="/bot-control/" class="{% if path.startswith('/bot-control') %}active{% endif %}">
+                <a href="{{ request.scope.get('root_path', '') }}/bot-control/" class="{% if path.startswith('/bot-control') %}active{% endif %}">
                     <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.8 1.8 0 0 0-1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.8 1.8 0 0 0 .4-2 1.8 1.8 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.8 1.8 0 0 0 1.6-1 1.8 1.8 0 0 0-.4-2l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.8 1.8 0 0 0 2 .4 1.8 1.8 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.8 1.8 0 0 0 1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.8 1.8 0 0 0-.4 2 1.8 1.8 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.8 1.8 0 0 0-1.5 1Z"/></svg></span>Управление
                 </a>
             {% endif %}
-            <a href="/logs/" class="{% if path.startswith('/logs') %}active{% endif %}">
+            <a href="{{ request.scope.get('root_path', '') }}/logs/" class="{% if path.startswith('/logs') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4Z"/><path d="m8 9 3 3-3 3"/><path d="M13 15h4"/></svg></span>Логи
             </a>
         </div>
@@ -52,7 +52,7 @@
         </div>
         <div class="nav-user">
             <span>{{ user }}</span>
-            <a href="/logout" class="logout">Выйти</a>
+            <a href="{{ request.scope.get('root_path', '') }}/logout" class="logout">Выйти</a>
         </div>
         </div>
     </nav>
@@ -87,7 +87,7 @@
         }
         async function poll() {
             try {
-                const r = await fetch('/api/llm-status', { credentials: 'same-origin' });
+            const r = await fetch("{{ request.scope.get('root_path', '') }}/api/llm-status", { credentials: 'same-origin' });
                 if (!r.ok) return;
                 const data = await r.json();
                 render('llm-main', 'Main', data.main, true);

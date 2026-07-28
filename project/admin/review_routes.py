@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 import review_database as rvdb
 from auth import get_current_user
 from audit_repository import record_audit, request_ip_address, request_user_agent
+from paths import admin_url
 from rbac import validate_csrf
 
 router = APIRouter(prefix="/review")
@@ -65,7 +66,9 @@ async def review_case_save(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url="/review/evals?saved=1", status_code=302)
+    return RedirectResponse(
+        url=admin_url(request, "/review/evals?saved=1"), status_code=302
+    )
 
 
 @router.post("/evals/suggestions")
@@ -94,7 +97,9 @@ async def review_suggestion_create(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url="/review/evals?saved=1", status_code=302)
+    return RedirectResponse(
+        url=admin_url(request, "/review/evals?saved=1"), status_code=302
+    )
 
 
 @router.post("/evals/suggestions/{suggestion_id}/delete")
@@ -116,4 +121,6 @@ async def review_suggestion_delete(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url="/review/evals?deleted=1", status_code=302)
+    return RedirectResponse(
+        url=admin_url(request, "/review/evals?deleted=1"), status_code=302
+    )

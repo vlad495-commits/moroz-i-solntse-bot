@@ -36,7 +36,7 @@
         {% for i in incidents %}
         <tr>
             <td>{{ i.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td><a href="/chats/{{ i.chat_id }}">#{{ i.chat_id }}</a></td>
+                    <td><a href="{{ request.scope.get('root_path', '') }}/chats/{{ i.chat_id }}">#{{ i.chat_id }}</a></td>
             <td>{% if i.username %}@{{ i.username }}{% elif i.user_id %}{{ i.user_id }}{% else %}—{% endif %}</td>
             <td><span class="badge badge-{{ i.incident_type }}">{{ i.incident_type }}</span></td>
             <td class="reason">{{ i.reason }}</td>

@@ -51,7 +51,7 @@
     <tbody>
         {% for c in chats %}
         <tr>
-            <td><a href="/chats/{{ c.chat_id }}">#{{ c.chat_id }}</a></td>
+                    <td><a href="{{ request.scope.get('root_path', '') }}/chats/{{ c.chat_id }}">#{{ c.chat_id }}</a></td>
             <td>{% if c.username %}@{{ c.username }}{% elif c.user_id %}id:{{ c.user_id }}{% else %}—{% endif %}</td>
             <td>{{ c.message_count }}</td>
             <td>{{ c.last_message_at.strftime('%Y-%m-%d %H:%M') }}</td>

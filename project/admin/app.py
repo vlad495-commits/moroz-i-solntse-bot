@@ -41,11 +41,13 @@ from review_routes import router as review_router  # noqa: E402
 from bot_control_routes import router as bot_control_router  # noqa: E402
 from logs_routes import router as logs_router  # noqa: E402
 from metrics_routes import router as metrics_router  # noqa: E402
+from paths import admin_url  # noqa: E402
 from rbac import require_role  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 ADMIN_COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "").lower() in {"1", "true", "yes"}
+ADMIN_ROOT_PATH = os.getenv("ADMIN_ROOT_PATH", "").rstrip("/")
 
 _BASE_DIR = Path(__file__).resolve().parent
 
@@ -58,7 +60,13 @@ async def lifespan(app: FastAPI):
     await database.close_db()
 
 
-app = FastAPI(title="Moroz i Solntse Bot — Admin", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(
+    title="Moroz i Solntse Bot — Admin",
+    docs_url=None,
+    redoc_url=None,
+    lifespan=lifespan,
+    root_path=ADMIN_ROOT_PATH,
+)
 
 app.mount("/static", StaticFiles(directory=_BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=_BASE_DIR / "templates")
@@ -86,7 +94,7 @@ templates.env.filters["int"] = _fmt_int
 
 @app.exception_handler(_LoginRequired)
 async def _login_required_handler(request: Request, exc: _LoginRequired):
-    return RedirectResponse(url="/login", status_code=302)
+    return RedirectResponse(url=admin_url(request, "/login"), status_code=302)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -105,9 +113,11 @@ async def login_submit(
 ):
     user = await authenticate_admin(username, password, totp_code)
     if not user:
-        return RedirectResponse(url="/login?error=invalid", status_code=302)
+        return RedirectResponse(
+            url=admin_url(request, "/login?error=invalid"), status_code=302
+        )
     token = create_session_token(user)
-    response = RedirectResponse(url="/", status_code=302)
+    response = RedirectResponse(url=admin_url(request, "/"), status_code=302)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -132,7 +142,7 @@ async def logout(request: Request):
     user = verify_session_token(token) if token else None
     if user and user.session_id:
         await user_repository.delete_session(user.session_id)
-    response = RedirectResponse(url="/login", status_code=302)
+    response = RedirectResponse(url=admin_url(request, "/login"), status_code=302)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
 
@@ -183,7 +193,7 @@ async def chat_detail(request: Request, chat_id: int):
     user = await get_current_user(request)
     detail = await database.get_chat_detail(chat_id)
     if not detail:
-        return RedirectResponse(url="/", status_code=302)
+        return RedirectResponse(url=admin_url(request, "/"), status_code=302)
     await record_audit(
         actor_id=user.id,
         action="chat.view",

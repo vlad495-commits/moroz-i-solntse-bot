@@ -24,6 +24,7 @@ REQUIRED = (
     "ADMIN_USERNAME",
     "ADMIN_PASSWORD",
     "ADMIN_SESSION_SECRET",
+    "ADMIN_COOKIE_SECURE",
     "YCLIENTS_PARTNER_TOKEN",
     "YCLIENTS_USER_TOKEN",
     "YCLIENTS_COMPANY_ID",
@@ -73,6 +74,8 @@ def validate(env: Mapping[str, str]) -> list[str]:
         errors.append("ADMIN_SESSION_SECRET must not use a default value")
     if session_secret and len(session_secret) < 32:
         errors.append("ADMIN_SESSION_SECRET must be at least 32 characters")
+    if (env.get("ADMIN_COOKIE_SECURE") or "").strip().lower() != "true":
+        errors.append("ADMIN_COOKIE_SECURE must be true in production")
     webhook_secret = (env.get("TELEGRAM_WEBHOOK_SECRET") or "").strip()
     if webhook_secret and len(webhook_secret) < 16:
         errors.append("TELEGRAM_WEBHOOK_SECRET must be at least 16 characters")

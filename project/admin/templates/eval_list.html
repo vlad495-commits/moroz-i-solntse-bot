@@ -4,19 +4,19 @@
 <div class="row-between">
     <h1>Эвалюэйшены <span class="muted">({{ cases|length }} кейсов)</span></h1>
     <div class="actions">
-        <form method="post" action="/eval/runs" style="display: inline">
+<form method="post" action="{{ request.scope.get('root_path', '') }}/eval/runs" style="display: inline">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn btn-primary" {% if not cases %}disabled{% endif %}>
                 ▶ Запустить эвалюэйшены
             </button>
         </form>
-        <form method="post" action="/eval/runs/problematic" style="display: inline">
+<form method="post" action="{{ request.scope.get('root_path', '') }}/eval/runs/problematic" style="display: inline">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn" {% if not problem_cases %}disabled{% endif %}>
                 ⚠ Прогнать проблемные{% if problem_cases %} ({{ problem_cases|length }}){% endif %}
             </button>
         </form>
-        <a href="/eval/cases/new" class="btn">+ Новый кейс</a>
+<a href="{{ request.scope.get('root_path', '') }}/eval/cases/new" class="btn">+ Новый кейс</a>
     </div>
 </div>
 
@@ -43,7 +43,7 @@
     <tbody>
         {% for r in runs %}
         <tr>
-            <td><a href="/eval/runs/{{ r.id }}">#{{ r.id }}</a></td>
+                    <td><a href="{{ request.scope.get('root_path', '') }}/eval/runs/{{ r.id }}">#{{ r.id }}</a></td>
             <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
             <td><span class="badge badge-status-{{ r.status }}">{{ r.status }}</span></td>
             <td>{{ r.passed }} / {{ r.total }}{% if r.failed %} <span class="failed">(✗ {{ r.failed }}){% endif %}</span></td>
@@ -80,8 +80,8 @@
             <td class="cell-trunc">{{ c.question }}</td>
             <td class="cell-trunc">{{ c.expected_answer }}</td>
             <td>
-                <a href="/eval/cases/{{ c.id }}" class="btn-sm">✎</a>
-                <form method="post" action="/eval/cases/{{ c.id }}/delete" style="display: inline"
+                    <a href="{{ request.scope.get('root_path', '') }}/eval/cases/{{ c.id }}" class="btn-sm">✎</a>
+                    <form method="post" action="{{ request.scope.get('root_path', '') }}/eval/cases/{{ c.id }}/delete" style="display: inline"
                       onsubmit="return confirm('Удалить кейс #{{ c.id }}?')">
                     <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
                     <button type="submit" class="btn-sm btn-danger">🗑</button>

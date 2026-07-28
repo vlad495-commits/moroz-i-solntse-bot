@@ -4,7 +4,7 @@
 <div class="login-card">
     <h1>Вход в панель управления</h1>
     {% if error %}<div class="error">Неверный логин или пароль</div>{% endif %}
-    <form method="post" action="/login">
+    <form method="post" action="{{ request.scope.get('root_path', '') }}/login">
         <label>Логин<input type="text" name="username" required autofocus></label>
         <label>Пароль<input type="password" name="password" required></label>
         <label>TOTP-код<input type="text" name="totp_code" inputmode="numeric" autocomplete="one-time-code"></label>

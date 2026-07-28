@@ -32,6 +32,7 @@ def valid_env():
         "ADMIN_USERNAME": "owner",
         "ADMIN_PASSWORD": "owner-password-value",
         "ADMIN_SESSION_SECRET": "session-secret-value-min-32-characters",
+        "ADMIN_COOKIE_SECURE": "true",
         "YCLIENTS_PARTNER_TOKEN": "partner-token",
         "YCLIENTS_USER_TOKEN": "user-token",
         "YCLIENTS_COMPANY_ID": "12345",
@@ -62,6 +63,16 @@ def test_validate_env_rejects_default_admin_credentials_and_short_secret():
     assert "ADMIN_USERNAME must not be the default admin user" in errors
     assert "ADMIN_PASSWORD must not be the default admin password" in errors
     assert "ADMIN_SESSION_SECRET must be at least 32 characters" in errors
+
+
+def test_validate_env_requires_secure_admin_cookie():
+    validator = load_validator()
+    env = valid_env()
+    env["ADMIN_COOKIE_SECURE"] = "false"
+
+    errors = validator.validate(env)
+
+    assert "ADMIN_COOKIE_SECURE must be true in production" in errors
 
 
 def test_validate_env_rejects_missing_webhook_yclients_and_http_public_url():
@@ -121,6 +132,8 @@ def test_production_compose_adds_caddy_and_keeps_admin_localhost_only():
     assert "pgbackups:/backups/postgres" in compose
     assert "ops-check:" in compose
     assert "BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY outside Git}" in compose
+    assert "ADMIN_ROOT_PATH: /admin" in compose
+    assert "ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:?set ADMIN_COOKIE_SECURE outside Git}" in compose
 
 
 def test_caddyfile_routes_only_webhook_and_admin_prefix():

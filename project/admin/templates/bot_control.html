@@ -18,7 +18,7 @@
         <p class="muted">Бот принимает и обрабатывает сообщения в обычном режиме.</p>
         {% endif %}
     </div>
-    <form method="post" action="/bot-control/toggle">
+<form method="post" action="{{ request.scope.get('root_path', '') }}/bot-control/toggle">
         <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
         {% if paused %}
         <button type="submit" class="btn btn-primary">Включить бота</button>

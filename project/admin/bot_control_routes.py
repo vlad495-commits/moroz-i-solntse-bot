@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from auth import get_current_user
 from audit_repository import record_audit, request_ip_address, request_user_agent
+from paths import admin_url
 from rbac import require_role, validate_csrf
 
 logger = logging.getLogger(__name__)
@@ -104,4 +105,4 @@ async def bot_control_toggle(request: Request, csrf_token: str = Form("")):
                     "bot_control_close_failed error_type=%s",
                     type(close_error).__name__,
                 )
-    return RedirectResponse(url="/bot-control/", status_code=302)
+    return RedirectResponse(url=admin_url(request, "/bot-control/"), status_code=302)

@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 import eval_database as evdb
 import eval_runner
 from auth import get_current_user
+from paths import admin_url
 from audit_repository import record_audit, request_ip_address, request_user_agent
 from rbac import validate_csrf
 
@@ -83,7 +84,7 @@ async def eval_case_edit(request: Request, case_id: int):
     user = await get_current_user(request)
     case = await evdb.get_case(case_id)
     if not case:
-        return RedirectResponse(url="/eval/", status_code=302)
+        return RedirectResponse(url=admin_url(request, "/eval/"), status_code=302)
     return templates.TemplateResponse(
         request,
         "eval_case_edit.html",
@@ -120,7 +121,7 @@ async def eval_case_create(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url="/eval/", status_code=302)
+    return RedirectResponse(url=admin_url(request, "/eval/"), status_code=302)
 
 
 @router.post("/cases/{case_id}")
@@ -154,7 +155,7 @@ async def eval_case_update(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url="/eval/", status_code=302)
+    return RedirectResponse(url=admin_url(request, "/eval/"), status_code=302)
 
 
 @router.post("/cases/{case_id}/delete")
@@ -176,7 +177,7 @@ async def eval_case_delete(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url="/eval/", status_code=302)
+    return RedirectResponse(url=admin_url(request, "/eval/"), status_code=302)
 
 
 @router.post("/runs")
@@ -189,7 +190,9 @@ async def eval_run_start(
     validate_csrf(user, csrf_token)
     cases = await evdb.list_cases()
     if not cases:
-        return RedirectResponse(url="/eval/?error=no_cases", status_code=302)
+        return RedirectResponse(
+            url=admin_url(request, "/eval/?error=no_cases"), status_code=302
+        )
 
     run_id = await evdb.create_run(
         total=len(cases),
@@ -206,7 +209,9 @@ async def eval_run_start(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url=f"/eval/runs/{run_id}", status_code=302)
+    return RedirectResponse(
+        url=admin_url(request, f"/eval/runs/{run_id}"), status_code=302
+    )
 
 
 @router.post("/runs/problematic")
@@ -218,7 +223,9 @@ async def eval_problem_run_start(
     validate_csrf(user, csrf_token)
     cases = await evdb.list_problem_cases()
     if not cases:
-        return RedirectResponse(url="/eval/?error=no_problem_cases", status_code=302)
+        return RedirectResponse(
+            url=admin_url(request, "/eval/?error=no_problem_cases"), status_code=302
+        )
 
     run_id = await evdb.create_run(
         total=len(cases),
@@ -235,7 +242,9 @@ async def eval_problem_run_start(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url=f"/eval/runs/{run_id}", status_code=302)
+    return RedirectResponse(
+        url=admin_url(request, f"/eval/runs/{run_id}"), status_code=302
+    )
 
 
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
@@ -243,7 +252,7 @@ async def eval_run_detail(request: Request, run_id: int):
     user = await get_current_user(request)
     run = await evdb.get_run(run_id)
     if not run:
-        return RedirectResponse(url="/eval/", status_code=302)
+        return RedirectResponse(url=admin_url(request, "/eval/"), status_code=302)
     results = await evdb.get_run_results(run_id)
     return templates.TemplateResponse(
         request,

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Прогон #{{ run.id }} — Admin{% endblock %}
 {% block content %}
-<a href="/eval/" class="back">← К списку эвалов</a>
+<a href="{{ request.scope.get('root_path', '') }}/eval/" class="back">← К списку эвалов</a>
 
 <h1>Прогон эвалюэйшенов #{{ run.id }}</h1>
 <div class="meta">
@@ -80,7 +80,7 @@
     const log = document.getElementById('run-log');
     const total = {{ run.total }};
 
-    const es = new EventSource('/eval/runs/{{ run.id }}/stream');
+    const es = new EventSource("{{ request.scope.get('root_path', '') }}/eval/runs/{{ run.id }}/stream");
 
     es.addEventListener('progress', function(e) {
         const d = JSON.parse(e.data);

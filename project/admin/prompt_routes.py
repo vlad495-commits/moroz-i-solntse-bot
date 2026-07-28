@@ -22,6 +22,7 @@ from fastapi.templating import Jinja2Templates
 import prompt_database as pdb
 from auth import get_current_user
 from audit_repository import record_audit, request_ip_address, request_user_agent
+from paths import admin_url
 from rbac import require_role, validate_csrf
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,9 @@ async def prompt_save(
     content = content.replace("\r\n", "\n").rstrip() + "\n"
 
     if not _write_prompt(content):
-        return RedirectResponse(url="/prompt/?error=write_failed", status_code=302)
+        return RedirectResponse(
+            url=admin_url(request, "/prompt/?error=write_failed"), status_code=302
+        )
 
     try:
         version_id = await pdb.create_version(
@@ -117,7 +120,9 @@ async def prompt_save(
         )
     except Exception as error:
         logger.error("prompt_db_save_failed error_type=%s", type(error).__name__)
-        return RedirectResponse(url="/prompt/?error=db_failed", status_code=302)
+        return RedirectResponse(
+            url=admin_url(request, "/prompt/?error=db_failed"), status_code=302
+        )
 
     await _publish_reload(version_id)
     await record_audit(
@@ -130,7 +135,9 @@ async def prompt_save(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url=f"/prompt/?saved={version_id}", status_code=302)
+    return RedirectResponse(
+        url=admin_url(request, f"/prompt/?saved={version_id}"), status_code=302
+    )
 
 
 @router.get("/versions/{version_id}", response_class=HTMLResponse)
@@ -139,7 +146,7 @@ async def prompt_version_view(request: Request, version_id: int):
     require_role(user, {"owner"})
     version = await pdb.get_version(version_id)
     if not version:
-        return RedirectResponse(url="/prompt/", status_code=302)
+        return RedirectResponse(url=admin_url(request, "/prompt/"), status_code=302)
     return templates.TemplateResponse(
         request, "prompt_version.html",
         {"user": user, "version": version},
@@ -157,11 +164,15 @@ async def prompt_rollback(
     require_role(user, {"owner"})
     version = await pdb.get_version(version_id)
     if not version:
-        return RedirectResponse(url="/prompt/?error=version_not_found", status_code=302)
+        return RedirectResponse(
+            url=admin_url(request, "/prompt/?error=version_not_found"), status_code=302
+        )
 
     content = version["content"]
     if not _write_prompt(content):
-        return RedirectResponse(url="/prompt/?error=write_failed", status_code=302)
+        return RedirectResponse(
+            url=admin_url(request, "/prompt/?error=write_failed"), status_code=302
+        )
 
     try:
         new_id = await pdb.create_version(
@@ -173,7 +184,9 @@ async def prompt_rollback(
         logger.error(
             "prompt_db_rollback_failed error_type=%s", type(error).__name__
         )
-        return RedirectResponse(url="/prompt/?error=db_failed", status_code=302)
+        return RedirectResponse(
+            url=admin_url(request, "/prompt/?error=db_failed"), status_code=302
+        )
 
     await _publish_reload(new_id)
     await record_audit(
@@ -186,4 +199,6 @@ async def prompt_rollback(
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
-    return RedirectResponse(url=f"/prompt/?saved={new_id}", status_code=302)
+    return RedirectResponse(
+        url=admin_url(request, f"/prompt/?saved={new_id}"), status_code=302
+    )

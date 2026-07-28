@@ -6,7 +6,7 @@
         <h1>Ревью eval-кейсов</h1>
         <p class="page-note">Площадка для заказчика: комментарии и эталонные ответы сохраняются отдельно и не запускают LLM.</p>
     </div>
-    <a href="/eval/" class="btn">Технические эвалы</a>
+    <a href="{{ request.scope.get('root_path', '') }}/eval/" class="btn">Технические эвалы</a>
 </div>
 
 {% if request.query_params.get('saved') %}
@@ -17,16 +17,16 @@
 {% endif %}
 
 <div class="review-tabs">
-    <a class="review-tab {% if active_status == 'all' %}active{% endif %}" href="/review/evals?status=all">Все <span>{{ counts.all }}</span></a>
-    <a class="review-tab {% if active_status == 'pending' %}active{% endif %}" href="/review/evals?status=pending">На проверке <span>{{ counts.pending }}</span></a>
-    <a class="review-tab {% if active_status == 'needs_edit' %}active{% endif %}" href="/review/evals?status=needs_edit">Нужно поправить <span>{{ counts.needs_edit }}</span></a>
-    <a class="review-tab {% if active_status == 'ok' %}active{% endif %}" href="/review/evals?status=ok">Ок <span>{{ counts.ok }}</span></a>
-    <a class="review-tab {% if active_status == 'delete' %}active{% endif %}" href="/review/evals?status=delete">Убрать <span>{{ counts.delete }}</span></a>
+    <a class="review-tab {% if active_status == 'all' %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/review/evals?status=all">Все <span>{{ counts.all }}</span></a>
+    <a class="review-tab {% if active_status == 'pending' %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/review/evals?status=pending">На проверке <span>{{ counts.pending }}</span></a>
+    <a class="review-tab {% if active_status == 'needs_edit' %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/review/evals?status=needs_edit">Нужно поправить <span>{{ counts.needs_edit }}</span></a>
+    <a class="review-tab {% if active_status == 'ok' %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/review/evals?status=ok">Ок <span>{{ counts.ok }}</span></a>
+    <a class="review-tab {% if active_status == 'delete' %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/review/evals?status=delete">Убрать <span>{{ counts.delete }}</span></a>
 </div>
 
 <section class="review-new">
     <h2>Добавить новый кейс</h2>
-    <form method="post" action="/review/evals/suggestions" class="review-new-form">
+<form method="post" action="{{ request.scope.get('root_path', '') }}/review/evals/suggestions" class="review-new-form">
         <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
         <label>
             Вопрос клиента
@@ -70,7 +70,7 @@
                 <div class="quoted reasoning">{{ s.comment }}</div>
             </div>
             {% endif %}
-            <form method="post" action="/review/evals/suggestions/{{ s.id }}/delete"
+                <form method="post" action="{{ request.scope.get('root_path', '') }}/review/evals/suggestions/{{ s.id }}/delete"
                   onsubmit="return confirm('Удалить это новое предложение?')">
                 <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
                 <button type="submit" class="btn btn-danger">Удалить</button>
@@ -89,7 +89,7 @@
     <div class="review-grid">
         {% for c in cases %}
         <article class="review-card">
-            <form method="post" action="/review/evals/cases/{{ c.id }}">
+            <form method="post" action="{{ request.scope.get('root_path', '') }}/review/evals/cases/{{ c.id }}">
                 <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
                 <div class="review-card-head">
                     <span class="badge badge-review-{{ c.review_status }}">{{ statuses[c.review_status] }}</span>
@@ -128,7 +128,7 @@
 
                 <div class="review-card-actions">
                     <button type="submit" class="btn btn-primary">Сохранить</button>
-                    <a href="/eval/cases/{{ c.id }}" class="btn">Открыть в эвалах</a>
+                <a href="{{ request.scope.get('root_path', '') }}/eval/cases/{{ c.id }}" class="btn">Открыть в эвалах</a>
                 </div>
             </form>
         </article>
