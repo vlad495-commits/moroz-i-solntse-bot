@@ -19,6 +19,7 @@
         {% endif %}
     </div>
     <form method="post" action="/bot-control/toggle">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
         {% if paused %}
         <button type="submit" class="btn btn-primary">Включить бота</button>
         {% else %}
