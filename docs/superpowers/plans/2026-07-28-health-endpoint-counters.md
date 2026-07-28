@@ -48,7 +48,7 @@ Use a small fake database attached to `app.state`; do not start real providers.
 Run:
 
 ```powershell
-docker compose --env-file .env.example -p moroz_health_counters --profile test run --rm test pytest -q tests/unit/test_health_endpoint.py
+docker compose --env-file ../.env -p moroz_health_counters --profile test run --rm --build test pytest -q tests/unit/test_health_endpoint.py
 ```
 
 Expected: FAIL because `/healthz` does not exist.
@@ -108,9 +108,9 @@ bot healthcheck URLs. Do not expose any additional paths.
 Run focused tests, then:
 
 ```powershell
-docker compose --env-file .env.example -p moroz_health_counters config --quiet
-docker compose --env-file .env.example -p moroz_health_counters -f docker-compose.yml -f docker-compose.prod.yml config --quiet
-docker compose --env-file .env.example -p moroz_health_counters -f docker-compose.yml -f docker-compose.staging.yml config --quiet
+docker compose --env-file ../.env -p moroz_health_counters config --quiet
+docker compose --env-file ../.env -p moroz_health_counters -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+docker compose --env-file ../.env -p moroz_health_counters -f docker-compose.yml -f docker-compose.staging.yml config --quiet
 ```
 
 ### Step 5: Commit
