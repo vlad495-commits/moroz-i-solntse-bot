@@ -3,14 +3,15 @@
 Rollback app containers to the previous image first. Treat schema as forward-only unless a fresh backup exists and restore has been rehearsed.
 
 ```bash
-docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml stop bot worker scheduler admin
-docker image tag previous-bot-image moroz-bot:rollback
-docker image tag previous-worker-image moroz-worker:rollback
-docker image tag previous-scheduler-image moroz-scheduler:rollback
-docker image tag previous-admin-image moroz-admin:rollback
-docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml up -d bot worker scheduler admin
+export BOT_IMAGE="${PREVIOUS_BOT_IMAGE:?set immutable previous bot image}"
+export WORKER_IMAGE="${PREVIOUS_WORKER_IMAGE:?set immutable previous worker image}"
+export SCHEDULER_IMAGE="${PREVIOUS_SCHEDULER_IMAGE:?set immutable previous scheduler image}"
+export ADMIN_IMAGE="${PREVIOUS_ADMIN_IMAGE:?set immutable previous admin image}"
+docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build bot worker scheduler admin
 pwsh ./ops/smoke.ps1
 ```
+
+The four exported values are the exact image references Compose reads from `docker-compose.prod.yml`; record immutable tags or digests before every release. After the incident command, unset `BOT_IMAGE`, `WORKER_IMAGE`, `SCHEDULER_IMAGE`, and `ADMIN_IMAGE` before any normal candidate deployment.
 
 Do not run destructive downgrade without backup evidence and an explicit incident decision. If data restore is required, restore into a separate database first:
 

@@ -24,6 +24,7 @@ def test_deploy_runbook_has_exact_local_release_commands():
 
 def test_rollback_runbook_forbids_destructive_downgrade_without_backup():
     doc = read("rollback-runbook.md")
+    compose = (PROJECT_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
 
     assert "previous image" in doc
     assert "destructive downgrade" in doc
@@ -31,6 +32,11 @@ def test_rollback_runbook_forbids_destructive_downgrade_without_backup():
     assert "restore-postgres.sh" in doc
     assert "exec -e RESTORE_TARGET_DB=moroz_restore postgres" in doc
     assert "forward-only" in doc
+    for variable in ("BOT_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE", "ADMIN_IMAGE"):
+        assert f"{variable}=" in doc
+        assert f"${{{variable}:" in compose
+    assert "up -d --no-build bot worker scheduler admin" in doc
+    assert "docker image tag" not in doc
 
 
 def test_incident_runbook_splits_technical_and_business_actions():

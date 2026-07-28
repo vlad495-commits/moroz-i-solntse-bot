@@ -23,6 +23,7 @@ services:
         max-file: "3"
 
   admin:
+    image: ${ADMIN_IMAGE:-moroz-i-solntse-admin:local}
     ports: !override
       - "127.0.0.1:${ADMIN_PORT:-8080}:8080"
     environment:
@@ -30,7 +31,14 @@ services:
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:?set ADMIN_COOKIE_SECURE outside Git}
 
   bot:
+    image: ${BOT_IMAGE:-moroz-i-solntse-bot:local}
     ports: []
+
+  worker:
+    image: ${WORKER_IMAGE:-moroz-i-solntse-worker:local}
+
+  scheduler:
+    image: ${SCHEDULER_IMAGE:-moroz-i-solntse-scheduler:local}
 
   postgres:
     environment:
