@@ -40,6 +40,7 @@ from eval_routes import router as eval_router  # noqa: E402
 from review_routes import router as review_router  # noqa: E402
 from bot_control_routes import router as bot_control_router  # noqa: E402
 from logs_routes import router as logs_router  # noqa: E402
+from metrics_routes import router as metrics_router  # noqa: E402
 from rbac import require_role  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -66,6 +67,7 @@ app.include_router(eval_router)
 app.include_router(review_router)
 app.include_router(bot_control_router)
 app.include_router(logs_router)
+app.include_router(metrics_router)
 
 
 # Jinja2 фильтры для форматирования
