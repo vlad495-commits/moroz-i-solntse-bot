@@ -1,34 +1,57 @@
-# Task 4 report — exact-key sandbox smoke
+# Task 4 lifecycle report - checkpoint 0008
 
-## Commands and counts
+## Status
 
-- RED: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-red --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py -q` → `5 failed, 22 passed`.
-- GREEN: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-green --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/unit/test_runtime_logging_policy.py -q` → `32 passed`.
-- Static privacy check → `privacy legacy=0 schema_disclosure=0` for the smoke source and `_empty_summary` output schema.
+`DONE_WITH_CONCERNS`
 
-## Safety
+The lifecycle regression gates are complete and the final full Docker suite is
+green. Per the explicit handoff scope, the roadmap and phase plan remain open,
+the `moroz_lifecycle_0008` namespace remains intact, and the broad review is
+deferred.
 
-- Only Docker test profile, local fakes and synthetic values were used. No live YCLIENTS, `.env` or credentials were read or emitted.
-- One UUID is passed through create/get/reschedule/get/cancel. Reconciliation uses only exact canonical `custom_fields.moroz_booking_key`; `api_id` and structural similarity are ignored.
-- Output has no provider record ID and accepts only stage/count/boolean gates plus allowlisted unknown kind/status.
+## Verified Docker gates
 
-## Cleanup
+- Lifecycle collection RED: unit and integration modules named
+  `test_lifecycle.py` produced one pytest collection error (`import file
+  mismatch`). The integration module was renamed to
+  `tests/integration/notifications/test_lifecycle_persistence.py`; the
+  immediate regression rerun passed: `16 passed in 13.83s`.
+- Focused lifecycle suite: `204 passed`, `0 failed`, `179.56s`.
+- Migration upgrade/current: exit `0`; current revision
+  `0008_yclients_lifecycle (head)`. The local database upgraded
+  `0006 -> 0007 -> 0008` after rebuilding the stale local migration image.
+- Worker and scheduler images built successfully; `python -m compileall -q
+  /app` exited `0` for both services.
+- First full suite: exit `1`; `835 passed, 1 failed in 399.38s`. The failure
+  was `test_official_compose_commands_use_approved_env_file`, caused by the
+  Task 4 Compose examples in the lifecycle implementation plan using a
+  non-canonical `--env-file` position/path.
+- Minimal documentation correction: Task 4 Compose examples now use
+  `docker compose --env-file ../.env --project-name moroz_lifecycle_0008 ...`.
+  The focused Docker regression gate passed: `6 passed in 0.11s`.
+- Final full suite: exit `0`; `836 passed in 388.82s (0:06:28)`. Complete
+  stdout and the recorded exit code are retained in
+  `tmp/task-4-full-pytest.log`.
 
-- `moroz-ownership-task4-red`: `containers=0 volumes=0 networks=0 images=0`.
-- `moroz-ownership-task4-green`: `containers=0 volumes=0 networks=0 images=0`.
-- Ignored `tmp/compose-empty.env` was removed.
+## Safety and scope
 
-## Commit
+- All Compose invocations used only the local namespace
+  `moroz_lifecycle_0008` with process-local test credentials.
+- No external/provider, YCLIENTS mutation, Telegram, staging, or production
+  action was run.
+- No production source was changed in this handoff. The only test change is
+  the collection-safe integration-test rename.
 
-`test: sandbox smoke использует moroz booking key`
+## Deferred by request
+
+- No roadmap or phase-plan completion update.
+- No namespace cleanup or image/volume removal.
+- No push or merge.
+- Broad independent review remains pending.
 
 ## Concerns
 
-Local implementation is complete. Live completion remains blocked until the branch field `moroz_booking_key` exists, separate cleanup consent is granted for the one pre-design active synthetic record, and a new lifecycle smoke is explicitly consented. No live smoke was run.
-
-## Review fix loop
-
-- RED: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-review-red --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py -q` → `4 failed, 29 passed`.
-- GREEN: `docker compose --env-file ../tmp/compose-empty.env -p moroz-ownership-task4-review-green --profile test run --rm test pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/unit/test_runtime_logging_policy.py -q` → `38 passed`.
-- Cleanup: both review namespaces reached `containers=0 volumes=0 networks=0 images=0`; the ignored temp env was removed.
-- Fix: invalid create results cannot trigger cleanup cancellation. Missing `custom_fields` remains unrelated; present non-mapping fields and exact-key records with absent/non-boolean `deleted` fail closed.
+Docker Compose emits normal container lifecycle status lines through stderr;
+PowerShell labels those lines `NativeCommandError`, although the final Compose
+command and pytest both exited `0`. The saved log contains the authoritative
+pytest result and `PYTEST_EXIT_CODE=0`.
