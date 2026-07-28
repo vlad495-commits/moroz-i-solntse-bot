@@ -129,7 +129,22 @@ def test_compose_process_environment_overrides_external_test_credentials():
             assert services[name]["environment"][key] == (
                 f"${{{key}:?set {key} outside Git}}"
             )
-    assert {"DATABASE_URL", "REDIS_URL"} <= set(services["admin"]["environment"])
+    assert {
+        "DATABASE_URL",
+        "REDIS_URL",
+        "RABBITMQ_USER",
+        "RABBITMQ_PASSWORD",
+        "RABBITMQ_MANAGEMENT_URL",
+    } <= set(services["admin"]["environment"])
+    assert services["admin"]["environment"]["RABBITMQ_USER"] == (
+        "${RABBITMQ_USER:?set RABBITMQ_USER outside Git}"
+    )
+    assert services["admin"]["environment"]["RABBITMQ_PASSWORD"] == (
+        "${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD outside Git}"
+    )
+    assert services["admin"]["environment"]["RABBITMQ_MANAGEMENT_URL"] == (
+        "${RABBITMQ_MANAGEMENT_URL:-http://rabbitmq:15672}"
+    )
     assert {"DATABASE_URL", "REDIS_URL", "TELEGRAM_WEBHOOK_SECRET"} <= set(
         services["bot"]["environment"]
     )

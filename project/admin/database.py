@@ -178,6 +178,67 @@ async def get_global_stats() -> dict[str, Any]:
     }
 
 
+async def get_system_metrics_snapshot() -> dict[str, Any]:
+    if not _pool:
+        raise RuntimeError("database is not initialized")
+    async with _pool.acquire() as conn:
+        totals = await conn.fetchrow(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM message_inbox)
+                    AS bot_inbound_messages_total,
+                (SELECT COUNT(*) FROM message_inbox
+                 WHERE status = 'processed')
+                    AS worker_processed_messages_total,
+                (SELECT COUNT(*) FROM message_inbox
+                 WHERE status = 'accepted')
+                    AS inbox_accepted_messages,
+                (SELECT EXTRACT(EPOCH FROM (now() - MIN(created_at)))
+                 FROM message_inbox WHERE status = 'accepted')
+                    AS inbox_oldest_age_seconds,
+                (SELECT COUNT(*) FROM task_outbox
+                 WHERE status = 'pending')
+                    AS task_outbox_pending_messages,
+                (SELECT COUNT(*) FROM task_outbox
+                 WHERE status = 'published')
+                    AS task_outbox_published_total,
+                (SELECT COUNT(*) FROM token_usage)
+                    AS llm_calls_total,
+                (SELECT COALESCE(SUM(total_tokens), 0) FROM token_usage)
+                    AS llm_tokens_total,
+                (SELECT COUNT(*) FROM escalations
+                 WHERE status = 'open')
+                    AS open_escalations
+            """
+        )
+        outbound_rows = await conn.fetch(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM outbound_messages
+            GROUP BY status
+            """
+        )
+        scheduler_rows = await conn.fetch(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM scheduler_jobs
+            GROUP BY status
+            """
+        )
+    result = dict(totals)
+    age = result["inbox_oldest_age_seconds"]
+    result["inbox_oldest_age_seconds"] = (
+        float(age) if age is not None else None
+    )
+    result["outbound_messages"] = {
+        row["status"]: row["count"] for row in outbound_rows
+    }
+    result["scheduler_jobs"] = {
+        row["status"]: row["count"] for row in scheduler_rows
+    }
+    return result
+
+
 async def get_recent_incidents(limit: int = 20) -> list[dict[str, Any]]:
     """Последние инциденты безопасности (заблокированные сообщения).
 
