@@ -1,4 +1,5 @@
 import importlib
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -62,6 +63,31 @@ async def test_login_submit_passes_totp_and_sets_session_cookie(monkeypatch):
     assert auth.SESSION_COOKIE_NAME in cookie
     assert "HttpOnly" in cookie
     assert "SameSite=lax" in cookie
+
+
+@pytest.mark.asyncio
+async def test_login_submit_forces_secure_cookie_when_configured(monkeypatch):
+    async def fake_authenticate(_username, _password, _totp_code):
+        return auth.AuthenticatedUser(
+            id=1,
+            username="owner",
+            role="owner",
+            csrf_token="csrf-token",
+            session_id="session-id",
+        )
+
+    monkeypatch.setattr(admin_app, "authenticate_admin", fake_authenticate)
+    monkeypatch.setattr(admin_app, "create_session_token", lambda _user: "token")
+    monkeypatch.setattr(admin_app, "ADMIN_COOKIE_SECURE", True)
+
+    response = await admin_app.login_submit(
+        request=SimpleNamespace(url=SimpleNamespace(scheme="http")),
+        username="owner",
+        password="secret",
+        totp_code="123456",
+    )
+
+    assert "Secure" in response.headers["set-cookie"]
 
 
 @pytest.mark.asyncio

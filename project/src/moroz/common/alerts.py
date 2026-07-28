@@ -16,11 +16,18 @@ class RedisCooldown(Protocol):
 
 
 AlertSender = Callable[[str, str], Awaitable[None]]
+SAFE_COMPONENT_RE = re.compile(r"[^a-z0-9_.-]+")
 
 
 def redact_pii(text: str) -> str:
     text = EMAIL_RE.sub("[email]", text)
     return PHONE_RE.sub("[phone]", text)
+
+
+def _safe_component(value: str) -> str:
+    value = redact_pii(value).replace("[phone]", "phone").replace("[email]", "email")
+    value = SAFE_COMPONENT_RE.sub("_", value.lower()).strip("_")
+    return value or "unknown"
 
 
 class AlertRouter:
@@ -48,7 +55,9 @@ class AlertRouter:
         text: str,
         business_critical: bool = False,
     ) -> bool:
-        key = f"alert:{code}:{subject}"
+        safe_code = _safe_component(code)
+        safe_subject = _safe_component(subject)
+        key = f"alert:{safe_code}:{safe_subject}"
         acquired = await self._redis.set(
             key,
             "1",
@@ -58,7 +67,7 @@ class AlertRouter:
         if not acquired:
             return False
 
-        message = f"[{severity}] {code}/{subject}: {redact_pii(text)}"
+        message = f"[{severity}] {safe_code}/{redact_pii(subject)}: {redact_pii(text)}"
         recipients = [self._technical_chat_id]
         if business_critical and self._business_chat_id:
             recipients.append(self._business_chat_id)

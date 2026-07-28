@@ -45,6 +45,7 @@ from rbac import require_role  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+ADMIN_COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "").lower() in {"1", "true", "yes"}
 
 _BASE_DIR = Path(__file__).resolve().parent
 
@@ -113,7 +114,7 @@ async def login_submit(
         max_age=SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https",
+        secure=ADMIN_COOKIE_SECURE or request.url.scheme == "https",
     )
     return response
 

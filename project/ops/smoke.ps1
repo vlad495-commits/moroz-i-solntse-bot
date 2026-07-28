@@ -1,10 +1,12 @@
 param(
     [string]$BaseUrl = $env:PUBLIC_BASE_URL,
+    [string]$WebhookSecret = $env:TELEGRAM_WEBHOOK_SECRET,
     [string]$AdminUser = $env:ADMIN_USERNAME,
     [string]$AdminPassword = $env:ADMIN_PASSWORD
 )
 
 if (-not $BaseUrl) { throw "PUBLIC_BASE_URL is required" }
+if (-not $WebhookSecret) { throw "TELEGRAM_WEBHOOK_SECRET is required" }
 
 function Assert-Ok($Name, $Response) {
     if ($Response.StatusCode -lt 200 -or $Response.StatusCode -ge 400) {
@@ -12,8 +14,8 @@ function Assert-Ok($Name, $Response) {
     }
 }
 
-$webhookProbe = Invoke-WebRequest -Method Post -Uri "$BaseUrl/telegram/webhook" -Body '{"update_id":1}' -ContentType "application/json" -SkipHttpErrorCheck
-if ($webhookProbe.StatusCode -notin @(200, 401, 403, 422)) {
+$webhookProbe = Invoke-WebRequest -Method Post -Uri "$BaseUrl/telegram/webhook" -Headers @{"X-Telegram-Bot-Api-Secret-Token"=$WebhookSecret} -Body '{"update_id":1}' -ContentType "application/json" -SkipHttpErrorCheck
+if ($webhookProbe.StatusCode -notin @(200, 202)) {
     throw "webhook health probe returned HTTP $($webhookProbe.StatusCode)"
 }
 

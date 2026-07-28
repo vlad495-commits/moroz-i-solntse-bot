@@ -84,6 +84,29 @@ def test_validate_env_rejects_missing_webhook_yclients_and_http_public_url():
     assert "BACKUP_ENCRYPTION_KEY is required" in errors
 
 
+def test_validate_env_rejects_placeholders_short_secrets_and_domain_mismatch():
+    validator = load_validator()
+    env = valid_env()
+    env.update(
+        {
+            "PUBLIC_DOMAIN": "bot.example.ru",
+            "PUBLIC_BASE_URL": "https://other.example.ru",
+            "TELEGRAM_BOT_TOKEN": "replace-with-telegram-bot-token",
+            "TELEGRAM_WEBHOOK_SECRET": "short",
+            "ADMIN_PASSWORD": "replace-with-strong-admin-password",
+            "BACKUP_ENCRYPTION_KEY": "replace-with-at-least-32-random-characters",
+        }
+    )
+
+    errors = validator.validate(env)
+
+    assert "PUBLIC_BASE_URL host must match PUBLIC_DOMAIN" in errors
+    assert "TELEGRAM_BOT_TOKEN must not use a placeholder value" in errors
+    assert "TELEGRAM_WEBHOOK_SECRET must be at least 16 characters" in errors
+    assert "ADMIN_PASSWORD must not use a placeholder value" in errors
+    assert "BACKUP_ENCRYPTION_KEY must not use a placeholder value" in errors
+
+
 def test_production_compose_adds_caddy_and_keeps_admin_localhost_only():
     compose = (PROJECT_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
 
@@ -96,6 +119,8 @@ def test_production_compose_adds_caddy_and_keeps_admin_localhost_only():
     assert "ops/Caddyfile:/etc/caddy/Caddyfile:ro" in compose
     assert "./ops:/ops:ro" in compose
     assert "pgbackups:/backups/postgres" in compose
+    assert "ops-check:" in compose
+    assert "BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY outside Git}" in compose
 
 
 def test_caddyfile_routes_only_webhook_and_admin_prefix():

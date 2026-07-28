@@ -10,6 +10,8 @@ def test_smoke_script_covers_health_privacy_faq_booking_and_admin_login():
     smoke = (PROJECT_ROOT / "ops" / "smoke.ps1").read_text(encoding="utf-8")
 
     assert "PUBLIC_BASE_URL" in smoke
+    assert "TELEGRAM_WEBHOOK_SECRET" in smoke
+    assert "X-Telegram-Bot-Api-Secret-Token" in smoke
     assert "/telegram/webhook" in smoke
     assert "privacy" in smoke
     assert "faq" in smoke
@@ -24,6 +26,8 @@ def test_load_script_limits_production_v1_target_rate():
     assert "constant-arrival-rate" in load
     assert "rate: 30" in load
     assert "preAllocatedVUs: 20" in load
+    assert "TELEGRAM_WEBHOOK_SECRET" in load
+    assert "X-Telegram-Bot-Api-Secret-Token" in load
     assert "/telegram/webhook" in load
     assert "http_req_failed" in load
 

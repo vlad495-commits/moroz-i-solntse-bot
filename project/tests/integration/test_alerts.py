@@ -110,3 +110,23 @@ def test_redact_pii_masks_email_and_phone_like_values():
     assert redact_pii("mail a@b.ru phone +7 (999) 000-00-00") == (
         "mail [email] phone [phone]"
     )
+
+
+@pytest.mark.asyncio
+async def test_alert_router_redacts_subject_in_message_and_cooldown_key():
+    redis = FakeRedis()
+    sender = FakeSender()
+    router = AlertRouter(redis, sender, technical_chat_id="tech-chat")
+
+    delivered = await router.emit(
+        code="booking_alert",
+        subject="+7 999 000-00-00",
+        severity="warning",
+        text="manual review",
+    )
+
+    assert delivered is True
+    assert "alert:booking_alert:phone" in redis.keys
+    assert sender.messages == [
+        ("tech-chat", "[warning] booking_alert/[phone]: manual review")
+    ]

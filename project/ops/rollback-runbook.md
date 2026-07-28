@@ -15,7 +15,7 @@ pwsh ./ops/smoke.ps1
 Do not run destructive downgrade without backup evidence and an explicit incident decision. If data restore is required, restore into a separate database first:
 
 ```bash
-RESTORE_TARGET_DB=moroz_restore docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml exec postgres sh /ops/restore-postgres.sh /backups/postgres/<file>.dump.enc
+docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml exec -e RESTORE_TARGET_DB=moroz_restore postgres sh /ops/restore-postgres.sh /backups/postgres/<file>.dump.enc
 ```
 
 Only after inspection may the operator decide how to swap traffic or databases.

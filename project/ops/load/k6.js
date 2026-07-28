@@ -19,6 +19,7 @@ export const options = {
 };
 
 const BASE_URL = __ENV.PUBLIC_BASE_URL;
+const TELEGRAM_WEBHOOK_SECRET = __ENV.TELEGRAM_WEBHOOK_SECRET;
 
 export default function () {
   const payload = JSON.stringify({
@@ -32,9 +33,12 @@ export default function () {
     },
   });
   const response = http.post(`${BASE_URL}/telegram/webhook`, payload, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_WEBHOOK_SECRET,
+    },
   });
   check(response, {
-    "webhook accepted or auth-blocked": (r) => [200, 401, 403, 422].includes(r.status),
+    "webhook accepted": (r) => [200, 202].includes(r.status),
   });
 }

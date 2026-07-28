@@ -30,10 +30,41 @@ services:
     ports: []
 
   postgres:
+    environment:
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY outside Git}
     volumes: !override
       - pgdata:/var/lib/postgresql/data
       - ./ops:/ops:ro
       - pgbackups:/backups/postgres
+
+  ops-check:
+    profiles: ["ops"]
+    image: python:3.12-slim
+    working_dir: /workspace
+    volumes:
+      - ./ops:/workspace/ops:ro
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN outside Git}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL outside Git}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER outside Git}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD outside Git}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
+      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER outside Git}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD outside Git}
+      RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL outside Git}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN outside Git}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET outside Git}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set ADMIN_USERNAME outside Git}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD outside Git}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET outside Git}
+      YCLIENTS_PARTNER_TOKEN: ${YCLIENTS_PARTNER_TOKEN:?set YCLIENTS_PARTNER_TOKEN outside Git}
+      YCLIENTS_USER_TOKEN: ${YCLIENTS_USER_TOKEN:?set YCLIENTS_USER_TOKEN outside Git}
+      YCLIENTS_COMPANY_ID: ${YCLIENTS_COMPANY_ID:?set YCLIENTS_COMPANY_ID outside Git}
+      YCLIENTS_BASE_URL: ${YCLIENTS_BASE_URL:?set YCLIENTS_BASE_URL outside Git}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY outside Git}
+    command: ["python", "/workspace/ops/validate_env.py"]
 
 volumes:
   caddydata:

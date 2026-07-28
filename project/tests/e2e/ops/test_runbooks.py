@@ -13,9 +13,10 @@ def read(name: str) -> str:
 def test_deploy_runbook_has_exact_local_release_commands():
     doc = read("deploy-runbook.md")
 
+    assert "cd /opt/moroz-i-solntse-bot/project" in doc
     assert "git pull --ff-only" in doc
     assert "docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml" in doc
-    assert "ops/validate_env.py" in doc
+    assert "--profile ops run --rm ops-check" in doc
     assert "alembic" in doc
     assert "smoke.ps1" in doc
     assert "No push or merge" in doc
@@ -28,6 +29,7 @@ def test_rollback_runbook_forbids_destructive_downgrade_without_backup():
     assert "destructive downgrade" in doc
     assert "backup" in doc
     assert "restore-postgres.sh" in doc
+    assert "exec -e RESTORE_TARGET_DB=moroz_restore postgres" in doc
     assert "forward-only" in doc
 
 
