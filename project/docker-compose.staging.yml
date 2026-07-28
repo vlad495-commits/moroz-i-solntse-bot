@@ -1,6 +1,8 @@
 services:
   bot:
     image: "moroz-staging-bot:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
+    environment:
+      TELEGRAM_MODE: webhook
     ports:
       - "127.0.0.1:${STAGING_BOT_PORT:-18081}:8081"
     healthcheck:

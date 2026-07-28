@@ -95,7 +95,10 @@ def test_caddy_is_pinned_non_root_and_routes_only_webhook():
 
 
 def test_staging_bot_healthcheck_probes_http_listener():
-    health = " ".join(load_staging()["services"]["bot"]["healthcheck"]["test"])
+    bot = load_staging()["services"]["bot"]
+    health = " ".join(bot["healthcheck"]["test"])
+
+    assert bot["environment"]["TELEGRAM_MODE"] == "webhook"
     assert "http://127.0.0.1:8081/healthz" in health
     assert "/openapi.json" not in health
     assert "/proc/1/cmdline" not in health
