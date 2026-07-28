@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 
 auth = importlib.import_module("auth")
+admin_app = importlib.import_module("app")
 bot_control_routes = importlib.import_module("bot_control_routes")
 prompt_routes = importlib.import_module("prompt_routes")
 rbac = importlib.import_module("rbac")
@@ -124,6 +125,66 @@ async def test_prompt_rollback_rejects_admin_role_before_db_read(monkeypatch):
         )
 
     assert denied.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_stats_page_rejects_admin_role_before_stats_read(monkeypatch):
+    async def current_user(_request):
+        return user(role="admin")
+
+    async def stats_must_not_be_called():
+        raise AssertionError("stats should not be read before RBAC passes")
+
+    monkeypatch.setattr(admin_app, "get_current_user", current_user)
+    monkeypatch.setattr(admin_app.database, "get_global_stats", stats_must_not_be_called)
+
+    with pytest.raises(HTTPException) as denied:
+        await admin_app.stats_page(object())
+
+    assert denied.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_bot_control_page_rejects_admin_role_before_redis(monkeypatch):
+    async def redis_must_not_be_called():
+        raise AssertionError("redis should not be touched before RBAC passes")
+
+    async def current_user(_request):
+        return user(role="admin")
+
+    monkeypatch.setattr(bot_control_routes, "get_current_user", current_user)
+    monkeypatch.setattr(bot_control_routes, "_redis_client", redis_must_not_be_called)
+
+    with pytest.raises(HTTPException) as denied:
+        await bot_control_routes.bot_control_page(object())
+
+    assert denied.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_prompt_editor_rejects_admin_role_before_prompt_read(monkeypatch):
+    async def current_user(_request):
+        return user(role="admin")
+
+    def prompt_must_not_be_read():
+        raise AssertionError("prompt file should not be read before RBAC passes")
+
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes, "_read_current_prompt", prompt_must_not_be_read)
+
+    with pytest.raises(HTTPException) as denied:
+        await prompt_routes.prompt_editor(object())
+
+    assert denied.value.status_code == 403
+
+
+def test_owner_only_navigation_links_are_hidden_from_admin_role():
+    base = (admin_app._BASE_DIR / "templates" / "base.html").read_text(encoding="utf-8")
+
+    assert "{% if user.role == 'owner' %}" in base
+    assert "/stats" in base
+    assert "/prompt/" in base
+    assert "/bot-control/" in base
 
 
 @pytest.mark.asyncio

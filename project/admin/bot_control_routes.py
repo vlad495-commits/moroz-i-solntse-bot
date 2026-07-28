@@ -34,6 +34,7 @@ async def _redis_client():
 @router.get("/", response_class=HTMLResponse)
 async def bot_control_page(request: Request):
     user = await get_current_user(request)
+    require_role(user, {"owner"})
     paused = False
     error = ""
     client = None

@@ -224,3 +224,15 @@ async def test_bootstrap_env_login_only_works_with_explicit_safe_values(monkeypa
     assert user is not None
     assert user.username == "bootstrap"
     assert user.role == "owner"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_env_login_fails_closed_when_db_pool_is_missing(monkeypatch):
+    monkeypatch.setattr(auth.user_repository.database, "_pool", None)
+    monkeypatch.setattr(auth, "SESSION_SECRET", "local-explicit-secret")
+    monkeypatch.setenv("ADMIN_USERNAME", "bootstrap")
+    monkeypatch.setenv("ADMIN_PASSWORD", "bootstrap-secret")
+
+    user = await auth.authenticate_admin("bootstrap", "bootstrap-secret", "")
+
+    assert user is None

@@ -80,6 +80,7 @@ def _write_prompt(content: str) -> bool:
 @router.get("/", response_class=HTMLResponse)
 async def prompt_editor(request: Request, saved: str = "", error: str = ""):
     user = await get_current_user(request)
+    require_role(user, {"owner"})
     current = _read_current_prompt()
     versions = await pdb.list_versions(limit=50)
     return templates.TemplateResponse(
@@ -135,6 +136,7 @@ async def prompt_save(
 @router.get("/versions/{version_id}", response_class=HTMLResponse)
 async def prompt_version_view(request: Request, version_id: int):
     user = await get_current_user(request)
+    require_role(user, {"owner"})
     version = await pdb.get_version(version_id)
     if not version:
         return RedirectResponse(url="/prompt/", status_code=302)

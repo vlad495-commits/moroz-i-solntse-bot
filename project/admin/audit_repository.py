@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import database
@@ -42,14 +43,14 @@ async def record_audit(
                 actor_id, action, object_type, object_id,
                 before, after, ip_address, user_agent
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
             """,
             actor_id,
             action,
             object_type,
             object_id,
-            before,
-            after,
+            json.dumps(before, ensure_ascii=False) if before is not None else None,
+            json.dumps(after, ensure_ascii=False) if after is not None else None,
             ip_address,
             user_agent,
         )

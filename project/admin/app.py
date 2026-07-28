@@ -40,6 +40,7 @@ from eval_routes import router as eval_router  # noqa: E402
 from review_routes import router as review_router  # noqa: E402
 from bot_control_routes import router as bot_control_router  # noqa: E402
 from logs_routes import router as logs_router  # noqa: E402
+from rbac import require_role  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -211,6 +212,7 @@ async def chat_detail(request: Request, chat_id: int):
 @app.get("/stats", response_class=HTMLResponse)
 async def stats_page(request: Request):
     user = await get_current_user(request)
+    require_role(user, {"owner"})
     stats = await database.get_global_stats()
     incidents = await database.get_recent_incidents(limit=20)
 

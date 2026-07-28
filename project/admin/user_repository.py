@@ -9,9 +9,9 @@ import database
 from security import new_csrf_token
 
 
-async def count_admin_users() -> int:
+async def count_admin_users() -> int | None:
     if not database._pool:
-        return 0
+        return None
     async with database._pool.acquire() as conn:
         value = await conn.fetchval("SELECT COUNT(*) FROM admin_users")
     return int(value or 0)
