@@ -21,6 +21,8 @@ from fastapi.templating import Jinja2Templates
 
 import prompt_database as pdb
 from auth import get_current_user
+from audit_repository import record_audit, request_ip_address, request_user_agent
+from rbac import validate_csrf
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/prompt", tags=["prompt"])
@@ -98,8 +100,10 @@ async def prompt_save(
     request: Request,
     content: str = Form(...),
     comment: str = Form(""),
+    csrf_token: str = Form(""),
 ):
     user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     content = content.replace("\r\n", "\n").rstrip() + "\n"
 
     if not _write_prompt(content):
@@ -114,6 +118,16 @@ async def prompt_save(
         return RedirectResponse(url="/prompt/?error=db_failed", status_code=302)
 
     await _publish_reload(version_id)
+    await record_audit(
+        actor_id=user.id,
+        action="prompt.save",
+        object_type="prompt_version",
+        object_id=str(version_id),
+        before=None,
+        after={"comment": comment.strip() or None},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
     return RedirectResponse(url=f"/prompt/?saved={version_id}", status_code=302)
 
 
@@ -130,8 +144,13 @@ async def prompt_version_view(request: Request, version_id: int):
 
 
 @router.post("/rollback/{version_id}")
-async def prompt_rollback(request: Request, version_id: int):
+async def prompt_rollback(
+    request: Request,
+    version_id: int,
+    csrf_token: str = Form(""),
+):
     user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     version = await pdb.get_version(version_id)
     if not version:
         return RedirectResponse(url="/prompt/?error=version_not_found", status_code=302)
@@ -153,4 +172,14 @@ async def prompt_rollback(request: Request, version_id: int):
         return RedirectResponse(url="/prompt/?error=db_failed", status_code=302)
 
     await _publish_reload(new_id)
+    await record_audit(
+        actor_id=user.id,
+        action="prompt.rollback",
+        object_type="prompt_version",
+        object_id=str(version_id),
+        before=None,
+        after={"new_version_id": new_id},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
     return RedirectResponse(url=f"/prompt/?saved={new_id}", status_code=302)

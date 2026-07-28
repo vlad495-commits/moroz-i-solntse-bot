@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from auth import get_current_user
-from audit_repository import record_audit
+from audit_repository import record_audit, request_ip_address, request_user_agent
 from rbac import validate_csrf
 
 logger = logging.getLogger(__name__)
@@ -85,8 +85,8 @@ async def bot_control_toggle(request: Request, csrf_token: str = Form("")):
             object_id=None,
             before=before,
             after=after,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
+            ip_address=request_ip_address(request),
+            user_agent=request_user_agent(request),
         )
     except Exception as redis_error:
         logger.error(

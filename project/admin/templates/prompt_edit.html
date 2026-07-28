@@ -11,6 +11,7 @@
 {% endif %}
 
 <form method="post" action="/prompt/save" class="prompt-form">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
     <label>
         Содержимое промпта
         <textarea name="content" rows="20" required>{{ current_content }}</textarea>
@@ -55,6 +56,7 @@
             <td class="actions">
                 <a href="/prompt/versions/{{ v.id }}" class="btn-sm">Открыть</a>
                 <form method="post" action="/prompt/rollback/{{ v.id }}" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
                     <button type="submit" class="btn-sm"
                             onclick="return confirm('Откатиться на версию #{{ v.id }}? Текущий промпт перезапишется.')">
                         Откатить

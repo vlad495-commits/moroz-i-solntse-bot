@@ -8,6 +8,8 @@ from fastapi.templating import Jinja2Templates
 
 import review_database as rvdb
 from auth import get_current_user
+from audit_repository import record_audit, request_ip_address, request_user_agent
+from rbac import validate_csrf
 
 router = APIRouter(prefix="/review")
 _BASE_DIR = Path(__file__).resolve().parent
@@ -42,14 +44,26 @@ async def review_case_save(
     status: str = Form("pending"),
     comment: str = Form(""),
     proposed_answer: str = Form(""),
+    csrf_token: str = Form(""),
 ):
     user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     await rvdb.save_case_review(
         case_id=case_id,
         status=status,
         comment=comment,
         proposed_answer=proposed_answer,
         reviewer=user,
+    )
+    await record_audit(
+        actor_id=user.id,
+        action="review.case_save",
+        object_type="review_case",
+        object_id=str(case_id),
+        before=None,
+        after={"status": status},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
     )
     return RedirectResponse(url="/review/evals?saved=1", status_code=302)
 
@@ -60,19 +74,46 @@ async def review_suggestion_create(
     question: str = Form(...),
     expected_answer: str = Form(...),
     comment: str = Form(""),
+    csrf_token: str = Form(""),
 ):
     user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     await rvdb.create_suggestion(
         question=question,
         expected_answer=expected_answer,
         comment=comment,
         reviewer=user,
     )
+    await record_audit(
+        actor_id=user.id,
+        action="review.suggestion_create",
+        object_type="review_suggestion",
+        object_id=None,
+        before=None,
+        after=None,
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
     return RedirectResponse(url="/review/evals?saved=1", status_code=302)
 
 
 @router.post("/evals/suggestions/{suggestion_id}/delete")
-async def review_suggestion_delete(request: Request, suggestion_id: int):
-    get_current_user(request)
+async def review_suggestion_delete(
+    request: Request,
+    suggestion_id: int,
+    csrf_token: str = Form(""),
+):
+    user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     await rvdb.delete_suggestion(suggestion_id)
+    await record_audit(
+        actor_id=user.id,
+        action="review.suggestion_delete",
+        object_type="review_suggestion",
+        object_id=str(suggestion_id),
+        before=None,
+        after=None,
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
     return RedirectResponse(url="/review/evals?deleted=1", status_code=302)

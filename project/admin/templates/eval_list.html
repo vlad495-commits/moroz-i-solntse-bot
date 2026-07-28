@@ -5,11 +5,13 @@
     <h1>Эвалюэйшены <span class="muted">({{ cases|length }} кейсов)</span></h1>
     <div class="actions">
         <form method="post" action="/eval/runs" style="display: inline">
+            <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn btn-primary" {% if not cases %}disabled{% endif %}>
                 ▶ Запустить эвалюэйшены
             </button>
         </form>
         <form method="post" action="/eval/runs/problematic" style="display: inline">
+            <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn" {% if not problem_cases %}disabled{% endif %}>
                 ⚠ Прогнать проблемные{% if problem_cases %} ({{ problem_cases|length }}){% endif %}
             </button>
@@ -81,6 +83,7 @@
                 <a href="/eval/cases/{{ c.id }}" class="btn-sm">✎</a>
                 <form method="post" action="/eval/cases/{{ c.id }}/delete" style="display: inline"
                       onsubmit="return confirm('Удалить кейс #{{ c.id }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
                     <button type="submit" class="btn-sm btn-danger">🗑</button>
                 </form>
             </td>

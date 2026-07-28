@@ -13,6 +13,9 @@ from security import new_csrf_token, verify_password, verify_totp
 SESSION_SECRET = os.getenv("ADMIN_SESSION_SECRET", "change-me-min-32-chars-please")
 SESSION_COOKIE_NAME = "admin_session"
 SESSION_MAX_AGE = int(os.getenv("ADMIN_SESSION_TTL_SEC", str(24 * 60 * 60)))
+_DEFAULT_USERNAME = "admin"
+_DEFAULT_PASSWORD = "admin"
+_DEFAULT_SESSION_SECRET = "change-me-min-32-chars-please"
 
 _serializer = URLSafeTimedSerializer(SESSION_SECRET, salt="admin-session")
 
@@ -35,10 +38,17 @@ class AuthenticatedUser:
 
 def authenticate(username: str, password: str) -> bool:
     """Legacy bootstrap credential check."""
-    return username == os.getenv("ADMIN_USERNAME", "admin") and password == os.getenv(
-        "ADMIN_PASSWORD",
-        "admin",
-    )
+    expected_username = os.getenv("ADMIN_USERNAME", "")
+    expected_password = os.getenv("ADMIN_PASSWORD", "")
+    if (
+        not expected_username
+        or not expected_password
+        or expected_username == _DEFAULT_USERNAME
+        or expected_password == _DEFAULT_PASSWORD
+        or SESSION_SECRET == _DEFAULT_SESSION_SECRET
+    ):
+        return False
+    return username == expected_username and password == expected_password
 
 
 async def authenticate_admin(

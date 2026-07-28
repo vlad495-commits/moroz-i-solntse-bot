@@ -27,6 +27,7 @@
 <section class="review-new">
     <h2>Добавить новый кейс</h2>
     <form method="post" action="/review/evals/suggestions" class="review-new-form">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
         <label>
             Вопрос клиента
             <textarea name="question" rows="3" required placeholder="Как клиент может спросить?"></textarea>
@@ -71,6 +72,7 @@
             {% endif %}
             <form method="post" action="/review/evals/suggestions/{{ s.id }}/delete"
                   onsubmit="return confirm('Удалить это новое предложение?')">
+                <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
                 <button type="submit" class="btn btn-danger">Удалить</button>
             </form>
         </article>
@@ -88,6 +90,7 @@
         {% for c in cases %}
         <article class="review-card">
             <form method="post" action="/review/evals/cases/{{ c.id }}">
+                <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
                 <div class="review-card-head">
                     <span class="badge badge-review-{{ c.review_status }}">{{ statuses[c.review_status] }}</span>
                     <span class="muted">Кейс #{{ c.id }}</span>

@@ -13,6 +13,8 @@ from fastapi.templating import Jinja2Templates
 import eval_database as evdb
 import eval_runner
 from auth import get_current_user
+from audit_repository import record_audit, request_ip_address, request_user_agent
+from rbac import validate_csrf
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +99,26 @@ async def eval_case_create(
     expected_keywords: str = Form(""),
     forbidden_keywords: str = Form(""),
     expected_answer: str = Form(...),
+    csrf_token: str = Form(""),
 ):
-    get_current_user(request)
+    user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     await evdb.create_case(
         category=category.strip() or "general",
         question=question.strip(),
         expected_keywords=_split_keywords(expected_keywords),
         forbidden_keywords=_split_keywords(forbidden_keywords),
         expected_answer=expected_answer.strip(),
+    )
+    await record_audit(
+        actor_id=user.id,
+        action="eval.case_create",
+        object_type="eval_case",
+        object_id=None,
+        before=None,
+        after={"category": category.strip() or "general"},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
     )
     return RedirectResponse(url="/eval/", status_code=302)
 
@@ -118,8 +132,10 @@ async def eval_case_update(
     expected_keywords: str = Form(""),
     forbidden_keywords: str = Form(""),
     expected_answer: str = Form(...),
+    csrf_token: str = Form(""),
 ):
-    get_current_user(request)
+    user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     await evdb.update_case(
         case_id=case_id,
         category=category.strip() or "general",
@@ -128,19 +144,49 @@ async def eval_case_update(
         forbidden_keywords=_split_keywords(forbidden_keywords),
         expected_answer=expected_answer.strip(),
     )
+    await record_audit(
+        actor_id=user.id,
+        action="eval.case_update",
+        object_type="eval_case",
+        object_id=str(case_id),
+        before=None,
+        after={"category": category.strip() or "general"},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
     return RedirectResponse(url="/eval/", status_code=302)
 
 
 @router.post("/cases/{case_id}/delete")
-async def eval_case_delete(request: Request, case_id: int):
-    get_current_user(request)
+async def eval_case_delete(
+    request: Request,
+    case_id: int,
+    csrf_token: str = Form(""),
+):
+    user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     await evdb.delete_case(case_id)
+    await record_audit(
+        actor_id=user.id,
+        action="eval.case_delete",
+        object_type="eval_case",
+        object_id=str(case_id),
+        before=None,
+        after=None,
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
     return RedirectResponse(url="/eval/", status_code=302)
 
 
 @router.post("/runs")
-async def eval_run_start(request: Request, background_tasks: BackgroundTasks):
-    get_current_user(request)
+async def eval_run_start(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    csrf_token: str = Form(""),
+):
+    user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     cases = await evdb.list_cases()
     if not cases:
         return RedirectResponse(url="/eval/?error=no_cases", status_code=302)
@@ -150,12 +196,26 @@ async def eval_run_start(request: Request, background_tasks: BackgroundTasks):
         judge_model=eval_runner.JUDGE_MODEL,
     )
     _start_eval_task(run_id, eval_runner.run_eval_set(run_id))
+    await record_audit(
+        actor_id=user.id,
+        action="eval.run_start",
+        object_type="eval_run",
+        object_id=str(run_id),
+        before=None,
+        after={"total": len(cases)},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
     return RedirectResponse(url=f"/eval/runs/{run_id}", status_code=302)
 
 
 @router.post("/runs/problematic")
-async def eval_problem_run_start(request: Request):
-    get_current_user(request)
+async def eval_problem_run_start(
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    user = get_current_user(request)
+    validate_csrf(user, csrf_token)
     cases = await evdb.list_problem_cases()
     if not cases:
         return RedirectResponse(url="/eval/?error=no_problem_cases", status_code=302)
@@ -165,6 +225,16 @@ async def eval_problem_run_start(request: Request):
         judge_model=eval_runner.JUDGE_MODEL,
     )
     _start_eval_task(run_id, eval_runner.run_eval_set(run_id, cases=cases))
+    await record_audit(
+        actor_id=user.id,
+        action="eval.problem_run_start",
+        object_type="eval_run",
+        object_id=str(run_id),
+        before=None,
+        after={"total": len(cases)},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
     return RedirectResponse(url=f"/eval/runs/{run_id}", status_code=302)
 
 

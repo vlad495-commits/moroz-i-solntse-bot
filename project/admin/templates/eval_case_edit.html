@@ -6,6 +6,7 @@
 <h1>{% if case %}Редактирование кейса #{{ case.id }}{% else %}Новый тест-кейс{% endif %}</h1>
 
 <form method="post" action="{% if case %}/eval/cases/{{ case.id }}{% else %}/eval/cases{% endif %}" class="eval-form">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
     <label>
         Категория
         <input type="text" name="category" value="{{ case.category if case else 'general' }}" placeholder="general / faq / pricing / ...">

@@ -18,6 +18,11 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.templating import Jinja2Templates  # noqa: E402
 
 import database  # noqa: E402
+from audit_repository import (  # noqa: E402
+    record_audit,
+    request_ip_address,
+    request_user_agent,
+)
 from llm_status import get_llm_status  # noqa: E402
 from auth import (  # noqa: E402
     _LoginRequired,
@@ -169,6 +174,16 @@ async def chat_detail(request: Request, chat_id: int):
     detail = await database.get_chat_detail(chat_id)
     if not detail:
         return RedirectResponse(url="/", status_code=302)
+    await record_audit(
+        actor_id=user.id,
+        action="chat.view",
+        object_type="chat",
+        object_id=str(chat_id),
+        before=None,
+        after=None,
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
 
     stats = detail["stats"]
     cost, savings = calculate_cost(

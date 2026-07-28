@@ -98,7 +98,7 @@ def test_session_token_round_trip_returns_authenticated_user():
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_env_login_only_works_without_db_users(monkeypatch):
+async def test_bootstrap_env_login_rejects_default_credentials(monkeypatch):
     async def no_db_users():
         return 0
 
@@ -107,6 +107,25 @@ async def test_bootstrap_env_login_only_works_without_db_users(monkeypatch):
 
     monkeypatch.setattr(auth.user_repository, "count_admin_users", no_db_users)
     monkeypatch.setattr(auth.user_repository, "get_user_by_username", no_db_user)
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+
+    user = await auth.authenticate_admin("admin", "admin", "")
+
+    assert user is None
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_env_login_only_works_with_explicit_safe_values(monkeypatch):
+    async def no_db_users():
+        return 0
+
+    async def no_db_user(username):
+        return None
+
+    monkeypatch.setattr(auth.user_repository, "count_admin_users", no_db_users)
+    monkeypatch.setattr(auth.user_repository, "get_user_by_username", no_db_user)
+    monkeypatch.setattr(auth, "SESSION_SECRET", "local-explicit-secret")
     monkeypatch.setenv("ADMIN_USERNAME", "bootstrap")
     monkeypatch.setenv("ADMIN_PASSWORD", "bootstrap-secret")
 

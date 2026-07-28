@@ -7,6 +7,21 @@ from typing import Any
 import database
 
 
+def request_ip_address(request: object) -> str | None:
+    client = getattr(request, "client", None)
+    return getattr(client, "host", None)
+
+
+def request_user_agent(request: object) -> str | None:
+    headers = getattr(request, "headers", None)
+    if not headers:
+        return None
+    get_header = getattr(headers, "get", None)
+    if not get_header:
+        return None
+    return get_header("user-agent")
+
+
 async def record_audit(
     *,
     actor_id: int | None,
@@ -38,4 +53,3 @@ async def record_audit(
             ip_address,
             user_agent,
         )
-

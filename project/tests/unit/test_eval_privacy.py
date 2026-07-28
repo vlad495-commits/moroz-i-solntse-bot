@@ -12,6 +12,7 @@ import pytest
 
 import eval_routes
 import eval_runner
+from auth import AuthenticatedUser
 from eval import run_evals
 from moroz.security.guardrails import GuardDecision
 from moroz.security.eval_gate import (
@@ -493,7 +494,17 @@ async def test_eval_route_owns_and_retrieves_background_task(monkeypatch, caplog
     exception_contexts = []
     loop.set_exception_handler(lambda _loop, context: exception_contexts.append(context))
 
-    monkeypatch.setattr(eval_routes, "get_current_user", lambda _request: "admin")
+    monkeypatch.setattr(
+        eval_routes,
+        "get_current_user",
+        lambda _request: AuthenticatedUser(
+            id=7,
+            username="admin",
+            role="owner",
+            csrf_token="csrf-token",
+            session_id="session-id",
+        ),
+    )
 
     async def list_cases():
         return [{"id": 1}]
@@ -512,7 +523,11 @@ async def test_eval_route_owns_and_retrieves_background_task(monkeypatch, caplog
 
     try:
         with caplog.at_level(logging.ERROR, logger=eval_routes.logger.name):
-            response = await eval_routes.eval_run_start(object(), object())
+            response = await eval_routes.eval_run_start(
+                object(),
+                object(),
+                csrf_token="csrf-token",
+            )
             created = tuple(asyncio.all_tasks() - before)
             assert len(created) == 1
             task = created[0]

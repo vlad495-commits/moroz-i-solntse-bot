@@ -4,6 +4,7 @@ import logging
 import pytest
 
 import bot_control_routes
+from auth import AuthenticatedUser
 import llm as llm_module
 import llm_status
 import prompt_routes
@@ -47,6 +48,16 @@ class FailingRedisClient:
         self.close_calls += 1
 
 
+def admin_user() -> AuthenticatedUser:
+    return AuthenticatedUser(
+        id=7,
+        username="admin",
+        role="owner",
+        csrf_token="csrf-token",
+        session_id="session-id",
+    )
+
+
 @pytest.mark.asyncio
 async def test_llm_status_failure_is_redacted_and_client_closes_once(
     monkeypatch, caplog
@@ -74,7 +85,11 @@ async def test_bot_control_page_uses_generic_error_and_closes_client(
     monkeypatch, caplog
 ):
     client = FailingRedisClient()
-    monkeypatch.setattr(bot_control_routes, "get_current_user", lambda _request: "admin")
+    monkeypatch.setattr(
+        bot_control_routes,
+        "get_current_user",
+        lambda _request: admin_user(),
+    )
 
     async def redis_client():
         return client
@@ -100,7 +115,11 @@ async def test_bot_control_toggle_failure_is_redacted_and_client_closes(
     monkeypatch, caplog
 ):
     client = FailingRedisClient(fail_on="set")
-    monkeypatch.setattr(bot_control_routes, "get_current_user", lambda _request: "admin")
+    monkeypatch.setattr(
+        bot_control_routes,
+        "get_current_user",
+        lambda _request: admin_user(),
+    )
 
     async def redis_client():
         return client
@@ -108,7 +127,10 @@ async def test_bot_control_toggle_failure_is_redacted_and_client_closes(
     monkeypatch.setattr(bot_control_routes, "_redis_client", redis_client)
 
     with caplog.at_level(logging.ERROR, logger=bot_control_routes.logger.name):
-        response = await bot_control_routes.bot_control_toggle(object())
+        response = await bot_control_routes.bot_control_toggle(
+            object(),
+            csrf_token="csrf-token",
+        )
 
     assert response.status_code == 302
     assert client.close_calls == 1

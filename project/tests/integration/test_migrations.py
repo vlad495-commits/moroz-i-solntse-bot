@@ -430,6 +430,9 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
             await conn.close()
 
         assert set(head_catalog[0]) - set(baseline_catalog[0]) == new_tables | {
+            "admin_audit_events",
+            "admin_sessions",
+            "admin_users",
             "escalations",
             "human_mode",
             "notification_feedback_requests",
@@ -455,7 +458,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0008_yclients_lifecycle"
+            "0009_production_admin"
         )
     finally:
         await conn.close()
@@ -594,7 +597,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0008_yclients_lifecycle"
+        assert current_revision == "0009_production_admin"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -757,7 +760,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0008_yclients_lifecycle"
+        assert current_revision == "0009_production_admin"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -854,7 +857,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0008_yclients_lifecycle"
+        assert current_revision == "0009_production_admin"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
