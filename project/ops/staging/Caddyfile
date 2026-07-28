@@ -6,8 +6,13 @@
 
 {$STAGING_DOMAIN} {
 	@telegram_webhook path /telegram/webhook
+	@health path /healthz
 
 	handle @telegram_webhook {
+		reverse_proxy bot:8081
+	}
+
+	handle @health {
 		reverse_proxy bot:8081
 	}
 

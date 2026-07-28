@@ -309,6 +309,14 @@ def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
     assert "75" in scheduler_health
 
 
+def test_bot_healthcheck_probes_safe_health_endpoint():
+    health = " ".join(compose_services()["bot"]["healthcheck"]["test"])
+
+    assert "http://127.0.0.1:8081/healthz" in health
+    assert "/openapi.json" not in health
+    assert "/proc/1/cmdline" not in health
+
+
 def test_admin_port_is_isolatable_without_changing_default_url():
     assert compose_services()["admin"]["ports"] == [
         "${ADMIN_PORT:-8080}:8080"

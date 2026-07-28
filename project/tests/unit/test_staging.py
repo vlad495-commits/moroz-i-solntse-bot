@@ -86,6 +86,8 @@ def test_caddy_is_pinned_non_root_and_routes_only_webhook():
     assert "http_port 8080" in text
     assert "https_port 8443" in text
     assert "path /telegram/webhook" in text
+    assert "path /healthz" in text
+    assert "/healthz/*" not in text
     assert "reverse_proxy bot:8081" in text
     assert "respond 404" in text
     assert "/admin" not in text
@@ -94,7 +96,8 @@ def test_caddy_is_pinned_non_root_and_routes_only_webhook():
 
 def test_staging_bot_healthcheck_probes_http_listener():
     health = " ".join(load_staging()["services"]["bot"]["healthcheck"]["test"])
-    assert "http://127.0.0.1:8081/openapi.json" in health
+    assert "http://127.0.0.1:8081/healthz" in health
+    assert "/openapi.json" not in health
     assert "/proc/1/cmdline" not in health
 
 

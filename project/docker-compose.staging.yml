@@ -9,7 +9,7 @@ services:
         - >-
           python -c "import urllib.request;
           raise SystemExit(0 if urllib.request.urlopen(
-          'http://127.0.0.1:8081/openapi.json', timeout=3).status == 200 else 1)"
+          'http://127.0.0.1:8081/healthz', timeout=3).status == 200 else 1)"
       interval: 10s
       timeout: 5s
       retries: 6

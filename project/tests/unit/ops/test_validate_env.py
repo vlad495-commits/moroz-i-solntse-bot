@@ -140,7 +140,10 @@ def test_caddyfile_routes_only_webhook_and_admin_prefix():
     caddyfile = (PROJECT_ROOT / "ops" / "Caddyfile").read_text(encoding="utf-8")
 
     assert "{$PUBLIC_DOMAIN}" in caddyfile
+    assert "handle /healthz" in caddyfile
     assert "reverse_proxy bot:8081" in caddyfile
+    assert "handle_path /healthz" not in caddyfile
+    assert "/healthz/*" not in caddyfile
     assert "handle_path /admin/*" in caddyfile
     assert "reverse_proxy admin:8080" in caddyfile
     assert "respond 404" in caddyfile

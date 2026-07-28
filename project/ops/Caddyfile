@@ -3,6 +3,10 @@
 		reverse_proxy bot:8081
 	}
 
+	handle /healthz {
+		reverse_proxy bot:8081
+	}
+
 	handle /admin {
 		redir /admin/ 308
 	}
