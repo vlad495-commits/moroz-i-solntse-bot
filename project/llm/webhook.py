@@ -1,4 +1,6 @@
+import asyncio
 from contextlib import asynccontextmanager
+import logging
 import secrets
 from uuid import uuid4
 
@@ -35,6 +37,8 @@ from moroz.security.consent import (
 
 
 CONSENT_CALLBACK_DATA = f"processing_consent:{PROCESSING_CONSENT_VERSION}"
+HEALTH_TIMEOUT_SECONDS = 2.0
+logger = logging.getLogger(__name__)
 CONSENT_PROMPT = "Чтобы продолжить, подтвердите обработку данных."
 CONSENT_KEYBOARD = InlineKeyboardMarkup(
     inline_keyboard=[
@@ -71,6 +75,7 @@ def create_app(
         )
         try:
             await database.connect()
+            webhook_app.state.database = database
             webhook_app.state.telegram = telegram
             webhook_app.state.redis = redis_client
             webhook_app.state.consent_service = ConsentService(database)
@@ -87,6 +92,27 @@ def create_app(
             await telegram.session.close()
 
     webhook_app = FastAPI(lifespan=lifespan)
+
+    @webhook_app.get("/healthz")
+    async def health():
+        try:
+            async with asyncio.timeout(HEALTH_TIMEOUT_SECONDS):
+                async with webhook_app.state.database.acquire() as connection:
+                    await connection.fetchval("SELECT 1")
+        except Exception as error:
+            logger.warning(
+                "health_probe_failed error_type=%s",
+                type(error).__name__,
+            )
+            return Response(
+                content='{"status":"unavailable"}',
+                status_code=503,
+                media_type="application/json",
+            )
+        return Response(
+            content='{"status":"ok"}',
+            media_type="application/json",
+        )
 
     async def is_bot_paused() -> bool:
         try:
