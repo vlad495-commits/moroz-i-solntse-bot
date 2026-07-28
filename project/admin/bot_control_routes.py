@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from auth import get_current_user
 from audit_repository import record_audit, request_ip_address, request_user_agent
-from rbac import validate_csrf
+from rbac import require_role, validate_csrf
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/bot-control", tags=["bot-control"])
@@ -65,6 +65,7 @@ async def bot_control_page(request: Request):
 async def bot_control_toggle(request: Request, csrf_token: str = Form("")):
     user = await get_current_user(request)
     validate_csrf(user, csrf_token)
+    require_role(user, {"owner"})
     client = None
     before = None
     after = None

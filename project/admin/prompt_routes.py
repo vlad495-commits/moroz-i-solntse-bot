@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 import prompt_database as pdb
 from auth import get_current_user
 from audit_repository import record_audit, request_ip_address, request_user_agent
-from rbac import validate_csrf
+from rbac import require_role, validate_csrf
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/prompt", tags=["prompt"])
@@ -104,6 +104,7 @@ async def prompt_save(
 ):
     user = await get_current_user(request)
     validate_csrf(user, csrf_token)
+    require_role(user, {"owner"})
     content = content.replace("\r\n", "\n").rstrip() + "\n"
 
     if not _write_prompt(content):
@@ -151,6 +152,7 @@ async def prompt_rollback(
 ):
     user = await get_current_user(request)
     validate_csrf(user, csrf_token)
+    require_role(user, {"owner"})
     version = await pdb.get_version(version_id)
     if not version:
         return RedirectResponse(url="/prompt/?error=version_not_found", status_code=302)

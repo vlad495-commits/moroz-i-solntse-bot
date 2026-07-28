@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 auth = importlib.import_module("auth")
 bot_control_routes = importlib.import_module("bot_control_routes")
+prompt_routes = importlib.import_module("prompt_routes")
 rbac = importlib.import_module("rbac")
 audit_repository = importlib.import_module("audit_repository")
 
@@ -57,6 +58,72 @@ async def test_bot_toggle_rejects_missing_csrf_before_redis(monkeypatch):
         response = await client.post("/bot-control/toggle", data={})
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_bot_toggle_rejects_admin_role_before_redis(monkeypatch):
+    async def redis_must_not_be_called():
+        raise AssertionError("redis should not be touched before RBAC passes")
+
+    async def current_user(_request):
+        return user(role="admin")
+
+    monkeypatch.setattr(bot_control_routes, "get_current_user", current_user)
+    monkeypatch.setattr(bot_control_routes, "_redis_client", redis_must_not_be_called)
+    app = FastAPI()
+    app.include_router(bot_control_routes.router)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/bot-control/toggle",
+            data={"csrf_token": "known-csrf"},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_prompt_save_rejects_admin_role_before_file_write(monkeypatch):
+    async def current_user(_request):
+        return user(role="admin")
+
+    def write_must_not_be_called(_content):
+        raise AssertionError("prompt file should not be written before RBAC passes")
+
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes, "_write_prompt", write_must_not_be_called)
+
+    with pytest.raises(HTTPException) as denied:
+        await prompt_routes.prompt_save(
+            object(),
+            content="new prompt",
+            comment="test",
+            csrf_token="known-csrf",
+        )
+
+    assert denied.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_prompt_rollback_rejects_admin_role_before_db_read(monkeypatch):
+    async def current_user(_request):
+        return user(role="admin")
+
+    async def db_must_not_be_called(_version_id):
+        raise AssertionError("prompt version should not be read before RBAC passes")
+
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes.pdb, "get_version", db_must_not_be_called)
+
+    with pytest.raises(HTTPException) as denied:
+        await prompt_routes.prompt_rollback(
+            object(),
+            version_id=1,
+            csrf_token="known-csrf",
+        )
+
+    assert denied.value.status_code == 403
 
 
 @pytest.mark.asyncio
