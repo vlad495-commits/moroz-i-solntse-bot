@@ -50,4 +50,3 @@ def test_csrf_token_is_url_safe_and_random():
     assert first
     assert second
     assert first != second
-

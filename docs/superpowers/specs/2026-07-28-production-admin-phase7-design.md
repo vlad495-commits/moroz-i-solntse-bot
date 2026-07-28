@@ -74,4 +74,3 @@ Use TDD through Docker Compose:
 - focused admin route tests for login, failed TOTP, disabled user, CSRF rejection and audit insertion;
 - migration tests that verify `0009` depends on `0008_yclients_lifecycle`;
 - existing full Docker pytest gate before completion.
-

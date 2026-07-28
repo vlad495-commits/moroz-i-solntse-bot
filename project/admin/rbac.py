@@ -19,4 +19,3 @@ def validate_csrf(user: AuthenticatedUser, csrf_token: str) -> None:
     actual = csrf_token or ""
     if not expected or not hmac.compare_digest(expected, actual):
         raise HTTPException(status_code=403, detail="bad_csrf")
-

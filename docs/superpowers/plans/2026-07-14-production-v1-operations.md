@@ -1,5 +1,7 @@
 # Production Operations and Release Implementation Plan
 
+> **Readiness status (2026-07-28):** local artifacts and Docker gates are ready; production launch is blocked. Real credentials/access, TLS/domain, staging smoke/load/failure, restore drill, alert recipients, eval/security evidence, health/counters, and signed launch checklist are not replaced by local acceptance.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Подготовить воспроизводимый production-деплой, мониторинг, алерты, backup/restore, нагрузочные проверки и финальный launch gate.
