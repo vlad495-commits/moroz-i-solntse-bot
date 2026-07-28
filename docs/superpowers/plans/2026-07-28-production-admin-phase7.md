@@ -1,6 +1,6 @@
 # Production Admin Phase 7 Implementation Plan
 
-> **Readiness status (2026-07-28):** local-ready security/ops layer on top of the existing FastAPI admin. This phase delivers DB sessions/users, TOTP-ready login, CSRF, RBAC, audit, role-aware UI, and secure `/admin` ingress behavior. It does not claim the full ideal admin from the target specification; health, booking operations, knowledge/version management, and escalation workflows remain explicit launch blockers or post-launch backlog until separately implemented and verified.
+> **Readiness status (2026-07-28):** local-ready security/ops layer on top of the existing FastAPI admin. This phase delivers DB sessions/users, TOTP-ready login, CSRF, RBAC, audit, role-aware UI, and secure `/admin` ingress behavior. The approved first-launch boundary requires a safe health endpoint and real system counters; booking operations UI, knowledge/version management UI, and escalation workflow UI are post-launch backlog.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

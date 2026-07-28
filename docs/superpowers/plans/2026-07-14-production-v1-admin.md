@@ -2,7 +2,7 @@
 
 > **2026-07-28 update:** This original Phase 7 plan was written before later phases added migrations `0006` through `0008`. Execute the current Phase 7 plan instead: `docs/superpowers/plans/2026-07-28-production-admin-phase7.md`. The current migration head is `0008_yclients_lifecycle`; the next admin migration must be `0009_production_admin`.
 >
-> **Scope clarification:** the completed current Phase 7 is the production security/operations layer over the existing FastAPI admin, not completion of every screen in this original ideal plan. Health, booking operations, knowledge/version management, and escalation workflows remain launch blockers or backlog unless separately implemented and verified.
+> **Scope clarification:** the completed current Phase 7 is the production security/operations layer over the existing FastAPI admin, not completion of every screen in this original ideal plan. The approved first-launch boundary requires a safe health endpoint and real system counters; booking operations UI, knowledge/version management UI, and escalation workflow UI are explicitly post-launch backlog.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

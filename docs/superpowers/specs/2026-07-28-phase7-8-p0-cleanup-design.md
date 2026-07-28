@@ -22,7 +22,7 @@ Existing application services receive explicit Compose image variables for bot, 
 
 ## Documentation boundary
 
-`Production Admin` means the production security/operations layer added to the existing FastAPI admin: DB-backed sessions, TOTP-ready login, CSRF, RBAC, audit, metrics, and secure ingress behavior. It does not claim the complete ideal admin from the target specification. Health UI, booking operations UI, knowledge management/versioning, and escalation workflows stay explicit launch blockers or post-launch backlog until separately implemented and verified.
+`Production Admin` means the production security/operations layer added to the existing FastAPI admin: DB-backed sessions, TOTP-ready login, CSRF, RBAC, audit, metrics, and secure ingress behavior. It does not claim the complete ideal admin from the target specification. The approved first-launch boundary requires a safe health endpoint and real system counters; booking operations UI, knowledge management/versioning UI, and escalation workflow UI are post-launch backlog.
 
 ## Tests
 
