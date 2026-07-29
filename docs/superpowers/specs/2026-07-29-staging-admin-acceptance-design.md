@@ -48,6 +48,11 @@ immutable images, Alembic `upgrade head`, запуск stores и app-конте�
 Если staging checkout не может безопасно перейти на `origin/main` fast-forward,
 rollout останавливается до отдельного решения; история сервера не сбрасывается.
 
+До upgrade рабочей staging-базы candidate migration применяется к изолированной
+PostgreSQL. Предыдущие immutable bot/worker images обязаны стать healthy с этой
+схемой, изолированными Redis и RabbitMQ. Ошибка — blocker: рабочие staging schema
+и app-контейнеры не изменяются.
+
 ## Technical smoke
 
 Smoke ограничивается следующими проверками:
@@ -55,7 +60,9 @@ Smoke ограничивается следующими проверками:
 - Alembic current совпадает с head;
 - bot, worker, admin, PostgreSQL, Redis, RabbitMQ и Caddy healthy/running;
 - loopback bot health отвечает успешно;
-- HTTPS `/healthz` и `/admin/login` отвечают `200`;
+- HTTPS `/healthz` отвечает `200` с точным телом `{"status":"ok"}` и не раскрывает
+  конфигурацию, версии, адреса сервисов, исключения или секреты;
+- HTTPS `/admin/login` отвечает `200`;
 - `/admin` перенаправляет на `/admin/`;
 - webhook без секрета и с неверным sentinel secret отвечает `403`;
 - посторонний URL отвечает `404`;
@@ -63,6 +70,9 @@ Smoke ограничивается следующими проверками:
 - безопасный log scanner не находит secrets, PII, raw message text или traceback.
 
 Live canary и полное ручное сценарное тестирование в этот rollout не входят.
+После зелёного technical smoke работа останавливается. Live canary, ручные
+сценарии, исправления и дополнительные тесты требуют следующей команды
+пользователя.
 
 ## Rollback
 
