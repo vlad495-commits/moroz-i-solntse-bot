@@ -1,0 +1,1352 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Moroz i Solntse — Production Telegram V1</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --background: rgb(250 251 253);
+      --foreground: rgb(24 29 36);
+      --surface: rgb(255 255 255);
+      --surface-soft: rgb(242 245 249);
+      --surface-strong: rgb(231 238 247);
+      --muted-foreground: rgb(91 101 115);
+      --border: rgb(198 207 218);
+      --border-strong: rgb(144 158 176);
+      --primary: rgb(23 105 170);
+      --primary-soft: rgb(223 239 252);
+      --primary-foreground: rgb(255 255 255);
+      --data: rgb(57 119 72);
+      --data-soft: rgb(227 242 230);
+      --booking: rgb(143 91 19);
+      --booking-soft: rgb(251 239 217);
+      --background-flow: rgb(102 80 158);
+      --background-soft: rgb(238 233 251);
+      --operations: rgb(78 91 105);
+      --operations-soft: rgb(232 237 242);
+      --danger: rgb(157 53 53);
+      --danger-soft: rgb(250 231 231);
+      --shadow: 0 10px 30px rgb(35 48 65 / 0.08);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: rgb(20 23 28);
+        --foreground: rgb(239 242 246);
+        --surface: rgb(31 36 43);
+        --surface-soft: rgb(38 44 52);
+        --surface-strong: rgb(43 55 68);
+        --muted-foreground: rgb(176 185 196);
+        --border: rgb(72 82 94);
+        --border-strong: rgb(107 120 136);
+        --primary: rgb(126 198 255);
+        --primary-soft: rgb(27 55 76);
+        --primary-foreground: rgb(18 22 27);
+        --data: rgb(135 194 145);
+        --data-soft: rgb(35 66 42);
+        --booking: rgb(225 174 102);
+        --booking-soft: rgb(73 53 27);
+        --background-flow: rgb(185 166 233);
+        --background-soft: rgb(57 47 82);
+        --operations: rgb(183 194 205);
+        --operations-soft: rgb(52 60 69);
+        --danger: rgb(238 142 142);
+        --danger-soft: rgb(78 39 39);
+        --shadow: 0 10px 30px rgb(0 0 0 / 0.22);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      margin: 0;
+      min-width: 0;
+      overflow-x: hidden;
+    }
+
+    body {
+      background: var(--background);
+      color: var(--foreground);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    h1,
+    h2,
+    h3,
+    p { margin-top: 0; }
+
+    h1,
+    h2,
+    h3 { line-height: 1.15; }
+
+    h1 {
+      max-width: 900px;
+      margin-bottom: 0.8rem;
+      font-size: clamp(2rem, 5vw, 4.5rem);
+      font-weight: 650;
+      letter-spacing: -0.045em;
+    }
+
+    h2 {
+      margin-bottom: 0.45rem;
+      font-size: clamp(1.6rem, 3vw, 2.5rem);
+      font-weight: 650;
+      letter-spacing: -0.03em;
+    }
+
+    h3 {
+      margin: 0.2rem 0 0.4rem;
+      font-size: 1rem;
+      font-weight: 650;
+    }
+
+    code {
+      padding: 0.16rem 0.38rem;
+      border-radius: 0.32rem;
+      background: var(--surface-soft);
+      color: var(--foreground);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.78rem;
+      overflow-wrap: anywhere;
+    }
+
+    .hero {
+      padding: clamp(2rem, 6vw, 5.5rem) max(1rem, calc((100vw - 1320px) / 2));
+      border-bottom: 1px solid var(--border);
+      background:
+        radial-gradient(circle at 82% 18%, var(--primary-soft), transparent 32%),
+        var(--surface);
+    }
+
+    .hero > p:not(.eyebrow) {
+      max-width: 820px;
+      color: var(--muted-foreground);
+      font-size: clamp(1rem, 2vw, 1.25rem);
+    }
+
+    .eyebrow,
+    .section-kicker,
+    .node-kind {
+      color: var(--muted-foreground);
+      font-size: 0.72rem;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .status-strip,
+    .legend,
+    .file-strip,
+    .foundation-grid,
+    .backlog-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+    }
+
+    .status-strip {
+      margin-top: 1.4rem;
+    }
+
+    .status-strip span,
+    .legend span,
+    .status-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.38rem 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--foreground);
+      font-size: 0.78rem;
+      font-weight: 650;
+    }
+
+    .status-strip span:first-child {
+      border-color: transparent;
+      background: var(--primary);
+      color: var(--primary-foreground);
+    }
+
+    main {
+      width: min(1320px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 2.25rem 0 5rem;
+    }
+
+    .workflow,
+    #platform-foundation,
+    #post-launch-boundary {
+      position: relative;
+      margin: 0 0 2.5rem;
+      padding: clamp(1rem, 3vw, 2rem);
+      border: 1px solid var(--border);
+      border-radius: 1.25rem;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .section-intro {
+      position: relative;
+      z-index: 3;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 420px);
+      gap: 1rem 2rem;
+      align-items: end;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-intro p {
+      margin: 0;
+      color: var(--muted-foreground);
+    }
+
+    .workflow-stage {
+      position: relative;
+      min-width: 0;
+      padding: 0.5rem 0;
+    }
+
+    .connectors {
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .connector {
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.72;
+    }
+
+    .connector-primary { stroke: var(--primary); }
+    .connector-data { stroke: var(--data); stroke-dasharray: 5 5; }
+    .connector-booking { stroke: var(--booking); }
+    .connector-background { stroke: var(--background-flow); stroke-dasharray: 9 5; }
+    .connector-operations { stroke: var(--operations); stroke-dasharray: 3 5; }
+
+    .workflow-grid {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      gap: 1rem clamp(1rem, 3vw, 2rem);
+      min-width: 0;
+      align-items: center;
+    }
+
+    .main-grid {
+      grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.25fr) minmax(180px, 0.85fr);
+      grid-template-areas:
+        ". client ."
+        ". telegram-main ."
+        ". caddy-main ."
+        "redis-ref bot postgres-ref"
+        ". validation ."
+        ". privacy ."
+        "postgres-store inbox redis-store"
+        ". buffer ."
+        "rabbit-store task ."
+        ". worker ."
+        ". serialization ."
+        ". router ."
+        ". scenario ."
+        "pii guardrails llm"
+        ". validator ."
+        ". outbound ."
+        ". sender ."
+        ". answer .";
+    }
+
+    .booking-grid {
+      grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.3fr) minmax(180px, 0.8fr);
+      grid-template-areas:
+        ". booking-state ."
+        "booking-pg ownership ."
+        ". yclients-read yclients-provider"
+        ". booking-confirm yclients-provider"
+        ". yclients-mutate yclients-provider"
+        ". reconcile ."
+        ". notify-plan booking-rabbit";
+    }
+
+    .background-grid {
+      grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.3fr) minmax(180px, 0.8fr);
+      grid-template-areas:
+        "background-pg jobs ."
+        ". scheduler ."
+        "background-rabbit background-task ."
+        ". background-worker ."
+        ". notification ."
+        "background-telegram lifecycle background-yclients"
+        ". dlq ."
+        ". escalation .";
+    }
+
+    .operations-grid {
+      grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.3fr) minmax(180px, 0.8fr);
+      grid-template-areas:
+        ". operations-caddy ."
+        "health admin metrics"
+        ". auth ."
+        "operations-pg session ."
+        ". access ."
+        "features audit ."
+        ". alerts ."
+        "backup migrations deploy"
+        ". rollback .";
+    }
+
+    .node,
+    .reference-node {
+      position: relative;
+      min-width: 0;
+      padding: 0.78rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 0.78rem;
+      background: var(--surface);
+      overflow-wrap: anywhere;
+    }
+
+    .node p,
+    .reference-node p {
+      margin: 0;
+      color: var(--muted-foreground);
+      font-size: 0.84rem;
+    }
+
+    .node small {
+      display: block;
+      margin-top: 0.45rem;
+      color: var(--muted-foreground);
+      font-size: 0.72rem;
+      font-weight: 650;
+    }
+
+    .node-step { border-left: 4px solid var(--primary); }
+    .node-process { background: var(--primary-soft); border-color: var(--primary); }
+    .node-storage { background: var(--data-soft); border-color: var(--data); }
+    .node-security { background: var(--background-soft); border-color: var(--background-flow); }
+    .node-background { background: var(--background-soft); border-color: var(--background-flow); }
+    .node-booking { background: var(--booking-soft); border-color: var(--booking); }
+    .node-ops { background: var(--operations-soft); border-color: var(--operations); }
+    .node-external { border-style: dashed; border-color: var(--border-strong); }
+    .node-danger { background: var(--danger-soft); border-color: var(--danger); }
+
+    .reference-node {
+      border-style: dashed;
+      background: transparent;
+      color: var(--muted-foreground);
+      text-align: center;
+    }
+
+    .reference-node strong {
+      display: block;
+      color: var(--foreground);
+    }
+
+    .flow-note {
+      position: relative;
+      z-index: 3;
+      margin: 1.4rem 0 0;
+      padding: 0.75rem 1rem;
+      border-left: 3px solid var(--primary);
+      background: var(--surface-soft);
+      color: var(--muted-foreground);
+      font-size: 0.86rem;
+    }
+
+    .flow-note strong { color: var(--foreground); }
+
+    .legend {
+      position: relative;
+      z-index: 3;
+      margin: 1rem 0 0;
+    }
+
+    .legend span::before {
+      content: "";
+      width: 1.4rem;
+      border-top: 2px solid currentColor;
+    }
+
+    .legend .legend-primary { color: var(--primary); }
+    .legend .legend-data { color: var(--data); }
+    .legend .legend-booking { color: var(--booking); }
+    .legend .legend-background { color: var(--background-flow); }
+    .legend .legend-operations { color: var(--operations); }
+
+    .file-strip {
+      position: relative;
+      z-index: 3;
+      margin: 1rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .foundation-grid,
+    .backlog-grid {
+      margin-top: 1.25rem;
+    }
+
+    .foundation-item,
+    .backlog-item {
+      flex: 1 1 200px;
+      min-width: 0;
+      padding: 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 0.78rem;
+      background: var(--surface-soft);
+    }
+
+    .foundation-item strong,
+    .backlog-item strong {
+      display: block;
+      margin-bottom: 0.2rem;
+    }
+
+    .foundation-item span,
+    .backlog-item span {
+      color: var(--muted-foreground);
+      font-size: 0.82rem;
+    }
+
+    #post-launch-boundary {
+      border-style: dashed;
+      box-shadow: none;
+    }
+
+    #post-launch-boundary .backlog-item {
+      opacity: 0.76;
+      border-style: dashed;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    #telegram-client { grid-area: client; }
+    #telegram-api { grid-area: telegram-main; }
+    #caddy-ingress { grid-area: caddy-main; }
+    #bot-process { grid-area: bot; }
+    #webhook-validation { grid-area: validation; }
+    #privacy-gate { grid-area: privacy; }
+    #durable-inbox { grid-area: inbox; }
+    #message-buffer { grid-area: buffer; }
+    #rabbit-tasks { grid-area: task; }
+    #worker-process { grid-area: worker; }
+    #chat-serialization { grid-area: serialization; }
+    #scripts-router { grid-area: router; }
+    #scenario-engine { grid-area: scenario; }
+    #pii-masking { grid-area: pii; }
+    #guardrails { grid-area: guardrails; }
+    #llm-gateway { grid-area: llm; }
+    #output-validator { grid-area: validator; }
+    #durable-outbound { grid-area: outbound; }
+    #telegram-sender { grid-area: sender; }
+    #postgres-storage { grid-area: postgres-store; }
+    #redis-storage { grid-area: redis-store; }
+    #rabbit-storage { grid-area: rabbit-store; }
+
+    #booking-state-machine { grid-area: booking-state; }
+    #booking-ownership { grid-area: ownership; }
+    #yclients-read { grid-area: yclients-read; }
+    #booking-confirmation { grid-area: booking-confirm; }
+    #yclients-mutation { grid-area: yclients-mutate; }
+    #booking-reconciliation { grid-area: reconcile; }
+    #notification-planner { grid-area: notify-plan; }
+
+    #scheduler-jobs { grid-area: jobs; }
+    #scheduler-process { grid-area: scheduler; }
+    #notification-handler { grid-area: notification; }
+    #lifecycle-handler { grid-area: lifecycle; }
+    #dead-letter-queue { grid-area: dlq; }
+    #human-escalation { grid-area: escalation; }
+
+    #admin-process { grid-area: admin; }
+    #admin-auth { grid-area: auth; }
+    #admin-session { grid-area: session; }
+    #admin-rbac-csrf { grid-area: access; }
+    #admin-features { grid-area: features; }
+    #admin-audit { grid-area: audit; }
+    #health-endpoint { grid-area: health; }
+    #system-metrics { grid-area: metrics; }
+    #alert-routing { grid-area: alerts; }
+    #backup-verify-restore { grid-area: backup; }
+    #alembic-migrations { grid-area: migrations; }
+    #deploy-gates { grid-area: deploy; }
+    #rollback-images { grid-area: rollback; }
+
+    .main-ref-postgres { grid-area: postgres-ref; }
+    .main-ref-redis { grid-area: redis-ref; }
+    .ref-answer { grid-area: answer; }
+    .booking-ref-postgres { grid-area: booking-pg; }
+    .booking-ref-yclients { grid-area: yclients-provider; }
+    .booking-ref-rabbit { grid-area: booking-rabbit; }
+    .background-ref-postgres { grid-area: background-pg; }
+    .background-ref-rabbit { grid-area: background-rabbit; }
+    .background-ref-task { grid-area: background-task; }
+    .background-ref-worker { grid-area: background-worker; }
+    .background-ref-telegram { grid-area: background-telegram; }
+    .background-ref-yclients { grid-area: background-yclients; }
+    .operations-ref-caddy { grid-area: operations-caddy; }
+    .operations-ref-postgres { grid-area: operations-pg; }
+
+    @media (max-width: 900px) {
+      .section-intro { grid-template-columns: 1fr; }
+      .workflow-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+      }
+      .main-grid {
+        grid-template-areas:
+          "client client"
+          "telegram-main telegram-main"
+          "caddy-main caddy-main"
+          "redis-ref bot"
+          "validation validation"
+          "privacy privacy"
+          "postgres-ref inbox"
+          "postgres-store redis-store"
+          "buffer buffer"
+          "rabbit-store task"
+          "worker worker"
+          "serialization serialization"
+          "router router"
+          "scenario scenario"
+          "pii guardrails"
+          "llm llm"
+          "validator validator"
+          "outbound outbound"
+          "sender sender"
+          "answer answer";
+      }
+      .booking-grid {
+        grid-template-areas:
+          "booking-state booking-state"
+          "booking-pg ownership"
+          "yclients-read yclients-provider"
+          "booking-confirm yclients-provider"
+          "yclients-mutate yclients-provider"
+          "reconcile reconcile"
+          "notify-plan booking-rabbit";
+      }
+      .background-grid {
+        grid-template-areas:
+          "background-pg jobs"
+          "scheduler scheduler"
+          "background-rabbit background-task"
+          "background-worker background-worker"
+          "notification notification"
+          "background-telegram lifecycle"
+          "background-yclients lifecycle"
+          "dlq dlq"
+          "escalation escalation";
+      }
+      .operations-grid {
+        grid-template-areas:
+          "operations-caddy operations-caddy"
+          "health admin"
+          "metrics admin"
+          "auth auth"
+          "operations-pg session"
+          "access access"
+          "features audit"
+          "alerts alerts"
+          "backup migrations"
+          "deploy deploy"
+          "rollback rollback";
+      }
+    }
+
+    @media (max-width: 720px) {
+      main { width: min(100% - 1rem, 1320px); padding-top: 1rem; }
+      .workflow,
+      #platform-foundation,
+      #post-launch-boundary {
+        margin-bottom: 1rem;
+        padding: 0.85rem;
+        border-radius: 0.9rem;
+      }
+      .workflow-grid {
+        display: flex;
+        flex-direction: column;
+      }
+      .node,
+      .reference-node {
+        width: 100%;
+      }
+      .connectors { opacity: 0.34; }
+      .status-strip span { flex: 1 1 auto; justify-content: center; }
+      .hero { padding: 2rem 1rem; }
+      .legend span { flex: 1 1 150px; }
+    }
+
+    @media print {
+      :root {
+        --background: white;
+        --foreground: black;
+        --surface: white;
+        --surface-soft: #f5f5f5;
+        --border: #999;
+        --shadow: none;
+      }
+      .workflow,
+      #platform-foundation,
+      #post-launch-boundary {
+        break-inside: avoid;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <p class="eyebrow">MOROZ I SOLNTSE · PRODUCTION TELEGRAM V1</p>
+    <h1>Как устроена реализованная система</h1>
+    <p>Читайте сверху вниз: от сообщения клиента до ответа, записи в YCLIENTS, фоновых задач и эксплуатации. В блоках показан фактический runtime, а не будущая целевая фантазия.</p>
+    <div class="status-strip" aria-label="Фактическая готовность">
+      <span>8/8 фаз реализовано</span>
+      <span>919 passed</span>
+      <span>staging smoke 6/6</span>
+      <span>READY FOR MANUAL ACCEPTANCE</span>
+      <span>migration 0009_production_admin</span>
+      <span>production gates 0/14</span>
+    </div>
+  </header>
+
+  <main id="architecture-shell">
+    <section id="message-flow" class="workflow" aria-labelledby="message-title">
+      <div class="section-intro">
+        <div>
+          <p class="section-kicker">Полотно 1 · главный runtime</p>
+          <h2 id="message-title">Путь сообщения клиента</h2>
+        </div>
+        <p>Telegram update надёжно фиксируется, проходит privacy gate, очередь, scripts-first маршрутизацию и защищённый LLM-контур. Ответ сохраняется до внешней доставки.</p>
+      </div>
+
+      <div class="workflow-stage">
+        <svg class="connectors" aria-hidden="true">
+          <defs>
+            <marker id="arrow-primary-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10" fill="var(--primary)"></path>
+            </marker>
+          </defs>
+          <g class="connector-paths"></g>
+        </svg>
+
+        <div class="workflow-grid main-grid">
+          <article class="node node-external" id="telegram-client">
+            <span class="node-kind">01 · Внешний участник</span>
+            <h3>Клиент в Telegram</h3>
+            <p>Отправляет текст и получает ответ бота.</p>
+            <small>До согласия текст не передаётся во внешнюю LLM</small>
+          </article>
+
+          <article class="node node-external" id="telegram-api">
+            <span class="node-kind">02 · Внешний API</span>
+            <h3>Telegram Bot API</h3>
+            <p>Доставляет webhook update и принимает исходящие сообщения.</p>
+            <small>webhook secret · error classification · rate limits</small>
+          </article>
+
+          <article class="node node-ops" id="caddy-ingress">
+            <span class="node-kind">03 · HTTPS ingress</span>
+            <h3>Caddy</h3>
+            <p>Завершает TLS и разводит webhook, admin и health endpoints.</p>
+            <small>/telegram/webhook · /admin · /healthz</small>
+          </article>
+
+          <aside class="reference-node main-ref-redis">
+            <strong>Redis</strong>
+            короткая память и buffer
+          </aside>
+
+          <article class="node node-process" id="bot-process">
+            <span class="node-kind">04 · Docker-процесс</span>
+            <h3>bot</h3>
+            <p>Принимает update и запускает надёжный ingress pipeline.</p>
+            <small>aiogram · webhook mode · bounded shutdown</small>
+          </article>
+
+          <aside class="reference-node main-ref-postgres">
+            <strong>PostgreSQL</strong>
+            источник постоянного состояния
+          </aside>
+
+          <article class="node node-step" id="webhook-validation">
+            <span class="node-kind">05 · Входная защита</span>
+            <h3>Проверка webhook</h3>
+            <p>Проверяет secret, возраст update, структуру и повторную доставку.</p>
+            <small>старые и поддельные события отбрасываются</small>
+          </article>
+
+          <article class="node node-security" id="privacy-gate">
+            <span class="node-kind">06 · Privacy gate</span>
+            <h3>Согласие на обработку</h3>
+            <p>До согласия сохраняет только минимальные технические данные.</p>
+            <small>versioned consent · deterministic reply</small>
+          </article>
+
+          <article class="node node-storage" id="postgres-storage">
+            <span class="node-kind">Постоянное состояние</span>
+            <h3>PostgreSQL</h3>
+            <p>Inbox, outbox, booking, scheduler, audit и admin sessions.</p>
+            <small>единственный источник критичного состояния</small>
+          </article>
+
+          <article class="node node-step" id="durable-inbox">
+            <span class="node-kind">07 · Durable checkpoint</span>
+            <h3>Inbox</h3>
+            <p>Идемпотентно фиксирует принятое сообщение и correlation ID.</p>
+            <small>duplicate update не запускает второй сценарий</small>
+          </article>
+
+          <article class="node node-storage" id="redis-storage">
+            <span class="node-kind">Временное состояние</span>
+            <h3>Redis</h3>
+            <p>Короткий контекст, быстрые locks, buffer и cooldown.</p>
+            <small>потеря Redis не уничтожает durable checkpoints</small>
+          </article>
+
+          <article class="node node-step" id="message-buffer">
+            <span class="node-kind">08 · Сбор сообщения</span>
+            <h3>Per-chat buffer</h3>
+            <p>Объединяет быстрые сообщения одного чата перед обработкой.</p>
+            <small>один диалог · один собранный запрос</small>
+          </article>
+
+          <article class="node node-storage" id="rabbit-storage">
+            <span class="node-kind">Broker</span>
+            <h3>RabbitMQ</h3>
+            <p>Надёжно передаёт фоновые задачи между процессами.</p>
+            <small>publisher confirms · manual ack · durable queue</small>
+          </article>
+
+          <article class="node node-step" id="rabbit-tasks">
+            <span class="node-kind">09 · Durable task</span>
+            <h3>Очередь tasks</h3>
+            <p>Отделяет быстрый webhook от тяжёлой обработки.</p>
+            <small>retry 1/5/30 · bounded delivery</small>
+          </article>
+
+          <article class="node node-process" id="worker-process">
+            <span class="node-kind">10 · Docker-процесс</span>
+            <h3>worker</h3>
+            <p>Выполняет message, booking и notification tasks.</p>
+            <small>manual ack только после durable результата</small>
+          </article>
+
+          <article class="node node-step" id="chat-serialization">
+            <span class="node-kind">11 · Порядок</span>
+            <h3>Per-chat serialization</h3>
+            <p>Не даёт двум задачам одного диалога обгонять друг друга.</p>
+            <small>разные чаты обрабатываются параллельно</small>
+          </article>
+
+          <article class="node node-step" id="scripts-router">
+            <span class="node-kind">12 · Scripts first</span>
+            <h3>Детерминированный роутер</h3>
+            <p>Сначала ищет consent, stop, rate limit и известный сценарий.</p>
+            <small>локальные решения не тратят внешний LLM-вызов</small>
+          </article>
+
+          <article class="node node-step" id="scenario-engine">
+            <span class="node-kind">13 · Оркестрация</span>
+            <h3>Scenario engine</h3>
+            <p>Выбирает FAQ, запись, изменение записи или эскалацию.</p>
+            <small>единый ScenarioResult и durable checkpoints</small>
+          </article>
+
+          <article class="node node-security" id="pii-masking">
+            <span class="node-kind">14A · Безопасность</span>
+            <h3>PII masking</h3>
+            <p>Заменяет email и телефон на стабильные локальные токены.</p>
+            <small>внешний провайдер не получает исходные ПД</small>
+          </article>
+
+          <article class="node node-security" id="guardrails">
+            <span class="node-kind">14B · Безопасность</span>
+            <h3>Guardrails</h3>
+            <p>Блокирует jailbreak и попытки раскрытия системного промпта.</p>
+            <small>scripts-first · fail closed · critical eval gate</small>
+          </article>
+
+          <article class="node node-external" id="llm-gateway">
+            <span class="node-kind">14C · LLM gateway</span>
+            <h3>Primary / reserve</h3>
+            <p>Вызывает основной или резервный совместимый LLM-провайдер.</p>
+            <small>masked request · bounded retry · usage accounting</small>
+          </article>
+
+          <article class="node node-security" id="output-validator">
+            <span class="node-kind">15 · Контроль ответа</span>
+            <h3>Output validator</h3>
+            <p>Проверяет утечки, формат и безопасность результата.</p>
+            <small>одна повторная генерация, затем fallback</small>
+          </article>
+
+          <article class="node node-step" id="durable-outbound">
+            <span class="node-kind">16 · Durable checkpoint</span>
+            <h3>Outbound</h3>
+            <p>Сохраняет проверенный ответ до попытки отправки.</p>
+            <small>перезапуск worker не теряет готовый ответ</small>
+          </article>
+
+          <article class="node node-step" id="telegram-sender">
+            <span class="node-kind">17 · Доставка</span>
+            <h3>Telegram sender</h3>
+            <p>Отправляет ответ и классифицирует transient/permanent ошибки.</p>
+            <small>per-chat order · no blind duplicate send</small>
+          </article>
+
+          <aside class="reference-node ref-answer">
+            <strong>18 · Ответ клиенту</strong>
+            сообщение доставлено и результат сохранён
+          </aside>
+        </div>
+      </div>
+
+      <p class="flow-note"><strong>Главная гарантия:</strong> PostgreSQL хранит принятие, выполнение и ответ. Redis ускоряет, RabbitMQ доставляет работу, но ни один из них не подменяет постоянное состояние.</p>
+      <div class="legend" aria-label="Типы связей">
+        <span class="legend-primary">основной поток</span>
+        <span class="legend-data">чтение и запись данных</span>
+        <span class="legend-booking">YCLIENTS booking</span>
+        <span class="legend-background">фоновые задачи</span>
+        <span class="legend-operations">операционный контроль</span>
+      </div>
+      <div class="file-strip" aria-label="Основные файлы пути сообщения">
+        <code>project/llm/webhook.py</code>
+        <code>project/src/moroz/messaging/</code>
+        <code>project/src/moroz/security/</code>
+        <code>project/worker/main.py</code>
+      </div>
+    </section>
+
+    <section id="booking-flow" class="workflow" aria-labelledby="booking-title">
+      <div class="section-intro">
+        <div>
+          <p class="section-kicker">Полотно 2 · защищённая мутация</p>
+          <h2 id="booking-title">Запись через YCLIENTS</h2>
+        </div>
+        <p>Запись не делается свободным текстом LLM. Сценарий собирает данные, показывает подтверждение и только затем выполняет одну защищённую внешнюю мутацию.</p>
+      </div>
+
+      <div class="workflow-stage">
+        <svg class="connectors" aria-hidden="true">
+          <defs>
+            <marker id="arrow-primary-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10" fill="var(--booking)"></path>
+            </marker>
+          </defs>
+          <g class="connector-paths"></g>
+        </svg>
+
+        <div class="workflow-grid booking-grid">
+          <article class="node node-booking" id="booking-state-machine">
+            <span class="node-kind">01 · Domain flow</span>
+            <h3>Booking state machine</h3>
+            <p>Ведёт create, reschedule и cancel по явным фазам.</p>
+            <small>needs input · confirm · executing · completed/escalated</small>
+          </article>
+
+          <aside class="reference-node booking-ref-postgres">
+            <strong>PostgreSQL</strong>
+            booking scenarios и current snapshot
+          </aside>
+
+          <article class="node node-booking" id="booking-ownership">
+            <span class="node-kind">02 · Владение</span>
+            <h3>Owner + booking key</h3>
+            <p>Связывает локального клиента и запись trusted UUID-ключом.</p>
+            <small>advisory lock · immutable ownership · fail closed</small>
+          </article>
+
+          <article class="node node-external" id="yclients-read">
+            <span class="node-kind">03 · Read API</span>
+            <h3>YCLIENTS: услуги и слоты</h3>
+            <p>Читает актуальные услуги, сотрудников, слоты и запись.</p>
+            <small>YCLIENTS остаётся источником внешней правды</small>
+          </article>
+
+          <aside class="reference-node booking-ref-yclients">
+            <strong>YCLIENTS API</strong>
+            test/production филиал и record field
+          </aside>
+
+          <article class="node node-booking" id="booking-confirmation">
+            <span class="node-kind">04 · Human confirmation</span>
+            <h3>Явное подтверждение</h3>
+            <p>Показывает услугу, сотрудника, дату и время до изменения.</p>
+            <small>без подтверждения provider mutation не выполняется</small>
+          </article>
+
+          <article class="node node-external" id="yclients-mutation">
+            <span class="node-kind">05 · Protected mutation</span>
+            <h3>Create / reschedule / cancel</h3>
+            <p>Выполняет одну внешнюю операцию без blind retry.</p>
+            <small>rate limit · exact key · no mutation replay</small>
+          </article>
+
+          <article class="node node-booking" id="booking-reconciliation">
+            <span class="node-kind">06 · Проверка результата</span>
+            <h3>Reconciliation</h3>
+            <p>При неизвестном исходе перечитывает provider state по exact key.</p>
+            <small>не создаёт дубль · unresolved outcome блокирует siblings</small>
+          </article>
+
+          <article class="node node-background" id="notification-planner">
+            <span class="node-kind">07 · После записи</span>
+            <h3>Notification planner</h3>
+            <p>Создаёт durable jobs подтверждения, напоминаний и lifecycle.</p>
+            <small>одна транзакция с локальным booking checkpoint</small>
+          </article>
+
+          <aside class="reference-node booking-ref-rabbit">
+            <strong>RabbitMQ</strong>
+            будущая доставка due jobs
+          </aside>
+        </div>
+      </div>
+
+      <p class="flow-note"><strong>При сбое:</strong> известная ошибка безопасно завершает сценарий, а неизвестный исход внешней мутации переводит запись на reconciliation/ручную проверку. Автоматического повторного POST/PUT/DELETE нет.</p>
+      <div class="file-strip" aria-label="Основные файлы записи">
+        <code>project/src/moroz/booking/</code>
+        <code>project/migrations/versions/0005_booking_state.py</code>
+        <code>project/migrations/versions/0006_yclients_booking_key.py</code>
+      </div>
+    </section>
+
+    <section id="background-flow" class="workflow" aria-labelledby="background-title">
+      <div class="section-intro">
+        <div>
+          <p class="section-kicker">Полотно 3 · время и надёжная доставка</p>
+          <h2 id="background-title">Scheduler и фоновые задачи</h2>
+        </div>
+        <p>PostgreSQL определяет, что пора выполнить. Scheduler публикует due job, RabbitMQ доставляет её worker, а handler фиксирует итог, повтор или эскалацию.</p>
+      </div>
+
+      <div class="workflow-stage">
+        <svg class="connectors" aria-hidden="true">
+          <defs>
+            <marker id="arrow-primary-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10" fill="var(--background-flow)"></path>
+            </marker>
+          </defs>
+          <g class="connector-paths"></g>
+        </svg>
+
+        <div class="workflow-grid background-grid">
+          <aside class="reference-node background-ref-postgres">
+            <strong>PostgreSQL</strong>
+            due_at, status, attempts, booking lifecycle
+          </aside>
+
+          <article class="node node-storage" id="scheduler-jobs">
+            <span class="node-kind">01 · Durable schedule</span>
+            <h3>Scheduler jobs</h3>
+            <p>Хранят due time, kind, attempts и terminal state.</p>
+            <small>reminder · no-show · feedback · lifecycle</small>
+          </article>
+
+          <article class="node node-process" id="scheduler-process">
+            <span class="node-kind">02 · Docker-процесс</span>
+            <h3>scheduler</h3>
+            <p>Выбирает due jobs и публикует их в RabbitMQ.</p>
+            <small>heartbeat · claim · publisher confirms</small>
+          </article>
+
+          <aside class="reference-node background-ref-rabbit">
+            <strong>RabbitMQ</strong>
+            tasks и tasks.dlq
+          </aside>
+
+          <aside class="reference-node background-ref-task">
+            <strong>Durable task</strong>
+            manual ack после результата
+          </aside>
+
+          <aside class="reference-node background-ref-worker">
+            <strong>worker</strong>
+            общий consumer и failure path
+          </aside>
+
+          <article class="node node-background" id="notification-handler">
+            <span class="node-kind">03A · Handler</span>
+            <h3>Напоминания и feedback</h3>
+            <p>Отправляет сервисные уведомления и feedback only once.</p>
+            <small>сразу · 24 часа · 09:00 · 1 час · post-visit</small>
+          </article>
+
+          <aside class="reference-node background-ref-telegram">
+            <strong>Telegram</strong>
+            клиент и сотрудник
+          </aside>
+
+          <article class="node node-background" id="lifecycle-handler">
+            <span class="node-kind">03B · Handler</span>
+            <h3>YCLIENTS lifecycle</h3>
+            <p>Точечно проверяет completed, no_show и неизвестные статусы.</p>
+            <small>bounded read-only checks · без polling-сервиса</small>
+          </article>
+
+          <aside class="reference-node background-ref-yclients">
+            <strong>YCLIENTS</strong>
+            read-only record status
+          </aside>
+
+          <article class="node node-danger" id="dead-letter-queue">
+            <span class="node-kind">04 · Terminal failure</span>
+            <h3>DLQ</h3>
+            <p>Принимает задачу после исчерпания трёх попыток.</p>
+            <small>30 дней · безопасная диагностика</small>
+          </article>
+
+          <article class="node node-danger" id="human-escalation">
+            <span class="node-kind">05 · Человек</span>
+            <h3>Эскалация</h3>
+            <p>Создаёт durable задачу оператору вместо скрытой потери.</p>
+            <small>human mode · staff fail closed · audit trail</small>
+          </article>
+        </div>
+      </div>
+
+      <p class="flow-note"><strong>Граница staging:</strong> scheduler реализован и проверен локально, но на текущем стенде ручной приёмки намеренно выключен. Его включение — отдельный контролируемый operational step.</p>
+      <div class="file-strip" aria-label="Основные файлы фоновых задач">
+        <code>project/src/moroz/notifications/</code>
+        <code>project/scheduler/main.py</code>
+        <code>project/migrations/versions/0007_scheduler_notifications.py</code>
+        <code>project/migrations/versions/0008_yclients_lifecycle.py</code>
+      </div>
+    </section>
+
+    <section id="operations-flow" class="workflow" aria-labelledby="operations-title">
+      <div class="section-intro">
+        <div>
+          <p class="section-kicker">Полотно 4 · управление и выпуск</p>
+          <h2 id="operations-title">Админка и эксплуатация</h2>
+        </div>
+        <p>Владелец входит через защищённый HTTPS-контур, получает роль и серверную сессию, управляет разрешёнными функциями и видит реальные health/metrics сигналы.</p>
+      </div>
+
+      <div class="workflow-stage">
+        <svg class="connectors" aria-hidden="true">
+          <defs>
+            <marker id="arrow-primary-4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10" fill="var(--operations)"></path>
+            </marker>
+          </defs>
+          <g class="connector-paths"></g>
+        </svg>
+
+        <div class="workflow-grid operations-grid">
+          <aside class="reference-node operations-ref-caddy">
+            <strong>Caddy</strong>
+            HTTPS /admin и public /healthz
+          </aside>
+
+          <article class="node node-ops" id="health-endpoint">
+            <span class="node-kind">Public probe</span>
+            <h3>/healthz</h3>
+            <p>Проверяет bounded PostgreSQL readiness без диагностики наружу.</p>
+            <small>exact {"status":"ok"} · uptime target</small>
+          </article>
+
+          <article class="node node-process" id="admin-process">
+            <span class="node-kind">01 · Docker-процесс</span>
+            <h3>FastAPI admin</h3>
+            <p>Серверная Jinja2-админка под публичным prefix /admin.</p>
+            <small>не SPA · secure cookie · fail-closed bootstrap</small>
+          </article>
+
+          <article class="node node-ops" id="system-metrics">
+            <span class="node-kind">Owner only</span>
+            <h3>/admin/metrics</h3>
+            <p>Собирает PostgreSQL, Redis и RabbitMQ counters без ПД.</p>
+            <small>per-request snapshot · bounded partial failures</small>
+          </article>
+
+          <article class="node node-security" id="admin-auth">
+            <span class="node-kind">02 · Identity</span>
+            <h3>Login + TOTP-ready</h3>
+            <p>Проверяет PBKDF2 password и при наличии TOTP secret.</p>
+            <small>default credentials запрещены fail closed</small>
+          </article>
+
+          <aside class="reference-node operations-ref-postgres">
+            <strong>PostgreSQL</strong>
+            admin users, sessions и audit
+          </aside>
+
+          <article class="node node-security" id="admin-session">
+            <span class="node-kind">03 · Server state</span>
+            <h3>DB session</h3>
+            <p>Проверяет sid на сервере, обновляет last_seen и поддерживает revoke.</p>
+            <small>logout удаляет session · stale cookie недостаточно</small>
+          </article>
+
+          <article class="node node-security" id="admin-rbac-csrf">
+            <span class="node-kind">04 · Authorization</span>
+            <h3>RBAC + CSRF</h3>
+            <p>Останавливает запрещённые действия до Redis, файла и БД.</p>
+            <small>owner-only routes · form token · role-aware UI</small>
+          </article>
+
+          <article class="node node-ops" id="admin-features">
+            <span class="node-kind">05 · Рабочие экраны</span>
+            <h3>Диалоги · промпт · эвалы</h3>
+            <p>Чаты, статистика, logs, bot control, версии промпта и eval runs.</p>
+            <small>production-safe launch scope, не полный UI из ТЗ</small>
+          </article>
+
+          <article class="node node-ops" id="admin-audit">
+            <span class="node-kind">06 · Audit</span>
+            <h3>Журнал действий</h3>
+            <p>Фиксирует вход, просмотр чувствительных данных и mutations.</p>
+            <small>actor · action · target · JSONB details</small>
+          </article>
+
+          <article class="node node-ops" id="alert-routing">
+            <span class="node-kind">07 · Monitoring</span>
+            <h3>Alert routing</h3>
+            <p>Разделяет technical и business-critical сигналы.</p>
+            <small>Redis cooldown · PII redaction · реальные recipients нужны</small>
+          </article>
+
+          <article class="node node-ops" id="backup-verify-restore">
+            <span class="node-kind">08A · Данные</span>
+            <h3>Backup → verify → restore</h3>
+            <p>Шифрует pg_dump, проверяет sha256 и восстанавливает в отдельную БД.</p>
+            <small>AES-256-CBC/PBKDF2 · server drill ещё launch gate</small>
+          </article>
+
+          <article class="node node-ops" id="alembic-migrations">
+            <span class="node-kind">08B · Схема данных</span>
+            <h3>Alembic 0001–0009</h3>
+            <p>Меняет схему только отдельным forward migration step.</p>
+            <small>head: 0009_production_admin · no runtime DDL</small>
+          </article>
+
+          <article class="node node-ops" id="deploy-gates">
+            <span class="node-kind">08C · Release</span>
+            <h3>Deploy + smoke/load/failure</h3>
+            <p>Валидирует env, TLS, webhook и деградацию до launch sign-off.</p>
+            <small>30 inbound/min · 20 active chats · 14 launch gates</small>
+          </article>
+
+          <article class="node node-ops" id="rollback-images">
+            <span class="node-kind">09 · Recovery</span>
+            <h3>Immutable app-only rollback</h3>
+            <p>Возвращает previous bot/worker/scheduler/admin images без DB downgrade.</p>
+            <small>pre-build image capture · exact Compose overrides</small>
+          </article>
+        </div>
+      </div>
+
+      <p class="flow-note"><strong>Текущий статус:</strong> admin и health уже работают на staging, technical smoke прошёл 6/6. Production launch заблокирован реальными credentials, TOTP, restore/load/eval/alert/TLS evidence и подписанным checklist.</p>
+      <div class="file-strip" aria-label="Основные файлы админки и эксплуатации">
+        <code>project/admin/</code>
+        <code>project/ops/</code>
+        <code>project/migrations/versions/0009_production_admin.py</code>
+        <code>project/docker-compose.prod.yml</code>
+      </div>
+    </section>
+
+    <section id="platform-foundation" aria-labelledby="foundation-title">
+      <p class="section-kicker">Сквозной слой под всеми полотнами</p>
+      <h2 id="foundation-title">Общий фундамент</h2>
+      <p>Это не отдельная бизнес-функция, а то, на чём одинаково работают bot, admin, worker, scheduler и migration step.</p>
+      <div class="foundation-grid">
+        <article class="foundation-item" id="docker-compose">
+          <strong>Docker Compose</strong>
+          <span>base, test, staging и production overlays; Docker-only запуск</span>
+        </article>
+        <article class="foundation-item" id="shared-package">
+          <strong>src/moroz</strong>
+          <span>config, db, queue, observability, messaging, booking, security, notifications</span>
+        </article>
+        <article class="foundation-item" id="test-gate">
+          <strong>919 passed</strong>
+          <span>unit, integration, contract, E2E и ops проверки без skips</span>
+        </article>
+        <article class="foundation-item">
+          <strong>Readiness + heartbeat</strong>
+          <span>процесс считается healthy только при реальном продвижении</span>
+        </article>
+        <article class="foundation-item">
+          <strong>Safe logging</strong>
+          <span>без токенов, URL credentials, ПД и текстов внешних ошибок</span>
+        </article>
+        <article class="foundation-item">
+          <strong>Graceful shutdown</strong>
+          <span>bounded broker cancel, inflight drain и закрытие clients</span>
+        </article>
+      </div>
+      <div class="file-strip" aria-label="Файлы общего фундамента">
+        <code>project/src/moroz/common/</code>
+        <code>project/migrations/</code>
+        <code>project/docker-compose.yml</code>
+        <code>project/tests/</code>
+      </div>
+    </section>
+
+    <section id="post-launch-boundary" aria-labelledby="backlog-title">
+      <p class="section-kicker">Не входит в работающий Telegram V1</p>
+      <h2 id="backlog-title">После первого запуска</h2>
+      <p>Эти направления есть в целевой архитектуре, но не соединены с runtime на схеме и не должны восприниматься как готовые.</p>
+      <div class="backlog-grid">
+        <article class="backlog-item"><strong>Новые каналы</strong><span>WhatsApp · Instagram · ВКонтакте · сайт</span></article>
+        <article class="backlog-item"><strong>Платежи</strong><span>ЮKassa, статусы, сверка и возвраты</span></article>
+        <article class="backlog-item"><strong>Голос</strong><span>Yandex SpeechKit и обработка аудио</span></article>
+        <article class="backlog-item"><strong>Полный booking UI</strong><span>операции с записями из клиентской админки</span></article>
+        <article class="backlog-item"><strong>Knowledge UI</strong><span>управление базой знаний и версиями</span></article>
+        <article class="backlog-item"><strong>Escalation UI</strong><span>рабочая очередь операторов и назначения</span></article>
+        <article class="backlog-item"><strong>Маркетинг</strong><span>рассылки, реактивация и коммерческие сценарии</span></article>
+        <article class="backlog-item"><strong>Расширенная observability</strong><span>затраты, latency, контейнеры и бизнес-KPI</span></article>
+      </div>
+    </section>
+
+    <div class="edge-definitions" hidden aria-hidden="true">
+      <span class="edge" data-from="telegram-client" data-to="telegram-api" data-kind="primary"></span>
+      <span class="edge" data-from="telegram-api" data-to="caddy-ingress" data-kind="primary"></span>
+      <span class="edge" data-from="caddy-ingress" data-to="bot-process" data-kind="primary"></span>
+      <span class="edge" data-from="bot-process" data-to="webhook-validation" data-kind="primary"></span>
+      <span class="edge" data-from="webhook-validation" data-to="privacy-gate" data-kind="primary"></span>
+      <span class="edge" data-from="privacy-gate" data-to="durable-inbox" data-kind="primary"></span>
+      <span class="edge" data-from="durable-inbox" data-to="message-buffer" data-kind="primary"></span>
+      <span class="edge" data-from="message-buffer" data-to="rabbit-tasks" data-kind="primary"></span>
+      <span class="edge" data-from="rabbit-tasks" data-to="worker-process" data-kind="primary"></span>
+      <span class="edge" data-from="worker-process" data-to="chat-serialization" data-kind="primary"></span>
+      <span class="edge" data-from="chat-serialization" data-to="scripts-router" data-kind="primary"></span>
+      <span class="edge" data-from="scripts-router" data-to="scenario-engine" data-kind="primary"></span>
+      <span class="edge" data-from="scenario-engine" data-to="pii-masking" data-kind="primary"></span>
+      <span class="edge" data-from="pii-masking" data-to="guardrails" data-kind="primary"></span>
+      <span class="edge" data-from="guardrails" data-to="llm-gateway" data-kind="primary"></span>
+      <span class="edge" data-from="llm-gateway" data-to="output-validator" data-kind="primary"></span>
+      <span class="edge" data-from="output-validator" data-to="durable-outbound" data-kind="primary"></span>
+      <span class="edge" data-from="durable-outbound" data-to="telegram-sender" data-kind="primary"></span>
+      <span class="edge" data-from="telegram-sender" data-to="telegram-api" data-kind="primary"></span>
+      <span class="edge" data-from="scenario-engine" data-to="booking-state-machine" data-kind="booking"></span>
+      <span class="edge" data-from="booking-state-machine" data-to="booking-ownership" data-kind="booking"></span>
+      <span class="edge" data-from="booking-ownership" data-to="yclients-read" data-kind="booking"></span>
+      <span class="edge" data-from="yclients-read" data-to="booking-confirmation" data-kind="booking"></span>
+      <span class="edge" data-from="booking-confirmation" data-to="yclients-mutation" data-kind="booking"></span>
+      <span class="edge" data-from="yclients-mutation" data-to="booking-reconciliation" data-kind="booking"></span>
+      <span class="edge" data-from="booking-reconciliation" data-to="notification-planner" data-kind="booking"></span>
+      <span class="edge" data-from="notification-planner" data-to="scheduler-jobs" data-kind="background"></span>
+      <span class="edge" data-from="scheduler-jobs" data-to="scheduler-process" data-kind="background"></span>
+      <span class="edge" data-from="scheduler-process" data-to="rabbit-tasks" data-kind="background"></span>
+      <span class="edge" data-from="worker-process" data-to="notification-handler" data-kind="background"></span>
+      <span class="edge" data-from="worker-process" data-to="lifecycle-handler" data-kind="background"></span>
+      <span class="edge" data-from="notification-handler" data-to="telegram-sender" data-kind="background"></span>
+      <span class="edge" data-from="lifecycle-handler" data-to="yclients-read" data-kind="background"></span>
+      <span class="edge" data-from="rabbit-tasks" data-to="dead-letter-queue" data-kind="background"></span>
+      <span class="edge" data-from="dead-letter-queue" data-to="human-escalation" data-kind="background"></span>
+      <span class="edge" data-from="caddy-ingress" data-to="admin-process" data-kind="operations"></span>
+      <span class="edge" data-from="admin-process" data-to="admin-auth" data-kind="operations"></span>
+      <span class="edge" data-from="admin-auth" data-to="admin-session" data-kind="operations"></span>
+      <span class="edge" data-from="admin-session" data-to="admin-rbac-csrf" data-kind="operations"></span>
+      <span class="edge" data-from="admin-rbac-csrf" data-to="admin-features" data-kind="operations"></span>
+      <span class="edge" data-from="admin-features" data-to="admin-audit" data-kind="operations"></span>
+      <span class="edge" data-from="admin-process" data-to="system-metrics" data-kind="operations"></span>
+      <span class="edge" data-from="caddy-ingress" data-to="health-endpoint" data-kind="operations"></span>
+      <span class="edge" data-from="system-metrics" data-to="alert-routing" data-kind="operations"></span>
+      <span class="edge" data-from="backup-verify-restore" data-to="postgres-storage" data-kind="data"></span>
+      <span class="edge" data-from="deploy-gates" data-to="rollback-images" data-kind="operations"></span>
+      <span class="edge" data-from="alembic-migrations" data-to="postgres-storage" data-kind="data"></span>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      const edgeDefinitions = [...document.querySelectorAll('.edge[data-from][data-to]')];
+
+      function connectorPath(sourceRect, targetRect, stageRect) {
+        const sourceCenterX = sourceRect.left + sourceRect.width / 2 - stageRect.left;
+        const sourceCenterY = sourceRect.top + sourceRect.height / 2 - stageRect.top;
+        const targetCenterX = targetRect.left + targetRect.width / 2 - stageRect.left;
+        const targetCenterY = targetRect.top + targetRect.height / 2 - stageRect.top;
+        const mostlyVertical = Math.abs(targetCenterY - sourceCenterY) >= Math.abs(targetCenterX - sourceCenterX);
+
+        if (mostlyVertical) {
+          const direction = targetCenterY >= sourceCenterY ? 1 : -1;
+          const x1 = sourceCenterX;
+          const y1 = sourceCenterY + direction * sourceRect.height / 2;
+          const x2 = targetCenterX;
+          const y2 = targetCenterY - direction * targetRect.height / 2;
+          const middle = y1 + (y2 - y1) / 2;
+          return `M ${x1} ${y1} V ${middle} H ${x2} V ${y2}`;
+        }
+
+        const direction = targetCenterX >= sourceCenterX ? 1 : -1;
+        const x1 = sourceCenterX + direction * sourceRect.width / 2;
+        const y1 = sourceCenterY;
+        const x2 = targetCenterX - direction * targetRect.width / 2;
+        const y2 = targetCenterY;
+        const middle = x1 + (x2 - x1) / 2;
+        return `M ${x1} ${y1} H ${middle} V ${y2} H ${x2}`;
+      }
+
+      function drawConnections() {
+        document.querySelectorAll('.workflow-stage').forEach((stage, stageIndex) => {
+          const svg = stage.querySelector('.connectors');
+          const group = stage.querySelector('.connector-paths');
+          const stageRect = stage.getBoundingClientRect();
+          group.replaceChildren();
+
+          edgeDefinitions.forEach((edge) => {
+            const source = document.getElementById(edge.dataset.from);
+            const target = document.getElementById(edge.dataset.to);
+            if (!source || !target || !stage.contains(source) || !stage.contains(target)) return;
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', connectorPath(source.getBoundingClientRect(), target.getBoundingClientRect(), stageRect));
+            path.setAttribute('class', `connector connector-${edge.dataset.kind}`);
+            path.setAttribute('marker-end', `url(#arrow-primary-${stageIndex + 1})`);
+            group.append(path);
+          });
+
+          svg.setAttribute('viewBox', `0 0 ${stageRect.width} ${stageRect.height}`);
+        });
+      }
+
+      let redrawFrame = 0;
+      const redraw = () => {
+        cancelAnimationFrame(redrawFrame);
+        redrawFrame = requestAnimationFrame(drawConnections);
+      };
+
+      window.addEventListener('resize', redraw);
+      if ('ResizeObserver' in window) {
+        document.querySelectorAll('.workflow-stage').forEach((stage) => {
+          new ResizeObserver(redraw).observe(stage);
+        });
+      }
+      drawConnections();
+    })();
+  </script>
+</body>
+</html>
