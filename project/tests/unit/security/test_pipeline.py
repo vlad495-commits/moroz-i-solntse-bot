@@ -107,7 +107,7 @@ async def test_provider_sees_only_masked_current_input_and_history() -> None:
     current_name = "Анна Иванова"
     current_phone = "+7 999 123-45-67"
     old_email = "old@example.ru"
-    gateway = CapturingGateway(f"Здравствуйте, <PII_NAME_1>")
+    gateway = CapturingGateway("Здравствуйте, <PII_NAME_1>")
 
     result = await pipeline(gateway).respond(
         f"Меня зовут {current_name}, телефон {current_phone}",

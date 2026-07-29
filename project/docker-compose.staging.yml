@@ -30,8 +30,14 @@ services:
     image: "moroz-staging-migrate:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
 
   admin:
-    profiles: ["disabled-in-staging"]
+    image: "moroz-staging-admin:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     ports: !reset []
+    environment:
+      ADMIN_ROOT_PATH: /admin
+      ADMIN_COOKIE_SECURE: "true"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET}
 
   scheduler:
     profiles: ["disabled-in-staging"]
@@ -117,6 +123,8 @@ services:
       - /tmp:exec
     depends_on:
       bot:
+        condition: service_healthy
+      admin:
         condition: service_healthy
       caddy-init:
         condition: service_completed_successfully

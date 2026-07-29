@@ -63,20 +63,80 @@ chmod 600 /opt/moroz-staging/.env
 cd /opt/moroz-staging/project
 export STAGING_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ls
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml config --quiet bot worker migrate postgres redis rabbitmq caddy staging-webhook staging-smoke
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml build bot worker migrate
-docker image inspect --format '{{.Config.User}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
-docker image inspect --format '{{.Id}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml config --quiet bot worker admin migrate postgres redis rabbitmq caddy staging-webhook staging-smoke
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml build bot worker admin migrate
+docker image inspect --format '{{.Config.User}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-admin:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
+docker image inspect --format '{{.Id}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-admin:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
 set -o pipefail
 {
-  docker image inspect --format '{{json .Config.Env}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
+  docker image inspect --format '{{json .Config.Env}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-admin:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
   docker history --no-trunc --format '{{.CreatedBy}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}"
   docker history --no-trunc --format '{{.CreatedBy}}' "moroz-staging-worker:${STAGING_IMAGE_TAG}"
+  docker history --no-trunc --format '{{.CreatedBy}}' "moroz-staging-admin:${STAGING_IMAGE_TAG}"
   docker history --no-trunc --format '{{.CreatedBy}}' "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
 } | docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run -T --rm staging-smoke scan-logs
 ```
 
-Сохранить commit, три image ID/digest и `.Config.User`, но не полный inspect. Пустой/неожиданный user, config failure или build failure — blocker.
+Сохранить commit, четыре image ID/digest и `.Config.User`, но не полный inspect. Пустой/неожиданный user, config failure или build failure — blocker.
+
+### 4.1. Backward compatibility gate
+
+До миграции рабочей staging-базы поднять отдельный Compose project. Сначала
+предыдущий migrate image создаёт прежнюю schema, затем candidate migrate image
+обновляет её до head. После этого предыдущие bot/worker images обязаны стать
+healthy. Изолированный project не использует staging volumes, network или port.
+
+```bash
+cd /opt/moroz-staging/project
+set -eu
+export STAGING_CANDIDATE_IMAGE_TAG="${STAGING_IMAGE_TAG:?candidate tag required}"
+export STAGING_PREVIOUS_IMAGE_TAG='<previous-immutable-tag>'
+case "$STAGING_PREVIOUS_IMAGE_TAG" in
+  '<previous-immutable-tag>') printf '%s\n' 'previous image tag required' >&2; exit 1 ;;
+esac
+compat_project="moroz-staging-compat-${STAGING_CANDIDATE_IMAGE_TAG}"
+compat_bot_port="${STAGING_COMPAT_BOT_PORT:-18082}"
+compatibility_cleanup() {
+  export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
+  STAGING_BOT_PORT="$compat_bot_port" docker compose --env-file ../.env \
+    -p "$compat_project" -f docker-compose.yml -f docker-compose.staging.yml \
+    down -v --remove-orphans >/dev/null 2>&1 || true
+}
+trap compatibility_cleanup EXIT HUP INT TERM
+
+export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
+STAGING_BOT_PORT="$compat_bot_port" docker compose --env-file ../.env \
+  -p "$compat_project" -f docker-compose.yml -f docker-compose.staging.yml \
+  up -d postgres redis rabbitmq
+
+export STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"
+STAGING_BOT_PORT="$compat_bot_port" docker compose --env-file ../.env \
+  -p "$compat_project" -f docker-compose.yml -f docker-compose.staging.yml \
+  --profile migration run --rm migrate alembic upgrade head
+
+export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
+STAGING_BOT_PORT="$compat_bot_port" docker compose --env-file ../.env \
+  -p "$compat_project" -f docker-compose.yml -f docker-compose.staging.yml \
+  --profile migration run --rm migrate alembic upgrade head
+STAGING_BOT_PORT="$compat_bot_port" docker compose --env-file ../.env \
+  -p "$compat_project" -f docker-compose.yml -f docker-compose.staging.yml \
+  --profile migration run --rm migrate alembic current
+
+export STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"
+STAGING_BOT_PORT="$compat_bot_port" docker compose --env-file ../.env \
+  -p "$compat_project" -f docker-compose.yml -f docker-compose.staging.yml \
+  up -d --wait --wait-timeout 120 bot worker
+STAGING_BOT_PORT="$compat_bot_port" docker compose --env-file ../.env \
+  -p "$compat_project" -f docker-compose.yml -f docker-compose.staging.yml \
+  ps --status running bot worker postgres redis rabbitmq
+
+compatibility_cleanup
+trap - EXIT HUP INT TERM
+export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
+```
+
+Любая ошибка предыдущей миграции, candidate upgrade, `alembic current` или
+healthcheck предыдущего bot/worker — blocker. Рабочую staging-базу не мигрировать.
 
 ## 5. Stores и migration
 
@@ -120,9 +180,9 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ```bash
 cd /opt/moroz-staging/project
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --wait --wait-timeout 120 bot worker
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq
-curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --wait --wait-timeout 120 bot worker admin
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker admin postgres redis rabbitmq
+test "$(curl --fail --silent --show-error http://127.0.0.1:18081/healthz)" = '{"status":"ok"}'
 ```
 
 При свободных 80/443 после healthy bot запустить собственный ingress:
@@ -138,6 +198,9 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 ```bash
 set -e
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://${STAGING_DOMAIN}/staging-unrelated-sentinel")" = 404
+test "$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error "https://${STAGING_DOMAIN}/healthz")" = '{"status":"ok"}'
+test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://${STAGING_DOMAIN}/admin/login")" = 200
+test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://${STAGING_DOMAIN}/admin")" = 308
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' "https://${STAGING_DOMAIN}/telegram/webhook")" = 403
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'X-Telegram-Bot-Api-Secret-Token: staging-invalid-sentinel' --data '{}' "https://${STAGING_DOMAIN}/telegram/webhook")" = 403
 ```
@@ -196,6 +259,10 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 ```
 
 Не выводить `webhook_status_json`. Initial `ok:false` допустим только по safe contract выше; после `set` финальный status обязан завершиться успешно. Identity mismatch, неожиданный pending count, `has_last_error:true` или Telegram error — blocker.
+
+Technical smoke завершён. Остановиться и не переходить к live canary, ручным
+сценариям, recovery drills, исправлениям или дополнительным тестам без следующей
+команды пользователя.
 
 ## 9. Consent и live canary
 

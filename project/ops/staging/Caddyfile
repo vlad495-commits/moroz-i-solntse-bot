@@ -16,6 +16,14 @@
 		reverse_proxy bot:8081
 	}
 
+	handle /admin {
+		redir /admin/ 308
+	}
+
+	handle_path /admin/* {
+		reverse_proxy admin:8080
+	}
+
 	handle {
 		respond 404
 	}

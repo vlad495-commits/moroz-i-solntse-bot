@@ -23,7 +23,7 @@ def upgrade() -> None:
         f"ALTER SEQUENCE {SEQUENCE} OWNED BY message_inbox.ingress_sequence"
     )
     op.execute(
-        f"""
+        """
         WITH ordered AS (
             SELECT id, row_number() OVER (ORDER BY created_at, id) AS sequence
             FROM message_inbox

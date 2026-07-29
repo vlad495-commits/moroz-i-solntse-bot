@@ -57,6 +57,7 @@ def test_staging_override_tags_apps_and_never_publishes_stores():
     services = load_staging()["services"]
     assert services["bot"]["image"] == "moroz-staging-bot:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     assert services["worker"]["image"] == "moroz-staging-worker:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
+    assert services["admin"]["image"] == "moroz-staging-admin:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     assert services["yclients-smoke"]["image"] == services["worker"]["image"]
     assert services["migrate"]["image"] == "moroz-staging-migrate:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     assert services["cutover"]["image"] == services["migrate"]["image"]
@@ -67,7 +68,7 @@ def test_staging_override_tags_apps_and_never_publishes_stores():
         assert "ports" not in services.get(name, {})
 
 
-def test_caddy_is_pinned_non_root_and_routes_only_webhook():
+def test_caddy_is_pinned_non_root_and_routes_only_staging_contract():
     compose = load_staging()
     caddy = compose["services"]["caddy"]
     assert caddy["image"] == "caddy:2.11.4"
@@ -89,8 +90,10 @@ def test_caddy_is_pinned_non_root_and_routes_only_webhook():
     assert "path /healthz" in text
     assert "/healthz/*" not in text
     assert "reverse_proxy bot:8081" in text
+    assert "redir /admin/ 308" in text
+    assert "handle_path /admin/*" in text
+    assert "reverse_proxy admin:8080" in text
     assert "respond 404" in text
-    assert "/admin" not in text
     assert "/openapi.json" not in text
 
 
@@ -156,9 +159,10 @@ def test_caddy_storage_is_initialized_before_non_root_start():
         init["command"]
     )
     assert caddy["depends_on"]["caddy-init"]["condition"] == "service_completed_successfully"
+    assert caddy["depends_on"]["admin"]["condition"] == "service_healthy"
 
 
-def test_merged_staging_disables_admin_and_scheduler_and_resets_admin_ports():
+def test_merged_staging_enables_admin_disables_scheduler_and_resets_admin_ports():
     base = load_compose(BASE)["services"]
     override = load_staging()["services"]
     merged = {
@@ -166,9 +170,21 @@ def test_merged_staging_disables_admin_and_scheduler_and_resets_admin_ports():
         for name in base.keys() | override.keys()
     }
 
-    assert merged["admin"]["profiles"] == ["disabled-in-staging"]
+    assert "profiles" not in override["admin"]
     assert merged["scheduler"]["profiles"] == ["disabled-in-staging"]
     assert merged["admin"]["ports"] == []
+    assert override["admin"]["image"] == (
+        "moroz-staging-admin:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
+    )
+    assert override["admin"]["environment"] == {
+        "ADMIN_ROOT_PATH": "/admin",
+        "ADMIN_COOKIE_SECURE": "true",
+        "ADMIN_USERNAME": "${ADMIN_USERNAME:?set ADMIN_USERNAME}",
+        "ADMIN_PASSWORD": "${ADMIN_PASSWORD:?set ADMIN_PASSWORD}",
+        "ADMIN_SESSION_SECRET": (
+            "${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET}"
+        ),
+    }
 
 
 def test_staging_webhook_receives_only_required_environment():
@@ -1011,6 +1027,20 @@ def test_staging_runbook_scans_image_metadata_without_printing_it():
     assert "staging-smoke scan-logs" in configured
 
 
+def test_staging_runbook_proves_previous_images_before_real_migration():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    compatibility = text.index("moroz-staging-compat-")
+    real_migration = text.index("## 5. Stores и migration")
+
+    assert compatibility < real_migration
+    assert "STAGING_PREVIOUS_IMAGE_TAG" in text[:real_migration]
+    assert "alembic upgrade head" in text[compatibility:real_migration]
+    assert "up -d --wait --wait-timeout 120 bot worker" in text[
+        compatibility:real_migration
+    ]
+    assert "down -v --remove-orphans" in text[compatibility:real_migration]
+
+
 def test_staging_runbook_checks_webhook_without_secret_header():
     text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
     https = text.split("## 7. Apps, health и HTTPS", 1)[1].split(
@@ -1025,6 +1055,20 @@ def test_staging_runbook_checks_webhook_without_secret_header():
     assert any("X-Telegram-Bot-Api-Secret-Token" in line for line in webhook_checks)
     assert any("X-Telegram-Bot-Api-Secret-Token" not in line for line in webhook_checks)
     assert all(line.endswith('= 403') for line in webhook_checks)
+
+
+def test_staging_runbook_checks_minimal_health_and_admin_https():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    https = text.split("## 7. Apps, health и HTTPS", 1)[1].split(
+        "## 8. Telegram webhook lifecycle", 1
+    )[0]
+
+    assert '{"status":"ok"}' in https
+    assert "/admin/login" in https
+    assert "/admin\"" in https
+    assert "versions" not in https
+    assert "exceptions" not in https
+    assert "service addresses" not in https
 
 
 def test_staging_runbook_accepts_only_safe_initial_status_mismatch():
@@ -1064,6 +1108,8 @@ def test_staging_runbook_accepts_only_safe_initial_status_mismatch():
         for line in webhook.splitlines()
         if line.lstrip().startswith("printf ")
     } == {blocker_output}
+    assert "technical smoke завершён" in webhook.lower()
+    assert "не переходить к live canary" in webhook.lower()
 
 
 def test_staging_runbook_log_scan_propagates_producer_failure():
