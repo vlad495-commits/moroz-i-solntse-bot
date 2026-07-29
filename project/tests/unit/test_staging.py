@@ -150,7 +150,7 @@ def test_caddy_storage_is_initialized_before_non_root_start():
     assert init["network_mode"] == "none"
     assert init["read_only"] is True
     assert init["cap_drop"] == ["ALL"]
-    assert init["cap_add"] == ["CHOWN"]
+    assert init["cap_add"] == ["CHOWN", "DAC_READ_SEARCH"]
     assert init["security_opt"] == ["no-new-privileges:true"]
     assert "environment" not in init
     assert "ports" not in init

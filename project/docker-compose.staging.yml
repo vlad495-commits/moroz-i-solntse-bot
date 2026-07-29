@@ -77,7 +77,7 @@ services:
     network_mode: none
     read_only: true
     cap_drop: ["ALL"]
-    cap_add: ["CHOWN"]
+    cap_add: ["CHOWN", "DAC_READ_SEARCH"]
     security_opt: ["no-new-privileges:true"]
     entrypoint: ["/bin/sh", "-c"]
     command: ["chown -R 10001:10001 /data/caddy /config/caddy"]
