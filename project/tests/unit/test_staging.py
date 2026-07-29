@@ -90,7 +90,8 @@ def test_caddy_is_pinned_non_root_and_routes_only_staging_contract():
     assert "path /healthz" in text
     assert "/healthz/*" not in text
     assert "reverse_proxy bot:8081" in text
-    assert "redir /admin/ 308" in text
+    assert "redir * /admin/ 308" in text
+    assert "\n\t\tredir /admin/ 308\n" not in text
     assert "handle_path /admin/*" in text
     assert "reverse_proxy admin:8080" in text
     assert "respond 404" in text

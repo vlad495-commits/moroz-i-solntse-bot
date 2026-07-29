@@ -17,7 +17,7 @@
 	}
 
 	handle /admin {
-		redir /admin/ 308
+		redir * /admin/ 308
 	}
 
 	handle_path /admin/* {
