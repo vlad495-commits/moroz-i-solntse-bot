@@ -15,6 +15,7 @@ HTML_PATH = Path(
 )
 
 REQUIRED_SECTIONS = {
+    "internal-platform",
     "message-flow",
     "booking-flow",
     "background-flow",
@@ -24,6 +25,28 @@ REQUIRED_SECTIONS = {
 }
 
 REQUIRED_NODES = {
+    "system-ingress-layer",
+    "system-process-layer",
+    "system-domain-layer",
+    "system-data-layer",
+    "system-external-layer",
+    "rabbitmq-subsystem",
+    "rabbit-tasks-exchange",
+    "rabbit-tasks-queue",
+    "rabbit-consumer-contract",
+    "rabbit-retry-loop",
+    "rabbit-dead-letter-exchange",
+    "rabbit-dead-letter-queue",
+    "postgres-subsystem",
+    "postgres-messaging-tables",
+    "postgres-booking-tables",
+    "postgres-notification-tables",
+    "postgres-admin-eval-tables",
+    "redis-subsystem",
+    "redis-buffer-keys",
+    "redis-context-keys",
+    "redis-control-keys",
+    "redis-alert-keys",
     "telegram-client",
     "telegram-api",
     "caddy-ingress",
@@ -212,6 +235,33 @@ def test_responsive_contract_is_present() -> None:
     assert "drawConnections" in html
     assert "addEventListener('click'" not in html
     assert 'addEventListener("click"' not in html
+
+
+def test_internal_platform_explains_real_infrastructure_contracts() -> None:
+    html, _ = load_visual()
+    for token in (
+        "tasks exchange",
+        "tasks queue",
+        "prefetch 4",
+        "manual ack",
+        "x-retry-count",
+        "retry 1 / 5 / 30",
+        "tasks.dlx",
+        "tasks.dlq",
+        "TTL 30 дней",
+        "message_inbox",
+        "outbound_messages",
+        "task_outbox",
+        "booking_scenarios",
+        "scheduler_jobs",
+        "admin_sessions",
+        "buffer:{chat_id}",
+        "buffer:deadlines",
+        "chat:{chat_id}:messages",
+        "bot:paused",
+        "alert:{code}:{subject}",
+    ):
+        assert token in html
 
 
 def test_desktop_grid_areas_are_rectangular() -> None:

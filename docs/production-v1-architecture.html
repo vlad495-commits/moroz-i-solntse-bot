@@ -182,6 +182,255 @@
       padding: 2.25rem 0 5rem;
     }
 
+    .system-boundary {
+      position: relative;
+      margin: 0 0 2.5rem;
+      padding: clamp(1rem, 3vw, 2rem);
+      border: 2px solid var(--primary);
+      border-radius: 1.35rem;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .boundary-caption {
+      position: absolute;
+      top: -0.78rem;
+      left: 1.5rem;
+      padding: 0.22rem 0.7rem;
+      border-radius: 999px;
+      background: var(--primary);
+      color: var(--primary-foreground);
+      font-size: 0.72rem;
+      font-weight: 750;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .platform-intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 440px);
+      gap: 1rem 2rem;
+      align-items: end;
+      margin: 0.6rem 0 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .platform-intro p {
+      margin: 0;
+      color: var(--muted-foreground);
+    }
+
+    .architecture-layer {
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 0.95rem;
+      background: var(--surface-soft);
+    }
+
+    .layer-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 0.5rem 1rem;
+      margin-bottom: 0.8rem;
+    }
+
+    .layer-header h3 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .layer-header span {
+      color: var(--muted-foreground);
+      font-size: 0.78rem;
+    }
+
+    .layer-connector {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 2.25rem;
+      color: var(--muted-foreground);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .layer-connector::before,
+    .layer-connector::after {
+      content: "";
+      width: 1px;
+      height: 1.1rem;
+      margin: 0 0.65rem;
+      background: var(--border-strong);
+    }
+
+    .topology-grid,
+    .process-topology,
+    .domain-topology,
+    .external-topology {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .topology-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .process-topology {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .domain-topology {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .external-topology {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .topology-card,
+    .module-card,
+    .external-card,
+    .subsystem,
+    .subnode {
+      min-width: 0;
+      padding: 0.72rem;
+      border: 1px solid var(--border);
+      border-radius: 0.72rem;
+      background: var(--surface);
+      overflow-wrap: anywhere;
+    }
+
+    .topology-card strong,
+    .module-card strong,
+    .external-card strong,
+    .subsystem h3,
+    .subnode strong {
+      display: block;
+      margin-bottom: 0.24rem;
+    }
+
+    .topology-card span,
+    .module-card span,
+    .external-card span,
+    .subnode span {
+      color: var(--muted-foreground);
+      font-size: 0.76rem;
+    }
+
+    .topology-card.process {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+    }
+
+    .module-card.security {
+      border-color: var(--background-flow);
+      background: var(--background-soft);
+    }
+
+    .module-card.booking {
+      border-color: var(--booking);
+      background: var(--booking-soft);
+    }
+
+    .module-card.background {
+      border-color: var(--background-flow);
+      background: var(--background-soft);
+    }
+
+    .external-card {
+      border-style: dashed;
+      border-color: var(--border-strong);
+      text-align: center;
+    }
+
+    .subsystem-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+    }
+
+    .subsystem {
+      padding: 0.9rem;
+    }
+
+    .subsystem > p {
+      margin: 0 0 0.8rem;
+      color: var(--muted-foreground);
+      font-size: 0.8rem;
+    }
+
+    .subsystem-rabbit {
+      border: 2px solid var(--background-flow);
+      background: var(--background-soft);
+    }
+
+    .subsystem-postgres {
+      border: 2px solid var(--data);
+      background: var(--data-soft);
+    }
+
+    .subsystem-redis {
+      border: 2px solid var(--booking);
+      background: var(--booking-soft);
+    }
+
+    .subsystem-chain {
+      display: grid;
+      gap: 0.45rem;
+    }
+
+    .subnode {
+      position: relative;
+      background: var(--surface);
+    }
+
+    .subnode + .subnode::before {
+      content: "↓";
+      position: absolute;
+      top: -0.72rem;
+      left: 50%;
+      color: var(--muted-foreground);
+      transform: translateX(-50%);
+    }
+
+    .subnode.retry {
+      border-color: var(--booking);
+      background: var(--booking-soft);
+    }
+
+    .subnode.dlq {
+      border-color: var(--danger);
+      background: var(--danger-soft);
+    }
+
+    .table-groups,
+    .redis-groups {
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    .table-groups code,
+    .redis-groups code {
+      display: inline-block;
+      margin: 0.12rem 0.16rem 0.12rem 0;
+      background: var(--surface);
+    }
+
+    .group-label {
+      display: block;
+      margin-bottom: 0.18rem;
+      color: var(--muted-foreground);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
     .workflow,
     #platform-foundation,
     #post-launch-boundary {
@@ -517,6 +766,10 @@
     .operations-ref-postgres { grid-area: operations-pg; }
 
     @media (max-width: 900px) {
+      .platform-intro { grid-template-columns: 1fr; }
+      .process-topology { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .domain-topology { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .subsystem-grid { grid-template-columns: 1fr; }
       .section-intro { grid-template-columns: 1fr; }
       .workflow-grid {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
@@ -584,6 +837,14 @@
 
     @media (max-width: 720px) {
       main { width: min(100% - 1rem, 1320px); padding-top: 1rem; }
+      .system-boundary { padding: 0.85rem; margin-bottom: 1rem; }
+      .boundary-caption { left: 0.85rem; }
+      .topology-grid,
+      .process-topology,
+      .domain-topology,
+      .external-topology {
+        grid-template-columns: 1fr;
+      }
       .workflow,
       #platform-foundation,
       #post-launch-boundary {
@@ -639,6 +900,253 @@
   </header>
 
   <main id="architecture-shell">
+    <section id="internal-platform" class="system-boundary" aria-labelledby="platform-title">
+      <span class="boundary-caption">Внутри Moroz i Solntse Bot</span>
+      <div class="platform-intro">
+        <div>
+          <p class="section-kicker">Полная внутренняя топология</p>
+          <h2 id="platform-title">Из каких подсистем состоит приложение</h2>
+        </div>
+        <p>В этой границе находятся ingress, пять runtime-процессов, общий Python-код и собственная инфраструктура. Telegram, LLM и YCLIENTS показаны снаружи как внешние API.</p>
+      </div>
+
+      <section id="system-ingress-layer" class="architecture-layer" aria-labelledby="ingress-layer-title">
+        <div class="layer-header">
+          <h3 id="ingress-layer-title">1. Входной слой</h3>
+          <span>единственная публичная точка входа</span>
+        </div>
+        <div class="topology-grid">
+          <article class="topology-card">
+            <strong>DNS + TLS</strong>
+            <span>домен ведёт на Caddy, HTTPS завершается до приложений</span>
+          </article>
+          <article class="topology-card process">
+            <strong>Caddy ingress</strong>
+            <span><code>/telegram/webhook</code> · <code>/admin</code> · <code>/healthz</code></span>
+          </article>
+          <article class="topology-card">
+            <strong>Webhook security</strong>
+            <span>secret header, HTTPS-only, точные route boundaries</span>
+          </article>
+        </div>
+      </section>
+
+      <div class="layer-connector">HTTP внутри Docker network</div>
+
+      <section id="system-process-layer" class="architecture-layer" aria-labelledby="process-layer-title">
+        <div class="layer-header">
+          <h3 id="process-layer-title">2. Runtime-процессы</h3>
+          <span>один репозиторий · пять отдельных контейнерных ролей</span>
+        </div>
+        <div class="process-topology">
+          <article class="topology-card process">
+            <strong>bot</strong>
+            <span>webhook ingress, consent, buffer, task publication, Telegram delivery</span>
+          </article>
+          <article class="topology-card process">
+            <strong>worker</strong>
+            <span>message, booking, notification и lifecycle handlers</span>
+          </article>
+          <article class="topology-card process">
+            <strong>scheduler</strong>
+            <span>читает due jobs из PostgreSQL и публикует их в RabbitMQ</span>
+          </article>
+          <article class="topology-card process">
+            <strong>admin</strong>
+            <span>FastAPI/Jinja2, auth, RBAC, prompts, evals, metrics</span>
+          </article>
+          <article class="topology-card process">
+            <strong>migrate</strong>
+            <span>отдельный Alembic step, runtime не создаёт таблицы</span>
+          </article>
+        </div>
+      </section>
+
+      <div class="layer-connector">импорты общего пакета src/moroz</div>
+
+      <section id="system-domain-layer" class="architecture-layer" aria-labelledby="domain-layer-title">
+        <div class="layer-header">
+          <h3 id="domain-layer-title">3. Доменные модули</h3>
+          <span>модульный монолит без сетевых вызовов между модулями</span>
+        </div>
+        <div class="domain-topology">
+          <article class="module-card">
+            <strong>messaging</strong>
+            <span>ingress, inbox/outbox, buffer, router, Telegram sender</span>
+          </article>
+          <article class="module-card security">
+            <strong>security</strong>
+            <span>consent, PII, guardrails, LLM gateway, validator, eval gate</span>
+          </article>
+          <article class="module-card booking">
+            <strong>booking</strong>
+            <span>state machine, ownership, repository, YCLIENTS adapter</span>
+          </article>
+          <article class="module-card background">
+            <strong>notifications</strong>
+            <span>planner, reminders, feedback, lifecycle, durable jobs</span>
+          </article>
+          <article class="module-card">
+            <strong>escalation</strong>
+            <span>human mode и durable передача нерешённого случая человеку</span>
+          </article>
+          <article class="module-card">
+            <strong>common</strong>
+            <span>config, DB pool, RabbitMQ port, metrics, alerts, observability</span>
+          </article>
+        </div>
+      </section>
+
+      <div class="layer-connector">SQL · Redis commands · AMQP</div>
+
+      <section id="system-data-layer" class="architecture-layer" aria-labelledby="data-layer-title">
+        <div class="layer-header">
+          <h3 id="data-layer-title">4. Внутренние данные и доставка</h3>
+          <span>все три подсистемы входят в развёртывание приложения</span>
+        </div>
+
+        <div class="subsystem-grid">
+          <article id="rabbitmq-subsystem" class="subsystem subsystem-rabbit">
+            <h3>RabbitMQ</h3>
+            <p>Внутренний broker фоновых задач. Он доставляет работу, но не является источником бизнес-состояния.</p>
+            <div class="subsystem-chain">
+              <div id="rabbit-tasks-exchange" class="subnode">
+                <span class="group-label">Publisher</span>
+                <strong>tasks exchange</strong>
+                <span>direct · durable · publisher confirms · persistent message</span>
+              </div>
+              <div id="rabbit-tasks-queue" class="subnode">
+                <span class="group-label">Routing key: tasks</span>
+                <strong>tasks queue</strong>
+                <span>durable queue для message, booking и notification jobs</span>
+              </div>
+              <div id="rabbit-consumer-contract" class="subnode">
+                <span class="group-label">Worker consumer</span>
+                <strong>prefetch 4 · manual ack</strong>
+                <span>ack только после результата либо успешной republish</span>
+              </div>
+              <div id="rabbit-retry-loop" class="subnode retry">
+                <span class="group-label">Header</span>
+                <strong>x-retry-count</strong>
+                <span>retry 1 / 5 / 30 секунд · максимум три повтора</span>
+              </div>
+              <div id="rabbit-dead-letter-exchange" class="subnode dlq">
+                <span class="group-label">После исчерпания retry</span>
+                <strong>tasks.dlx</strong>
+                <span>direct dead-letter exchange · routing key tasks.dlq</span>
+              </div>
+              <div id="rabbit-dead-letter-queue" class="subnode dlq">
+                <span class="group-label">Terminal storage</span>
+                <strong>tasks.dlq</strong>
+                <span>TTL 30 дней · диагностика и ручное решение</span>
+              </div>
+            </div>
+          </article>
+
+          <article id="postgres-subsystem" class="subsystem subsystem-postgres">
+            <h3>PostgreSQL</h3>
+            <p>Единственный источник критичного состояния. Alembic управляет схемой от <code>0001</code> до <code>0009</code>.</p>
+            <div class="table-groups">
+              <div id="postgres-messaging-tables" class="subnode">
+                <span class="group-label">Messaging + privacy</span>
+                <code>messages</code>
+                <code>message_inbox</code>
+                <code>outbound_messages</code>
+                <code>task_outbox</code>
+                <code>processing_consents</code>
+              </div>
+              <div id="postgres-booking-tables" class="subnode">
+                <span class="group-label">YCLIENTS booking</span>
+                <code>booking_scenarios</code>
+                <code>bookings</code>
+                <code>booking_events</code>
+                <span>UUID ownership · advisory locks · current snapshot</span>
+              </div>
+              <div id="postgres-notification-tables" class="subnode">
+                <span class="group-label">Scheduler + human mode</span>
+                <code>scheduler_jobs</code>
+                <code>notification_feedback_requests</code>
+                <code>escalations</code>
+                <code>human_mode</code>
+              </div>
+              <div id="postgres-admin-eval-tables" class="subnode">
+                <span class="group-label">Admin + quality</span>
+                <code>admin_users</code>
+                <code>admin_sessions</code>
+                <code>admin_audit_events</code>
+                <code>prompt_versions</code>
+                <code>eval_cases</code>
+                <code>eval_runs</code>
+                <code>eval_results</code>
+                <code>token_usage</code>
+              </div>
+            </div>
+          </article>
+
+          <article id="redis-subsystem" class="subsystem subsystem-redis">
+            <h3>Redis</h3>
+            <p>Временная память и координация. Потеря Redis ухудшает скорость, но durable данные остаются в PostgreSQL.</p>
+            <div class="redis-groups">
+              <div id="redis-buffer-keys" class="subnode">
+                <span class="group-label">Message buffer</span>
+                <code>buffer:{chat_id}</code>
+                <code>buffer:deadlines</code>
+                <code>lock:buffer:{chat_id}</code>
+                <span>pipeline transaction · TTL · per-chat lock</span>
+              </div>
+              <div id="redis-context-keys" class="subnode">
+                <span class="group-label">Короткая память</span>
+                <code>chat:{chat_id}:messages</code>
+                <span>последние N сообщений · fallback на PostgreSQL</span>
+              </div>
+              <div id="redis-control-keys" class="subnode">
+                <span class="group-label">Runtime control</span>
+                <code>bot:paused</code>
+                <span>глобальная пауза и канал reload системного промпта</span>
+              </div>
+              <div id="redis-alert-keys" class="subnode">
+                <span class="group-label">Alerts</span>
+                <code>alert:{code}:{subject}</code>
+                <span>SET NX + cooldown 300 секунд · safe subject</span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <div class="layer-connector">адаптеры вызывают внешние API</div>
+
+      <section id="system-external-layer" class="architecture-layer" aria-labelledby="external-layer-title">
+        <div class="layer-header">
+          <h3 id="external-layer-title">5. Внешние системы</h3>
+          <span>не входят в Docker-контур и могут деградировать независимо</span>
+        </div>
+        <div class="external-topology">
+          <article class="external-card">
+            <strong>Telegram Bot API</strong>
+            <span>webhook updates и исходящая доставка сообщений</span>
+          </article>
+          <article class="external-card">
+            <strong>Primary / reserve LLM</strong>
+            <span>получают только masked input через единый security gateway</span>
+          </article>
+          <article class="external-card">
+            <strong>YCLIENTS API</strong>
+            <span>источник услуг, слотов, записей и lifecycle status</span>
+          </article>
+        </div>
+      </section>
+
+      <div class="file-strip" aria-label="Основные файлы внутренней платформы">
+        <code>project/docker-compose.yml</code>
+        <code>project/src/moroz/common/queue.py</code>
+        <code>project/src/moroz/messaging/</code>
+        <code>project/src/moroz/booking/</code>
+        <code>project/src/moroz/notifications/</code>
+        <code>project/migrations/versions/</code>
+      </div>
+    </section>
+
     <section id="message-flow" class="workflow" aria-labelledby="message-title">
       <div class="section-intro">
         <div>
