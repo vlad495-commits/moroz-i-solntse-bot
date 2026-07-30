@@ -189,6 +189,10 @@ services:
       INPUT_TOO_LONG_REPLY: ${INPUT_TOO_LONG_REPLY:-Сообщение слишком длинное. Сократите его, пожалуйста (лимит {limit} символов).}
       START_REPLY: ${START_REPLY:-Привет! Я ИИ-ассистент. Задайте свой вопрос текстом, и я постараюсь помочь.}
       NON_TEXT_REPLY: ${NON_TEXT_REPLY:-Я понимаю только текстовые сообщения. Напишите ваш вопрос текстом, пожалуйста.}
+      POLICY_URL: ${POLICY_URL:-https://example.com/privacy}
+      CONSENT_PROMPT: ${CONSENT_PROMPT:-}
+      CONSENT_BUTTON_TEXT: ${CONSENT_BUTTON_TEXT:-Согласен на обработку ПД}
+      CONSENT_THANKS: ${CONSENT_THANKS:-Спасибо! Теперь я могу ответить на ваш вопрос.}
       LOG_FILE: ${LOG_FILE:-/app/logs/bot.log}
       LOG_FILE_MAX_BYTES: ${LOG_FILE_MAX_BYTES:-10485760}
       LOG_FILE_BACKUPS: ${LOG_FILE_BACKUPS:-5}

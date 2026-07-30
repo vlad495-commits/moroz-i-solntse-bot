@@ -56,6 +56,18 @@ NON_TEXT_REPLY = os.getenv(
     "NON_TEXT_REPLY",
     "Я понимаю только текстовые сообщения. Напишите ваш вопрос текстом, пожалуйста.",
 )
+POLICY_URL = os.getenv("POLICY_URL", "https://example.com/privacy")
+CONSENT_PROMPT = os.getenv("CONSENT_PROMPT") or (
+    "Чтобы я мог ответить и помочь с записью, подтвердите согласие "
+    "на обработку персональных данных.\n\n"
+    f"Политика конфиденциальности: {POLICY_URL}"
+)
+CONSENT_BUTTON_TEXT = (
+    os.getenv("CONSENT_BUTTON_TEXT") or "Согласен на обработку ПД"
+)
+CONSENT_THANKS = os.getenv("CONSENT_THANKS") or (
+    "Спасибо! Теперь я могу ответить на ваш вопрос."
+)
 
 # --- Логирование ---
 LOG_FILE = os.getenv("LOG_FILE", "/app/logs/bot.log")

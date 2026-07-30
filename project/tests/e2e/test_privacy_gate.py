@@ -29,7 +29,13 @@ pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
 
 CONSENT_CALLBACK_DATA = "processing_consent:v1"
-CONSENT_PROMPT = "Чтобы продолжить, подтвердите обработку данных."
+CONSENT_PROMPT = (
+    "Чтобы я мог ответить и помочь с записью, подтвердите согласие "
+    "на обработку персональных данных.\n\n"
+    "Политика конфиденциальности: https://example.com/privacy"
+)
+CONSENT_BUTTON_TEXT = "Согласен на обработку ПД"
+CONSENT_THANKS = "Спасибо! Теперь я могу ответить на ваш вопрос."
 WEBHOOK_SECRET = "test-webhook-secret"
 
 
@@ -233,10 +239,16 @@ async def test_message_without_consent_is_not_persisted(
         .callback_data
         == CONSENT_CALLBACK_DATA
     )
+    assert (
+        fake_telegram.sent_messages[-1]["reply_markup"]
+        .inline_keyboard[0][0]
+        .text
+        == CONSENT_BUTTON_TEXT
+    )
 
 
 async def test_consent_callback_persists_only_versioned_consent(
-    client, db
+    client, db, fake_telegram
 ):
     response = await client.post(
         "/telegram/webhook",
@@ -253,6 +265,7 @@ async def test_consent_callback_persists_only_versioned_consent(
     assert tuple(consent.values())[:3] == ("telegram", "7", "v1")
     assert isinstance(consent["granted_at"], datetime)
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert fake_telegram.last_text == CONSENT_THANKS
 
 
 async def test_group_messages_and_callbacks_are_ignored_before_any_durable_work(
@@ -422,12 +435,15 @@ async def test_overlength_reply_is_durable_after_consent_without_persisting_text
 
     assert first.status_code == duplicate.status_code == 200
     assert [message["text"] for message in fake_telegram.sent_messages] == [
+        CONSENT_THANKS,
         INPUT_TOO_LONG_REPLY.format(limit=MAX_INPUT_LENGTH)
     ]
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
-    assert await db.fetchval(
-        "SELECT idempotency_key FROM outbound_messages"
-    ) == "telegram:too_long:914"
+    keys = await db.fetch("SELECT idempotency_key FROM outbound_messages")
+    assert sorted(row["idempotency_key"] for row in keys) == [
+        "telegram:consent_thanks:913",
+        "telegram:too_long:914",
+    ]
 
 
 async def test_duplicate_no_consent_update_sends_one_durable_prompt(
@@ -616,7 +632,7 @@ async def test_claimed_consent_outbound_rebuilds_keyboard_from_database(
             "inline_keyboard": [
                 [
                     {
-                        "text": "Подтвердить",
+                        "text": CONSENT_BUTTON_TEXT,
                         "callback_data": CONSENT_CALLBACK_DATA,
                     }
                 ]
@@ -652,7 +668,7 @@ async def test_claimed_consent_outbound_rebuilds_keyboard_from_database(
         outbound_id,
     )
     assert claimed.delivery_options["reply_markup"]["inline_keyboard"][0][0] == {
-        "text": "Подтвердить",
+        "text": CONSENT_BUTTON_TEXT,
         "callback_data": CONSENT_CALLBACK_DATA,
     }
     assert isinstance(markup, InlineKeyboardMarkup)

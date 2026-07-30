@@ -14,6 +14,9 @@ from redis.exceptions import RedisError
 from config import (
     BOT_PAUSE_KEY,
     BOT_PAUSED_REPLY,
+    CONSENT_BUTTON_TEXT,
+    CONSENT_PROMPT,
+    CONSENT_THANKS,
     DATABASE_URL,
     INPUT_TOO_LONG_REPLY,
     MAX_INPUT_LENGTH,
@@ -39,12 +42,11 @@ from moroz.security.consent import (
 CONSENT_CALLBACK_DATA = f"processing_consent:{PROCESSING_CONSENT_VERSION}"
 HEALTH_TIMEOUT_SECONDS = 2.0
 logger = logging.getLogger(__name__)
-CONSENT_PROMPT = "Чтобы продолжить, подтвердите обработку данных."
 CONSENT_KEYBOARD = InlineKeyboardMarkup(
     inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="Подтвердить",
+                text=CONSENT_BUTTON_TEXT,
                 callback_data=CONSENT_CALLBACK_DATA,
             )
         ]
@@ -171,6 +173,12 @@ def create_app(
                     "telegram",
                     str(callback.from_user.id),
                     PROCESSING_CONSENT_VERSION,
+                )
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=callback.message.chat.id,
+                    text=CONSENT_THANKS,
+                    reply_kind="consent_thanks",
                 )
             return Response(status_code=200)
 
