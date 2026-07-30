@@ -201,6 +201,8 @@ test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null
 test "$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error "https://${STAGING_DOMAIN}/healthz")" = '{"status":"ok"}'
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://${STAGING_DOMAIN}/admin/login")" = 200
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://${STAGING_DOMAIN}/admin")" = 308
+test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code} %{content_type}' "https://${STAGING_DOMAIN}/admin/static/styles.css")" = "200 text/css; charset=utf-8"
+test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code} %{content_type}' "https://${STAGING_DOMAIN}/admin/static/moroz-solntse-logo.png")" = "200 image/png"
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' "https://${STAGING_DOMAIN}/telegram/webhook")" = 403
 test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /dev/null --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'X-Telegram-Bot-Api-Secret-Token: staging-invalid-sentinel' --data '{}' "https://${STAGING_DOMAIN}/telegram/webhook")" = 403
 ```

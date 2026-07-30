@@ -92,7 +92,8 @@ def test_caddy_is_pinned_non_root_and_routes_only_staging_contract():
     assert "reverse_proxy bot:8081" in text
     assert "redir * /admin/ 308" in text
     assert "\n\t\tredir /admin/ 308\n" not in text
-    assert "handle_path /admin/*" in text
+    assert "handle /admin/*" in text
+    assert "handle_path /admin/*" not in text
     assert "reverse_proxy admin:8080" in text
     assert "respond 404" in text
     assert "/openapi.json" not in text
@@ -1067,6 +1068,10 @@ def test_staging_runbook_checks_minimal_health_and_admin_https():
     assert '{"status":"ok"}' in https
     assert "/admin/login" in https
     assert "/admin\"" in https
+    assert "/admin/static/styles.css" in https
+    assert "text/css" in https
+    assert "/admin/static/moroz-solntse-logo.png" in https
+    assert "image/png" in https
     assert "versions" not in https
     assert "exceptions" not in https
     assert "service addresses" not in https
