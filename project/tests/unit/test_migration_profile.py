@@ -153,6 +153,15 @@ def test_compose_process_environment_overrides_external_test_credentials():
     assert services["bot"]["environment"]["TELEGRAM_MODE"] == (
         "${TELEGRAM_MODE:-webhook}"
     )
+    assert "POLICY_URL" in services["bot"]["environment"]
+    assert {
+        "CONSENT_PROMPT",
+        "CONSENT_PII_LABEL",
+        "CONSENT_ADS_LABEL",
+        "CONSENT_DONE_LABEL",
+        "CONSENT_NEED_PII_REPLY",
+        "CONSENT_THANKS",
+    }.isdisjoint(services["bot"]["environment"])
     for name in ("bot", "worker"):
         assert "redis" not in services[name]["depends_on"]
 
