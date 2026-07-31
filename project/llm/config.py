@@ -58,12 +58,17 @@ NON_TEXT_REPLY = os.getenv(
 )
 POLICY_URL = os.getenv("POLICY_URL", "https://example.com/privacy")
 CONSENT_PROMPT = os.getenv("CONSENT_PROMPT") or (
-    "Чтобы я мог ответить и помочь с записью, подтвердите согласие "
-    "на обработку персональных данных.\n\n"
-    f"Политика конфиденциальности: {POLICY_URL}"
+    "Чтобы начать, отметьте согласия и нажмите «Готово»\n\n"
+    "1) Согласен с политикой конфиденциальности\n"
+    "2) Хочу получать в этом боте сообщения об акциях, новостях и "
+    "специальных предложениях (включая рекламные)\n\n"
+    '<a href="{policy_url}">Политика конфиденциальности</a>'
 )
-CONSENT_BUTTON_TEXT = (
-    os.getenv("CONSENT_BUTTON_TEXT") or "Согласен на обработку ПД"
+CONSENT_PII_LABEL = os.getenv("CONSENT_PII_LABEL") or "Согласен с политикой"
+CONSENT_ADS_LABEL = os.getenv("CONSENT_ADS_LABEL") or "Согласен на рассылку"
+CONSENT_DONE_LABEL = os.getenv("CONSENT_DONE_LABEL") or "Готово"
+CONSENT_NEED_PII_REPLY = os.getenv("CONSENT_NEED_PII_REPLY") or (
+    "Без согласия с политикой продолжить не получится"
 )
 CONSENT_THANKS = os.getenv("CONSENT_THANKS") or (
     "Спасибо! Теперь я могу ответить на ваш вопрос."

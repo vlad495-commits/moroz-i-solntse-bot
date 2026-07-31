@@ -28,13 +28,20 @@ from webhook import create_app
 pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
 
-CONSENT_CALLBACK_DATA = "processing_consent:v1"
+CONSENT_PII_CALLBACK_DATA = "consent:t:pii"
+CONSENT_ADS_CALLBACK_DATA = "consent:t:ads"
+CONSENT_DONE_CALLBACK_DATA = "consent:done"
 CONSENT_PROMPT = (
-    "Чтобы я мог ответить и помочь с записью, подтвердите согласие "
-    "на обработку персональных данных.\n\n"
-    "Политика конфиденциальности: https://example.com/privacy"
+    "Чтобы начать, отметьте согласия и нажмите «Готово»\n\n"
+    "1) Согласен с политикой конфиденциальности\n"
+    "2) Хочу получать в этом боте сообщения об акциях, новостях и "
+    "специальных предложениях (включая рекламные)\n\n"
+    '<a href="https://example.com/privacy">Политика конфиденциальности</a>'
 )
-CONSENT_BUTTON_TEXT = "Согласен на обработку ПД"
+CONSENT_PII_LABEL = "Согласен с политикой"
+CONSENT_ADS_LABEL = "Согласен на рассылку"
+CONSENT_DONE_LABEL = "Готово"
+CONSENT_NEED_PII_REPLY = "Без согласия с политикой продолжить не получится"
 CONSENT_THANKS = "Спасибо! Теперь я могу ответить на ваш вопрос."
 WEBHOOK_SECRET = "test-webhook-secret"
 
@@ -51,6 +58,7 @@ class FakeTelegram:
     def __init__(self):
         self.session = FakeSession()
         self.sent_messages = []
+        self.edited_reply_markups = []
         self.send_error = None
 
     @property
@@ -62,6 +70,10 @@ class FakeTelegram:
         if self.send_error:
             raise self.send_error
         return SimpleNamespace(message_id=700 + len(self.sent_messages))
+
+    async def edit_message_reply_markup(self, **kwargs):
+        self.edited_reply_markups.append(kwargs)
+        return True
 
 
 def telegram_text_update(
@@ -94,6 +106,7 @@ def telegram_consent_callback(
     chat_id=42,
     chat_type="private",
     user_id=7,
+    data=CONSENT_DONE_CALLBACK_DATA,
 ):
     return {
         "update_id": update_id,
@@ -105,7 +118,7 @@ def telegram_consent_callback(
                 "first_name": "Тест",
             },
             "chat_instance": "test-chat",
-            "data": CONSENT_CALLBACK_DATA,
+            "data": data,
             "message": {
                 "message_id": 99,
                 "date": 1_768_478_400,
@@ -191,6 +204,30 @@ async def client(migrated_database_url, fake_telegram, redis_client):
     assert fake_telegram.session.closed is True
 
 
+async def grant_policy_consent(client, *, user_id=7, chat_id=42, update_id=901):
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=update_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                data=CONSENT_PII_CALLBACK_DATA,
+            ),
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=update_id + 1,
+                chat_id=chat_id,
+                user_id=user_id,
+            ),
+        )
+    ).status_code == 200
+
+
 async def test_webhook_rejects_missing_or_wrong_secret_before_json_parsing(
     migrated_database_url, fake_telegram
 ):
@@ -233,21 +270,16 @@ async def test_message_without_consent_is_not_persisted(
         "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
     ) == 0
     assert fake_telegram.last_text == CONSENT_PROMPT
-    assert (
-        fake_telegram.sent_messages[-1]["reply_markup"]
-        .inline_keyboard[0][0]
-        .callback_data
-        == CONSENT_CALLBACK_DATA
-    )
-    assert (
-        fake_telegram.sent_messages[-1]["reply_markup"]
-        .inline_keyboard[0][0]
-        .text
-        == CONSENT_BUTTON_TEXT
-    )
+    assert fake_telegram.sent_messages[-1]["parse_mode"] == "HTML"
+    keyboard = fake_telegram.sent_messages[-1]["reply_markup"].inline_keyboard
+    assert [(row[0].text, row[0].callback_data) for row in keyboard] == [
+        (f"☐ {CONSENT_PII_LABEL}", CONSENT_PII_CALLBACK_DATA),
+        (f"☐ {CONSENT_ADS_LABEL}", CONSENT_ADS_CALLBACK_DATA),
+        (CONSENT_DONE_LABEL, CONSENT_DONE_CALLBACK_DATA),
+    ]
 
 
-async def test_consent_callback_persists_only_versioned_consent(
+async def test_consent_done_without_policy_refuses_and_keeps_gate(
     client, db, fake_telegram
 ):
     response = await client.post(
@@ -255,13 +287,40 @@ async def test_consent_callback_persists_only_versioned_consent(
         json=telegram_consent_callback(),
     )
 
+    assert response.status_code == 200
+    assert await db.fetchval("SELECT count(*) FROM processing_consents") == 0
+    assert fake_telegram.last_text == CONSENT_NEED_PII_REPLY
+
+
+async def test_consent_checkbox_toggles_markup_without_persisting(
+    client, db, fake_telegram
+):
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_consent_callback(data=CONSENT_PII_CALLBACK_DATA),
+    )
+
+    assert response.status_code == 200
+    assert await db.fetchval("SELECT count(*) FROM processing_consents") == 0
+    keyboard = fake_telegram.edited_reply_markups[-1]["reply_markup"].inline_keyboard
+    assert [(row[0].text, row[0].callback_data) for row in keyboard] == [
+        (f"☑ {CONSENT_PII_LABEL}", CONSENT_PII_CALLBACK_DATA),
+        (f"☐ {CONSENT_ADS_LABEL}", CONSENT_ADS_CALLBACK_DATA),
+        (CONSENT_DONE_LABEL, CONSENT_DONE_CALLBACK_DATA),
+    ]
+
+
+async def test_checked_policy_done_persists_only_versioned_consent(
+    client, db, fake_telegram
+):
+    await grant_policy_consent(client, update_id=901)
+
     consent = await db.fetchrow(
         """
         SELECT channel, user_id, consent_version, granted_at
         FROM processing_consents
         """
     )
-    assert response.status_code == 200
     assert tuple(consent.values())[:3] == ("telegram", "7", "v1")
     assert isinstance(consent["granted_at"], datetime)
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
@@ -312,13 +371,8 @@ async def test_group_messages_and_callbacks_are_ignored_before_any_durable_work(
 async def test_consented_update_is_persisted_once_by_update_id(
     client, db, redis_client
 ):
-    assert (
-        await client.post(
-            "/telegram/webhook",
-            json=telegram_consent_callback(),
-        )
-    ).status_code == 200
-    update = telegram_text_update("Можно сохранить", update_id=902)
+    await grant_policy_consent(client)
+    update = telegram_text_update("Можно сохранить", update_id=903)
 
     first = await client.post("/telegram/webhook", json=update)
     duplicate = await client.post("/telegram/webhook", json=update)
@@ -331,10 +385,10 @@ async def test_consented_update_is_persisted_once_by_update_id(
     )
     assert first.status_code == duplicate.status_code == 200
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 1
-    assert tuple(message.values())[:3] == ("telegram", "902", "42")
+    assert tuple(message.values())[:3] == ("telegram", "903", "42")
     assert json.loads(message["payload"])["text"] == "Можно сохранить"
     entries = await redis_client.lrange("buffer:42", 0, -1)
-    assert [json.loads(entry)["update_id"] for entry in entries] == ["902"]
+    assert [json.loads(entry)["update_id"] for entry in entries] == ["903"]
     assert await db.fetchval(
         "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
     ) == 0
@@ -343,6 +397,12 @@ async def test_consented_update_is_persisted_once_by_update_id(
 async def test_redis_failure_after_consent_creates_single_message_task(
     migrated_database_url, db, fake_telegram
 ):
+    await db.execute(
+        """
+        INSERT INTO processing_consents (channel, user_id, consent_version)
+        VALUES ('telegram', '7', 'v1')
+        """
+    )
     app = create_app(
         database_url=migrated_database_url,
         bot=fake_telegram,
@@ -355,12 +415,6 @@ async def test_redis_failure_after_consent_creates_single_message_task(
             base_url="http://test",
             headers={"X-Telegram-Bot-Api-Secret-Token": WEBHOOK_SECRET},
         ) as http_client:
-            assert (
-                await http_client.post(
-                    "/telegram/webhook",
-                    json=telegram_consent_callback(update_id=909),
-                )
-            ).status_code == 200
             assert (
                 await http_client.post(
                     "/telegram/webhook",
@@ -422,13 +476,8 @@ async def test_paused_reply_is_durable_and_precedes_consent(
 async def test_overlength_reply_is_durable_after_consent_without_persisting_text(
     client, db, fake_telegram
 ):
-    assert (
-        await client.post(
-            "/telegram/webhook",
-            json=telegram_consent_callback(update_id=913),
-        )
-    ).status_code == 200
-    update = telegram_text_update("я" * (MAX_INPUT_LENGTH + 1), update_id=914)
+    await grant_policy_consent(client, update_id=913)
+    update = telegram_text_update("я" * (MAX_INPUT_LENGTH + 1), update_id=915)
 
     first = await client.post("/telegram/webhook", json=update)
     duplicate = await client.post("/telegram/webhook", json=update)
@@ -441,8 +490,8 @@ async def test_overlength_reply_is_durable_after_consent_without_persisting_text
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
     keys = await db.fetch("SELECT idempotency_key FROM outbound_messages")
     assert sorted(row["idempotency_key"] for row in keys) == [
-        "telegram:consent_thanks:913",
-        "telegram:too_long:914",
+        "telegram:consent_thanks:914",
+        "telegram:too_long:915",
     ]
 
 
@@ -632,8 +681,20 @@ async def test_claimed_consent_outbound_rebuilds_keyboard_from_database(
             "inline_keyboard": [
                 [
                     {
-                        "text": CONSENT_BUTTON_TEXT,
-                        "callback_data": CONSENT_CALLBACK_DATA,
+                        "text": f"☐ {CONSENT_PII_LABEL}",
+                        "callback_data": CONSENT_PII_CALLBACK_DATA,
+                    }
+                ],
+                [
+                    {
+                        "text": f"☐ {CONSENT_ADS_LABEL}",
+                        "callback_data": CONSENT_ADS_CALLBACK_DATA,
+                    }
+                ],
+                [
+                    {
+                        "text": CONSENT_DONE_LABEL,
+                        "callback_data": CONSENT_DONE_CALLBACK_DATA,
                     }
                 ]
             ]
@@ -667,12 +728,13 @@ async def test_claimed_consent_outbound_rebuilds_keyboard_from_database(
         "SELECT delivery_options FROM outbound_messages WHERE id = $1",
         outbound_id,
     )
-    assert claimed.delivery_options["reply_markup"]["inline_keyboard"][0][0] == {
-        "text": CONSENT_BUTTON_TEXT,
-        "callback_data": CONSENT_CALLBACK_DATA,
-    }
+    assert claimed.delivery_options["reply_markup"]["inline_keyboard"] == [
+        [{"text": f"☐ {CONSENT_PII_LABEL}", "callback_data": CONSENT_PII_CALLBACK_DATA}],
+        [{"text": f"☐ {CONSENT_ADS_LABEL}", "callback_data": CONSENT_ADS_CALLBACK_DATA}],
+        [{"text": CONSENT_DONE_LABEL, "callback_data": CONSENT_DONE_CALLBACK_DATA}],
+    ]
     assert isinstance(markup, InlineKeyboardMarkup)
-    assert markup.inline_keyboard[0][0].callback_data == CONSENT_CALLBACK_DATA
+    assert markup.inline_keyboard[0][0].callback_data == CONSENT_PII_CALLBACK_DATA
     assert json.loads(stored_options) == claimed.delivery_options
     assert await db.fetchval(
         "SELECT status FROM outbound_messages WHERE id = $1", outbound_id

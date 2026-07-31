@@ -191,7 +191,10 @@ services:
       NON_TEXT_REPLY: ${NON_TEXT_REPLY:-Я понимаю только текстовые сообщения. Напишите ваш вопрос текстом, пожалуйста.}
       POLICY_URL: ${POLICY_URL:-https://example.com/privacy}
       CONSENT_PROMPT: ${CONSENT_PROMPT:-}
-      CONSENT_BUTTON_TEXT: ${CONSENT_BUTTON_TEXT:-Согласен на обработку ПД}
+      CONSENT_PII_LABEL: ${CONSENT_PII_LABEL:-Согласен с политикой}
+      CONSENT_ADS_LABEL: ${CONSENT_ADS_LABEL:-Согласен на рассылку}
+      CONSENT_DONE_LABEL: ${CONSENT_DONE_LABEL:-Готово}
+      CONSENT_NEED_PII_REPLY: ${CONSENT_NEED_PII_REPLY:-Без согласия с политикой продолжить не получится}
       CONSENT_THANKS: ${CONSENT_THANKS:-Спасибо! Теперь я могу ответить на ваш вопрос.}
       LOG_FILE: ${LOG_FILE:-/app/logs/bot.log}
       LOG_FILE_MAX_BYTES: ${LOG_FILE_MAX_BYTES:-10485760}

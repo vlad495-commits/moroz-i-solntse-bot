@@ -34,6 +34,9 @@ async def deliver_claimed_outbound(
             send_arguments["reply_markup"] = (
                 InlineKeyboardMarkup.model_validate(reply_markup)
             )
+        parse_mode = outbound.delivery_options.get("parse_mode")
+        if parse_mode is not None:
+            send_arguments["parse_mode"] = str(parse_mode)
         sent_message = await telegram.send_message(**send_arguments)
     except asyncio.CancelledError:
         await repository.mark_outbound_delivery_unknown(outbound.id)

@@ -14,13 +14,17 @@ from redis.exceptions import RedisError
 from config import (
     BOT_PAUSE_KEY,
     BOT_PAUSED_REPLY,
-    CONSENT_BUTTON_TEXT,
+    CONSENT_ADS_LABEL,
+    CONSENT_DONE_LABEL,
+    CONSENT_NEED_PII_REPLY,
+    CONSENT_PII_LABEL,
     CONSENT_PROMPT,
     CONSENT_THANKS,
     DATABASE_URL,
     INPUT_TOO_LONG_REPLY,
     MAX_INPUT_LENGTH,
     NON_TEXT_REPLY,
+    POLICY_URL,
     REDIS_URL,
     START_REPLY,
     TELEGRAM_BOT_TOKEN,
@@ -39,19 +43,47 @@ from moroz.security.consent import (
 )
 
 
-CONSENT_CALLBACK_DATA = f"processing_consent:{PROCESSING_CONSENT_VERSION}"
+CONSENT_PII_CALLBACK_DATA = "consent:t:pii"
+CONSENT_ADS_CALLBACK_DATA = "consent:t:ads"
+CONSENT_DONE_CALLBACK_DATA = "consent:done"
 HEALTH_TIMEOUT_SECONDS = 2.0
 logger = logging.getLogger(__name__)
-CONSENT_KEYBOARD = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text=CONSENT_BUTTON_TEXT,
-                callback_data=CONSENT_CALLBACK_DATA,
-            )
+
+
+def _consent_state_key(chat_id: int, user_id: int) -> str:
+    return f"consent:state:telegram:{chat_id}:{user_id}"
+
+
+def _consent_keyboard(checked: set[str] | None = None) -> InlineKeyboardMarkup:
+    checked = checked or set()
+    pii_box = "☑" if "pii" in checked else "☐"
+    ads_box = "☑" if "ads" in checked else "☐"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"{pii_box} {CONSENT_PII_LABEL}",
+                    callback_data=CONSENT_PII_CALLBACK_DATA,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"{ads_box} {CONSENT_ADS_LABEL}",
+                    callback_data=CONSENT_ADS_CALLBACK_DATA,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=CONSENT_DONE_LABEL,
+                    callback_data=CONSENT_DONE_CALLBACK_DATA,
+                )
+            ],
         ]
-    ]
-)
+    )
+
+
+def _consent_prompt() -> str:
+    return CONSENT_PROMPT.replace("{policy_url}", POLICY_URL)
 
 
 def create_app(
@@ -147,6 +179,19 @@ def create_app(
             outbound,
         )
 
+    async def consent_checked(chat_id: int, user_id: int) -> set[str]:
+        raw = await webhook_app.state.redis.get(_consent_state_key(chat_id, user_id))
+        return {item for item in (raw or "").split(",") if item}
+
+    async def save_consent_checked(
+        chat_id: int, user_id: int, checked: set[str]
+    ) -> None:
+        await webhook_app.state.redis.set(
+            _consent_state_key(chat_id, user_id),
+            ",".join(sorted(checked)),
+            ex=3600,
+        )
+
     @webhook_app.post("/telegram/webhook")
     async def telegram_webhook(request: Request) -> Response:
         supplied_secret = request.headers.get(
@@ -168,11 +213,50 @@ def create_app(
                 or callback.message.chat.type != ChatType.PRIVATE
             ):
                 return Response(status_code=200)
-            if callback.data == CONSENT_CALLBACK_DATA:
+            if callback.data in (CONSENT_PII_CALLBACK_DATA, CONSENT_ADS_CALLBACK_DATA):
+                kind = "pii" if callback.data == CONSENT_PII_CALLBACK_DATA else "ads"
+                checked = await consent_checked(
+                    callback.message.chat.id,
+                    callback.from_user.id,
+                )
+                if kind in checked:
+                    checked.remove(kind)
+                else:
+                    checked.add(kind)
+                await save_consent_checked(
+                    callback.message.chat.id,
+                    callback.from_user.id,
+                    checked,
+                )
+                await telegram.edit_message_reply_markup(
+                    chat_id=callback.message.chat.id,
+                    message_id=callback.message.message_id,
+                    reply_markup=_consent_keyboard(checked),
+                )
+                return Response(status_code=200)
+            if callback.data == CONSENT_DONE_CALLBACK_DATA:
+                checked = await consent_checked(
+                    callback.message.chat.id,
+                    callback.from_user.id,
+                )
+                if "pii" not in checked:
+                    await send_static_reply(
+                        update_id=update.update_id,
+                        chat_id=callback.message.chat.id,
+                        text=CONSENT_NEED_PII_REPLY,
+                        reply_kind="consent_need_pii",
+                    )
+                    return Response(status_code=200)
                 await webhook_app.state.consent_service.grant_processing_consent(
                     "telegram",
                     str(callback.from_user.id),
                     PROCESSING_CONSENT_VERSION,
+                )
+                await webhook_app.state.redis.delete(
+                    _consent_state_key(
+                        callback.message.chat.id,
+                        callback.from_user.id,
+                    )
                 )
                 await send_static_reply(
                     update_id=update.update_id,
@@ -235,10 +319,13 @@ def create_app(
                 await send_static_reply(
                     update_id=update.update_id,
                     chat_id=message.chat.id,
-                    text=CONSENT_PROMPT,
+                    text=_consent_prompt(),
                     reply_kind="consent_prompt",
                     delivery_options={
-                        "reply_markup": CONSENT_KEYBOARD.model_dump(mode="json")
+                        "parse_mode": "HTML",
+                        "reply_markup": _consent_keyboard().model_dump(
+                            mode="json"
+                        ),
                     },
                 )
             return Response(status_code=200)
