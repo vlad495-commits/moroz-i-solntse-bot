@@ -1,4 +1,5 @@
 # Changelog
+[2026-07-31 12:39] Серверный контур очищен от старого prototype checkout: `/opt/moroz-i-solntse-bot` заархивирован в `/root/moroz-server-archive/moroz-i-solntse-bot-20260731-123827.tar.gz` и удалён из активного `/opt`; единственный активный Compose project на VPS — `moroz-staging`. Локальный `.env` переведён на staging-бота `@moroz_solntse_staging_bot` и путь `/opt/moroz-staging`.
 [2026-07-30 15:29] Перенесён consent-flow по образцу Lucky Hair Studio: Telegram privacy gate получил понятный текст согласия на обработку ПД, кнопку `Согласен на обработку ПД`, сообщение благодарности после callback, env-настройки и e2e-regression `18 passed`.
 [2026-07-30 15:15] Проведён read-only аудит внешнего референса Lucky Hair Studio Bot из `D:\Downloads\Telegram Desktop\llm чат бот от Володи` и файла `архитектура-проекта-полная.html`; код проекта не изменялся.
 [2026-07-27 16:55] Task 1 YCLIENTS lifecycle 0008: added RED tests for provider mapping, mock duration, repository round-trip, and migration downgrade normalization; no provider requests were made.
