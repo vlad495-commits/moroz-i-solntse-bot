@@ -59,6 +59,7 @@ class FakeTelegram:
         self.session = FakeSession()
         self.sent_messages = []
         self.edited_reply_markups = []
+        self.chat_actions = []
         self.send_error = None
 
     @property
@@ -73,6 +74,10 @@ class FakeTelegram:
 
     async def edit_message_reply_markup(self, **kwargs):
         self.edited_reply_markups.append(kwargs)
+        return True
+
+    async def send_chat_action(self, **kwargs):
+        self.chat_actions.append(kwargs)
         return True
 
 
@@ -369,7 +374,7 @@ async def test_group_messages_and_callbacks_are_ignored_before_any_durable_work(
 
 
 async def test_consented_update_is_persisted_once_by_update_id(
-    client, db, redis_client
+    client, db, redis_client, fake_telegram
 ):
     await grant_policy_consent(client)
     update = telegram_text_update("Можно сохранить", update_id=903)
@@ -389,6 +394,7 @@ async def test_consented_update_is_persisted_once_by_update_id(
     assert json.loads(message["payload"])["text"] == "Можно сохранить"
     entries = await redis_client.lrange("buffer:42", 0, -1)
     assert [json.loads(entry)["update_id"] for entry in entries] == ["903"]
+    assert fake_telegram.chat_actions == [{"chat_id": 42, "action": "typing"}]
     assert await db.fetchval(
         "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
     ) == 0

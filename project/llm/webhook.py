@@ -338,7 +338,7 @@ def create_app(
             )
             return Response(status_code=200)
 
-        await webhook_app.state.message_service.accept(
+        accepted = await webhook_app.state.message_service.accept(
             IncomingMessage(
                 update_id=str(update.update_id),
                 message_id=str(message.message_id),
@@ -350,6 +350,17 @@ def create_app(
                 correlation_id=uuid4(),
             )
         )
+        if accepted:
+            try:
+                await telegram.send_chat_action(
+                    chat_id=message.chat.id,
+                    action="typing",
+                )
+            except Exception as error:
+                logger.warning(
+                    "telegram_typing_failed error_type=%s",
+                    type(error).__name__,
+                )
         return Response(status_code=200)
 
     return webhook_app

@@ -8,7 +8,7 @@ from moroz.common.db import Database
 from moroz.messaging.outbox import enqueue_process_message
 
 
-BUFFER_SECONDS = 5
+BUFFER_SECONDS = 2
 BUFFER_TTL_SECONDS = 30
 DEADLINE_INDEX_KEY = "buffer:deadlines"
 

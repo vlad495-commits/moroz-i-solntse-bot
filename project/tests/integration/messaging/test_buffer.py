@@ -108,6 +108,21 @@ async def test_buffer_joins_fast_messages_after_deadline(
     assert task["status"] == "pending"
 
 
+async def test_buffer_flushes_after_two_second_quiet_window(
+    buffer, clock, database
+):
+    await buffer.append("42", "quiet-1", "Готовый вопрос?")
+
+    clock.advance(seconds=2)
+    flushed = await buffer.flush("42")
+
+    assert flushed == BufferedMessage(
+        chat_id="42",
+        update_ids=("quiet-1",),
+        text="Готовый вопрос?",
+    )
+
+
 async def test_concurrent_flush_claims_batch_once(buffer, clock, database):
     await buffer.append("42", "3", "Один раз")
     clock.advance(seconds=5)
