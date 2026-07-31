@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manual QA Bot Testing"
+  short_description: "Ручное QA-тестирование Telegram LLM-бота"
+  default_prompt: "Протестируй staging-бота по ручному QA-процессу и подготовь отчёт."
