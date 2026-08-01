@@ -144,6 +144,22 @@ async def test_unknown_task_fails_closed_without_logging_payload_or_identifiers(
     assert "private identifier" not in caplog.text
 
 
+@pytest.mark.parametrize("kind", ["callback", "contact"])
+def test_non_text_payload_guard_raises_safe_retryable_error(kind, caplog):
+    secret = "private callback or phone"
+
+    with pytest.raises(
+        RuntimeError,
+        match="non-text interaction requires structured dispatcher",
+    ) as raised:
+        worker_main._require_text_payloads(
+            [{"kind": kind, "text": "[private]", "data": {"secret": secret}}]
+        )
+
+    assert secret not in str(raised.value)
+    assert secret not in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_message_task_handler_processes_scheduler_job():
     job_id = uuid4()

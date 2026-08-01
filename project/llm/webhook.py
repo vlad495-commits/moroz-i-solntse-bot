@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 import logging
 import secrets
 from uuid import uuid4
@@ -87,9 +88,10 @@ def _consent_prompt() -> str:
 
 
 def create_app(
-    *, database_url=None, redis_url=None, bot=None, webhook_secret=None
+    *, database_url=None, redis_url=None, bot=None, webhook_secret=None, clock=None
 ) -> FastAPI:
     resolved_webhook_secret = webhook_secret or TELEGRAM_WEBHOOK_SECRET
+    now = clock.now if clock is not None else lambda: datetime.now(UTC)
 
     @asynccontextmanager
     async def lifespan(webhook_app: FastAPI):
@@ -178,6 +180,17 @@ def create_app(
             repository,
             outbound,
         )
+
+    async def acknowledge_callback(callback_id: str) -> None:
+        try:
+            await webhook_app.state.telegram.answer_callback_query(
+                callback_query_id=callback_id
+            )
+        except Exception as error:
+            logger.warning(
+                "telegram_callback_ack_failed error_type=%s",
+                type(error).__name__,
+            )
 
     async def consent_checked(chat_id: int, user_id: int) -> set[str]:
         raw = await webhook_app.state.redis.get(_consent_state_key(chat_id, user_id))
@@ -299,6 +312,7 @@ def create_app(
                             ),
                         },
                     )
+                await acknowledge_callback(callback.id)
                 return Response(status_code=200)
             await webhook_app.state.message_service.accept(
                 IncomingMessage(
@@ -308,12 +322,13 @@ def create_app(
                     chat_id=str(callback.message.chat.id),
                     user_id=user_id,
                     text="[booking callback]",
-                    received_at=callback.message.date,
+                    received_at=now(),
                     correlation_id=uuid4(),
                     kind="callback",
                     data={"callback_data": callback.data},
                 )
             )
+            await acknowledge_callback(callback.id)
             return Response(status_code=200)
 
         message = update.message

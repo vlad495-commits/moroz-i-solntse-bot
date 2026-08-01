@@ -45,6 +45,13 @@ async def handle(task: QueueTask) -> None:
     raise NotImplementedError("No worker task handlers are registered")
 
 
+def _require_text_payloads(payloads: list[dict[str, object]]) -> None:
+    if any(payload.get("kind", "text") != "text" for payload in payloads):
+        raise RuntimeError(
+            "non-text interaction requires structured dispatcher"
+        )
+
+
 class MessageTaskHandler:
     def __init__(
         self,
@@ -208,6 +215,7 @@ class MessageTaskHandler:
                     ):
                         raise ValueError("process_message persisted payload is invalid")
                     payloads.append(payload)
+                _require_text_payloads(payloads)
                 user_ids = {payload["user_id"] for payload in payloads}
                 if len(user_ids) != 1:
                     raise ValueError("process_message spans multiple users")
