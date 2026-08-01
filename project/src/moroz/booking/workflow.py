@@ -92,8 +92,17 @@ def _is_partial_service_change(
         following = (target for target in target_indexes if target > action)
         closest = min(following, default=None)
         if closest is None:
-            preceding = (target for target in target_indexes if target < action)
-            closest = max(preceding, default=None)
+            preceding = tuple(
+                target for target in target_indexes if target < action
+            )
+            preceding_other = (
+                target
+                for target in preceding
+                if target_indexes[target] == "other"
+            )
+            closest = max(preceding_other, default=None)
+            if closest is None:
+                closest = max(preceding, default=None)
         if closest is not None and target_indexes[closest] == "service":
             return True
     return False
