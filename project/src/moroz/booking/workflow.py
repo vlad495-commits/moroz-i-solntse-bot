@@ -48,7 +48,12 @@ _PARTIAL_SERVICE_ACTION_STEMS = (
     "убра",
     "удал",
 )
-_OTHER_CHANGE_TARGET_STEMS = ("дат", "врем", "мастер")
+_OTHER_CHANGE_TARGET_STEMS = ("дат", "мастер")
+_TIME_TARGET_WORDS = {
+    "время",
+    "времени",
+    "временем",
+}
 _PROTECTED_UNAVAILABLE = (
     "Не удалось безопасно проверить ваши записи. Попробуйте позже."
 )
@@ -86,6 +91,7 @@ def _is_partial_service_change(
             index: "other"
             for index, word in enumerate(words)
             if word.startswith(_OTHER_CHANGE_TARGET_STEMS)
+            or word in _TIME_TARGET_WORDS
         }
     )
     for action in action_indexes:

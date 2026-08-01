@@ -312,6 +312,46 @@ async def test_clear_inflected_partial_service_request_escalates(
 @pytest.mark.parametrize(
     "text",
     [
+        "Услугу хочу временно изменить",
+        "Массаж хочу временно убрать",
+    ],
+)
+@pytest.mark.parametrize("kind", ["reschedule", "cancel"])
+async def test_temporary_adverb_does_not_hide_partial_service_target(
+    change_dependencies,
+    text,
+    kind,
+):
+    workflow, repository, _catalog, _port, service = change_dependencies
+    if kind == "reschedule":
+        reply = await workflow.start_reschedule(
+            OWNER,
+            f"change:temporary:{text}",
+        )
+        await _press(workflow, OWNER, reply, _button_texts(reply)[0])
+    else:
+        reply = await workflow.start_cancel(OWNER, f"cancel:temporary:{text}")
+        await _press(workflow, OWNER, reply, _button_texts(reply)[0])
+
+    result = await workflow.handle(
+        Interaction.text(OWNER, f"temporary:{kind}:{text}", text)
+    )
+
+    assert "администратор" in result.text.casefold()
+    assert service.handle_calls == []
+    assert service.escalate_calls == [
+        (
+            repository.session.id,
+            BookingIdentity("user-10", True),
+            "partial_service_change_unsupported",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
         "Перенесите на третье августа",
         "Поменяйте мастера",
         "Можно выбрать Анну?",
@@ -322,6 +362,7 @@ async def test_clear_inflected_partial_service_request_escalates(
         "Дату услуги хочу изменить на завтра",
         "Мастера для услуги хочу поменять",
         "Время процедуры нужно поменять",
+        "Времени для услуги хочу поменять",
     ],
 )
 @pytest.mark.parametrize("kind", ["reschedule", "cancel"])
