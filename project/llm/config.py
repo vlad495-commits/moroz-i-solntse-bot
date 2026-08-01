@@ -48,26 +48,36 @@ if _booking_interactions_enabled not in {"true", "false"}:
     raise ValueError("BOOKING_INTERACTIONS_ENABLED must be true or false")
 BOOKING_INTERACTIONS_ENABLED = _booking_interactions_enabled == "true"
 
-BOOKING_MODE = os.getenv("BOOKING_MODE", "disabled")
-if BOOKING_MODE not in {"disabled", "mock", "real"}:
-    raise ValueError("BOOKING_MODE must be disabled, mock, or real")
-
-if BOOKING_MODE == "disabled":
+if not BOOKING_INTERACTIONS_ENABLED:
+    BOOKING_MODE = "disabled"
     YCLIENTS_SERVICE_ALLOWLIST: tuple[str, ...] = ()
     YCLIENTS_STAFF_ALLOWLIST: tuple[str, ...] = ()
+    BOOKING_HORIZON_DAYS = 14
+    BOOKING_CONFIRMATION_TTL_SECONDS = 1800
+    BOOKING_ROUTER_CONFIDENCE = 0.80
 else:
-    YCLIENTS_SERVICE_ALLOWLIST = parse_id_allowlist(
-        os.getenv("YCLIENTS_SERVICE_ALLOWLIST", ""), "services"
-    )
-    YCLIENTS_STAFF_ALLOWLIST = parse_id_allowlist(
-        os.getenv("YCLIENTS_STAFF_ALLOWLIST", ""), "staff"
-    )
+    BOOKING_MODE = os.getenv("BOOKING_MODE", "disabled")
+    if BOOKING_MODE not in {"disabled", "mock", "real"}:
+        raise ValueError("BOOKING_MODE must be disabled, mock, or real")
 
-BOOKING_HORIZON_DAYS = int(os.getenv("BOOKING_HORIZON_DAYS", "14"))
-BOOKING_CONFIRMATION_TTL_SECONDS = int(
-    os.getenv("BOOKING_CONFIRMATION_TTL_SECONDS", "1800")
-)
-BOOKING_ROUTER_CONFIDENCE = float(os.getenv("BOOKING_ROUTER_CONFIDENCE", "0.80"))
+    if BOOKING_MODE == "disabled":
+        YCLIENTS_SERVICE_ALLOWLIST = ()
+        YCLIENTS_STAFF_ALLOWLIST = ()
+    else:
+        YCLIENTS_SERVICE_ALLOWLIST = parse_id_allowlist(
+            os.getenv("YCLIENTS_SERVICE_ALLOWLIST", ""), "services"
+        )
+        YCLIENTS_STAFF_ALLOWLIST = parse_id_allowlist(
+            os.getenv("YCLIENTS_STAFF_ALLOWLIST", ""), "staff"
+        )
+
+    BOOKING_HORIZON_DAYS = int(os.getenv("BOOKING_HORIZON_DAYS", "14"))
+    BOOKING_CONFIRMATION_TTL_SECONDS = int(
+        os.getenv("BOOKING_CONFIRMATION_TTL_SECONDS", "1800")
+    )
+    BOOKING_ROUTER_CONFIDENCE = float(
+        os.getenv("BOOKING_ROUTER_CONFIDENCE", "0.80")
+    )
 
 # --- Промпт ---
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"

@@ -4,13 +4,24 @@ from enum import StrEnum
 from uuid import UUID
 
 from aiogram.exceptions import TelegramNetworkError
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from moroz.messaging.models import OutboundMessage
 from moroz.messaging.repository import MessageRepository
 
 
 logger = logging.getLogger(__name__)
+
+
+def _telegram_reply_markup(value: object):
+    if not isinstance(value, dict):
+        raise ValueError("reply markup must be an object")
+    inline = "inline_keyboard" in value
+    reply = "keyboard" in value
+    if inline == reply:
+        raise ValueError("reply markup kind is invalid")
+    model = InlineKeyboardMarkup if inline else ReplyKeyboardMarkup
+    return model.model_validate(value)
 
 
 class DeliveryResult(StrEnum):
@@ -31,8 +42,8 @@ async def deliver_claimed_outbound(
         }
         reply_markup = outbound.delivery_options.get("reply_markup")
         if reply_markup is not None:
-            send_arguments["reply_markup"] = (
-                InlineKeyboardMarkup.model_validate(reply_markup)
+            send_arguments["reply_markup"] = _telegram_reply_markup(
+                reply_markup
             )
         parse_mode = outbound.delivery_options.get("parse_mode")
         if parse_mode is not None:

@@ -113,12 +113,32 @@ def test_booking_settings_defaults_are_safe(monkeypatch):
 def test_booking_config_rejects_empty_or_duplicate_active_allowlists(
     monkeypatch, mode, services, staff
 ):
+    monkeypatch.setenv("BOOKING_INTERACTIONS_ENABLED", "true")
     monkeypatch.setenv("BOOKING_MODE", mode)
     monkeypatch.setenv("YCLIENTS_SERVICE_ALLOWLIST", services)
     monkeypatch.setenv("YCLIENTS_STAFF_ALLOWLIST", staff)
 
     with pytest.raises(ValueError, match="allowlist must contain unique numeric ids"):
         importlib.reload(importlib.import_module("config"))
+
+
+def test_disabled_booking_gate_ignores_all_stale_booking_settings(monkeypatch):
+    monkeypatch.setenv("BOOKING_INTERACTIONS_ENABLED", "false")
+    monkeypatch.setenv("BOOKING_MODE", "real")
+    monkeypatch.setenv("YCLIENTS_SERVICE_ALLOWLIST", "broken")
+    monkeypatch.setenv("YCLIENTS_STAFF_ALLOWLIST", "also-broken")
+    monkeypatch.setenv("BOOKING_HORIZON_DAYS", "broken")
+    monkeypatch.setenv("BOOKING_CONFIRMATION_TTL_SECONDS", "broken")
+    monkeypatch.setenv("BOOKING_ROUTER_CONFIDENCE", "broken")
+
+    config = importlib.reload(importlib.import_module("config"))
+
+    assert config.BOOKING_MODE == "disabled"
+    assert config.YCLIENTS_SERVICE_ALLOWLIST == ()
+    assert config.YCLIENTS_STAFF_ALLOWLIST == ()
+    assert config.BOOKING_HORIZON_DAYS == 14
+    assert config.BOOKING_CONFIRMATION_TTL_SECONDS == 1800
+    assert config.BOOKING_ROUTER_CONFIDENCE == 0.80
 
 
 @pytest.mark.parametrize("value", ["", "TRUE", "False", "1", "yes", " true "])

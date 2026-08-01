@@ -21,6 +21,11 @@ if ($LASTEXITCODE -ne 0) {
 $services = ($renderedConfig -join "`n" | ConvertFrom-Json).services
 $expectedEnvironment = @{
     worker = @(
+        "BOOKING_CONFIRMATION_TTL_SECONDS",
+        "BOOKING_HORIZON_DAYS",
+        "BOOKING_INTERACTIONS_ENABLED",
+        "BOOKING_MODE",
+        "BOOKING_ROUTER_CONFIDENCE",
         "CONTEXT_MESSAGES_LIMIT",
         "DATABASE_URL",
         "LLM_API_KEY",
@@ -43,6 +48,8 @@ $expectedEnvironment = @{
         "YCLIENTS_BASE_URL",
         "YCLIENTS_COMPANY_ID",
         "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
         "YCLIENTS_TIMEOUT_SECONDS",
         "YCLIENTS_TIMEZONE",
         "YCLIENTS_USER_TOKEN"

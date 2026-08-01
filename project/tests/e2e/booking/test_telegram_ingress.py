@@ -426,7 +426,7 @@ async def test_booking_interaction_requires_processing_consent(
     assert fake_telegram.answered_callback_queries == expected_answers
 
 
-async def test_old_worker_fails_closed_for_contact_without_leaking_or_mutating(
+async def test_disabled_worker_durably_rejects_contact_without_blocking_order(
     client,
     database,
     worker_database,
@@ -453,23 +453,27 @@ async def test_old_worker_fails_closed_for_contact_without_leaking_or_mutating(
     llm = AsyncMock()
     handler = MessageTaskHandler(worker_database, llm, object())
 
-    with pytest.raises(
-        RuntimeError,
-        match="non-text interaction requires structured dispatcher",
-    ):
-        await handler.handle(
-            QueueTask(
-                kind="process_message",
-                payload=task_payload,
-                idempotency_key=task["idempotency_key"],
-            )
+    await handler.handle(
+        QueueTask(
+            kind="process_message",
+            payload=task_payload,
+            idempotency_key=task["idempotency_key"],
         )
+    )
 
     llm.assert_not_awaited()
     assert await database.fetchval(
         "SELECT status FROM message_inbox WHERE external_message_id = '1007'"
-    ) == "accepted"
+    ) == "processed"
+    persisted = await database.fetchval(
+        "SELECT payload::text FROM message_inbox "
+        "WHERE external_message_id = '1007'"
+    )
     assert await database.fetchval("SELECT count(*) FROM messages") == 0
-    assert await database.fetchval("SELECT count(*) FROM outbound_messages") == 0
+    assert await database.fetchval("SELECT count(*) FROM outbound_messages") == 1
+    assert await database.fetchval(
+        "SELECT count(*) FROM message_inbox WHERE status = 'accepted'"
+    ) == 0
+    assert "+79990000000" not in persisted
     assert "+79990000000" not in caplog.text
     assert "[shared contact]" not in caplog.text
