@@ -264,12 +264,69 @@ def create_app(
                     text=CONSENT_THANKS,
                     reply_kind="consent_thanks",
                 )
+                return Response(status_code=200)
+            if callback.data is None or not callback.data.startswith("booking:"):
+                return Response(status_code=200)
+            if await is_bot_paused():
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=callback.message.chat.id,
+                    text=BOT_PAUSED_REPLY,
+                    reply_kind="paused",
+                )
+                return Response(status_code=200)
+            user_id = str(callback.from_user.id)
+            has_processing_consent = (
+                await webhook_app.state.consent_service.has_processing_consent(
+                    "telegram", user_id
+                )
+            )
+            ingress = decide_ingress(
+                has_text=True,
+                has_processing_consent=has_processing_consent,
+            )
+            if ingress.action == "reply":
+                if ingress.code == "consent_required":
+                    await send_static_reply(
+                        update_id=update.update_id,
+                        chat_id=callback.message.chat.id,
+                        text=_consent_prompt(),
+                        reply_kind="consent_prompt",
+                        delivery_options={
+                            "parse_mode": "HTML",
+                            "reply_markup": _consent_keyboard().model_dump(
+                                mode="json"
+                            ),
+                        },
+                    )
+                return Response(status_code=200)
+            await webhook_app.state.message_service.accept(
+                IncomingMessage(
+                    update_id=str(update.update_id),
+                    message_id=str(callback.id),
+                    channel="telegram",
+                    chat_id=str(callback.message.chat.id),
+                    user_id=user_id,
+                    text="[booking callback]",
+                    received_at=callback.message.date,
+                    correlation_id=uuid4(),
+                    kind="callback",
+                    data={"callback_data": callback.data},
+                )
+            )
             return Response(status_code=200)
 
         message = update.message
         if not message:
             return Response(status_code=200)
         if message.chat.type != ChatType.PRIVATE:
+            return Response(status_code=200)
+        if message.from_user is None:
+            return Response(status_code=200)
+        if (
+            message.contact is not None
+            and message.contact.user_id != message.from_user.id
+        ):
             return Response(status_code=200)
         if await is_bot_paused():
             await send_static_reply(
@@ -279,7 +336,7 @@ def create_app(
                 reply_kind="paused",
             )
             return Response(status_code=200)
-        if message.text is None:
+        if message.text is None and message.contact is None:
             ingress = decide_ingress(
                 has_text=False,
                 has_processing_consent=False,
@@ -292,9 +349,11 @@ def create_app(
                     reply_kind="non_text",
                 )
             return Response(status_code=200)
-        if message.from_user is None:
-            return Response(status_code=200)
-        command = message.text.split(maxsplit=1)[0].split("@", 1)[0]
+        command = (
+            message.text.split(maxsplit=1)[0].split("@", 1)[0]
+            if message.text is not None
+            else None
+        )
         if command == "/start":
             await send_static_reply(
                 update_id=update.update_id,
@@ -329,7 +388,7 @@ def create_app(
                     },
                 )
             return Response(status_code=200)
-        if len(message.text) > MAX_INPUT_LENGTH:
+        if message.text is not None and len(message.text) > MAX_INPUT_LENGTH:
             await send_static_reply(
                 update_id=update.update_id,
                 chat_id=message.chat.id,
@@ -338,6 +397,7 @@ def create_app(
             )
             return Response(status_code=200)
 
+        kind = "contact" if message.contact is not None else "text"
         accepted = await webhook_app.state.message_service.accept(
             IncomingMessage(
                 update_id=str(update.update_id),
@@ -345,12 +405,22 @@ def create_app(
                 channel="telegram",
                 chat_id=str(message.chat.id),
                 user_id=user_id,
-                text=message.text,
+                text=(
+                    "[shared contact]"
+                    if message.contact is not None
+                    else message.text
+                ),
                 received_at=message.date,
                 correlation_id=uuid4(),
+                kind=kind,
+                data=(
+                    {"phone_number": message.contact.phone_number}
+                    if message.contact is not None
+                    else {}
+                ),
             )
         )
-        if accepted:
+        if accepted and kind == "text":
             try:
                 await telegram.send_chat_action(
                     chat_id=message.chat.id,

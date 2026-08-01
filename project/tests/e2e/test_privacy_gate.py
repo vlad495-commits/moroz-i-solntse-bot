@@ -157,6 +157,33 @@ def telegram_photo_update(*, update_id=903):
     }
 
 
+def telegram_contact_update(
+    *,
+    update_id=904,
+    chat_id=42,
+    chat_type="private",
+    user_id=7,
+):
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": 102,
+            "date": 1_768_478_400,
+            "chat": {"id": chat_id, "type": chat_type},
+            "from": {
+                "id": user_id,
+                "is_bot": False,
+                "first_name": "Тест",
+            },
+            "contact": {
+                "phone_number": "+79990000000",
+                "first_name": "Тест",
+                "user_id": user_id,
+            },
+        },
+    }
+
+
 @pytest.fixture
 def fake_telegram():
     return FakeTelegram()
@@ -337,11 +364,25 @@ async def test_group_messages_and_callbacks_are_ignored_before_any_durable_work(
 ):
     responses = []
     for offset, user_id in enumerate((7, 8)):
+        first_update_id = 920 + offset * 3
         responses.append(
             await client.post(
                 "/telegram/webhook",
                 json=telegram_consent_callback(
-                    update_id=920 + offset * 2,
+                    update_id=first_update_id,
+                    chat_id=-10042,
+                    chat_type="group",
+                    user_id=user_id,
+                    data="booking:opaque123",
+                ),
+            )
+        )
+        responses.append(
+            await client.post(
+                "/telegram/webhook",
+                json=telegram_text_update(
+                    f"Групповой текст {user_id}",
+                    update_id=first_update_id + 1,
                     chat_id=-10042,
                     chat_type="group",
                     user_id=user_id,
@@ -351,9 +392,8 @@ async def test_group_messages_and_callbacks_are_ignored_before_any_durable_work(
         responses.append(
             await client.post(
                 "/telegram/webhook",
-                json=telegram_text_update(
-                    f"Групповой текст {user_id}",
-                    update_id=921 + offset * 2,
+                json=telegram_contact_update(
+                    update_id=first_update_id + 2,
                     chat_id=-10042,
                     chat_type="group",
                     user_id=user_id,

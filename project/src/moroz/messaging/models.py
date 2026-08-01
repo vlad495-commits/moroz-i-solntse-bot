@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -14,6 +15,8 @@ class IncomingMessage:
     text: str
     received_at: datetime
     correlation_id: UUID
+    kind: Literal["text", "callback", "contact"] = "text"
+    data: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

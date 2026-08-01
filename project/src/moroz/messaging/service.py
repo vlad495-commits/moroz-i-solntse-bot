@@ -21,6 +21,13 @@ class MessageService:
     async def accept(self, message: IncomingMessage) -> bool:
         if not await self._repository.accept(message):
             return False
+        if message.kind != "text":
+            await enqueue_process_message(
+                self._database,
+                chat_id=message.chat_id,
+                update_ids=(message.update_id,),
+            )
+            return True
         try:
             await self._buffer.append(
                 message.chat_id,
