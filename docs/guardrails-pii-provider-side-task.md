@@ -33,7 +33,7 @@ $env:RABBITMQ_USER='unit'
 $env:RABBITMQ_PASSWORD='unit-password'
 $env:RABBITMQ_URL='amqp://unit:unit-password@rabbitmq:5672/'
 $env:TELEGRAM_WEBHOOK_SECRET='dummy-webhook-secret-for-unit-tests-only'
-docker compose --env-file ..\.env run --rm test pytest -q tests/unit/security tests/unit/test_safe_logging.py
+docker compose --env-file ..\.env run --rm --no-deps test pytest -q tests/unit/security tests/unit/test_safe_logging.py
 Remove-Item Env:\RABBITMQ_USER,Env:\RABBITMQ_PASSWORD,Env:\RABBITMQ_URL,Env:\TELEGRAM_WEBHOOK_SECRET -ErrorAction SilentlyContinue
 ```
 
@@ -50,11 +50,11 @@ Remove-Item Env:\RABBITMQ_USER,Env:\RABBITMQ_PASSWORD,Env:\RABBITMQ_URL,Env:\TEL
 - Дополнительный provider-boundary gate по всем критичным классам PII прошёл: `6 passed`.
 
 ```powershell
-docker compose --env-file ..\.env run --rm test pytest -q tests/unit/security tests/unit/test_safe_logging.py
-docker compose --env-file ..\.env run --rm test pytest -q tests/e2e/test_security_pipeline.py::test_security_pipeline_masks_each_critical_pii_class
+docker compose --env-file ..\.env run --rm --no-deps test pytest -q tests/unit/security tests/unit/test_safe_logging.py
+docker compose --env-file ..\.env run --rm --no-deps test pytest -q tests/e2e/test_security_pipeline.py::test_security_pipeline_masks_each_critical_pii_class
 ```
 
-Production-код не потребовал изменений: существующие тесты подтвердили маскирование текущего ввода и истории до `LLMRequest`, отклонение неизвестных placeholder и восстановление разрешённых значений только из текущей `PiiSession`.
+Production-код не потребовал изменений: существующие тесты подтвердили маскирование текущего ввода и истории до `LLMRequest`, отклонение неизвестных placeholder и восстановление разрешённых значений только из текущей `PiiSession`. Флаг `--no-deps` изолирует gate от локальных RabbitMQ/PostgreSQL/Redis и не позволяет unit-переменным пересоздать инфраструктурные контейнеры.
 
 ## Definition of Done
 
