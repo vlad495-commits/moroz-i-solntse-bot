@@ -128,7 +128,10 @@ def _record(
         "datetime": "2026-07-29T12:00:00+03:00",
         "seance_length": 3600,
         "attendance": 0,
-        "custom_fields": {"moroz_booking_key": str(BOOKING_KEY)},
+        "custom_fields": {
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "customer-7",
+        },
         "deleted": deleted,
     }
     record.update(changes)
@@ -223,7 +226,10 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
         "send_sms": False,
         "comment": "contract test",
         "attendance": 0,
-        "custom_fields": {"moroz_booking_key": str(BOOKING_KEY)},
+        "custom_fields": {
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "customer-7",
+        },
         "client_agreements": {
             "is_personal_data_processing_allowed": True,
             "is_newsletter_allowed": False,
@@ -232,6 +238,40 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
     assert "api_id" not in server.requests[4][3]
     assert all("Idempotency-Key" not in request[2] for request in server.requests)
     assert "local-key-only" not in json.dumps(server.requests)
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_lookup_is_get_only_and_requires_owner_binding(
+    server: ScriptedServer,
+) -> None:
+    bound = _record(
+        custom_fields={
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "customer-7",
+        }
+    )
+    unbound = _record(
+        id=9002,
+        custom_fields={"moroz_booking_key": str(BOOKING_KEY)},
+    )
+    server.responses.append(
+        (200, {"success": True, "data": [bound, unbound]})
+    )
+
+    found = await YclientsAdapter(_config(server)).find_by_booking_key(
+        BOOKING_KEY
+    )
+
+    assert len(found) == 1
+    assert found[0].customer_id == "customer-7"
+    assert found[0].booking_key == BOOKING_KEY
+    assert [request[0] for request in server.requests] == ["GET"]
+    assert urlsplit(server.requests[0][1]).path == "/api/v1/records/123"
+    assert parse_qsl(urlsplit(server.requests[0][1]).query) == [
+        ("page", "1"),
+        ("count", "100"),
+        ("with_deleted", "1"),
+    ]
 
 
 @pytest.mark.asyncio

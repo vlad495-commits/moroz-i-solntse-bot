@@ -33,9 +33,12 @@ from moroz.booking.yclients_http import (
 
 _SLOT_PREFIX = "yclients:v1:"
 _BOOKING_KEY_FIELD = "moroz_booking_key"
+_CUSTOMER_ID_FIELD = "moroz_customer_id"
 _SLOT_KEYS = {"services", "staff", "start", "duration"}
 _CONFLICT_CODES = {433, 436, 437, 438}
 _DEFINITE_MUTATION_REJECTIONS = {400, 401, 403, 409, 422, 429}
+_LOOKUP_PAGE_SIZE = 100
+_LOOKUP_MAX_PAGES = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +129,10 @@ class YclientsAdapter(BookingPort):
             "seance_length": payload.duration,
             "send_sms": False,
             "attendance": 0,
-            "custom_fields": {_BOOKING_KEY_FIELD: str(command.booking_key)},
+            "custom_fields": {
+                _BOOKING_KEY_FIELD: str(command.booking_key),
+                _CUSTOMER_ID_FIELD: customer_id,
+            },
             "client_agreements": {
                 "is_personal_data_processing_allowed": True,
                 "is_newsletter_allowed": False,
@@ -198,6 +204,66 @@ class YclientsAdapter(BookingPort):
             raise
         except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
             raise BookingTemporaryError() from error
+
+    async def find_by_booking_key(
+        self,
+        booking_key: UUID,
+    ) -> list[ExternalBooking]:
+        matches: list[ExternalBooking] = []
+        for page in range(1, _LOOKUP_MAX_PAGES + 1):
+            try:
+                response = await self._http.request(
+                    "GET",
+                    f"/api/v1/records/{self._config.company_id}",
+                    query=[
+                        ("page", page),
+                        ("count", _LOOKUP_PAGE_SIZE),
+                        ("with_deleted", 1),
+                    ],
+                    user_auth=True,
+                )
+            except YclientsTransportError as error:
+                raise BookingTemporaryError() from error
+            if response.status != 200:
+                raise BookingTemporaryError()
+            try:
+                data = _envelope(response)
+            except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
+                raise BookingTemporaryError() from error
+            if not isinstance(data, list) or any(
+                not isinstance(item, Mapping) for item in data
+            ):
+                raise BookingTemporaryError()
+            for item in data:
+                fields = item.get("custom_fields")
+                if not isinstance(fields, Mapping):
+                    continue
+                if fields.get(_BOOKING_KEY_FIELD) != str(booking_key):
+                    continue
+                customer_id = fields.get(_CUSTOMER_ID_FIELD)
+                if not isinstance(customer_id, str) or not customer_id:
+                    continue
+                try:
+                    matches.append(
+                        _external_booking(
+                            item,
+                            self._timezone,
+                            self._config,
+                            customer_id,
+                            booking_key,
+                        )
+                    )
+                except (
+                    BookingNotFound,
+                    BookingTemporaryError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                ) as error:
+                    raise BookingTemporaryError() from error
+            if len(data) < _LOOKUP_PAGE_SIZE:
+                return matches
+        raise BookingTemporaryError()
 
     async def reschedule_booking(self, command: RescheduleBooking) -> ExternalBooking:
         provider_id = _provider_id(command.external_id)

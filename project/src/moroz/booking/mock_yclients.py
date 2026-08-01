@@ -1,5 +1,5 @@
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from moroz.booking.models import (
     BookingNotFound,
@@ -123,6 +123,16 @@ class MockYclientsAdapter(BookingPort):
             status=booking.status,
             scheduled_end_at=booking.scheduled_end_at,
         )
+
+    async def find_by_booking_key(
+        self,
+        booking_key: UUID,
+    ) -> list[ExternalBooking]:
+        return [
+            booking
+            for booking in self._bookings.values()
+            if booking.booking_key == booking_key
+        ]
 
     def _available_slot(self, slot_id: str, *, excluding_external_id: str | None = None) -> Slot:
         try:

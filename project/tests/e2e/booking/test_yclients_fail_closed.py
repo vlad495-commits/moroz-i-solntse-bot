@@ -134,6 +134,7 @@ async def test_real_adapter_unknown_create_is_durable_and_never_retried_after_re
         assert server.create_count == 1
         assert server.create_bodies[0]["custom_fields"] == {
             "moroz_booking_key": str(scenario.id),
+            "moroz_customer_id": scenario.customer_id,
         }
         assert "api_id" not in server.create_bodies[0]
         stored = await repo.get_scenario(scenario.id)
