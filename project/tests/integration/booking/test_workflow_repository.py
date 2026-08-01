@@ -288,7 +288,7 @@ async def test_concurrent_callback_has_one_port_effect_and_same_saved_result(
     port = CountingPort(clock)
     service = BookingService(
         port,
-        BookingRepository(database),
+        BookingRepository(database, staff_chat_id="900001"),
         now=clock.now,
     )
 
@@ -321,7 +321,9 @@ async def test_concurrent_callback_has_one_port_effect_and_same_saved_result(
         "status": "ok",
         "message": f"Запись подтверждена на {port.slot.starts_at.isoformat()}.",
     }
-    stored = await BookingRepository(database).get_scenario(awaiting.id)
+    stored = await BookingRepository(
+        database, staff_chat_id="900001"
+    ).get_scenario(awaiting.id)
     assert stored.phase == "confirmed"
     assert stored.state["external_id"] == "external-1"
     assert stored.state["status"] == "confirmed"
@@ -344,7 +346,7 @@ async def test_complete_action_preserves_escalated_state_and_replays_without_eve
         {},
         clock.now() + timedelta(minutes=30),
     )
-    booking_repository = BookingRepository(database)
+    booking_repository = BookingRepository(database, staff_chat_id="900001")
     service_session = await booking_repository.get_scenario(awaiting.id)
     await booking_repository.escalate(
         replace(

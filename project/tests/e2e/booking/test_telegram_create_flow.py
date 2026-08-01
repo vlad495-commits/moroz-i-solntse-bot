@@ -87,7 +87,11 @@ def _runtime(database):
         catalog,
         port,
         workflow_repository,
-        BookingService(port, BookingRepository(database), now=lambda: NOW),
+        BookingService(
+            port,
+            BookingRepository(database, staff_chat_id="900001"),
+            now=lambda: NOW,
+        ),
         now=lambda: NOW,
     )
     router = AsyncMock(return_value=IntentVerdict("unknown", 0.0))

@@ -295,6 +295,16 @@ def test_enabled_booking_runtime_rejects_disabled_or_incomplete_mode():
             staff_allowlist=(),
             env={},
         )
+
+    with pytest.raises(ValueError, match="staff Telegram chat"):
+        worker_main._build_booking_dispatcher(
+            object(),
+            enabled=True,
+            mode="mock",
+            service_allowlist=("1",),
+            staff_allowlist=("7",),
+            env={},
+        )
     with pytest.raises(ValueError, match="YCLIENTS booking configuration"):
         worker_main._build_booking_dispatcher(
             object(),
@@ -302,7 +312,10 @@ def test_enabled_booking_runtime_rejects_disabled_or_incomplete_mode():
             mode="real",
             service_allowlist=("1",),
             staff_allowlist=("7",),
-            env={"YCLIENTS_COMPANY_ID": "42"},
+            env={
+                "YCLIENTS_COMPANY_ID": "42",
+                "STAFF_TELEGRAM_CHAT_ID": "900001",
+            },
         )
 
 
@@ -326,7 +339,7 @@ async def test_mock_booking_runtime_is_exact_and_clock_deterministic():
         mode="mock",
         service_allowlist=("1", "2"),
         staff_allowlist=("7",),
-        env={},
+        env={"STAFF_TELEGRAM_CHAT_ID": "900001"},
         now=lambda: fixed_now,
     )
     dispatcher = build()
@@ -377,6 +390,7 @@ def test_real_booking_runtime_shares_one_http_boundary_without_network_call():
             "YCLIENTS_USER_TOKEN": "synthetic-user",
             "YCLIENTS_COMPANY_ID": "42",
             "YCLIENTS_BASE_URL": "https://provider.invalid",
+            "STAFF_TELEGRAM_CHAT_ID": "900001",
         },
     )
 

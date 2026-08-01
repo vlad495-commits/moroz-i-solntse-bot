@@ -301,6 +301,9 @@ def _build_booking_dispatcher(
         raise RuntimeError("booking mode must be ready when interactions are enabled")
     if not service_allowlist or not staff_allowlist:
         raise ValueError("booking allowlists are incomplete")
+    staff_chat_id = str(env.get("STAFF_TELEGRAM_CHAT_ID", "")).strip()
+    if not staff_chat_id:
+        raise ValueError("staff Telegram chat is not configured")
     if mode == "mock":
         catalog, booking_port, timezone = _mock_booking_adapters(
             service_allowlist,
@@ -332,7 +335,13 @@ def _build_booking_dispatcher(
         catalog,
         booking_port,
         workflow_repository,
-        BookingService(booking_port, BookingRepository(database)),
+        BookingService(
+            booking_port,
+            BookingRepository(
+                database,
+                staff_chat_id=staff_chat_id,
+            ),
+        ),
         now=now,
         timezone=timezone,
         horizon_days=BOOKING_HORIZON_DAYS,

@@ -1,12 +1,14 @@
 import json
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import asyncpg
 
 from moroz.booking.models import BookingEvent, BookingScenario, ExternalBooking
 from moroz.common.db import Database
+from moroz.messaging.repository import MessageRepository
 from moroz.notifications.planner import plan_booking_notifications
 
 
@@ -27,8 +29,10 @@ def _load_json(value: object) -> object:
 
 
 class BookingRepository:
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, *, staff_chat_id: str = ""):
         self._database = database
+        self._staff_chat_id = staff_chat_id.strip()
+        self._messages = MessageRepository(database)
 
     @asynccontextmanager
     async def serialized_scenario(
@@ -405,8 +409,27 @@ class BookingRepository:
         error_code: str,
         payload: Mapping[str, object] | None = None,
     ) -> None:
-        event_payload = dict(_thaw_json(payload or {}))
-        event_payload["error_code"] = error_code
+        current = await connection.fetchrow(
+            """
+            SELECT phase, customer_id
+            FROM booking_scenarios
+            WHERE id = $1
+            """,
+            scenario.id,
+        )
+        if current is None:
+            raise KeyError(f"booking scenario {scenario.id} not found")
+        if current["phase"] in {"confirmed", "escalated"}:
+            return
+        if current["customer_id"] != scenario.customer_id:
+            raise RuntimeError("booking scenario ownership conflict")
+        if not self._staff_chat_id:
+            raise RuntimeError("STAFF_TELEGRAM_CHAT_ID is not configured")
+        scenario = replace(
+            scenario,
+            phase="escalated",
+            error_code=error_code,
+        )
         await self._update_scenario(
             connection,
             scenario,
@@ -416,7 +439,76 @@ class BookingRepository:
             connection,
             scenario.id,
             "admin_attention_required",
-            event_payload,
+            {"error_code": error_code},
+        )
+        payload_json = _dump_json({"scenario_id": str(scenario.id)})
+        escalation_id = await connection.fetchval(
+            """
+            SELECT id
+            FROM escalations
+            WHERE source = 'booking'
+              AND status = 'open'
+              AND customer_id = $1
+              AND payload->>'scenario_id' = $2
+            FOR UPDATE
+            """,
+            scenario.customer_id,
+            str(scenario.id),
+        )
+        if escalation_id is None:
+            escalation_id = uuid4()
+            await connection.execute(
+                """
+                INSERT INTO escalations
+                    (id, source, customer_id, status, reason_code, payload)
+                VALUES ($1, 'booking', $2, 'open', $3, $4::jsonb)
+                """,
+                escalation_id,
+                scenario.customer_id,
+                error_code,
+                payload_json,
+            )
+        else:
+            await connection.execute(
+                "UPDATE escalations SET reason_code = $2 WHERE id = $1",
+                escalation_id,
+                error_code,
+            )
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id, enabled_at)
+            VALUES ($1, true, $2, $3, now())
+            ON CONFLICT (customer_id) DO UPDATE SET
+                enabled = true,
+                reason_code = EXCLUDED.reason_code,
+                escalation_id = EXCLUDED.escalation_id,
+                enabled_at = EXCLUDED.enabled_at,
+                expires_at = NULL
+            """,
+            scenario.customer_id,
+            error_code,
+            escalation_id,
+        )
+        await self._messages.enqueue_outbound_in_transaction(
+            connection,
+            channel="telegram",
+            chat_id=scenario.customer_id,
+            text=(
+                "Не удалось надёжно завершить действие с записью. "
+                "Администратор проверит ситуацию и ответит Вам."
+            ),
+            idempotency_key=f"booking_escalation:{scenario.id}:client",
+        )
+        await self._messages.enqueue_outbound_in_transaction(
+            connection,
+            channel="telegram",
+            chat_id=self._staff_chat_id,
+            text=(
+                f"Booking escalation: {error_code}; "
+                f"scenario: {scenario.id}"
+            ),
+            idempotency_key=f"booking_escalation:{scenario.id}:staff",
         )
 
     @staticmethod

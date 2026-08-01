@@ -29,7 +29,7 @@ async def database(migrated_database_url):
 
 @pytest.fixture
 def repo(database):
-    return BookingRepository(database)
+    return BookingRepository(database, staff_chat_id="900001")
 
 
 @pytest.fixture
@@ -335,11 +335,7 @@ async def test_escalate_stores_error_and_admin_attention_event(repo, scenario):
     assert stored.phase == "escalated"
     assert stored.error_code == "provider_outcome_unknown"
     assert events[-1].event_type == "admin_attention_required"
-    assert events[-1].payload == {
-        "operation": "create",
-        "attempts": (1, 2),
-        "error_code": "provider_outcome_unknown",
-    }
+    assert events[-1].payload == {"error_code": "provider_outcome_unknown"}
 
 
 async def test_cancellation_upserts_snapshot_resolvable_by_earlier_scenario(

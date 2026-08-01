@@ -154,7 +154,11 @@ def _workflow(
         database,
         now=clock.now,
     )
-    service = BookingService(port, BookingRepository(database), now=clock.now)
+    service = BookingService(
+        port,
+        BookingRepository(database, staff_chat_id="900001"),
+        now=clock.now,
+    )
     return (
         BookingWorkflow(
             _catalog(),
@@ -257,7 +261,9 @@ async def test_confirm_accepted_before_ttl_saves_result_after_service_finishes_l
         owner.chat_id,
         owner.customer_id,
     )
-    stored = await BookingRepository(database).get_scenario(saved.scenario_id)
+    stored = await BookingRepository(
+        database, staff_chat_id="900001"
+    ).get_scenario(saved.scenario_id)
 
     assert first == replay
     assert first.text == "Запись подтверждена."
