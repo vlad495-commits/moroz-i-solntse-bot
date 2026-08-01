@@ -123,6 +123,12 @@ class BookingService:
                             scenario,
                             "booking_temporarily_unavailable",
                         )
+                    if not change_state_matches_booking(scenario, protected):
+                        return await self._change_validation_failure(
+                            session,
+                            scenario,
+                            "booking_temporarily_unavailable",
+                        )
                     return await self._handle_change(
                         session,
                         scenario,
@@ -492,7 +498,53 @@ def booking_snapshots_match(
         and actual.slot_id == expected.slot_id
         and Counter(actual.service_ids) == Counter(expected.service_ids)
         and actual.staff_id == expected.staff_id
-        and actual.status == "confirmed"
+        and expected.status == actual.status == "confirmed"
         and actual.starts_at == expected.starts_at
         and scheduled_end_matches
     )
+
+
+def change_state_matches_booking(
+    scenario: BookingScenario,
+    booking: ExternalBooking,
+) -> bool:
+    state = scenario.state
+    try:
+        selected_services = state.get("selected_service_ids")
+        if (
+            not isinstance(selected_services, (list, tuple))
+            or "old_scheduled_end_at" not in state
+        ):
+            return False
+        old_end_value = state.get("old_scheduled_end_at")
+        old_end = (
+            datetime.fromisoformat(old_end_value)
+            if isinstance(old_end_value, str)
+            else None
+        )
+        common_matches = (
+            state.get("external_id") == booking.external_id
+            and state.get("original_slot_id") == booking.slot_id
+            and Counter(selected_services) == Counter(booking.service_ids)
+            and state.get("old_staff_id") == booking.staff_id
+            and datetime.fromisoformat(str(state.get("starts_at")))
+            == booking.starts_at
+            and datetime.fromisoformat(str(state.get("old_starts_at")))
+            == booking.starts_at
+            and old_end == booking.scheduled_end_at
+        )
+        if not common_matches:
+            return False
+        if scenario.kind == "cancel":
+            return True
+        if scenario.kind != "reschedule":
+            return False
+        raw_query = state.get("slot_query")
+        if not isinstance(raw_query, Mapping):
+            return False
+        query_services = raw_query.get("service_ids")
+        return isinstance(query_services, (list, tuple)) and Counter(
+            query_services
+        ) == Counter(booking.service_ids)
+    except (TypeError, ValueError):
+        return False

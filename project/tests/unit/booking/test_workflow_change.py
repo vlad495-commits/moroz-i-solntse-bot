@@ -275,6 +275,84 @@ async def test_partial_service_change_escalates_without_mutation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Хочу добавить услугу",
+        "Можно убрать массаж?",
+        "Поменяйте услугу",
+        "Добавьте, пожалуйста, ещё одну услугу",
+        "Я хочу изменить набор услуг",
+        "Удалите массаж из записи",
+    ],
+)
+async def test_clear_inflected_partial_service_request_escalates(
+    change_dependencies,
+    text,
+):
+    workflow, repository, _catalog, _port, service = change_dependencies
+    reply = await workflow.start_reschedule(OWNER, f"change:partial:{text}")
+    await _press(workflow, OWNER, reply, _button_texts(reply)[0])
+
+    result = await workflow.handle(Interaction.text(OWNER, "partial:inflected", text))
+
+    assert "администратор" in result.text.casefold()
+    assert service.handle_calls == []
+    assert service.escalate_calls == [
+        (
+            repository.session.id,
+            BookingIdentity("user-10", True),
+            "partial_service_change_unsupported",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Перенесите на третье августа",
+        "Поменяйте мастера",
+        "Можно выбрать Анну?",
+        "Хочу время попозже",
+    ],
+)
+async def test_date_and_staff_messages_are_not_partial_service_requests(
+    change_dependencies,
+    text,
+):
+    workflow, _repository, _catalog, _port, service = change_dependencies
+    reply = await workflow.start_reschedule(OWNER, f"change:ordinary:{text}")
+    await _press(workflow, OWNER, reply, _button_texts(reply)[0])
+
+    await workflow.handle(Interaction.text(OWNER, "ordinary", text))
+
+    assert service.escalate_calls == []
+
+
+@pytest.mark.asyncio
+async def test_partial_service_request_during_cancel_workflow_escalates(
+    change_dependencies,
+):
+    workflow, repository, _catalog, _port, service = change_dependencies
+    await workflow.start_cancel(OWNER, "cancel:partial-service")
+
+    result = await workflow.handle(
+        Interaction.text(OWNER, "cancel:partial-service:text", "Хочу убрать услугу")
+    )
+
+    assert "администратор" in result.text.casefold()
+    assert service.handle_calls == []
+    assert service.escalate_calls == [
+        (
+            repository.session.id,
+            BookingIdentity("user-10", True),
+            "partial_service_change_unsupported",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_foreign_or_replayed_booking_action_never_selects_record(
     change_dependencies,
 ):

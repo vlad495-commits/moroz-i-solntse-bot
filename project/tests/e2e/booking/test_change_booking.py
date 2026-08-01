@@ -138,6 +138,11 @@ def _scenario(
     state: dict[str, object] = {
         "external_id": external_id,
         "starts_at": starts_at.isoformat(),
+        "old_starts_at": starts_at.isoformat(),
+        "old_scheduled_end_at": (starts_at + timedelta(hours=1)).isoformat(),
+        "original_slot_id": "slot-old",
+        "selected_service_ids": ["service-1"],
+        "old_staff_id": "staff-1",
     }
     if kind == "reschedule":
         state.update(
@@ -422,6 +427,83 @@ async def test_change_repeats_exact_protected_get_before_mutation(
         "booking_temporarily_unavailable",
     )
     assert result.message == "Статус записи проверит администратор."
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    assert port.get_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("state_key", "corrupt_value"),
+    [
+        ("selected_service_ids", []),
+        ("original_slot_id", "stale-slot"),
+        ("old_staff_id", "stale-staff"),
+        ("old_starts_at", (OLD_START + timedelta(minutes=1)).isoformat()),
+        (
+            "old_scheduled_end_at",
+            (OLD_START + timedelta(hours=2)).isoformat(),
+        ),
+        ("slot_query.service_ids", []),
+    ],
+    ids=[
+        "partial-services",
+        "stale-original-slot",
+        "stale-old-staff",
+        "stale-old-start",
+        "stale-old-end",
+        "partial-slot-query-services",
+    ],
+)
+async def test_reschedule_rejects_corrupt_persisted_change_state_before_slots(
+    repo,
+    state_key,
+    corrupt_value,
+):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    original = await _seed_booking(repo, port)
+    scenario = _scenario("reschedule", original.external_id)
+    state = dict(scenario.state)
+    if state_key == "slot_query.service_ids":
+        state["slot_query"] = {**state["slot_query"], "service_ids": corrupt_value}
+    else:
+        state[state_key] = corrupt_value
+    scenario = replace(scenario, state=state)
+    await repo.create_scenario(scenario)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        scenario.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-7", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    assert port.get_calls == 1
+
+
+async def test_non_confirmed_local_snapshot_never_matches_confirmed_provider(repo):
+    port = CountingChangeAdapter([_slot("slot-old", 14)])
+    original = await _seed_booking(repo, port)
+    scenario = _scenario("cancel", original.external_id)
+    await repo.create_scenario(scenario)
+    async with repo._database.acquire() as connection:
+        await connection.execute(
+            "UPDATE bookings SET status = 'cancelled' WHERE external_id = $1",
+            original.external_id,
+        )
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        scenario.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-7", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
     assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
     assert port.get_calls == 1
 

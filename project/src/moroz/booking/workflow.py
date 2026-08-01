@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -37,14 +38,15 @@ _ACTIVE_PHASES = {"collecting", "awaiting_confirmation", "executing"}
 _COLLECTING_CREATE_PHASE_ERROR = "unsupported create phase: collecting"
 _NAME_LIMIT = 100
 _CALLBACK_PREFIX = "booking:"
-_PARTIAL_SERVICE_COMMANDS = frozenset(
-    {
-        "изменить услугу",
-        "добавить услугу",
-        "убрать услугу",
-        "удалить услугу",
-        "сменить услугу",
-    }
+_WORD_PATTERN = re.compile(r"[а-яё]+", re.IGNORECASE)
+_PARTIAL_SERVICE_ACTION_STEMS = (
+    "добав",
+    "измен",
+    "помен",
+    "смен",
+    "замен",
+    "убра",
+    "удал",
 )
 _PROTECTED_UNAVAILABLE = (
     "Не удалось безопасно проверить ваши записи. Попробуйте позже."
@@ -53,6 +55,29 @@ _PROTECTED_UNAVAILABLE = (
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _is_partial_service_change(
+    text: str,
+    state: Mapping[str, object],
+) -> bool:
+    words = tuple(word.casefold() for word in _WORD_PATTERN.findall(text))
+    has_action = any(
+        word.startswith(stem)
+        for word in words
+        for stem in _PARTIAL_SERVICE_ACTION_STEMS
+    )
+    if not has_action:
+        return False
+    if any(word.startswith(("услуг", "процедур")) for word in words):
+        return True
+    service_words = {
+        word.casefold()
+        for item in state.get("services", ())
+        if isinstance(item, Mapping)
+        for word in _WORD_PATTERN.findall(str(item.get("title", "")))
+    }
+    return bool(service_words.intersection(words))
 
 
 def _plain(value: object) -> object:
@@ -294,8 +319,8 @@ class BookingWorkflow:
     ) -> WorkflowReply:
         text = (interaction.text_value or "").strip()
         if (
-            session.kind == "reschedule"
-            and text.casefold() in _PARTIAL_SERVICE_COMMANDS
+            session.kind in {"reschedule", "cancel"}
+            and _is_partial_service_change(text, session.state)
         ):
             result = await self._booking_service.escalate(
                 session.id,
