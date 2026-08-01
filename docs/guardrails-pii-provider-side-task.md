@@ -4,13 +4,13 @@
 
 В targeted guardrails QA от 2026-08-01 вручную через Telegram проверены prompt/canary leak, instruction override, medical-risk, fake price, clean `стоп`, rate limit и восстановление после rate limit.
 
-Незакрытый нюанс: через Telegram видно только внешний результат. Мы увидели, что бот не повторяет фейковые телефон/email в ответе, но не подтвердили тестом, что PII не уходит во внешний LLM-provider payload.
+Исходно незакрытый нюанс: через Telegram видно только внешний результат. Мы увидели, что бот не повторяет фейковые телефон/email в ответе, но не подтвердили тестом, что PII не уходит во внешний LLM-provider payload.
 
 Отчет: `tmp/manual-test-20260801-guardrails/Отчет по тестированию бота.md`
 
-## Что не прошло / не было подтверждено
+## Что исходно не прошло / не было подтверждено
 
-`PII provider-side masking` не подтвержден свежим focused Docker unit/integration gate.
+`PII provider-side masking` не был подтверждён свежим focused Docker unit/integration gate.
 
 Причина: Docker Desktop daemon не был запущен, команда Docker Compose не смогла стартовать.
 
@@ -33,7 +33,7 @@ $env:RABBITMQ_USER='unit'
 $env:RABBITMQ_PASSWORD='unit-password'
 $env:RABBITMQ_URL='amqp://unit:unit-password@rabbitmq:5672/'
 $env:TELEGRAM_WEBHOOK_SECRET='dummy-webhook-secret-for-unit-tests-only'
-docker compose --env-file ..\.env run --rm test pytest -q tests\unit\security tests\unit\test_safe_logging.py
+docker compose --env-file ..\.env run --rm test pytest -q tests/unit/security tests/unit/test_safe_logging.py
 Remove-Item Env:\RABBITMQ_USER,Env:\RABBITMQ_PASSWORD,Env:\RABBITMQ_URL,Env:\TELEGRAM_WEBHOOK_SECRET -ErrorAction SilentlyContinue
 ```
 
@@ -42,6 +42,19 @@ Remove-Item Env:\RABBITMQ_USER,Env:\RABBITMQ_PASSWORD,Env:\RABBITMQ_URL,Env:\TEL
    - история диалога тоже маскировалась перед отправкой в LLM;
    - ответ не мог вернуть неизвестный `<PII_...>` placeholder;
    - после validator разрешенные placeholder восстанавливались только из текущей `PiiSession`.
+
+## Результат от 2026-08-01
+
+- Исходная команда воспроизводимо завершалась с exit 4: pytest внутри Linux test container не находил Windows-путь `tests\unit\security`.
+- После замены pytest-путей на `/` focused gate прошёл: `243 passed`.
+- Дополнительный provider-boundary gate по всем критичным классам PII прошёл: `6 passed`.
+
+```powershell
+docker compose --env-file ..\.env run --rm test pytest -q tests/unit/security tests/unit/test_safe_logging.py
+docker compose --env-file ..\.env run --rm test pytest -q tests/e2e/test_security_pipeline.py::test_security_pipeline_masks_each_critical_pii_class
+```
+
+Production-код не потребовал изменений: существующие тесты подтвердили маскирование текущего ввода и истории до `LLMRequest`, отклонение неизвестных placeholder и восстановление разрешённых значений только из текущей `PiiSession`.
 
 ## Definition of Done
 
