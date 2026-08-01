@@ -135,28 +135,25 @@
     <div class="tblwrap wide"><table class="grid">
       <thead><tr><th>Область</th><th>Lucky Hair Studio</th><th>Мороз и Солнце</th><th>Что расходится</th><th>Что можно перенять</th></tr></thead>
       <tbody>
-        <tr><td>Каналы и голос</td><td>4 live-канала и голос</td><td>Live только Telegram; WhatsApp, Instagram, VK, сайт и SpeechKit — план</td><td>Telegram V1 сознательно уже омниканального контура</td><td>Явная карта адаптеров и единый статусный язык</td></tr>
-        <tr><td>Очередь и фон</td><td>RabbitMQ, worker, scheduler, PostgreSQL, Redis</td><td>Тот же набор, но с durable inbox/outbox/task outbox и одним tasks-контрактом</td><td>У нас сильнее акцент на восстановление и точный порядок чата</td><td>Показывать очередь, worker и lifecycle одним читаемым потоком</td></tr>
-        <tr><td>Роутинг</td><td>Омниканальные scripts-first ветки</td><td>Scripts-first router, scenario engine, FAQ/booking/change/cancel/escalation</td><td>Мультинтент, платежи и маркетинг пока не входят в runtime</td><td>Быстрые отказы до LLM и наглядный веер сценариев</td></tr>
-        <tr><td>LLM security</td><td>Guardrails, PII и проверка выхода</td><td>PII masking, guardrails, primary/reserve gateway, output validator уже в коде</td><td>У нас строгая durable-граница до и после внешнего вызова</td><td>Показывать masked context и демаскировку только после validation</td></tr>
-        <tr><td>Запись</td><td>Локальный booking flow</td><td>YCLIENTS ownership, exact key, reconciliation и защищённые мутации</td><td>Live provider-доступ и production smoke ещё не подтверждены</td><td>Жизненный цикл записи и явное подтверждение клиента</td></tr>
-        <tr><td>Маркетинг и деньги</td><td>Шире автоматизация маркетинга</td><td>ЮKassa, массовые рассылки и реактивация не построены</td><td>Отложено после надёжного Telegram/YCLIENTS V1</td><td>Отдельные lifecycle и consent-гейты до кампаний</td></tr>
-        <tr><td>Админка и качество</td><td>Широкий операционный UI и эвалы</td><td>FastAPI/Jinja, RBAC, CSRF, TOTP, audit, prompt versions и eval runs</td><td>Нет полноценного UI записей, платежей, рассылок и knowledge editor</td><td>Единая карта ролей, моделей, eval-контуров и быстрых отказов</td></tr>
-        <tr><td>152-ФЗ</td><td>Локальная PII-граница</td><td>Privacy gate, раздельные consent semantics, masking и safe logging</td><td>Юридические сроки и правила остаются production acceptance</td><td>Отдельная карта Redis keys, данных и secret boundary</td></tr>
+        <tr><td>Каналы и голос</td><td>4 live-канала и голос</td><td>Live только Telegram; WhatsApp, Instagram, VK, сайт и SpeechKit — план</td><td>Telegram V1 сознательно уже омниканального контура</td><td><span class="ph">СЛЕДУЮЩИЙ ШАГ</span><br>Расширить карту адаптеров новыми каналами; единый статусный язык уже используется.</td></tr>
+        <tr><td>Очередь и фон</td><td>RabbitMQ, worker, scheduler, PostgreSQL, Redis</td><td>Тот же набор, но с durable inbox/outbox/task outbox и одним tasks-контрактом</td><td>У нас сильнее акцент на восстановление и точный порядок чата</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Очередь, worker и базовый lifecycle показаны одним читаемым потоком.</td></tr>
+        <tr><td>Роутинг</td><td>Омниканальные scripts-first ветки</td><td>Scripts-first router, scenario engine, FAQ/booking/change/cancel/escalation</td><td>Мультинтент, платежи и маркетинг пока не входят в runtime</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Быстрые отказы до LLM, scripts-first и наглядный веер сценариев.</td></tr>
+        <tr><td>LLM security</td><td>Guardrails, PII и проверка выхода</td><td>PII masking, guardrails, primary/reserve gateway, output validator уже в коде</td><td>У нас строгая durable-граница до и после внешнего вызова</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Masked context и демаскировка только после validation.</td></tr>
+        <tr><td>Запись</td><td>Локальный booking flow</td><td>YCLIENTS ownership, exact key, reconciliation и защищённые мутации</td><td>Live provider-доступ и production smoke ещё не подтверждены</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Явное подтверждение и базовый lifecycle; <span class="ph">СЛЕДУЮЩИЙ ШАГ</span> — расширение после live evidence.</td></tr>
+        <tr><td>Маркетинг и деньги</td><td>Шире автоматизация маркетинга</td><td>ЮKassa, массовые рассылки и реактивация не построены</td><td>Отложено после надёжного Telegram/YCLIENTS V1</td><td><span class="ph">СЛЕДУЮЩИЙ ШАГ</span><br>Расширить lifecycle, затем добавить consent-гейты кампаний, рассылки и платежи.</td></tr>
+        <tr><td>Админка и качество</td><td>Широкий операционный UI и эвалы</td><td>FastAPI/Jinja, RBAC, CSRF, TOTP, audit, prompt versions и eval runs</td><td>Нет полноценного UI записей, платежей, рассылок и knowledge editor</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Единая карта ролей, моделей, eval-контуров и статусный язык.</td></tr>
+        <tr><td>152-ФЗ</td><td>Локальная PII-граница</td><td>Privacy gate, раздельные consent semantics, masking и safe logging</td><td>Юридические сроки и правила остаются production acceptance</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Отдельная карта Redis keys, данных и secret boundary.</td></tr>
       </tbody>
     </table></div>
   </section>
 
   <section id="channels">
     <h2 class="sect wide">1 · Каналы</h2>
-    <div class="wide"><div class="branches five">
+    <div class="wide"><div class="branches">
       <div class="bcol"><span class="bhead" style="background:#2e7d5b">Текущий канал</span><div id="telegram-channel" class="node chan" data-status="implemented"><b>Telegram</b><small>aiogram webhook через Caddy; пользовательский канал Production V1</small><span class="status done">РАБОТАЕТ</span></div></div>
-      <div class="bcol"><span class="bhead">Следующий релиз</span><div id="whatsapp-channel" class="node future" data-status="planned"><b>WhatsApp</b><small>адаптер к единому IncomingMessage</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><span class="bhead">Следующий релиз</span><div id="instagram-channel" class="node future" data-status="planned"><b>Instagram</b><small>webhook-адаптер и исходящая доставка</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><span class="bhead">Следующий релиз</span><div id="vk-channel" class="node future" data-status="planned"><b>ВКонтакте</b><small>адаптер сообщений сообщества</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><span class="bhead">Следующий релиз</span><div id="site-channel" class="node future" data-status="planned"><b>Чат на сайте</b><small>единый входной контракт</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><span class="bhead">Целевая граница</span><div id="future-channels-reference" class="node future"><b>Новые текстовые каналы</b><small>WhatsApp · Instagram · ВКонтакте · чат на сайте</small><span class="ph">СМ. РАЗДЕЛ 14</span></div></div>
+      <div class="bcol"><span class="bhead">Целевая граница</span><div id="future-voice-reference" class="node future"><b>Голосовые сообщения</b><small>SpeechKit только после privacy gate</small><span class="ph">СМ. РАЗДЕЛ 14</span></div></div>
     </div></div>
-    <div class="aside"><div id="voice-speechkit" class="node future" data-status="planned"><b>Голос → Yandex SpeechKit</b><small>транскрибация только после privacy gate; аудио не входит в Telegram V1</small><span class="ph">ПЛАН</span></div></div>
   </section>
 
   <section id="ingress">
@@ -246,7 +243,7 @@
     <div class="wide"><div class="branches three">
       <div class="bcol"><div id="admin-panel" class="node proc" data-status="implemented"><b>FastAPI / Jinja admin</b><small>login, DB sessions, PBKDF2, TOTP-ready, RBAC, CSRF, audit, dialogs, prompt versions, bot control, logs, stats/metrics</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div id="eval-system" class="node llm" data-status="implemented"><b>Eval system</b><small>CRUD cases, runs/results, review, judge role и production gate</small><span class="status done">РАБОТАЕТ</span></div></div>
-      <div class="bcol"><div id="knowledge-base-editor" class="node future" data-status="planned"><b>Knowledge base editor</b><small>версии базы знаний и клиентское управление содержимым</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="knowledge-editor-reference" class="node future"><b>Knowledge base editor</b><small>целевая функция вынесена в единый future-контур</small><span class="ph">СМ. РАЗДЕЛ 14</span></div></div>
     </div></div>
     <div class="aside"><div class="card blue"><h3>Граница UI</h3><p>Диалоги, промпт, эвалы, управление ботом, логи и базовые метрики реализованы. Полноценные рабочие экраны эскалаций, записей, платежей и рассылок готовыми не считаются.</p></div></div>
   </section>
@@ -312,13 +309,18 @@
   <section id="future-boundary">
     <h2 class="sect wide">14 · Дальнейшая граница — не входит в рабочий поток</h2>
     <div class="wide"><div class="branches five">
+      <div class="bcol"><div id="whatsapp-channel" class="node future" data-status="planned"><b>WhatsApp</b><small>адаптер к единому IncomingMessage</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="instagram-channel" class="node future" data-status="planned"><b>Instagram</b><small>webhook-адаптер и исходящая доставка</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="vk-channel" class="node future" data-status="planned"><b>ВКонтакте</b><small>адаптер сообщений сообщества</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="site-channel" class="node future" data-status="planned"><b>Чат на сайте</b><small>единый входной контракт</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="voice-speechkit" class="node future" data-status="planned"><b>Голос → Yandex SpeechKit</b><small>транскрибация только после privacy gate</small><span class="ph">ПЛАН</span></div></div>
       <div class="bcol"><div id="yookassa-payments" class="node future" data-status="planned"><b>ЮKassa</b><small>payment link, подписанный webhook, статусы, сверка и возвраты</small><span class="ph">ПЛАН</span></div></div>
       <div class="bcol"><div id="mass-mailings" class="node future" data-status="planned"><b>Массовые рассылки</b><small>draft, preview, test, consent, limits, stop</small><span class="ph">ПЛАН</span></div></div>
       <div class="bcol"><div id="reactivation" class="node future" data-status="planned"><b>Реактивация</b><small>кампании, уникальные ключи, лимиты и остановка по ответу</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div class="node future"><b>Мультинтент и несколько услуг</b><small>merge нескольких сценариев без потери приоритетов</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="knowledge-base-editor" class="node future" data-status="planned"><b>Knowledge base editor</b><small>версии базы знаний и клиентское управление содержимым</small><span class="ph">ПЛАН</span></div></div>
       <div class="bcol"><div id="extended-business-analytics" class="node future" data-status="planned"><b>Расширенная бизнес-аналитика</b><small>конверсия, KPI, затраты, latency и канал attribution</small><span class="ph">ПЛАН</span></div></div>
     </div></div>
-    <p class="bnote" style="max-width:1100px;margin:14px auto 0;text-align:center">Также сюда относятся WhatsApp, Instagram, VK, чат сайта, voice/SpeechKit и knowledge-base editor, показанные выше серым пунктиром. Они не соединены с рабочим Telegram V1 как выполняющиеся компоненты.</p>
+    <p class="bnote" style="max-width:1100px;margin:14px auto 0;text-align:center">Все обязательные planned-узлы собраны здесь и не соединены с рабочим Telegram V1 как выполняющиеся компоненты. Дополнительно в backlog остаются мультинтент и несколько услуг в одном запросе.</p>
   </section>
 
   <p class="tiny">Схема собрана по текущему коду, Docker Compose, миграциям 0001–0009, тестам, <code>docs/production-v1-architecture.html</code> и целевым документам. Lucky Hair Studio использован только как визуальный и сравнительный референс; его бизнес-факты не перенесены в свойства проекта.</p>
