@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Мороз и Солнце — Полная архитектура проекта</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --ink: #1c2733; --muted: #667482; --line: #d9e1e8; --paper: #fbfbfb;
+      --blue: #dcefff; --blue-line: #79b6ec; --green: #d8f2dc; --green-line: #7cc98c;
+      --violet: #e7e0ff; --violet-line: #9b86d9; --orange: #ffe9cf; --orange-line: #e8a552;
+      --red: #fdeeeb; --red-line: #dba49a; --cyan: #d4f0ff; --cyan-line: #4aa3e0;
+    }
+    html, body { overflow-x: hidden; }
+    body {
+      margin: 0; padding: 30px 16px 64px;
+      font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      color: var(--ink); background: var(--paper); -webkit-font-smoothing: antialiased;
+    }
+    h1 { margin: 0 0 5px; text-align: center; font-size: 21px; letter-spacing: .25px; }
+    .sub { max-width: 1100px; margin: 4px auto; text-align: center; color: #75818d; font-size: 12.5px; line-height: 1.55; }
+    h2.sect {
+      max-width: 1100px; margin: 42px auto 15px; padding-bottom: 7px;
+      border-bottom: 2px solid #dde4ea; color: #2b3b4a; font-size: 15px;
+      text-transform: uppercase; letter-spacing: .42px;
+    }
+    h2.sect.wide, .wide { max-width: 1500px; }
+    .flow { max-width: 1100px; margin: 0 auto; }
+    .row { display: grid; grid-template-columns: 1fr minmax(230px, 330px) 1fr; align-items: center; gap: 14px; }
+    .center { grid-column: 2; display: flex; flex-direction: column; align-items: center; width: 100%; }
+    .side-l { grid-column: 1; justify-self: end; text-align: right; }
+    .side-r { grid-column: 3; justify-self: start; text-align: left; }
+    .node {
+      width: 100%; padding: 12px 14px; border: 1.5px solid; border-radius: 10px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.055); text-align: center; font-size: 13px; line-height: 1.4;
+    }
+    .node b { display: block; margin-bottom: 3px; font-size: 13.5px; }
+    .node small { display: block; color: #566573; font-size: 11.5px; }
+    .proc { background: var(--blue); border-color: var(--blue-line); }
+    .store { background: var(--violet); border-color: var(--violet-line); }
+    .term { background: var(--red); border-color: var(--red-line); color: #4a3733; }
+    .chan { background: var(--green); border-color: var(--green-line); }
+    .llm { background: var(--cyan); border-color: var(--cyan-line); }
+    .queue { background: var(--orange); border-color: var(--orange-line); }
+    .local { background: #e8f6e8; border-color: #5aa66a; }
+    .future { background: #f4f5f7; border-color: #b9c0c8; border-style: dashed; color: #818c96; box-shadow: none; }
+    .future b, .future small { color: #7b8690; }
+    .status, .ph, .flagoff {
+      display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 10px;
+      font-size: 9.5px; font-weight: 800; letter-spacing: .35px;
+    }
+    .status.done { color: #1d6833; background: #eff9f1; border: 1px solid #76bd86; }
+    .ph { color: #68747e; background: #dfe3e7; border: 1px dashed #aab2ba; }
+    .flagoff { color: #7b6014; background: #fff3cd; border: 1px dashed #d9b94e; }
+    .decision {
+      width: 100%; max-width: 310px; padding: 23px 20px; background: #ffe6c7;
+      border: 1.5px solid #e8a552; clip-path: polygon(50% 0,100% 50%,50% 100%,0 50%);
+      text-align: center; font-size: 12px; font-weight: 700;
+    }
+    .arr { position: relative; width: 2px; height: 24px; background: #9aa7b3; }
+    .arr.short { height: 16px; }
+    .arr::after { content: ""; position: absolute; bottom: -1px; left: -3px; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 7px solid #9aa7b3; }
+    .yes { margin: 3px 0; color: #1f8a3b; text-align: center; font-size: 10.5px; font-weight: 800; }
+    .branch-r { display: flex; align-items: center; gap: 8px; }
+    .branch-r .lbl { color: #b33c2f; font-size: 10.5px; font-weight: 800; white-space: nowrap; }
+    .branch-r .conn { position: relative; width: 26px; height: 2px; background: #d3a29a; }
+    .branch-r .conn::after { content: ""; position: absolute; right: -1px; top: -3px; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 7px solid #d3a29a; }
+    .side-note, .bnote { color: #6e7b87; font-size: 11px; line-height: 1.45; }
+    .lane { position: relative; margin: 8px auto 0; padding: 24px 13px 20px; border: 2px dashed #b7c2cd; border-radius: 14px; background: rgba(255,255,255,.54); }
+    .lane > .tag { position: absolute; top: -11px; left: 20px; padding: 3px 10px; border-radius: 20px; background: #34495e; color: white; font-size: 10.5px; font-weight: 800; letter-spacing: .3px; }
+    .lane.worker { border-color: #79b6ec; } .lane.worker > .tag { background: #2b78c2; }
+    .lane.adapter { border-color: #7cc98c; } .lane.adapter > .tag { background: #2e7d5b; }
+    .lane.sec { border-color: #e8a552; background: #fffaf3; } .lane.sec > .tag { background: #b97018; }
+    .lane.sched { border-color: #c9a5e0; } .lane.sched > .tag { background: #7d4fa8; }
+    .legend { max-width: 1100px; margin: 23px auto 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 18px; color: #3a4652; font-size: 11.5px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .chip { width: 14px; height: 14px; border: 1.5px solid; border-radius: 4px; }
+    .chip.dash { border-style: dashed; }
+    .aside { max-width: 1100px; margin: 17px auto 0; display: grid; grid-template-columns: repeat(auto-fit,minmax(270px,1fr)); gap: 13px; }
+    .aside.wide { max-width: 1500px; }
+    .card { padding: 14px 16px; border: 1.5px solid #cdd6df; border-radius: 12px; background: #fff; }
+    .card h3 { margin: 0 0 8px; font-size: 13.5px; }
+    .card p, .card li { color: #3a4652; font-size: 12px; line-height: 1.55; }
+    .card ul { margin: 0; padding-left: 18px; }
+    .card.done { border-color: #7cc98c; background: #f4fbf5; }
+    .card.warn { border-color: #d9b94e; background: #fffaf0; }
+    .card.fail { border-color: #d3a29a; background: #fdf3f1; }
+    .card.blue { border-color: #79b6ec; background: #f3fafe; }
+    .wide { margin-left: auto; margin-right: auto; }
+    .branches { display: grid; grid-template-columns: repeat(4,minmax(220px,1fr)); gap: 15px; align-items: start; }
+    .branches.five { grid-template-columns: repeat(5,minmax(205px,1fr)); }
+    .branches.three { grid-template-columns: repeat(3,minmax(240px,1fr)); }
+    .bcol { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+    .bcol .node { margin-bottom: 0; }
+    .bhead { margin: 7px 0; padding: 3px 11px; border-radius: 12px; background: #34495e; color: #fff; text-align: center; font-size: 10.5px; font-weight: 800; letter-spacing: .3px; }
+    .fanline { height: 2px; margin: 0 8%; background: #9aa7b3; }
+    .tblwrap { max-width: 1100px; margin: 0 auto; overflow-x: auto; border-radius: 10px; }
+    .tblwrap.wide { max-width: 1500px; }
+    table.grid { width: 100%; border-collapse: collapse; background: #fff; font-size: 11.5px; }
+    table.grid th, table.grid td { padding: 8px 9px; border: 1px solid #dce3e9; text-align: left; vertical-align: top; line-height: 1.45; }
+    table.grid th { background: #eef3f7; color: #2b3b4a; font-size: 11px; letter-spacing: .25px; }
+    code { padding: 1px 5px; border-radius: 4px; background: #eef1f4; font-size: 11px; overflow-wrap: anywhere; }
+    .tiny { max-width: 1100px; margin: 34px auto 0; color: #87929c; text-align: center; font-size: 10.5px; line-height: 1.55; }
+    @media (max-width: 1100px) { .branches, .branches.five { grid-template-columns: repeat(2,minmax(230px,1fr)); } }
+    @media (max-width: 760px) {
+      body { padding: 22px 10px 48px; } h1 { font-size: 18px; } h2.sect { margin-top: 34px; }
+      .row { display: flex; flex-direction: column; gap: 7px; } .center, .side-l, .side-r { width: 100%; text-align: center; }
+      .side-r .branch-r { justify-content: center; flex-wrap: wrap; } .decision { max-width: 280px; padding: 21px 17px; }
+      .branches, .branches.five, .branches.three { grid-template-columns: 1fr; }
+      .fanline { display: none; } .aside { grid-template-columns: 1fr; } .lane > .tag { position: static; display: inline-block; margin: -38px 0 14px; }
+      table.grid { min-width: 720px; } .tblwrap { border: 1px solid #e1e6ea; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>МОРОЗ И СОЛНЦЕ — ПОЛНАЯ АРХИТЕКТУРА ПРОЕКТА</h1>
+    <p class="sub">Фактический Telegram V1, функции с кодом без полного внешнего evidence и отдельно — согласованная целевая граница.</p>
+    <p class="sub"><b>Срез 01.08.2026</b> · git <code>06d7a14</code> · Alembic <code>0009_production_admin</code> · runtime: <code>worker</code>, <code>scheduler</code>, <code>bot</code>, <code>admin</code>, <code>redis</code>, <code>postgres</code>, <code>rabbitmq</code> · focused visual contract: <b>5 passed</b> · release evidence: <b>919 passed</b>, staging smoke <b>6/6</b> (актуальная запись проекта; новый full suite здесь не заявлен)</p>
+    <p class="sub"><b>Цветное:</b> РАБОТАЕТ · <b style="color:#7b6014">Жёлтая плашка:</b> КОД ЕСТЬ · НУЖНА ПРОВЕРКА · <b style="color:#818c96">Серое пунктирное:</b> ПЛАН</p>
+  </header>
+
+  <div class="legend" aria-label="Легенда">
+    <span><i class="chip" style="background:#dcefff;border-color:#79b6ec"></i>процесс</span>
+    <span><i class="chip" style="background:#ffe6c7;border-color:#e8a552"></i>решение</span>
+    <span><i class="chip" style="background:#e7e0ff;border-color:#9b86d9"></i>хранилище</span>
+    <span><i class="chip" style="background:#d8f2dc;border-color:#7cc98c"></i>канал / доставка</span>
+    <span><i class="chip" style="background:#d4f0ff;border-color:#4aa3e0"></i>LLM-контур</span>
+    <span><i class="chip dash" style="background:#f4f5f7;border-color:#b9c0c8"></i>план</span>
+  </div>
+
+  <section id="comparison">
+    <h2 class="sect wide">0 · Сравнение с Lucky Hair Studio</h2>
+    <div class="tblwrap wide"><table class="grid">
+      <thead><tr><th>Область</th><th>Lucky Hair Studio</th><th>Мороз и Солнце</th><th>Что расходится</th><th>Что можно перенять</th></tr></thead>
+      <tbody>
+        <tr><td>Каналы и голос</td><td>4 live-канала и голос</td><td>Live только Telegram; WhatsApp, Instagram, VK, сайт и SpeechKit — план</td><td>Telegram V1 сознательно уже омниканального контура</td><td>Явная карта адаптеров и единый статусный язык</td></tr>
+        <tr><td>Очередь и фон</td><td>RabbitMQ, worker, scheduler, PostgreSQL, Redis</td><td>Тот же набор, но с durable inbox/outbox/task outbox и одним tasks-контрактом</td><td>У нас сильнее акцент на восстановление и точный порядок чата</td><td>Показывать очередь, worker и lifecycle одним читаемым потоком</td></tr>
+        <tr><td>Роутинг</td><td>Омниканальные scripts-first ветки</td><td>Scripts-first router, scenario engine, FAQ/booking/change/cancel/escalation</td><td>Мультинтент, платежи и маркетинг пока не входят в runtime</td><td>Быстрые отказы до LLM и наглядный веер сценариев</td></tr>
+        <tr><td>LLM security</td><td>Guardrails, PII и проверка выхода</td><td>PII masking, guardrails, primary/reserve gateway, output validator уже в коде</td><td>У нас строгая durable-граница до и после внешнего вызова</td><td>Показывать masked context и демаскировку только после validation</td></tr>
+        <tr><td>Запись</td><td>Локальный booking flow</td><td>YCLIENTS ownership, exact key, reconciliation и защищённые мутации</td><td>Live provider-доступ и production smoke ещё не подтверждены</td><td>Жизненный цикл записи и явное подтверждение клиента</td></tr>
+        <tr><td>Маркетинг и деньги</td><td>Шире автоматизация маркетинга</td><td>ЮKassa, массовые рассылки и реактивация не построены</td><td>Отложено после надёжного Telegram/YCLIENTS V1</td><td>Отдельные lifecycle и consent-гейты до кампаний</td></tr>
+        <tr><td>Админка и качество</td><td>Широкий операционный UI и эвалы</td><td>FastAPI/Jinja, RBAC, CSRF, TOTP, audit, prompt versions и eval runs</td><td>Нет полноценного UI записей, платежей, рассылок и knowledge editor</td><td>Единая карта ролей, моделей, eval-контуров и быстрых отказов</td></tr>
+        <tr><td>152-ФЗ</td><td>Локальная PII-граница</td><td>Privacy gate, раздельные consent semantics, masking и safe logging</td><td>Юридические сроки и правила остаются production acceptance</td><td>Отдельная карта Redis keys, данных и secret boundary</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="channels">
+    <h2 class="sect wide">1 · Каналы</h2>
+    <div class="wide"><div class="branches five">
+      <div class="bcol"><span class="bhead" style="background:#2e7d5b">Текущий канал</span><div id="telegram-channel" class="node chan" data-status="implemented"><b>Telegram</b><small>aiogram webhook через Caddy; пользовательский канал Production V1</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><span class="bhead">Следующий релиз</span><div id="whatsapp-channel" class="node future" data-status="planned"><b>WhatsApp</b><small>адаптер к единому IncomingMessage</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><span class="bhead">Следующий релиз</span><div id="instagram-channel" class="node future" data-status="planned"><b>Instagram</b><small>webhook-адаптер и исходящая доставка</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><span class="bhead">Следующий релиз</span><div id="vk-channel" class="node future" data-status="planned"><b>ВКонтакте</b><small>адаптер сообщений сообщества</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><span class="bhead">Следующий релиз</span><div id="site-channel" class="node future" data-status="planned"><b>Чат на сайте</b><small>единый входной контракт</small><span class="ph">ПЛАН</span></div></div>
+    </div></div>
+    <div class="aside"><div id="voice-speechkit" class="node future" data-status="planned"><b>Голос → Yandex SpeechKit</b><small>транскрибация только после privacy gate; аудио не входит в Telegram V1</small><span class="ph">ПЛАН</span></div></div>
+  </section>
+
+  <section id="ingress">
+    <h2 class="sect">2 · Вход: webhook, consent и durable приём</h2>
+    <div class="flow"><div class="lane adapter"><span class="tag">ПУБЛИЧНЫЙ TELEGRAM INGRESS</span>
+      <div class="row"><div class="center"><div class="node chan"><b>Telegram Bot API → Caddy</b><small>HTTPS endpoint <code>/telegram/webhook</code></small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="decision">Webhook secret корректен?</div></div><div class="side-r"><div class="branch-r"><span class="lbl">нет</span><span class="conn"></span><div class="node term" style="width:210px"><b>403, без обработки</b></div></div></div></div>
+      <div class="yes">да</div><div class="row"><div class="center"><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="node proc"><b>Форма update, private chat, текст и длина</b><small>неподдерживаемый контент получает статический ответ; слишком длинный текст не попадает в inbox</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div><div class="side-r"><div class="side-note">Отдельный age-gate в текущем webhook-аудите не подтверждён; freshness не обозначена как работающий шаг.</div></div></div>
+      <div class="row"><div class="center"><div class="decision">Бот на паузе?</div></div><div class="side-r"><div class="branch-r"><span class="lbl">да</span><span class="conn"></span><div class="node term" style="width:210px"><b>Статический ответ</b><small>до LLM и очереди</small></div></div></div></div>
+      <div class="yes">нет</div><div class="row"><div class="center"><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="decision">Есть processing consent?</div></div><div class="side-r"><div class="branch-r"><span class="lbl">нет</span><span class="conn"></span><div class="node term" style="width:230px"><b>Меню согласий</b><small>обработка ПД обязательна; рассылка — отдельная семантика</small></div></div></div></div>
+      <div class="yes">да</div><div class="row"><div class="center"><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div id="privacy-gate" class="node local" data-status="implemented"><b>Privacy gate</b><small>до согласия нет текста в долгой истории и внешней LLM</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div id="durable-inbox" class="node store" data-status="implemented"><b>Durable inbox + dedup</b><small><code>message_inbox</code>; unique <code>(channel, external_message_id)</code>, повтор не запускает второй сценарий</small><span class="status done">РАБОТАЕТ</span></div></div></div>
+    </div></div>
+  </section>
+
+  <section id="queue-worker">
+    <h2 class="sect">3 · Буфер, RabbitMQ и worker</h2>
+    <div class="flow"><div class="lane worker"><span class="tag">НАДЁЖНАЯ ОБРАБОТКА</span>
+      <div class="row"><div class="center"><div id="message-buffer" class="node proc" data-status="implemented"><b>Per-chat message buffer</b><small>2 секунды тишины; Redis transaction + TTL + lock, PostgreSQL recovery</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="node store"><b>Task outbox relay</b><small><code>task_outbox</code> материализует <code>process_message</code> до публикации</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div id="rabbitmq-tasks" class="node queue" data-status="implemented"><b>RabbitMQ tasks</b><small>direct durable exchange/queue · persistent · publisher confirms · retry 1/5/30 · DLQ 30 дней</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div id="worker-process" class="node proc" data-status="implemented"><b>worker</b><small>prefetch 4 · manual ACK после durable результата · message/booking/notification handlers</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div><div class="side-r"><div class="side-note">PostgreSQL advisory lock сериализует один chat_id; разные чаты идут параллельно.</div></div></div>
+      <div class="row"><div class="center"><div class="node store"><b>Durable checkpoints</b><small>inbox + outbound + task outbox; broker доставляет работу, но не хранит бизнес-истину</small><span class="status done">РАБОТАЕТ</span></div></div></div>
+    </div></div>
+  </section>
+
+  <section id="routing">
+    <h2 class="sect wide">4 · Scripts-first routing и сценарии</h2>
+    <div class="wide"><div class="fanline"></div><div class="branches five">
+      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#2b78c2">Диспетчер</span><div id="scripts-first-router" class="node proc" data-status="implemented"><b>Scripts-first router</b><small>consent, stop, rate limit и известные сценарии решаются до внешней LLM</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#2e7d5b">Консультация</span><div class="node llm"><b>FAQ / consultation</b><small>контекст → security → primary/reserve LLM</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#7d4fa8">Запись</span><div class="node proc"><b>booking / change / cancel</b><small>детерминированная state machine с явным подтверждением</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#b97018">Уведомления</span><div class="node proc"><b>notification / lifecycle</b><small>реализованы в подтверждённой code/test boundary</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#a3473d">Человек</span><div class="node term"><b>Эскалация</b><small>durable запись и human mode; полного операторского UI нет</small><span class="status done">РАБОТАЕТ</span></div></div>
+    </div><p class="bnote" style="text-align:center;margin-top:12px">Мультинтент, несколько услуг, оплата, массовые рассылки и полноценная реактивация не включены в этот рабочий веер.</p></div>
+  </section>
+
+  <section id="llm-security">
+    <h2 class="sect">5 · LLM security</h2>
+    <div class="flow"><div class="lane sec"><span class="tag">ТОЛЬКО ДЛЯ LLM-МАРШРУТОВ</span>
+      <div class="row"><div class="center"><div id="pii-masking" class="node local" data-status="implemented"><b>PII masking</b><small>телефоны, email, ФИО, адреса, платёжные и медицинские фрагменты заменяются локальными typed placeholders</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div id="guardrails" class="node proc" data-status="implemented"><b>Guardrails</b><small>jailbreak, prompt leak, токсичность и unsafe input; scripts-first и fail-closed policy</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div><div class="side-r"><div class="branch-r"><span class="lbl">BLOCK</span><span class="conn"></span><div class="node term" style="width:210px"><b>Безопасный шаблон</b><small>без основного LLM</small></div></div></div></div>
+      <div class="yes">masked context разрешён</div><div class="row"><div class="center"><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div id="primary-reserve-gateway" class="node llm" data-status="implemented"><b>Primary / reserve gateway</b><small>модель задаётся конфигурацией; bounded retry, классификация ошибок, резерв и usage accounting</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div id="output-validator" class="node proc" data-status="implemented"><b>Output validator</b><small>проверка утечек, формата и безопасности; максимум одна повторная генерация, затем fallback</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="node local"><b>Демаскировка</b><small>только после успешной validation; выдуманные placeholders не превращаются в ПД</small><span class="status done">РАБОТАЕТ</span></div></div></div>
+    </div></div>
+  </section>
+
+  <section id="booking">
+    <h2 class="sect wide">6 · Booking и YCLIENTS</h2>
+    <div class="wide"><div class="branches five">
+      <div class="bcol"><span class="bhead">1 · Сценарий</span><div class="node proc"><b>Booking state machine</b><small>create, reschedule, cancel; needs input → confirm → executing → terminal</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><span class="bhead">2 · Владение</span><div class="node store"><b>Owner + exact booking key</b><small>trusted UUID, advisory lock, immutable ownership, fail closed</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><span class="bhead">3 · Подтверждение</span><div class="node proc"><b>Human confirmation</b><small>услуга, сотрудник, дата и время до provider mutation</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><span class="bhead">4 · Интеграция</span><div id="yclients-live" class="node llm" data-status="evidence-pending"><b>YCLIENTS API</b><small>HTTP-адаптер и sandbox smoke-контур есть; доступы, live API и production smoke не подтверждены</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div></div>
+      <div class="bcol"><span class="bhead">5 · Исход</span><div class="node store"><b>Reconciliation</b><small>unknown mutation outcome перечитывается по exact key; blind retry запрещён</small><span class="status done">РАБОТАЕТ</span></div></div>
+    </div></div>
+    <div class="aside"><div class="card warn"><h3>Честная внешняя граница</h3><p>Локальные booking state/ownership/key/reconciliation/lifecycle модули и тесты реализованы. Это не означает, что реальные клиентские записи уже проходят через production YCLIENTS.</p></div></div>
+  </section>
+
+  <section id="delivery">
+    <h2 class="sect">7 · Защита выхода и доставка</h2>
+    <div class="flow"><div class="lane adapter"><span class="tag">DURABLE OUTBOUND</span>
+      <div class="row"><div class="center"><div class="node proc"><b>Output security завершена</b><small>validation → безопасная демаскировка → материализация ответа</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div id="durable-outbox" class="node store" data-status="implemented"><b>Durable outbox</b><small><code>pending → sending → sent</code> или <code>delivery_unknown</code>; idempotency key и порядок чата</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="node chan"><b>Telegram sender</b><small>transient/permanent classification; неопределённую доставку не повторяет вслепую</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="node store"><b>История и usage</b><small><code>messages</code>, <code>token_usage</code>, внешний message ID и correlation trail</small><span class="status done">РАБОТАЕТ</span></div></div></div>
+    </div></div>
+  </section>
+
+  <section id="background">
+    <h2 class="sect">8 · Scheduler и фоновые процессы</h2>
+    <div class="flow"><div class="lane sched"><span class="tag">SCHEDULER → RABBITMQ → WORKER</span>
+      <div class="row"><div class="center"><div class="node store"><b>scheduler_jobs</b><small>due_at, kind, attempts и terminal state для reminder, no-show, feedback, lifecycle</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="node proc"><b>scheduler</b><small>claim due jobs, heartbeat и публикация с publisher confirms</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
+      <div class="row"><div class="center"><div class="node proc"><b>Worker handlers</b><small>подтверждение, напоминания, no-show, visit outcome, feedback и low-feedback escalation</small><span class="status done">РАБОТАЕТ</span></div></div><div class="side-r"><div class="side-note">YCLIENTS-dependent lifecycle наследует осторожную external evidence boundary.</div></div></div>
+    </div></div>
+    <div class="aside"><div class="card fail"><h3>Controlled failure</h3><ul><li>три повтора: 1 / 5 / 30 секунд;</li><li>manual ACK только после durable результата;</li><li>после исчерпания — DLQ на 30 дней;</li><li>неразрешённый бизнес-исход — durable эскалация.</li></ul></div></div>
+  </section>
+
+  <section id="admin-evals">
+    <h2 class="sect wide">9 · Админка и эвалы</h2>
+    <div class="wide"><div class="branches three">
+      <div class="bcol"><div id="admin-panel" class="node proc" data-status="implemented"><b>FastAPI / Jinja admin</b><small>login, DB sessions, PBKDF2, TOTP-ready, RBAC, CSRF, audit, dialogs, prompt versions, bot control, logs, stats/metrics</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="eval-system" class="node llm" data-status="implemented"><b>Eval system</b><small>CRUD cases, runs/results, review, judge role и production gate</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="knowledge-base-editor" class="node future" data-status="planned"><b>Knowledge base editor</b><small>версии базы знаний и клиентское управление содержимым</small><span class="ph">ПЛАН</span></div></div>
+    </div></div>
+    <div class="aside"><div class="card blue"><h3>Граница UI</h3><p>Диалоги, промпт, эвалы, управление ботом, логи и базовые метрики реализованы. Полноценные рабочие экраны эскалаций, записей, платежей и рассылок готовыми не считаются.</p></div></div>
+  </section>
+
+  <section id="data">
+    <h2 class="sect wide">10 · Данные и queue contracts</h2>
+    <div class="wide"><div class="branches three">
+      <div class="bcol"><div id="postgres-store" class="node store" data-status="implemented"><b>PostgreSQL</b><small>критическое и durable состояние</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="redis-store" class="node store" data-status="implemented"><b>Redis</b><small>временная память, буфер, locks и control</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="rabbitmq-store" class="node queue" data-status="implemented"><b>RabbitMQ</b><small>доставка задач между процессами</small><span class="status done">РАБОТАЕТ</span></div></div>
+    </div></div>
+    <div class="aside wide">
+      <div class="card"><h3>PostgreSQL · Alembic 0001–0009</h3><p><code>messages</code>, <code>token_usage</code>, <code>prompt_versions</code>, <code>eval_cases/runs/results</code>, <code>eval_case_reviews</code>; <code>message_inbox</code>, <code>outbound_messages</code>, <code>task_outbox</code>, <code>processing_consents</code>; <code>booking_scenarios</code>, <code>bookings</code>, <code>booking_events</code>; <code>scheduler_jobs</code>, <code>notification_feedback_requests</code>, <code>escalations</code>, <code>human_mode</code>; <code>admin_users</code>, <code>admin_sessions</code>, <code>admin_audit_events</code>.</p></div>
+      <div class="card"><h3>Redis · реальные семейства</h3><p><code>buffer:{chat_id}</code>, <code>buffer:deadlines</code>, <code>lock:buffer:{chat_id}</code>; <code>chat:{chat_id}:messages</code>; <code>bot:paused</code>; prompt reload channel; <code>alert:{code}:{subject}</code> cooldown.</p></div>
+      <div class="card"><h3>RabbitMQ · реальный контракт</h3><p><code>tasks</code> direct exchange/queue, publisher confirms, persistent messages, prefetch 4, manual ACK, <code>x-retry-count</code>, retry 1/5/30, <code>tasks.dlx</code> и <code>tasks.dlq</code> с TTL 30 дней.</p></div>
+    </div>
+  </section>
+
+  <section id="infrastructure">
+    <h2 class="sect wide">11 · Инфраструктура и release boundary</h2>
+    <div class="tblwrap wide"><table class="grid">
+      <thead><tr><th>Сервис</th><th>Роль</th><th>Health / durable граница</th><th>Статус</th></tr></thead>
+      <tbody>
+        <tr><td><code>bot</code></td><td>Telegram webhook ingress и outbound delivery</td><td>bounded shutdown, PostgreSQL/Redis dependencies</td><td>РАБОТАЕТ</td></tr>
+        <tr><td><code>worker</code></td><td>message, booking, notification tasks</td><td>heartbeat, manual ACK, retry/DLQ</td><td>РАБОТАЕТ</td></tr>
+        <tr><td><code>scheduler</code></td><td>due jobs → RabbitMQ</td><td>heartbeat, PostgreSQL claim</td><td>РАБОТАЕТ в code/test boundary</td></tr>
+        <tr><td><code>admin</code></td><td>FastAPI/Jinja control plane</td><td><code>/healthz</code>, owner metrics, audit</td><td>РАБОТАЕТ</td></tr>
+        <tr><td><code>postgres</code> · <code>redis</code> · <code>rabbitmq</code></td><td>state, cache/coordination, task broker</td><td>named volumes не считаются app-сервисами</td><td>РАБОТАЕТ</td></tr>
+        <tr><td><code>migrate</code></td><td>разовый профиль Alembic</td><td>head <code>0009_production_admin</code>, runtime DDL запрещён</td><td>РАБОТАЕТ</td></tr>
+      </tbody>
+    </table></div>
+    <div class="aside wide">
+      <div class="card done"><h3>Release mechanics</h3><p>Docker Compose base/test/staging/production overlays, env validation, safe logging, healthz, owner-only metrics, staging/deploy gates и immutable app-only rollback реализованы в коде и runbooks.</p></div>
+      <div id="production-backup" class="node store" data-status="evidence-pending"><b>Production backup / restore</b><small>скрипты шифрования, verify и restore есть; внешний backup и production restore drill не закрыты evidence</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div>
+      <div id="external-uptime" class="node proc" data-status="evidence-pending"><b>External uptime</b><small>public health contract есть; независимый внешний монитор и алерт ещё не подтверждены</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div>
+    </div>
+  </section>
+
+  <section id="models-integrations">
+    <h2 class="sect">12 · Модели и внешние интеграции</h2>
+    <div class="tblwrap"><table class="grid">
+      <thead><tr><th>Роль</th><th>Граница</th><th>Статус</th></tr></thead>
+      <tbody>
+        <tr><td>Primary LLM</td><td>конфигурируемая модель; только masked request</td><td>РАБОТАЕТ</td></tr>
+        <tr><td>Reserve LLM</td><td>подхватывает разрешённые ошибки primary через единый gateway</td><td>РАБОТАЕТ</td></tr>
+        <tr><td>Judge LLM</td><td>отдельная конфигурируемая роль для eval runs</td><td>РАБОТАЕТ</td></tr>
+        <tr><td>Telegram Bot API</td><td>webhook + исходящая доставка</td><td>РАБОТАЕТ</td></tr>
+        <tr><td>YCLIENTS</td><td>adapter/sandbox code есть; live evidence нет</td><td>КОД ЕСТЬ · НУЖНА ПРОВЕРКА</td></tr>
+        <tr><td>ЮKassa · SpeechKit · новые каналы</td><td>последующие релизы</td><td>ПЛАН</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="privacy-security">
+    <h2 class="sect">13 · Privacy, security и 152-ФЗ</h2>
+    <div class="aside">
+      <div class="card done"><h3>До внешней LLM</h3><ul><li>versioned processing consent и отдельная рекламная семантика;</li><li>privacy gate до долгого хранения и внешнего вызова;</li><li>typed PII masking и scripts-first guardrails;</li><li>fail-closed security boundary.</li></ul></div>
+      <div class="card done"><h3>Внутри контура</h3><ul><li>секреты только через environment boundary;</li><li>safe logging без токенов, URL credentials и исходных ПД;</li><li>RBAC, CSRF, server-side sessions, TOTP-ready и audit;</li><li>PostgreSQL — источник критичного состояния.</li></ul></div>
+      <div class="card warn"><h3>Юридическая граница</h3><p>Архитектура поддерживает требования 152-ФЗ техническими мерами, но не объявляет окончательное юридическое соответствие. Retention, тексты согласий и правила обработки остаются предметом production acceptance.</p></div>
+    </div>
+  </section>
+
+  <section id="future-boundary">
+    <h2 class="sect wide">14 · Дальнейшая граница — не входит в рабочий поток</h2>
+    <div class="wide"><div class="branches five">
+      <div class="bcol"><div id="yookassa-payments" class="node future" data-status="planned"><b>ЮKassa</b><small>payment link, подписанный webhook, статусы, сверка и возвраты</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="mass-mailings" class="node future" data-status="planned"><b>Массовые рассылки</b><small>draft, preview, test, consent, limits, stop</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="reactivation" class="node future" data-status="planned"><b>Реактивация</b><small>кампании, уникальные ключи, лимиты и остановка по ответу</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div class="node future"><b>Мультинтент и несколько услуг</b><small>merge нескольких сценариев без потери приоритетов</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="extended-business-analytics" class="node future" data-status="planned"><b>Расширенная бизнес-аналитика</b><small>конверсия, KPI, затраты, latency и канал attribution</small><span class="ph">ПЛАН</span></div></div>
+    </div></div>
+    <p class="bnote" style="max-width:1100px;margin:14px auto 0;text-align:center">Также сюда относятся WhatsApp, Instagram, VK, чат сайта, voice/SpeechKit и knowledge-base editor, показанные выше серым пунктиром. Они не соединены с рабочим Telegram V1 как выполняющиеся компоненты.</p>
+  </section>
+
+  <p class="tiny">Схема собрана по текущему коду, Docker Compose, миграциям 0001–0009, тестам, <code>docs/production-v1-architecture.html</code> и целевым документам. Lucky Hair Studio использован только как визуальный и сравнительный референс; его бизнес-факты не перенесены в свойства проекта.</p>
+</body>
+</html>
