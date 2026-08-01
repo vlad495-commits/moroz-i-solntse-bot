@@ -19,7 +19,9 @@ from moroz.booking.workflow_repository import (
     BookingAction,
     BookingWorkflowRepository,
     WorkflowSession,
+    WorkflowRevisionConflict,
 )
+from moroz.messaging.models import ScenarioResult
 
 
 _ACTIVE_PHASES = {"collecting", "awaiting_confirmation", "executing"}
@@ -89,6 +91,17 @@ class BookingWorkflow:
             owner.customer_id,
             idempotency_key,
         )
+        if (
+            session.phase == "awaiting_confirmation"
+            and session.expires_at is not None
+            and session.expires_at <= self._aware_now()
+        ):
+            recovery = await self._slot_recovery(session)
+            session = await self._repository.checkpoint(
+                recovery,
+                "booking_confirmation_expired",
+                {},
+            )
         if session.state.get("step") is not None:
             return await self._render_current(session)
         try:
@@ -163,7 +176,11 @@ class BookingWorkflow:
             owner.chat_id,
             owner.customer_id,
         )
-        if session is None or session.id != action.scenario_id:
+        if (
+            session is None
+            or session.id != action.scenario_id
+            or session.revision != action.revision
+        ):
             return self._refresh()
         if session.phase == "executing":
             return self._presenter.plain(
@@ -185,7 +202,10 @@ class BookingWorkflow:
         handler = handlers.get(action.action_kind)
         if handler is None:
             return self._refresh()
-        return await handler(session, action)
+        try:
+            return await handler(session, action)
+        except WorkflowRevisionConflict:
+            return self._refresh()
 
     async def _handle_text(
         self,
@@ -568,11 +588,28 @@ class BookingWorkflow:
         owner: BookingOwner,
         action: BookingAction,
     ) -> WorkflowReply:
-        result = await self._booking_service.handle(
-            action.scenario_id,
-            confirmed=True,
-        )
+        session = await self._repository.get(action.scenario_id)
+        if session is None:
+            return self._refresh()
+        if session.phase == "collecting":
+            result = ScenarioResult(
+                "needs_input",
+                "",
+                "choose_slot",
+                (),
+            )
+        else:
+            result = await self._booking_service.handle(
+                action.scenario_id,
+                confirmed=True,
+            )
         reply = self._presenter.scenario_result(result)
+        recovery_session = None
+        if result.status == "needs_input" and result.next_action == "choose_slot":
+            latest = await self._repository.get(action.scenario_id)
+            if latest is None or latest.phase != "collecting":
+                return self._refresh()
+            recovery_session = await self._slot_recovery(latest)
         completion = await self._repository.complete_action(
             action.id,
             owner.channel,
@@ -584,8 +621,71 @@ class BookingWorkflow:
                 "status": result.status,
                 "error_code": result.error_code,
             },
+            recovery_session=recovery_session,
         )
         return WorkflowReply.from_result(completion.result)
+
+    async def _slot_recovery(
+        self,
+        session: WorkflowSession,
+    ) -> WorkflowSession:
+        state = self._state(session)
+        for key in (
+            "selected_date",
+            "selected_slot_id",
+            "actual_staff_id",
+            "actual_staff_name",
+            "starts_at",
+            "duration_minutes",
+            "customer_name",
+            "customer_phone",
+            "personal_data_processing_allowed",
+        ):
+            state.pop(key, None)
+        slots: list[Slot] = []
+        raw_query = state.get("slot_query")
+        if isinstance(raw_query, Mapping):
+            now = self._aware_now()
+            query = SlotQuery(
+                service_ids=tuple(raw_query.get("service_ids", ())),
+                starts_after=now,
+                starts_before=now + self._horizon,
+                staff_id=(
+                    str(raw_query["staff_id"])
+                    if raw_query.get("staff_id") is not None
+                    else None
+                ),
+            )
+            try:
+                fresh = await self._booking_port.list_slots(query)
+            except BookingTemporaryError:
+                fresh = []
+            staff_ids = {
+                str(item["id"])
+                for item in state.get("staff", ())
+                if isinstance(item, Mapping) and item.get("id") is not None
+            }
+            slots = self._allowed_slots(fresh, query, staff_ids)
+            state["slot_query"] = {
+                "service_ids": list(query.service_ids),
+                "starts_after": query.starts_after.isoformat(),
+                "starts_before": query.starts_before.isoformat(),
+                "staff_id": query.staff_id,
+            }
+        if slots:
+            state["slots"] = [self._slot_state(slot) for slot in slots]
+            state["date_page"] = 0
+            state["step"] = "date"
+        else:
+            state.pop("slots", None)
+            state["step"] = "master"
+        return replace(
+            session,
+            phase="collecting",
+            state=state,
+            error_code=None,
+            expires_at=None,
+        )
 
     async def _render_current(self, session: WorkflowSession) -> WorkflowReply:
         if session.phase == "executing":

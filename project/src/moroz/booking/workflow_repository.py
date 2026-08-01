@@ -13,6 +13,11 @@ from moroz.common.db import Database
 
 WorkflowKind = Literal["create", "reschedule", "cancel"]
 _ACTIVE_PHASES = ("collecting", "awaiting_confirmation", "executing")
+_CONFIRM_RECOVERY_PHASES = ("collecting", "executing", "confirmed", "escalated")
+
+
+class WorkflowRevisionConflict(RuntimeError):
+    pass
 
 
 def _utc_now() -> datetime:
@@ -232,6 +237,14 @@ class BookingWorkflowRepository:
             )
         return self._session_from_row(row) if row is not None else None
 
+    async def get(self, scenario_id: UUID) -> WorkflowSession | None:
+        async with self._database.acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT * FROM booking_scenarios WHERE id = $1",
+                scenario_id,
+            )
+        return self._session_from_row(row) if row is not None else None
+
     async def checkpoint(
         self,
         session: WorkflowSession,
@@ -288,7 +301,7 @@ class BookingWorkflowRepository:
                     ):
                         raise RuntimeError("booking action is stale")
                 if row["revision"] != session.revision:
-                    raise RuntimeError("workflow revision conflict")
+                    raise WorkflowRevisionConflict("workflow revision conflict")
                 updated = await connection.fetchrow(
                     """
                     UPDATE booking_scenarios
@@ -307,7 +320,7 @@ class BookingWorkflowRepository:
                     session.revision,
                 )
                 if updated is None:
-                    raise RuntimeError("workflow revision conflict")
+                    raise WorkflowRevisionConflict("workflow revision conflict")
                 await self._insert_event(
                     connection,
                     session.id,
@@ -350,7 +363,7 @@ class BookingWorkflowRepository:
                 if scenario is None:
                     raise KeyError(f"booking scenario {scenario_id} not found")
                 if scenario["revision"] != revision:
-                    raise RuntimeError("workflow revision conflict")
+                    raise WorkflowRevisionConflict("workflow revision conflict")
                 if not all(
                     isinstance(scenario[field], str) and scenario[field]
                     for field in ("customer_id", "channel", "chat_id")
@@ -395,7 +408,8 @@ class BookingWorkflowRepository:
             async with connection.transaction():
                 row = await connection.fetchrow(
                     """
-                    SELECT a.*, s.revision AS scenario_revision
+                    SELECT a.*, s.revision AS scenario_revision,
+                           s.phase AS scenario_phase
                     FROM booking_actions AS a
                     JOIN booking_scenarios AS s ON s.id = a.scenario_id
                     WHERE a.id = $1
@@ -413,9 +427,13 @@ class BookingWorkflowRepository:
                     return None
                 if row["consumed_at"] is not None and row["result"] is not None:
                     return self._action_from_row(row)
-                if (
+                recoverable_confirm = (
+                    row["action_kind"] == "confirm"
+                    and row["scenario_phase"] in _CONFIRM_RECOVERY_PHASES
+                )
+                if row["revision"] != row["scenario_revision"] or (
                     row["expires_at"] <= self._now()
-                    or row["revision"] != row["scenario_revision"]
+                    and not recoverable_confirm
                 ):
                     return None
                 return self._action_from_row(row)
@@ -429,6 +447,8 @@ class BookingWorkflowRepository:
         result: Mapping[str, object],
         event_type: str,
         payload: Mapping[str, object] | None = None,
+        *,
+        recovery_session: WorkflowSession | None = None,
     ) -> ActionCompletion:
         result_object = _json_object(result, "result")
         result_json = _dump_json_object(result_object, "result")
@@ -479,24 +499,64 @@ class BookingWorkflowRepository:
                         saved,
                         True,
                     )
-                if (
-                    action["revision"] != scenario["revision"]
-                    or action["expires_at"] <= now
+                recoverable_confirm = (
+                    action["action_kind"] == "confirm"
+                    and scenario["phase"] in _CONFIRM_RECOVERY_PHASES
+                )
+                if action["revision"] != scenario["revision"] or (
+                    action["expires_at"] <= now
+                    and not recoverable_confirm
                 ):
                     raise RuntimeError("booking action is stale")
-                updated = await connection.fetchrow(
-                    """
-                    UPDATE booking_scenarios
-                    SET revision = revision + 1, updated_at = $2
-                    WHERE id = $1 AND revision = $3
-                    RETURNING *
-                    """,
-                    scenario["id"],
-                    now,
-                    scenario["revision"],
-                )
+                if recovery_session is not None:
+                    if (
+                        action["action_kind"] != "confirm"
+                        or scenario["phase"] != "collecting"
+                        or recovery_session.id != scenario["id"]
+                        or recovery_session.revision != scenario["revision"]
+                        or recovery_session.phase != "collecting"
+                        or (
+                            recovery_session.channel,
+                            recovery_session.chat_id,
+                            recovery_session.customer_id,
+                        )
+                        != (channel, chat_id, customer_id)
+                    ):
+                        raise RuntimeError("booking action recovery conflict")
+                    recovery_state = _dump_json_object(
+                        recovery_session.state,
+                        "state",
+                    )
+                    updated = await connection.fetchrow(
+                        """
+                        UPDATE booking_scenarios
+                        SET phase = 'collecting', state = $2::jsonb,
+                            error_code = $3, expires_at = $4,
+                            revision = revision + 1, updated_at = $5
+                        WHERE id = $1 AND revision = $6
+                        RETURNING *
+                        """,
+                        scenario["id"],
+                        recovery_state,
+                        recovery_session.error_code,
+                        recovery_session.expires_at,
+                        now,
+                        scenario["revision"],
+                    )
+                else:
+                    updated = await connection.fetchrow(
+                        """
+                        UPDATE booking_scenarios
+                        SET revision = revision + 1, updated_at = $2
+                        WHERE id = $1 AND revision = $3
+                        RETURNING *
+                        """,
+                        scenario["id"],
+                        now,
+                        scenario["revision"],
+                    )
                 if updated is None:
-                    raise RuntimeError("workflow revision conflict")
+                    raise WorkflowRevisionConflict("workflow revision conflict")
                 await self._insert_event(
                     connection,
                     scenario["id"],

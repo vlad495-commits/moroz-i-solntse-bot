@@ -150,6 +150,11 @@ class FakeWorkflowRepository:
             return None
         return session
 
+    async def get(self, scenario_id):
+        if self.session is None or self.session.id != scenario_id:
+            return None
+        return self.session
+
     async def checkpoint(
         self,
         session,
@@ -230,6 +235,8 @@ class FakeWorkflowRepository:
         result,
         event_type,
         payload=None,
+        *,
+        recovery_session=None,
     ):
         assert self.session is not None
         action = self.actions[action_id]
@@ -243,8 +250,9 @@ class FakeWorkflowRepository:
             customer_id,
         )
         now = self.clock.now()
+        source = recovery_session or self.session
         self.session = replace(
-            self.session,
+            source,
             revision=self.session.revision + 1,
             updated_at=now,
         )
@@ -267,7 +275,12 @@ class FakeBookingService:
     async def handle(self, scenario_id, *, confirmed):
         self.calls.append((scenario_id, confirmed))
         if self.repository.session is not None:
-            phase = "confirmed" if self.result.status == "ok" else "escalated"
+            if self.result.status == "ok":
+                phase = "confirmed"
+            elif self.result.status == "needs_input":
+                phase = "collecting"
+            else:
+                phase = "escalated"
             self.repository.session = replace(self.repository.session, phase=phase)
         return self.result
 
