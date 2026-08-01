@@ -28,11 +28,15 @@
 - Consumes: `START_REPLY: str`, который Docker Compose передаёт сервису `bot`.
 - Produces: статический текст, который существующие `handle_start` и webhook ingress отправляют по `/start`.
 
-- [ ] **Step 1: Зафиксировать RED-проверку текущей конфигурации**
+- [x] **Step 1: Зафиксировать RED-проверку текущей конфигурации**
 
 Выполнить Docker Compose-проверку точного ожидаемого значения до изменения `.env`:
 
 ```powershell
+$env:RABBITMQ_USER = "test_user"
+$env:RABBITMQ_PASSWORD = "test_password"
+$env:RABBITMQ_URL = "amqp://test_user:test_password@rabbitmq:5672/"
+$env:TELEGRAM_WEBHOOK_SECRET = "test_webhook_secret_32_chars_long"
 $expected = "Здравствуйте! Я онлайн-ассистент центра «Мороз и Солнце» ❄️☀️`n`nПомогу вам:`n• узнать об услугах, ценах и программах`n• подобрать подходящую процедуру`n• записаться на удобное время`n• перенести или отменить запись`n• узнать о сертификатах и подготовке к визиту`n`nНапишите, что вас интересует — я подскажу, с чего начать."
 $actual = ((docker compose --env-file ../.env config --format json | ConvertFrom-Json).services.bot.environment.START_REPLY)
 if ($actual -eq $expected) { exit 0 } else { Write-Error "START_REPLY differs from approved copy" }
@@ -40,7 +44,7 @@ if ($actual -eq $expected) { exit 0 } else { Write-Error "START_REPLY differs fr
 
 Expected: exit code `1`, потому что в `.env` пока находится прежнее короткое приветствие.
 
-- [ ] **Step 2: Записать минимальное изменение**
+- [x] **Step 2: Записать минимальное изменение**
 
 Заменить только строку `START_REPLY` в `.env` на значение с `\n\n` между тремя блоками:
 
@@ -48,21 +52,21 @@ Expected: exit code `1`, потому что в `.env` пока находитс
 START_REPLY="Здравствуйте! Я онлайн-ассистент центра «Мороз и Солнце» ❄️☀️\n\nПомогу вам:\n• узнать об услугах, ценах и программах\n• подобрать подходящую процедуру\n• записаться на удобное время\n• перенести или отменить запись\n• узнать о сертификатах и подготовке к визиту\n\nНапишите, что вас интересует — я подскажу, с чего начать."
 ```
 
-- [ ] **Step 3: Проверить GREEN через Docker Compose**
+- [x] **Step 3: Проверить GREEN через Docker Compose**
 
 Повторить команду Step 1.
 
 Expected: exit code `0`; значение полностью совпадает, включая две пустые строки между блоками.
 
-- [ ] **Step 4: Проверить значение в контейнере**
+- [x] **Step 4: Проверить значение в контейнере**
 
 ```powershell
-docker compose --env-file ../.env run --rm --no-deps bot python -c "import os; value=os.environ['START_REPLY']; assert value.count('\\n\\n') == 2; print('START_REPLY runtime check passed')"
+docker compose --env-file ../.env run --rm --no-deps bot python -c "import os; value=os.environ['START_REPLY']; assert value.count(chr(10) * 2) == 2; print('START_REPLY runtime check passed')"
 ```
 
 Expected: `START_REPLY runtime check passed`, exit code `0`.
 
-- [ ] **Step 5: Обновить проектные документы и закоммитить логический шаг**
+- [x] **Step 5: Обновить проектные документы и закоммитить логический шаг**
 
 Отметить задачу выполненной в `Дорожная карта.md`, записать результат проверки в `changelog.md`, затем выполнить:
 
