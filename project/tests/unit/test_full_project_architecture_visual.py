@@ -98,7 +98,7 @@ URL_ATTRIBUTES = {
     "usemap",
     "xlink:href",
 }
-MULTI_URL_ATTRIBUTES = {"ping", "srcset"}
+MULTI_URL_ATTRIBUTES = {"imagesrcset", "ping", "srcset"}
 VOID_ELEMENTS = {
     "area",
     "base",
@@ -220,7 +220,7 @@ def is_external_target(target: str) -> bool:
 
 
 def iter_attribute_targets(attribute: str, value: str) -> list[str]:
-    if attribute == "srcset":
+    if attribute in {"imagesrcset", "srcset"}:
         return [
             candidate.strip().split()[0]
             for candidate in value.split(",")
@@ -316,6 +316,11 @@ def test_visual_is_static_and_does_not_expose_secrets() -> None:
 
 def test_visual_has_only_local_assets() -> None:
     _, parser = load_visual()
+    forbidden_elements = {"embed", "iframe", "object"}
+    present_forbidden_elements = sorted(
+        {element.tag for element in parser.tags} & forbidden_elements
+    )
+    assert not present_forbidden_elements, present_forbidden_elements
     for element in parser.tags:
         for attribute in URL_ATTRIBUTES | MULTI_URL_ATTRIBUTES:
             source = element.attrs.get(attribute)
@@ -327,12 +332,10 @@ def test_visual_has_only_local_assets() -> None:
             raise AssertionError((element.tag, "srcdoc"))
         if (
             element.tag == "meta"
-            and (element.attrs.get("http-equiv") or "").casefold() == "refresh"
-            and "url=" in (element.attrs.get("content") or "").casefold()
+            and (element.attrs.get("http-equiv") or "").strip().casefold()
+            == "refresh"
         ):
-            raise AssertionError(
-                (element.tag, "refresh", element.attrs.get("content"))
-            )
+            raise AssertionError((element.tag, "refresh"))
 
 
 def test_visual_has_required_css_contract() -> None:
