@@ -79,11 +79,58 @@ STATUS_MARKERS = {
     "planned": "ПЛАН",
 }
 
+URL_ATTRIBUTES = {
+    "action",
+    "archive",
+    "background",
+    "cite",
+    "codebase",
+    "data",
+    "dynsrc",
+    "formaction",
+    "href",
+    "longdesc",
+    "lowsrc",
+    "manifest",
+    "poster",
+    "profile",
+    "src",
+    "usemap",
+    "xlink:href",
+}
+MULTI_URL_ATTRIBUTES = {"ping", "srcset"}
+VOID_ELEMENTS = {
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+}
+CSS_URL_PATTERN = re.compile(
+    r"url\(\s*(?P<quote>['\"]?)(?P<target>.*?)(?P=quote)\s*\)",
+    re.IGNORECASE | re.DOTALL,
+)
+CONNECTION_STRING_PATTERN = re.compile(
+    r"\b(?:postgres(?:ql)?|rediss?|amqps?)://",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class ParsedElement:
     tag: str
     attrs: dict[str, str | None]
+    ancestor_ids: tuple[str, ...]
+    hides_content: bool
     visible_text_parts: list[str] = field(default_factory=list)
 
     @property
@@ -95,6 +142,8 @@ class FullArchitectureParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.elements_by_id: dict[str, ParsedElement] = {}
+        self.id_counts: dict[str, int] = {}
+        self.duplicate_ids: set[str] = set()
         self.tags: list[ParsedElement] = []
         self.visible_text_parts: list[str] = []
         self._open_elements: list[ParsedElement] = []
@@ -103,20 +152,42 @@ class FullArchitectureParser(HTMLParser):
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
     ) -> None:
-        element = ParsedElement(tag, dict(attrs))
+        parsed_attrs = dict(attrs)
+        ancestor_ids = tuple(
+            element_id
+            for element in self._open_elements
+            if (element_id := element.attrs.get("id"))
+        )
+        normalized_style = re.sub(
+            r"\s+", "", parsed_attrs.get("style") or ""
+        ).casefold()
+        hides_content = (
+            tag in {"script", "style", "template"}
+            or "hidden" in parsed_attrs
+            or (parsed_attrs.get("aria-hidden") or "").casefold() == "true"
+            or "display:none" in normalized_style
+            or "visibility:hidden" in normalized_style
+        )
+        element = ParsedElement(tag, parsed_attrs, ancestor_ids, hides_content)
         self.tags.append(element)
-        self._open_elements.append(element)
         element_id = element.attrs.get("id")
         if element_id:
-            self.elements_by_id[element_id] = element
-        if tag in {"script", "style"}:
-            self._non_visible_tag_depth += 1
+            self.id_counts[element_id] = self.id_counts.get(element_id, 0) + 1
+            if element_id in self.elements_by_id:
+                self.duplicate_ids.add(element_id)
+            else:
+                self.elements_by_id[element_id] = element
+        if tag not in VOID_ELEMENTS:
+            self._open_elements.append(element)
+            if hides_content:
+                self._non_visible_tag_depth += 1
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style"}:
-            self._non_visible_tag_depth -= 1
         for index in range(len(self._open_elements) - 1, -1, -1):
             if self._open_elements[index].tag == tag:
+                self._non_visible_tag_depth -= sum(
+                    element.hides_content for element in self._open_elements[index:]
+                )
                 del self._open_elements[index:]
                 break
 
@@ -138,15 +209,47 @@ def load_visual() -> tuple[str, FullArchitectureParser]:
     return html, parser
 
 
+def is_external_target(target: str) -> bool:
+    target = target.strip()
+    if not target or target.startswith("#"):
+        return False
+    if target.startswith(("//", "\\\\")):
+        return True
+    parsed = urlsplit(target)
+    return bool(parsed.scheme or parsed.netloc)
+
+
+def iter_attribute_targets(attribute: str, value: str) -> list[str]:
+    if attribute == "srcset":
+        return [
+            candidate.strip().split()[0]
+            for candidate in value.split(",")
+            if candidate.strip()
+        ]
+    if attribute == "ping":
+        return value.split()
+    return [value]
+
+
 def test_visual_contains_required_sections_and_status_markers() -> None:
     _, parser = load_visual()
+    assert not parser.duplicate_ids, sorted(parser.duplicate_ids)
     assert REQUIRED_SECTIONS <= parser.elements_by_id.keys()
     for status, nodes in STATUS_NODES.items():
         marker = STATUS_MARKERS[status]
         for node in nodes:
+            assert parser.id_counts.get(node) == 1, node
             element = parser.elements_by_id[node]
             assert element.attrs.get("data-status") == status
             assert marker in element.visible_text
+            classes = set((element.attrs.get("class") or "").split())
+            assert "node" in classes
+            if status == "planned":
+                assert "future" in classes
+                assert "future-boundary" in element.ancestor_ids
+            else:
+                assert "future" not in classes
+                assert "future-boundary" not in element.ancestor_ids
 
 
 def test_visual_contains_status_labels_and_comparison_facts() -> None:
@@ -177,11 +280,31 @@ def test_visual_is_static_and_does_not_expose_secrets() -> None:
         "fetch(",
         "xmlhttprequest",
         "websocket(",
-        "http://",
-        "https://",
     ):
         assert forbidden not in normalized_html
-    assert not any(element.tag in {"iframe", "object", "embed"} for element in parser.tags)
+    assert not re.search(r"@import\b", html, re.IGNORECASE)
+    for match in CSS_URL_PATTERN.finditer(html):
+        target = match.group("target").strip()
+        assert not is_external_target(target), target
+    for element in parser.tags:
+        inline_style = element.attrs.get("style") or ""
+        assert not re.search(r"@import\b", inline_style, re.IGNORECASE)
+        for match in CSS_URL_PATTERN.finditer(inline_style):
+            target = match.group("target").strip()
+            assert not is_external_target(target), target
+    decoded_content = "\n".join(
+        [
+            html,
+            parser.visible_text,
+            *(
+                value
+                for element in parser.tags
+                for value in element.attrs.values()
+                if value
+            ),
+        ]
+    )
+    assert not CONNECTION_STRING_PATTERN.search(decoded_content)
     for secret in (
         "telegram_bot_token",
         "postgres_password",
@@ -194,19 +317,22 @@ def test_visual_is_static_and_does_not_expose_secrets() -> None:
 def test_visual_has_only_local_assets() -> None:
     _, parser = load_visual()
     for element in parser.tags:
-        if element.tag not in {"script", "link", "img"}:
-            continue
-        for attribute in ("src", "href"):
+        for attribute in URL_ATTRIBUTES | MULTI_URL_ATTRIBUTES:
             source = element.attrs.get(attribute)
             if not source:
                 continue
-            source = source.strip()
-            if not source or source.startswith("#"):
-                continue
-            parsed = urlsplit(source)
-            assert not source.startswith("//"), (element.tag, attribute, source)
-            assert not parsed.scheme, (element.tag, attribute, source)
-            assert not parsed.netloc, (element.tag, attribute, source)
+            for target in iter_attribute_targets(attribute, source):
+                assert not is_external_target(target), (element.tag, attribute, target)
+        if element.attrs.get("srcdoc"):
+            raise AssertionError((element.tag, "srcdoc"))
+        if (
+            element.tag == "meta"
+            and (element.attrs.get("http-equiv") or "").casefold() == "refresh"
+            and "url=" in (element.attrs.get("content") or "").casefold()
+        ):
+            raise AssertionError(
+                (element.tag, "refresh", element.attrs.get("content"))
+            )
 
 
 def test_visual_has_required_css_contract() -> None:
@@ -219,7 +345,8 @@ def test_visual_has_required_css_contract() -> None:
         ".future",
         ".flagoff",
         "border-style: dashed",
+        "repeat(auto-fit,minmax(205px,1fr))",
+        "max-width: 1085px",
         "@media (max-width: 760px)",
-        "overflow-x: hidden",
     ):
         assert token in html

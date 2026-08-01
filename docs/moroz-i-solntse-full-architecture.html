@@ -89,7 +89,10 @@
     .card.blue { border-color: #79b6ec; background: #f3fafe; }
     .wide { margin-left: auto; margin-right: auto; }
     .branches { display: grid; grid-template-columns: repeat(4,minmax(220px,1fr)); gap: 15px; align-items: start; }
-    .branches.five { grid-template-columns: repeat(5,minmax(205px,1fr)); }
+    .branches.five {
+      max-width: 1085px; margin-left: auto; margin-right: auto;
+      grid-template-columns: repeat(auto-fit,minmax(205px,1fr));
+    }
     .branches.three { grid-template-columns: repeat(3,minmax(240px,1fr)); }
     .bcol { display: flex; flex-direction: column; align-items: center; min-width: 0; }
     .bcol .node { margin-bottom: 0; }
