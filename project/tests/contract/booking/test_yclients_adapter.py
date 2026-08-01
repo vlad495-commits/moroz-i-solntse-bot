@@ -184,6 +184,8 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
     assert booking.customer_id == "customer-7"
     assert booking.booking_key == BOOKING_KEY
     assert booking.slot_id == slots[0].id
+    assert booking.service_ids == ("331",)
+    assert booking.staff_id == "6544"
     assert fetched == booking
     paths = [urlsplit(request[1]).path for request in server.requests]
     assert paths == [
@@ -883,6 +885,8 @@ async def test_reschedule_uses_protected_get_check_put_and_preserves_minimum_rec
     )
 
     assert booking.slot_id == target_slot
+    assert booking.service_ids == ("331",)
+    assert booking.staff_id == "77"
     assert booking.customer_id == "trusted-customer"
     assert booking.booking_key == BOOKING_KEY
     assert [urlsplit(item[1]).path for item in server.requests] == [

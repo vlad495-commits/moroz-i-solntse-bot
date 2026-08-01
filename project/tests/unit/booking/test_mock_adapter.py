@@ -98,6 +98,8 @@ async def test_create_is_idempotent_for_same_key():
     repeated = await adapter.create_booking(command)
 
     assert repeated == first
+    assert first.service_ids == ("service-1", "service-2")
+    assert first.staff_id == "staff-1"
     assert await adapter.get_booking(
         GetBooking(first.external_id, first.customer_id, first.booking_key)
     ) == first
@@ -129,6 +131,8 @@ async def test_reschedule_checks_availability_and_is_idempotent():
 
     assert repeated == first
     assert first.slot_id == "slot-next"
+    assert first.service_ids == ("service-1",)
+    assert first.staff_id == "staff-1"
     assert first.scheduled_end_at == first.starts_at + timedelta(hours=1)
     with pytest.raises(SlotUnavailable):
         await adapter.create_booking(_create_command("customer-2", "slot-next", "create-2"))

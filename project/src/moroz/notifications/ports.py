@@ -1,3 +1,4 @@
+import json
 from uuid import UUID
 
 from moroz.booking.models import ExternalBooking
@@ -14,7 +15,9 @@ class LocalBookingPort:
             row = await connection.fetchrow(
                 """
                 SELECT external_id, customer_id, booking_key, slot_id,
-                       starts_at, scheduled_end_at, status
+                       starts_at, scheduled_end_at, status,
+                       snapshot->'service_ids' AS service_ids,
+                       snapshot->>'staff_id' AS staff_id
                 FROM bookings
                 WHERE booking_key = $1
                 ORDER BY updated_at DESC, id DESC
@@ -24,15 +27,25 @@ class LocalBookingPort:
             )
         if row is None:
             return None
+        service_ids = row["service_ids"]
+        staff_id = row["staff_id"]
         return ExternalBooking(
             external_id=row["external_id"],
             customer_id=row["customer_id"],
             booking_key=row["booking_key"],
             slot_id=row["slot_id"],
+            service_ids=(
+                () if service_ids is None else tuple(_json_value(service_ids))
+            ),
+            staff_id="" if staff_id is None else staff_id,
             starts_at=row["starts_at"],
             status=row["status"],
             scheduled_end_at=row["scheduled_end_at"],
         )
+
+
+def _json_value(value):
+    return json.loads(value) if isinstance(value, str) else value
 
 
 class NotificationOutbox:

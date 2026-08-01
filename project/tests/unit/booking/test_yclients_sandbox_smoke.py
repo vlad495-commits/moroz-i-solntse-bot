@@ -49,6 +49,8 @@ def _booking(slot: Slot, *, status: str = "confirmed") -> ExternalBooking:
         f"smoke-{RUN_ID.hex}",
         RUN_ID,
         slot.id,
+        slot.service_ids,
+        slot.staff_id,
         slot.starts_at,
         status,
     )
@@ -266,6 +268,8 @@ async def test_invalid_create_result_never_triggers_cleanup_mutation(booking_key
         f"smoke-{RUN_ID.hex}",
         booking_key,
         "slot-a",
+        ("331",),
+        "6544",
         _slot("slot-a", 48).starts_at,
         "confirmed",
     ))

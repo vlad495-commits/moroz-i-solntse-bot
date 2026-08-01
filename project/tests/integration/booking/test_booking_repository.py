@@ -54,6 +54,8 @@ def confirmed_booking(*, status="confirmed"):
         customer_id="customer-7",
         booking_key=BOOKING_KEY,
         slot_id="slot-9",
+        service_ids=("service-1", "service-2"),
+        staff_id="staff-7",
         starts_at=datetime(2026, 7, 25, 14, 0, tzinfo=UTC),
         status=status,
     )
@@ -150,6 +152,8 @@ async def test_confirm_atomically_persists_terminal_scenario_and_booking(
     snapshot = json.loads(row["snapshot"])
     assert snapshot["external_id"] == booking.external_id
     assert snapshot["booking_key"] == str(booking.booking_key)
+    assert snapshot["service_ids"] == list(booking.service_ids)
+    assert snapshot["staff_id"] == booking.staff_id
     assert snapshot["starts_at"] == booking.starts_at.isoformat()
 
 

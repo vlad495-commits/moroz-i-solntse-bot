@@ -605,6 +605,8 @@ def _external_booking(
         customer_id=customer_id,
         booking_key=booking_key,
         slot_id=slot_id,
+        service_ids=tuple(str(value) for value in services),
+        staff_id=str(staff),
         starts_at=starts_at,
         status=_visit_status(record),
         scheduled_end_at=scheduled_end_at,

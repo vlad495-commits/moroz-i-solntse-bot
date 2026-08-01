@@ -63,6 +63,8 @@ def local_booking(*, status="confirmed", scheduled_end_at=END_AT):
         customer_id="customer-7",
         booking_key=BOOKING_KEY,
         slot_id="slot-1",
+        service_ids=("service-1", "service-2"),
+        staff_id="staff-7",
         starts_at=STARTS_AT,
         status=status,
         scheduled_end_at=scheduled_end_at,
@@ -75,6 +77,8 @@ def _row(booking):
         "customer_id": booking.customer_id,
         "booking_key": booking.booking_key,
         "slot_id": booking.slot_id,
+        "service_ids": booking.service_ids,
+        "staff_id": booking.staff_id,
         "starts_at": booking.starts_at,
         "status": booking.status,
         "scheduled_end_at": booking.scheduled_end_at,
@@ -99,6 +103,8 @@ async def test_refresh_uses_exact_owned_get_command():
         )
     ]
     assert refreshed.status == "completed"
+    assert refreshed.service_ids == ("service-1", "service-2")
+    assert refreshed.staff_id == "staff-7"
 
 
 @pytest.mark.asyncio

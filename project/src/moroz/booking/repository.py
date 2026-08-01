@@ -178,7 +178,7 @@ class BookingRepository:
         row = await connection.fetchrow(
             """
             SELECT b.external_id, b.customer_id, b.booking_key, b.slot_id,
-                   b.starts_at, b.scheduled_end_at, b.status
+                   b.starts_at, b.scheduled_end_at, b.status, b.snapshot
             FROM booking_scenarios AS s
             JOIN bookings AS b
               ON b.external_id = s.state->>'external_id'
@@ -188,11 +188,14 @@ class BookingRepository:
         )
         if row is None:
             return None
+        snapshot = _load_json(row["snapshot"])
         return ExternalBooking(
             external_id=row["external_id"],
             customer_id=row["customer_id"],
             booking_key=row["booking_key"],
             slot_id=row["slot_id"],
+            service_ids=tuple(snapshot["service_ids"]),
+            staff_id=snapshot["staff_id"],
             starts_at=row["starts_at"],
             status=row["status"],
             scheduled_end_at=row["scheduled_end_at"],
@@ -270,6 +273,8 @@ class BookingRepository:
             "customer_id": booking.customer_id,
             "booking_key": str(booking.booking_key),
             "slot_id": booking.slot_id,
+            "service_ids": list(booking.service_ids),
+            "staff_id": booking.staff_id,
             "starts_at": booking.starts_at.isoformat(),
             "scheduled_end_at": (
                 booking.scheduled_end_at.isoformat()
