@@ -54,6 +54,13 @@ _TIME_TARGET_WORDS = {
     "времени",
     "временем",
 }
+_COORDINATED_TARGET_LINKS = {
+    ("и",),
+    ("и", "пожалуйста"),
+    ("а",),
+    ("а", "также"),
+}
+_GENITIVE_GENERIC_SERVICE_WORDS = {"услуги", "процедуры"}
 _PROTECTED_UNAVAILABLE = (
     "Не удалось безопасно проверить ваши записи. Попробуйте позже."
 )
@@ -110,7 +117,7 @@ def _is_partial_service_change(
         for left, right in zip(ordered_targets, ordered_targets[1:]):
             kinds = {targets[left], targets[right]}
             if (
-                words[left + 1 : right] == ("и",)
+                words[left + 1 : right] in _COORDINATED_TARGET_LINKS
                 and "other" in kinds
                 and any(kind.endswith("service") for kind in kinds)
             ):
@@ -131,7 +138,10 @@ def _is_partial_service_change(
             closest is not None
             and targets[closest] == "generic_service"
             and "other" in targets.values()
-            and "для" in words[action + 1 : closest]
+            and (
+                "для" in words[action + 1 : closest]
+                or words[closest] in _GENITIVE_GENERIC_SERVICE_WORDS
+            )
         ):
             continue
         if closest is not None and targets[closest].endswith("service"):

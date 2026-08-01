@@ -316,6 +316,10 @@ async def test_clear_inflected_partial_service_request_escalates(
         "Хочу изменить услугу и время",
         "Хочу поменять время и услугу",
         "Хочу изменить время и массаж",
+        "Хочу изменить время и, пожалуйста, услугу",
+        "Хочу изменить время, а также услугу",
+        "Хочу изменить время, а услугу убрать",
+        "Хочу поменять время, а массаж убрать",
     ],
 )
 @pytest.mark.parametrize("kind", ["reschedule", "cancel"])
@@ -408,6 +412,8 @@ async def test_temporary_adverb_does_not_hide_partial_service_target(
         "Время хочу поменять для услуги",
         "Мастера хочу поменять для услуги",
         "Дату хочу изменить для услуги",
+        "Время хочу поменять услуги",
+        "Мастера хочу поменять услуги",
     ],
 )
 @pytest.mark.parametrize("kind", ["reschedule", "cancel"])
