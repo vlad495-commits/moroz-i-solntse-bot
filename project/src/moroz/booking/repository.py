@@ -12,6 +12,29 @@ from moroz.messaging.repository import MessageRepository
 from moroz.notifications.planner import plan_booking_notifications
 
 
+_BOOKING_ESCALATION_REASON_CODES = frozenset(
+    {
+        "booking_temporarily_unavailable",
+        "booking_outcome_unknown",
+        "late_booking_change",
+        "booking_identity_unconfirmed",
+        "partial_service_change_unsupported",
+    }
+)
+_ESCALATABLE_SCENARIO_PHASES = frozenset(
+    {"collecting", "awaiting_confirmation", "executing"}
+)
+_TERMINAL_SCENARIO_PHASES = frozenset({"failed", "confirmed", "escalated"})
+
+
+def _validate_booking_escalation_reason(error_code: object) -> str:
+    if not isinstance(error_code, str) or error_code not in (
+        _BOOKING_ESCALATION_REASON_CODES
+    ):
+        raise ValueError("unsupported booking escalation reason code")
+    return error_code
+
+
 def _thaw_json(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _thaw_json(item) for key, item in value.items()}
@@ -151,6 +174,7 @@ class BookingRepository:
         error_code: str,
         payload: Mapping[str, object] | None = None,
     ) -> None:
+        error_code = _validate_booking_escalation_reason(error_code)
         async with self._database.acquire() as connection:
             async with connection.transaction():
                 await self._lock_scenario(connection, scenario.id)
@@ -419,8 +443,11 @@ class BookingRepository:
         )
         if current is None:
             raise KeyError(f"booking scenario {scenario.id} not found")
-        if current["phase"] in {"confirmed", "escalated"}:
+        current_phase = current["phase"]
+        if current_phase in _TERMINAL_SCENARIO_PHASES:
             return
+        if current_phase not in _ESCALATABLE_SCENARIO_PHASES:
+            raise RuntimeError("unsupported booking scenario phase")
         if current["customer_id"] != scenario.customer_id:
             raise RuntimeError("booking scenario ownership conflict")
         if not self._staff_chat_id:
@@ -631,6 +658,7 @@ class BookingScenarioSession:
         error_code: str,
         payload: Mapping[str, object] | None = None,
     ) -> None:
+        error_code = _validate_booking_escalation_reason(error_code)
         async with self._connection.transaction():
             await self._repository._lock_scenario(self._connection, scenario.id)
             await self._repository._escalate_with_connection(

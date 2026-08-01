@@ -233,3 +233,82 @@ async def test_escalation_does_not_overwrite_confirmed_terminal_scenario(
     stored = await repository.get_scenario(scenario.id)
     assert (stored.phase, stored.error_code) == ("confirmed", None)
     assert tuple((await _counts(database, scenario.id)).values()) == (0, 0, 0, 0, 0)
+
+
+async def test_escalation_does_not_overwrite_failed_terminal_scenario(
+    database, scenario
+):
+    repository = BookingRepository(database, staff_chat_id=STAFF_CHAT_ID)
+    failed = replace(scenario, phase="failed", error_code="existing_failure")
+    await repository.create_scenario(failed)
+
+    await repository.escalate(failed, "booking_outcome_unknown")
+
+    stored = await repository.get_scenario(scenario.id)
+    assert (stored.phase, stored.error_code) == ("failed", "existing_failure")
+    assert tuple((await _counts(database, scenario.id)).values()) == (0, 0, 0, 0, 0)
+
+
+async def test_escalation_fails_closed_for_unknown_persisted_phase(
+    database, scenario
+):
+    repository = BookingRepository(database, staff_chat_id=STAFF_CHAT_ID)
+    await repository.create_scenario(scenario)
+    async with database.acquire() as connection:
+        await connection.execute(
+            "ALTER TABLE booking_scenarios "
+            "DROP CONSTRAINT ck_booking_scenarios_phase"
+        )
+        await connection.execute(
+            "UPDATE booking_scenarios SET phase = 'unexpected' WHERE id = $1",
+            scenario.id,
+        )
+    try:
+        with pytest.raises(RuntimeError, match="booking scenario phase"):
+            await repository.escalate(scenario, "booking_outcome_unknown")
+
+        assert tuple((await _counts(database, scenario.id)).values()) == (
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    finally:
+        async with database.acquire() as connection:
+            await connection.execute(
+                "UPDATE booking_scenarios SET phase = 'failed' WHERE id = $1",
+                scenario.id,
+            )
+            await connection.execute(
+                "ALTER TABLE booking_scenarios ADD CONSTRAINT "
+                "ck_booking_scenarios_phase CHECK (phase IN "
+                "('collecting', 'awaiting_confirmation', 'executing', "
+                "'confirmed', 'failed', 'escalated'))"
+            )
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        None,
+        42,
+        "",
+        "unknown_reason",
+        "booking_outcome_unknown\nprovider-secret",
+        "+79991234567",
+        "provider_booking_id:12345",
+    ],
+)
+async def test_escalation_rejects_non_allowlisted_reason_before_side_effects(
+    database, scenario, error_code
+):
+    repository = BookingRepository(database, staff_chat_id=STAFF_CHAT_ID)
+    await repository.create_scenario(scenario)
+
+    with pytest.raises(ValueError, match="booking escalation reason code"):
+        await repository.escalate(scenario, error_code)
+
+    stored = await repository.get_scenario(scenario.id)
+    assert (stored.phase, stored.error_code) == ("executing", None)
+    assert tuple((await _counts(database, scenario.id)).values()) == (0, 0, 0, 0, 0)
