@@ -84,6 +84,26 @@ class BarrierWorkflowRepository(BookingWorkflowRepository):
         return action
 
 
+class ConfirmBarrierWorkflowRepository(BookingWorkflowRepository):
+    def __init__(self, database: Database, clock: Clock) -> None:
+        super().__init__(database, now=clock.now)
+        self._arrivals = 0
+        self._gate = asyncio.Event()
+
+    async def get(self, scenario_id):
+        session = await super().get(scenario_id)
+        if (
+            session is not None
+            and session.phase == "awaiting_confirmation"
+            and session.state.get("step") == "awaiting_confirmation"
+        ):
+            self._arrivals += 1
+            if self._arrivals == 2:
+                self._gate.set()
+            await asyncio.wait_for(self._gate.wait(), timeout=2)
+        return session
+
+
 @pytest_asyncio.fixture
 async def database(migrated_database_url):
     database = Database(migrated_database_url, min_size=1, max_size=5)
@@ -351,6 +371,57 @@ async def test_slot_unavailable_recovers_on_restart_without_second_service_call(
         text in {"03.08", "Любой мастер"}
         for text in (str(button["text"]) for button in _buttons(restarted))
     )
+
+
+async def test_concurrent_same_confirm_slot_unavailable_returns_durable_replay(
+    database,
+    clock,
+    owner,
+):
+    selected = _slot("slot-1", 2, 7)
+    alternative = _slot("slot-2", 3, 8)
+    port = SequencePort(
+        [selected],
+        [alternative],
+        [alternative],
+        [alternative],
+    )
+    repository = ConfirmBarrierWorkflowRepository(database, clock)
+    workflow, _, _service = _workflow(
+        database,
+        clock,
+        port,
+        repository=repository,
+    )
+    summary = await _ready_summary(workflow, owner)
+    callback = _callback(summary, "Подтвердить")
+    action_id = callback.removeprefix("booking:")
+
+    concurrent = await asyncio.gather(
+        workflow.handle(
+            Interaction.callback(owner, "confirm:first", callback)
+        ),
+        workflow.handle(
+            Interaction.callback(owner, "confirm:second", callback)
+        ),
+        return_exceptions=True,
+    )
+    replay = await workflow.handle(
+        Interaction.callback(owner, "confirm:replay", callback)
+    )
+    saved = await repository.consume_action(
+        action_id,
+        owner.channel,
+        owner.chat_id,
+        owner.customer_id,
+    )
+
+    assert not any(isinstance(result, BaseException) for result in concurrent)
+    assert concurrent[0] == concurrent[1] == replay
+    assert saved.result == replay.to_result()
+    assert "подтверждена" not in replay.text.casefold()
+    assert port.create_calls == 0
+    assert port.list_calls == 4
 
 
 async def test_concurrent_same_collecting_action_transitions_once_and_fails_closed(

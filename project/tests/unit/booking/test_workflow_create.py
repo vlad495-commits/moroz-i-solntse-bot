@@ -271,9 +271,12 @@ class FakeBookingService:
         self.repository = repository
         self.calls: list[tuple[UUID, bool]] = []
         self.result = ScenarioResult("ok", "unsafe provider reply", None, ())
+        self.error: ValueError | None = None
 
     async def handle(self, scenario_id, *, confirmed):
         self.calls.append((scenario_id, confirmed))
+        if self.error is not None:
+            raise self.error
         if self.repository.session is not None:
             if self.result.status == "ok":
                 phase = "confirmed"
@@ -711,6 +714,42 @@ async def test_expired_confirmation_and_consumed_replay_call_service_once(
 
     assert first == second
     assert len(service.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_does_not_swallow_unrelated_service_value_error(
+    workflow,
+    owner,
+    dependencies,
+):
+    _repository, _catalog, _port, service = dependencies
+    summary = await _ready_confirmation(workflow, owner)
+    service.error = ValueError("unrelated service validation")
+
+    with pytest.raises(ValueError, match="unrelated service validation"):
+        await _press(workflow, owner, summary, "Подтвердить")
+
+
+@pytest.mark.asyncio
+async def test_confirm_does_not_recover_ordinary_collecting_state(
+    workflow,
+    owner,
+    dependencies,
+):
+    repository, _catalog, _port, service = dependencies
+    summary = await _ready_confirmation(workflow, owner)
+    state = dict(repository.session.state)
+    state["step"] = "services"
+    repository.session = replace(
+        repository.session,
+        phase="collecting",
+        state=state,
+    )
+
+    reply = await _press(workflow, owner, summary, "Подтвердить")
+
+    assert "истёк" in reply.text.casefold()
+    assert service.calls == []
 
 
 @pytest.mark.asyncio

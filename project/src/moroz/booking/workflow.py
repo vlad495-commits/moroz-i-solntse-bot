@@ -25,6 +25,7 @@ from moroz.messaging.models import ScenarioResult
 
 
 _ACTIVE_PHASES = {"collecting", "awaiting_confirmation", "executing"}
+_COLLECTING_CREATE_PHASE_ERROR = "unsupported create phase: collecting"
 _NAME_LIMIT = 100
 _CALLBACK_PREFIX = "booking:"
 
@@ -592,6 +593,8 @@ class BookingWorkflow:
         if session is None:
             return self._refresh()
         if session.phase == "collecting":
+            if not self._is_confirm_slot_recovery(session, action):
+                return self._refresh()
             result = ScenarioResult(
                 "needs_input",
                 "",
@@ -599,10 +602,31 @@ class BookingWorkflow:
                 (),
             )
         else:
-            result = await self._booking_service.handle(
-                action.scenario_id,
-                confirmed=True,
-            )
+            try:
+                result = await self._booking_service.handle(
+                    action.scenario_id,
+                    confirmed=True,
+                )
+            except ValueError as error:
+                if error.args != (_COLLECTING_CREATE_PHASE_ERROR,):
+                    raise
+                observed = await self._repository.consume_action(
+                    action.id,
+                    owner.channel,
+                    owner.chat_id,
+                    owner.customer_id,
+                )
+                if observed is not None and observed.result is not None:
+                    return WorkflowReply.from_result(observed.result)
+                latest = await self._repository.get(action.scenario_id)
+                if not self._is_confirm_slot_recovery(latest, action):
+                    raise
+                result = ScenarioResult(
+                    "needs_input",
+                    "",
+                    "choose_slot",
+                    (),
+                )
         reply = self._presenter.scenario_result(result)
         recovery_session = None
         if result.status == "needs_input" and result.next_action == "choose_slot":
@@ -624,6 +648,24 @@ class BookingWorkflow:
             recovery_session=recovery_session,
         )
         return WorkflowReply.from_result(completion.result)
+
+    @staticmethod
+    def _is_confirm_slot_recovery(
+        session: WorkflowSession | None,
+        action: BookingAction,
+    ) -> bool:
+        if (
+            session is None
+            or action.action_kind != "confirm"
+            or session.id != action.scenario_id
+            or session.revision != action.revision
+            or session.phase != "collecting"
+            or session.state.get("step") != "awaiting_confirmation"
+            or not isinstance(session.state.get("slot_query"), Mapping)
+        ):
+            return False
+        selected_slot_id = session.state.get("selected_slot_id")
+        return isinstance(selected_slot_id, str) and bool(selected_slot_id)
 
     async def _slot_recovery(
         self,
