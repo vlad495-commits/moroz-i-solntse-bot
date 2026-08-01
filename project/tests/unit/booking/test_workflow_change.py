@@ -284,6 +284,7 @@ async def test_partial_service_change_escalates_without_mutation(
         "Добавьте, пожалуйста, ещё одну услугу",
         "Я хочу изменить набор услуг",
         "Удалите массаж из записи",
+        "Хочу временно изменить услугу",
     ],
 )
 async def test_clear_inflected_partial_service_request_escalates(
@@ -315,19 +316,28 @@ async def test_clear_inflected_partial_service_request_escalates(
         "Поменяйте мастера",
         "Можно выбрать Анну?",
         "Хочу время попозже",
+        "Хочу изменить дату услуги на завтра",
+        "Хочу поменять время услуги на вечер",
+        "Можно поменять мастера для услуги?",
     ],
 )
-async def test_date_and_staff_messages_are_not_partial_service_requests(
+@pytest.mark.parametrize("kind", ["reschedule", "cancel"])
+async def test_service_mention_does_not_override_date_time_or_staff_target(
     change_dependencies,
     text,
+    kind,
 ):
     workflow, _repository, _catalog, _port, service = change_dependencies
-    reply = await workflow.start_reschedule(OWNER, f"change:ordinary:{text}")
-    await _press(workflow, OWNER, reply, _button_texts(reply)[0])
+    if kind == "reschedule":
+        reply = await workflow.start_reschedule(OWNER, f"change:ordinary:{text}")
+        await _press(workflow, OWNER, reply, _button_texts(reply)[0])
+    else:
+        await workflow.start_cancel(OWNER, f"cancel:ordinary:{text}")
 
     await workflow.handle(Interaction.text(OWNER, "ordinary", text))
 
     assert service.escalate_calls == []
+    assert service.handle_calls == []
 
 
 @pytest.mark.asyncio

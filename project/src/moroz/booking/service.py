@@ -517,11 +517,12 @@ def change_state_matches_booking(
         ):
             return False
         old_end_value = state.get("old_scheduled_end_at")
-        old_end = (
-            datetime.fromisoformat(old_end_value)
-            if isinstance(old_end_value, str)
-            else None
-        )
+        if old_end_value is None:
+            old_end = None
+        elif isinstance(old_end_value, str):
+            old_end = datetime.fromisoformat(old_end_value)
+        else:
+            return False
         common_matches = (
             state.get("external_id") == booking.external_id
             and state.get("original_slot_id") == booking.slot_id

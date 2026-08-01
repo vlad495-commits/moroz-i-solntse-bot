@@ -48,6 +48,7 @@ _PARTIAL_SERVICE_ACTION_STEMS = (
     "убра",
     "удал",
 )
+_OTHER_CHANGE_TARGET_STEMS = ("дат", "врем", "мастер")
 _PROTECTED_UNAVAILABLE = (
     "Не удалось безопасно проверить ваши записи. Попробуйте позже."
 )
@@ -62,22 +63,40 @@ def _is_partial_service_change(
     state: Mapping[str, object],
 ) -> bool:
     words = tuple(word.casefold() for word in _WORD_PATTERN.findall(text))
-    has_action = any(
-        word.startswith(stem)
-        for word in words
-        for stem in _PARTIAL_SERVICE_ACTION_STEMS
+    action_indexes = tuple(
+        index
+        for index, word in enumerate(words)
+        if word.startswith(_PARTIAL_SERVICE_ACTION_STEMS)
     )
-    if not has_action:
+    if not action_indexes:
         return False
-    if any(word.startswith(("услуг", "процедур")) for word in words):
-        return True
     service_words = {
         word.casefold()
         for item in state.get("services", ())
         if isinstance(item, Mapping)
         for word in _WORD_PATTERN.findall(str(item.get("title", "")))
     }
-    return bool(service_words.intersection(words))
+    target_indexes = {
+        index: "service"
+        for index, word in enumerate(words)
+        if word.startswith(("услуг", "процедур")) or word in service_words
+    }
+    target_indexes.update(
+        {
+            index: "other"
+            for index, word in enumerate(words)
+            if word.startswith(_OTHER_CHANGE_TARGET_STEMS)
+        }
+    )
+    for action in action_indexes:
+        following = (target for target in target_indexes if target > action)
+        closest = min(following, default=None)
+        if closest is None:
+            preceding = (target for target in target_indexes if target < action)
+            closest = max(preceding, default=None)
+        if closest is not None and target_indexes[closest] == "service":
+            return True
+    return False
 
 
 def _plain(value: object) -> object:

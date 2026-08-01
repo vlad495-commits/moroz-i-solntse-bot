@@ -483,6 +483,45 @@ async def test_reschedule_rejects_corrupt_persisted_change_state_before_slots(
     assert port.get_calls == 1
 
 
+@pytest.mark.parametrize(
+    "invalid_end",
+    [0, False, {}, []],
+    ids=["integer", "boolean", "object", "array"],
+)
+async def test_invalid_old_scheduled_end_type_fails_before_slots_or_mutation(
+    repo,
+    invalid_end,
+):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    original = await _seed_booking(repo, port)
+    provider_without_end = replace(original, scheduled_end_at=None)
+    port._bookings[original.external_id] = provider_without_end
+    async with repo._database.acquire() as connection:
+        await connection.execute(
+            "UPDATE bookings SET scheduled_end_at = NULL WHERE external_id = $1",
+            original.external_id,
+        )
+    scenario = _scenario("reschedule", original.external_id)
+    scenario = replace(
+        scenario,
+        state={**scenario.state, "old_scheduled_end_at": invalid_end},
+    )
+    await repo.create_scenario(scenario)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        scenario.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-7", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    assert port.get_calls == 1
+
+
 async def test_non_confirmed_local_snapshot_never_matches_confirmed_provider(repo):
     port = CountingChangeAdapter([_slot("slot-old", 14)])
     original = await _seed_booking(repo, port)
