@@ -16,6 +16,11 @@ from dataclasses import dataclass
 
 from openai import AsyncOpenAI
 import redis.asyncio as aioredis
+from moroz.booking.intent_router import (
+    StructuredIntentRouter,
+    route_intent as classify_intent,
+)
+from moroz.booking.interaction import IntentVerdict
 from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
@@ -26,6 +31,7 @@ from moroz.security.pipeline import SecurityPipeline
 from moroz.security.validator import extract_structured_facts
 
 from config import (
+    BOOKING_ROUTER_CONFIDENCE,
     LLM_API_KEY,
     LLM_BASE_URL,
     LLM_MODEL,
@@ -59,6 +65,7 @@ _primary_client = None
 _primary_kind: str = ""
 _pipeline: SecurityPipeline | None = None
 _pipeline_client = None
+_intent_router: StructuredIntentRouter | None = None
 
 
 def _detect_kind(model: str, base_url: str | None) -> str:
@@ -107,6 +114,7 @@ def _load_prompt() -> None:
 def init_llm() -> None:
     """Инициализировать LLM-клиент. Один раз при старте."""
     global _primary_client, _primary_kind, _pipeline, _pipeline_client
+    global _intent_router
 
     _load_prompt()
     if not _system_prompt:
@@ -137,10 +145,15 @@ def init_llm() -> None:
             LLM_TEMPERATURE,
             LLM_MAX_TOKENS,
         )
+    gateway = PrimaryReserveGateway(primary, reserve)
     _pipeline = SecurityPipeline(
-        PrimaryReserveGateway(primary, reserve),
+        gateway,
         _system_prompt,
         extract_structured_facts(_system_prompt),
+    )
+    _intent_router = StructuredIntentRouter(
+        gateway,
+        threshold=BOOKING_ROUTER_CONFIDENCE,
     )
     _pipeline_client = _primary_client
     logger.info(
@@ -218,6 +231,22 @@ async def generate_response(
             extract_structured_facts(_system_prompt),
         )
     return await active_pipeline.respond(
+        user_message,
+        context,
+        recent_message_count=recent_message_count,
+    )
+
+
+async def route_intent(
+    user_message: str,
+    context: list[dict[str, str]],
+    recent_message_count: int = 1,
+) -> IntentVerdict:
+    """Классифицировать intent через общий безопасный LLM gateway."""
+    if _intent_router is None:
+        raise RuntimeError("LLM не инициализирован, вызовите init_llm()")
+    return await classify_intent(
+        _intent_router,
         user_message,
         context,
         recent_message_count=recent_message_count,
