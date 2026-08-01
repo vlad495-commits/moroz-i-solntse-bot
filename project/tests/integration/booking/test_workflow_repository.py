@@ -474,6 +474,37 @@ async def test_owned_active_bookings_and_human_mode_are_owner_bound(
     assert await repository.is_human_mode("20") is False
 
 
+async def test_owned_active_bookings_skip_incomplete_legacy_snapshot(
+    database,
+    repository,
+    clock,
+):
+    scenario = await repository.start(
+        "create",
+        "telegram",
+        "20",
+        "20",
+        "start:legacy-owned",
+    )
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO bookings
+                (id, last_scenario_id, external_id, customer_id, booking_key,
+                 slot_id, starts_at, status, snapshot)
+            VALUES ($1, $2, 'external-legacy', '20', $3, 'slot-legacy', $4,
+                    'confirmed', $5::jsonb)
+            """,
+            uuid4(),
+            scenario.id,
+            uuid4(),
+            clock.now() + timedelta(days=1),
+            '{"service_ids":["__legacy__"],"staff_id":"__legacy__"}',
+        )
+
+    assert await repository.list_owned_active_bookings("20") == []
+
+
 async def test_action_id_is_short_opaque_and_payload_is_frozen(repository, clock):
     scenario = await repository.start(
         "create", "telegram", "10", "10", "start:opaque"

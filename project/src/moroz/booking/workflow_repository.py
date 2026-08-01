@@ -14,6 +14,7 @@ from moroz.common.db import Database
 WorkflowKind = Literal["create", "reschedule", "cancel"]
 _ACTIVE_PHASES = ("collecting", "awaiting_confirmation", "executing")
 _CONFIRM_RECOVERY_PHASES = ("collecting", "executing", "confirmed", "escalated")
+_LEGACY_OWNERSHIP_SENTINELS = frozenset({"__legacy__", "unknown", "missing"})
 
 
 class WorkflowRevisionConflict(RuntimeError):
@@ -602,7 +603,10 @@ class BookingWorkflowRepository:
             )
         bookings: list[ExternalBooking] = []
         for row in rows:
-            snapshot = _json_object(row["snapshot"], "snapshot")
+            try:
+                snapshot = _json_object(row["snapshot"], "snapshot")
+            except ValueError:
+                continue
             raw_service_ids = snapshot.get("service_ids")
             raw_staff_id = snapshot.get("staff_id")
             if (
@@ -611,8 +615,13 @@ class BookingWorkflowRepository:
                 or not all(isinstance(item, str) and item for item in raw_service_ids)
                 or not isinstance(raw_staff_id, str)
                 or not raw_staff_id
+                or any(
+                    item.casefold() in _LEGACY_OWNERSHIP_SENTINELS
+                    for item in raw_service_ids
+                )
+                or raw_staff_id.casefold() in _LEGACY_OWNERSHIP_SENTINELS
             ):
-                raise ValueError("booking snapshot has invalid service ownership")
+                continue
             bookings.append(
                 ExternalBooking(
                     external_id=row["external_id"],

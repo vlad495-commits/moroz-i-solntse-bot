@@ -37,6 +37,13 @@ def _dispatcher(*, human_mode=False, active=None, route="faq"):
         start_create=AsyncMock(
             return_value=WorkflowReply("Выберите услуги", {})
         ),
+        list_bookings=AsyncMock(return_value=WorkflowReply("Ваши записи", {})),
+        start_reschedule=AsyncMock(
+            return_value=WorkflowReply("Выберите запись для переноса", {})
+        ),
+        start_cancel=AsyncMock(
+            return_value=WorkflowReply("Выберите запись для отмены", {})
+        ),
     )
     router = AsyncMock(return_value=IntentVerdict(route, 0.95))
     consultant = AsyncMock(return_value=_consultant_result())
@@ -167,18 +174,68 @@ async def test_router_booking_create_starts_workflow_without_consultant():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["booking_reschedule", "booking_cancel"])
-async def test_change_routes_are_safe_and_never_mutate_before_task_8(route):
+async def test_change_routes_start_deterministic_workflow_without_consultant(route):
     dispatcher, _, workflow, _, consultant = _dispatcher(route=route)
     interaction = Interaction.text(OWNER, "process_message:7", "Моя запись")
 
     result = await dispatcher.dispatch(interaction, CONTEXT, 1)
 
-    assert "мои записи" in result.reply.text.lower()
-    assert "подтвержд" not in result.reply.text.lower()
+    if route == "booking_reschedule":
+        assert result.reply.text == "Выберите запись для переноса"
+        workflow.start_reschedule.assert_awaited_once_with(
+            OWNER,
+            interaction.idempotency_key,
+        )
+        workflow.start_cancel.assert_not_awaited()
+    else:
+        assert result.reply.text == "Выберите запись для отмены"
+        workflow.start_cancel.assert_awaited_once_with(
+            OWNER,
+            interaction.idempotency_key,
+        )
+        workflow.start_reschedule.assert_not_awaited()
     workflow.start_create.assert_not_awaited()
     workflow.handle.assert_not_awaited()
     consultant.assert_not_awaited()
     assert result.usage is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["/bookings", "Мои записи"])
+async def test_exact_owned_list_bypasses_router_and_consultant(value):
+    dispatcher, _, workflow, router, consultant = _dispatcher()
+    interaction = Interaction.text(OWNER, f"process_message:{value}", value)
+
+    result = await dispatcher.dispatch(interaction, CONTEXT, 1)
+
+    assert result.reply.text == "Ваши записи"
+    workflow.list_bookings.assert_awaited_once_with(OWNER)
+    router.assert_not_awaited()
+    consultant.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value", "method"),
+    [
+        ("/reschedule", "start_reschedule"),
+        ("Перенести запись", "start_reschedule"),
+        ("/cancel", "start_cancel"),
+        ("Отменить запись", "start_cancel"),
+    ],
+)
+async def test_exact_change_entries_bypass_router_and_consultant(value, method):
+    dispatcher, _, workflow, router, consultant = _dispatcher()
+    interaction = Interaction.text(OWNER, f"process_message:{value}", value)
+
+    await dispatcher.dispatch(interaction, CONTEXT, 1)
+
+    getattr(workflow, method).assert_awaited_once_with(
+        OWNER,
+        interaction.idempotency_key,
+    )
+    router.assert_not_awaited()
+    consultant.assert_not_awaited()
 
 
 @pytest.mark.asyncio

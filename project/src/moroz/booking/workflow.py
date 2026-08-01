@@ -11,10 +11,19 @@ from moroz.booking.interaction import (
     Interaction,
     WorkflowReply,
 )
-from moroz.booking.models import BookingTemporaryError, Slot, SlotQuery
+from moroz.booking.models import (
+    BookingNotFound,
+    BookingOutcomeUnknown,
+    BookingTemporaryError,
+    BookingIdentity,
+    ExternalBooking,
+    GetBooking,
+    Slot,
+    SlotQuery,
+)
 from moroz.booking.ports import BookingPort
 from moroz.booking.presenter import BookingPresenter, PresentedAction
-from moroz.booking.service import BookingService
+from moroz.booking.service import BookingService, booking_snapshots_match
 from moroz.booking.workflow_repository import (
     BookingAction,
     BookingWorkflowRepository,
@@ -28,6 +37,18 @@ _ACTIVE_PHASES = {"collecting", "awaiting_confirmation", "executing"}
 _COLLECTING_CREATE_PHASE_ERROR = "unsupported create phase: collecting"
 _NAME_LIMIT = 100
 _CALLBACK_PREFIX = "booking:"
+_PARTIAL_SERVICE_COMMANDS = frozenset(
+    {
+        "изменить услугу",
+        "добавить услугу",
+        "убрать услугу",
+        "удалить услугу",
+        "сменить услугу",
+    }
+)
+_PROTECTED_UNAVAILABLE = (
+    "Не удалось безопасно проверить ваши записи. Попробуйте позже."
+)
 
 
 def _utc_now() -> datetime:
@@ -131,6 +152,63 @@ class BookingWorkflow:
         )
         return await self._render_services(session)
 
+    async def list_bookings(self, owner: BookingOwner) -> WorkflowReply:
+        bookings = await self._load_protected_bookings(owner.customer_id)
+        if bookings is None:
+            return self._presenter.plain(_PROTECTED_UNAVAILABLE)
+        if not bookings:
+            return self._presenter.plain("У вас нет предстоящих записей через бота.")
+        summaries = [
+            self._booking_summary(item, index + 1)
+            for index, item in enumerate(bookings)
+        ]
+        return self._presenter.plain("Ваши записи:\n\n" + "\n\n".join(summaries))
+
+    async def start_reschedule(
+        self,
+        owner: BookingOwner,
+        idempotency_key: str,
+    ) -> WorkflowReply:
+        return await self._start_change("reschedule", owner, idempotency_key)
+
+    async def start_cancel(
+        self,
+        owner: BookingOwner,
+        idempotency_key: str,
+    ) -> WorkflowReply:
+        return await self._start_change("cancel", owner, idempotency_key)
+
+    async def _start_change(
+        self,
+        kind: str,
+        owner: BookingOwner,
+        idempotency_key: str,
+    ) -> WorkflowReply:
+        session = await self._repository.start(
+            kind,
+            owner.channel,
+            owner.chat_id,
+            owner.customer_id,
+            idempotency_key,
+        )
+        if session.state.get("step") is not None:
+            return await self._render_current(session)
+        bookings = await self._load_protected_bookings(owner.customer_id)
+        if bookings is None:
+            return self._presenter.plain(_PROTECTED_UNAVAILABLE)
+        if not bookings:
+            return self._presenter.plain("У вас нет предстоящих записей через бота.")
+        state = {
+            "step": "booking",
+            "owned_bookings": bookings,
+        }
+        session = await self._repository.checkpoint(
+            replace(session, state=state),
+            "owned_bookings_presented",
+            {"booking_count": len(bookings)},
+        )
+        return await self._render_booking_choices(session)
+
     async def handle(self, interaction: Interaction) -> WorkflowReply:
         if interaction.kind == "callback":
             return await self._handle_callback(interaction)
@@ -196,6 +274,7 @@ class BookingWorkflow:
             "select_date": self._select_date,
             "slot_page": self._slot_page,
             "select_slot": self._select_slot,
+            "select_booking": self._select_booking,
             "back": self._back,
             "change": self._change,
             "cancel": self._cancel,
@@ -214,6 +293,16 @@ class BookingWorkflow:
         interaction: Interaction,
     ) -> WorkflowReply:
         text = (interaction.text_value or "").strip()
+        if (
+            session.kind == "reschedule"
+            and text.casefold() in _PARTIAL_SERVICE_COMMANDS
+        ):
+            result = await self._booking_service.escalate(
+                session.id,
+                identity=BookingIdentity(session.customer_id, True),
+                error_code="partial_service_change_unsupported",
+            )
+            return self._presenter.scenario_result(result, session.kind)
         if text.casefold() == "назад":
             return await self._back(session, None)
         if text.casefold() == "отмена":
@@ -502,8 +591,23 @@ class BookingWorkflow:
         state["selected_slot_id"] = slot_id
         state["actual_staff_id"] = slot["staff_id"]
         state["actual_staff_name"] = staff_name
-        state["starts_at"] = slot["starts_at"]
         state["duration_minutes"] = slot["duration_minutes"]
+        if session.kind == "reschedule":
+            state["selected_new_starts_at"] = slot["starts_at"]
+            state["step"] = "awaiting_confirmation"
+            expires_at = self._aware_now() + self._confirmation_ttl
+            advanced = await self._repository.checkpoint(
+                replace(
+                    session,
+                    phase="awaiting_confirmation",
+                    state=state,
+                    expires_at=expires_at,
+                ),
+                "booking_confirmation_ready",
+                {"confirmation_ttl_seconds": 1800},
+            )
+            return await self._render_summary(advanced)
+        state["starts_at"] = slot["starts_at"]
         state["step"] = "customer_name"
         advanced = await self._repository.checkpoint(
             replace(session, state=state),
@@ -512,18 +616,99 @@ class BookingWorkflow:
         )
         return await self._render_name(advanced, "Как вас зовут?")
 
+    async def _select_booking(
+        self,
+        session: WorkflowSession,
+        action: BookingAction,
+    ) -> WorkflowReply:
+        if session.state.get("step") != "booking":
+            return self._refresh()
+        index = action.payload.get("booking_index")
+        bookings = session.state.get("owned_bookings", ())
+        if not isinstance(index, int) or index < 0 or index >= len(bookings):
+            return self._refresh()
+        selected = bookings[index]
+        if not isinstance(selected, Mapping):
+            return self._refresh()
+        state = self._state(session)
+        state.update(
+            {
+                "external_id": _required_text(selected.get("external_id")),
+                "booking_key": _required_text(selected.get("booking_key")),
+                "original_slot_id": _required_text(selected.get("slot_id")),
+                "starts_at": _required_text(selected.get("starts_at")),
+                "old_starts_at": _required_text(selected.get("starts_at")),
+                "old_scheduled_end_at": selected.get("scheduled_end_at"),
+                "selected_service_ids": list(selected.get("service_ids", ())),
+                "services": list(selected.get("services", ())),
+                "old_staff_id": _required_text(selected.get("staff_id")),
+                "old_staff_name": _required_text(selected.get("staff_name")),
+            }
+        )
+        if session.kind == "cancel":
+            state["step"] = "awaiting_confirmation"
+            expires_at = self._aware_now() + self._confirmation_ttl
+            advanced = await self._repository.checkpoint(
+                replace(
+                    session,
+                    phase="awaiting_confirmation",
+                    state=state,
+                    expires_at=expires_at,
+                ),
+                "booking_confirmation_ready",
+                {"confirmation_ttl_seconds": 1800},
+            )
+            return await self._render_summary(advanced)
+        try:
+            staff = await self._catalog.list_staff(
+                tuple(state["selected_service_ids"])
+            )
+        except BookingTemporaryError:
+            return self._unavailable()
+        if not staff:
+            return self._unavailable()
+        state["staff"] = [
+            {
+                "id": member.id,
+                "name": member.name,
+                "service_ids": list(member.service_ids),
+            }
+            for member in staff
+        ]
+        state["step"] = "master"
+        advanced = await self._repository.checkpoint(
+            replace(session, state=state),
+            "booking_selected_for_reschedule",
+            {"service_count": len(state["selected_service_ids"])},
+        )
+        return await self._render_master(advanced)
+
     async def _back(
         self,
         session: WorkflowSession,
         _action: BookingAction | None,
     ) -> WorkflowReply:
+        if session.phase == "awaiting_confirmation" and session.kind != "create":
+            state = self._state(session)
+            state["step"] = "slot" if session.kind == "reschedule" else "booking"
+            advanced = await self._repository.checkpoint(
+                replace(
+                    session,
+                    phase="collecting",
+                    state=state,
+                    expires_at=None,
+                ),
+                "booking_workflow_back",
+                {"step": state["step"]},
+            )
+            return await self._render_current(advanced)
         if session.phase != "collecting":
             return self._presenter.plain(
                 "После начала подтверждения назад вернуться нельзя."
             )
         step = session.state.get("step")
         previous = {
-            "master": "services",
+            "master": "booking" if session.kind == "reschedule" else "services",
             "date": "master",
             "slot": "date",
             "customer_name": "slot",
@@ -582,7 +767,9 @@ class BookingWorkflow:
             "booking_workflow_cancelled",
             {},
         )
-        return self._presenter.plain("Запись отменена. Изменения не отправлялись.")
+        return self._presenter.plain(
+            "Действие отменено. Изменения не отправлялись."
+        )
 
     async def _confirm(
         self,
@@ -603,10 +790,17 @@ class BookingWorkflow:
             )
         else:
             try:
-                result = await self._booking_service.handle(
-                    action.scenario_id,
-                    confirmed=True,
-                )
+                if session.kind == "create":
+                    result = await self._booking_service.handle(
+                        action.scenario_id,
+                        confirmed=True,
+                    )
+                else:
+                    result = await self._booking_service.handle(
+                        action.scenario_id,
+                        confirmed=True,
+                        identity=BookingIdentity(owner.customer_id, True),
+                    )
             except ValueError as error:
                 if error.args != (_COLLECTING_CREATE_PHASE_ERROR,):
                     raise
@@ -627,7 +821,7 @@ class BookingWorkflow:
                     "choose_slot",
                     (),
                 )
-        reply = self._presenter.scenario_result(result)
+        reply = self._presenter.scenario_result(result, session.kind)
         recovery_session = None
         if result.status == "needs_input" and result.next_action == "choose_slot":
             latest = await self._repository.get(action.scenario_id)
@@ -678,11 +872,14 @@ class BookingWorkflow:
             "actual_staff_id",
             "actual_staff_name",
             "starts_at",
+            "selected_new_starts_at",
             "duration_minutes",
             "customer_name",
             "customer_phone",
             "personal_data_processing_allowed",
         ):
+            if session.kind != "create" and key == "starts_at":
+                continue
             state.pop(key, None)
         slots: list[Slot] = []
         raw_query = state.get("slot_query")
@@ -751,7 +948,25 @@ class BookingWorkflow:
             return self._presenter.request_contact(
                 "Отправьте свой контакт кнопкой ниже. Чужой контакт не принимается."
             )
+        if step == "booking":
+            return await self._render_booking_choices(session)
         return self._refresh()
+
+    async def _render_booking_choices(
+        self,
+        session: WorkflowSession,
+    ) -> WorkflowReply:
+        bookings = session.state.get("owned_bookings", ())
+        specs = [
+            (
+                self._booking_label(item),
+                "select_booking",
+                {"booking_index": index},
+            )
+            for index, item in enumerate(bookings)
+        ]
+        specs.append(("Отмена", "cancel", {}))
+        return await self._choice(session, "Выберите запись:", specs)
 
     async def _render_services(self, session: WorkflowSession) -> WorkflowReply:
         state = session.state
@@ -842,6 +1057,8 @@ class BookingWorkflow:
         )
 
     async def _render_summary(self, session: WorkflowSession) -> WorkflowReply:
+        if session.kind != "create":
+            return await self._render_change_summary(session)
         state = session.state
         services_by_id = {
             item["id"]: item["title"] for item in state.get("services", ())
@@ -869,6 +1086,53 @@ class BookingWorkflow:
                 ("Изменить", "change", {}),
                 ("Отмена", "cancel", {}),
             ),
+            expires_at=session.expires_at,
+        )
+
+    async def _render_change_summary(
+        self,
+        session: WorkflowSession,
+    ) -> WorkflowReply:
+        state = session.state
+        titles = [
+            _required_text(item.get("title"))
+            for item in state.get("services", ())
+        ]
+        old_local = datetime.fromisoformat(
+            _required_text(state.get("starts_at"))
+        ).astimezone(self._timezone)
+        if session.kind == "cancel":
+            text = (
+                "Проверьте отмену записи:\n"
+                f"Услуги: {', '.join(titles)}\n"
+                f"Мастер: {_required_text(state.get('old_staff_name'))}\n"
+                f"Дата и время: {old_local:%d.%m.%Y %H:%M}"
+            )
+            specs = (
+                ("Да, отменить запись", "confirm", {}),
+                ("Назад", "back", {}),
+                ("Отмена", "cancel", {}),
+            )
+        else:
+            new_local = datetime.fromisoformat(
+                _required_text(state.get("selected_new_starts_at"))
+            ).astimezone(self._timezone)
+            text = (
+                "Проверьте перенос записи:\n"
+                f"Услуги: {', '.join(titles)}\n"
+                f"Мастер: {_required_text(state.get('actual_staff_name'))}\n"
+                f"Дата и время: {old_local:%d.%m.%Y %H:%M} → "
+                f"{new_local:%d.%m.%Y %H:%M}"
+            )
+            specs = (
+                ("Подтвердить", "confirm", {}),
+                ("Назад", "back", {}),
+                ("Отмена", "cancel", {}),
+            )
+        return await self._choice(
+            session,
+            text,
+            specs,
             expires_at=session.expires_at,
         )
 
@@ -912,6 +1176,102 @@ class BookingWorkflow:
                 and query.starts_after <= slot.starts_at < query.starts_before
             ),
             key=lambda slot: (slot.starts_at, slot.staff_id, slot.id),
+        )
+
+    async def _load_protected_bookings(
+        self,
+        customer_id: str,
+    ) -> list[dict[str, object]] | None:
+        try:
+            local_bookings = await self._repository.list_owned_active_bookings(
+                customer_id
+            )
+            services = await self._catalog.list_services()
+            services_by_id = {service.id: service for service in services}
+            protected_bookings = []
+            for local in local_bookings:
+                protected = await self._booking_port.get_booking(
+                    GetBooking(
+                        local.external_id,
+                        local.customer_id,
+                        local.booking_key,
+                    )
+                )
+                if not booking_snapshots_match(local, protected):
+                    return None
+                selected_services = []
+                for service_id in local.service_ids:
+                    service = services_by_id.get(service_id)
+                    if service is None:
+                        return None
+                    selected_services.append(
+                        {
+                            "id": service.id,
+                            "title": service.title,
+                            "duration_minutes": service.duration_minutes,
+                        }
+                    )
+                staff = await self._catalog.list_staff(local.service_ids)
+                member = next(
+                    (item for item in staff if item.id == local.staff_id),
+                    None,
+                )
+                if member is None:
+                    return None
+                protected_bookings.append(
+                    self._owned_booking_state(local, selected_services, member.name)
+                )
+            return protected_bookings
+        except (
+            BookingNotFound,
+            BookingTemporaryError,
+            BookingOutcomeUnknown,
+            TimeoutError,
+            ValueError,
+        ):
+            return None
+
+    @staticmethod
+    def _owned_booking_state(
+        booking: ExternalBooking,
+        services: list[dict[str, object]],
+        staff_name: str,
+    ) -> dict[str, object]:
+        return {
+            "external_id": booking.external_id,
+            "customer_id": booking.customer_id,
+            "booking_key": str(booking.booking_key),
+            "slot_id": booking.slot_id,
+            "service_ids": list(booking.service_ids),
+            "services": services,
+            "staff_id": booking.staff_id,
+            "staff_name": staff_name,
+            "starts_at": booking.starts_at.isoformat(),
+            "scheduled_end_at": (
+                booking.scheduled_end_at.isoformat()
+                if booking.scheduled_end_at is not None
+                else None
+            ),
+        }
+
+    def _booking_label(self, booking: Mapping[str, object]) -> str:
+        starts_at = datetime.fromisoformat(
+            _required_text(booking.get("starts_at"))
+        ).astimezone(self._timezone)
+        services = ", ".join(
+            _required_text(item.get("title"))
+            for item in booking.get("services", ())
+        )
+        return f"{starts_at:%d.%m.%Y %H:%M} — {services}"
+
+    def _booking_summary(
+        self,
+        booking: Mapping[str, object],
+        number: int,
+    ) -> str:
+        return (
+            f"{number}. {self._booking_label(booking)}\n"
+            f"Мастер: {_required_text(booking.get('staff_name'))}"
         )
 
     @staticmethod

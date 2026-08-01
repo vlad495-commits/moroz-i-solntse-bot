@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,7 @@ from moroz.booking.models import (
     CancelBooking,
     CreateBooking,
     ExternalBooking,
+    GetBooking,
     RescheduleBooking,
     Slot,
     SlotQuery,
@@ -51,6 +53,21 @@ class BookingService:
                 confirmed=confirmed,
                 identity=identity,
             )
+
+    async def escalate(
+        self,
+        scenario_id: UUID,
+        *,
+        identity: BookingIdentity | None,
+        error_code: str,
+    ) -> ScenarioResult:
+        async with self._repository.serialized_scenario(scenario_id) as session:
+            scenario = session.scenario
+            if not self._owns_scenario(identity, scenario):
+                return await self._identity_failure(session, scenario)
+            if scenario.phase in {"confirmed", "escalated", "executing"}:
+                return self._escalated_result(error_code)
+            return await self._escalate(session, scenario, error_code)
 
     async def _handle_serialized(
         self,
@@ -93,11 +110,24 @@ class BookingService:
                         return await self._escalate_unknown(session, scenario)
                     if await session.has_unresolved_outcome(external_id):
                         return await self._escalate_unknown(session, scenario)
+                    protected = await self._port.get_booking(
+                        GetBooking(
+                            external_id=booking.external_id,
+                            customer_id=booking.customer_id,
+                            booking_key=booking.booking_key,
+                        )
+                    )
+                    if not booking_snapshots_match(booking, protected):
+                        return await self._change_validation_failure(
+                            session,
+                            scenario,
+                            "booking_temporarily_unavailable",
+                        )
                     return await self._handle_change(
                         session,
                         scenario,
                         confirmed,
-                        booking,
+                        protected,
                     )
                 except (BookingNotFound, BookingTemporaryError):
                     return await self._escalate(
@@ -445,3 +475,24 @@ class BookingService:
             next_action=None,
             events=(),
         )
+
+
+def booking_snapshots_match(
+    expected: ExternalBooking,
+    actual: ExternalBooking,
+) -> bool:
+    scheduled_end_matches = (
+        expected.scheduled_end_at is None
+        or actual.scheduled_end_at == expected.scheduled_end_at
+    )
+    return (
+        actual.external_id == expected.external_id
+        and actual.customer_id == expected.customer_id
+        and actual.booking_key == expected.booking_key
+        and actual.slot_id == expected.slot_id
+        and Counter(actual.service_ids) == Counter(expected.service_ids)
+        and actual.staff_id == expected.staff_id
+        and actual.status == "confirmed"
+        and actual.starts_at == expected.starts_at
+        and scheduled_end_matches
+    )

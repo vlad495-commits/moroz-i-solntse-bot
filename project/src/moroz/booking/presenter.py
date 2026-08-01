@@ -67,8 +67,16 @@ class BookingPresenter:
             },
         )
 
-    def scenario_result(self, result: ScenarioResult) -> WorkflowReply:
+    def scenario_result(
+        self,
+        result: ScenarioResult,
+        kind: str = "create",
+    ) -> WorkflowReply:
         if result.status == "ok":
+            if kind == "reschedule":
+                return self.plain("Запись перенесена.")
+            if kind == "cancel":
+                return self.plain("Запись отменена.")
             return self.plain("Запись подтверждена.")
         if result.status == "needs_input" and result.next_action == "choose_slot":
             return self.plain(

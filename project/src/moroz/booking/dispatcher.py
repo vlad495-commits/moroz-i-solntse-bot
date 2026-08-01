@@ -10,6 +10,9 @@ from moroz.booking.interaction import Interaction, IntentVerdict, WorkflowReply
 
 _CALLBACK = re.compile(r"^booking:[A-Za-z0-9_-]{1,32}$")
 _CREATE_ENTRIES = frozenset({"/book", "Записаться"})
+_LIST_ENTRIES = frozenset({"/bookings", "Мои записи"})
+_RESCHEDULE_ENTRIES = frozenset({"/reschedule", "Перенести запись"})
+_CANCEL_ENTRIES = frozenset({"/cancel", "Отменить запись"})
 
 
 class _WorkflowRepository(Protocol):
@@ -27,6 +30,20 @@ class _Workflow(Protocol):
     async def handle(self, interaction: Interaction) -> WorkflowReply: ...
 
     async def start_create(
+        self,
+        owner,
+        idempotency_key: str,
+    ) -> WorkflowReply: ...
+
+    async def list_bookings(self, owner) -> WorkflowReply: ...
+
+    async def start_reschedule(
+        self,
+        owner,
+        idempotency_key: str,
+    ) -> WorkflowReply: ...
+
+    async def start_cancel(
         self,
         owner,
         idempotency_key: str,
@@ -98,6 +115,22 @@ class MessageDispatcher:
                     interaction.idempotency_key,
                 )
             )
+        if text in _LIST_ENTRIES:
+            return DispatchResult(await self._workflow.list_bookings(owner))
+        if text in _RESCHEDULE_ENTRIES:
+            return DispatchResult(
+                await self._workflow.start_reschedule(
+                    owner,
+                    interaction.idempotency_key,
+                )
+            )
+        if text in _CANCEL_ENTRIES:
+            return DispatchResult(
+                await self._workflow.start_cancel(
+                    owner,
+                    interaction.idempotency_key,
+                )
+            )
         active = await self._repository.get_active(
             owner.channel,
             owner.chat_id,
@@ -120,12 +153,18 @@ class MessageDispatcher:
                     interaction.idempotency_key,
                 )
             )
-        if verdict.route in {"booking_reschedule", "booking_cancel"}:
+        if verdict.route == "booking_reschedule":
             return DispatchResult(
-                WorkflowReply(
-                    "Перенос и отмена через бота пока недоступны. "
-                    "Откройте «Мои записи» или уточните запрос.",
-                    _clarification_options(),
+                await self._workflow.start_reschedule(
+                    owner,
+                    interaction.idempotency_key,
+                )
+            )
+        if verdict.route == "booking_cancel":
+            return DispatchResult(
+                await self._workflow.start_cancel(
+                    owner,
+                    interaction.idempotency_key,
                 )
             )
         if verdict.route == "complaint":
