@@ -112,6 +112,16 @@ class BookingAction:
             object.__setattr__(self, "result", _json_object(self.result, "result"))
 
 
+@dataclass(frozen=True, slots=True)
+class ActionCompletion:
+    session: WorkflowSession
+    result: Mapping[str, object]
+    replayed: bool
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "result", _json_object(self.result, "result"))
+
+
 class BookingWorkflowRepository:
     def __init__(
         self,
@@ -409,6 +419,109 @@ class BookingWorkflowRepository:
                 ):
                     return None
                 return self._action_from_row(row)
+
+    async def complete_action(
+        self,
+        action_id: str,
+        channel: str,
+        chat_id: str,
+        customer_id: str,
+        result: Mapping[str, object],
+        event_type: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> ActionCompletion:
+        result_object = _json_object(result, "result")
+        result_json = _dump_json_object(result_object, "result")
+        payload_json = _dump_json_object(payload or {}, "payload")
+        now = self._now()
+        _require_aware(now)
+        async with self._database.acquire() as connection:
+            scenario_id = await connection.fetchval(
+                "SELECT scenario_id FROM booking_actions WHERE id = $1",
+                action_id,
+            )
+            if scenario_id is None:
+                raise RuntimeError("booking action conflict")
+            async with connection.transaction():
+                scenario = await connection.fetchrow(
+                    "SELECT * FROM booking_scenarios WHERE id = $1 FOR UPDATE",
+                    scenario_id,
+                )
+                if scenario is None:
+                    raise RuntimeError("booking action conflict")
+                action = await connection.fetchrow(
+                    "SELECT * FROM booking_actions WHERE id = $1 FOR UPDATE",
+                    action_id,
+                )
+                if (
+                    action is None
+                    or action["scenario_id"] != scenario["id"]
+                    or (
+                        action["channel"],
+                        action["chat_id"],
+                        action["customer_id"],
+                    )
+                    != (channel, chat_id, customer_id)
+                    or (
+                        scenario["channel"],
+                        scenario["chat_id"],
+                        scenario["customer_id"],
+                    )
+                    != (channel, chat_id, customer_id)
+                ):
+                    raise RuntimeError("booking action conflict")
+                if action["consumed_at"] is not None:
+                    saved = _json_object(action["result"], "result")
+                    if saved != result_object:
+                        raise RuntimeError("booking action result conflict")
+                    return ActionCompletion(
+                        self._session_from_row(scenario),
+                        saved,
+                        True,
+                    )
+                if (
+                    action["revision"] != scenario["revision"]
+                    or action["expires_at"] <= now
+                ):
+                    raise RuntimeError("booking action is stale")
+                updated = await connection.fetchrow(
+                    """
+                    UPDATE booking_scenarios
+                    SET revision = revision + 1, updated_at = $2
+                    WHERE id = $1 AND revision = $3
+                    RETURNING *
+                    """,
+                    scenario["id"],
+                    now,
+                    scenario["revision"],
+                )
+                if updated is None:
+                    raise RuntimeError("workflow revision conflict")
+                await self._insert_event(
+                    connection,
+                    scenario["id"],
+                    event_type,
+                    payload_json,
+                    now,
+                    encoded=True,
+                )
+                status = await connection.execute(
+                    """
+                    UPDATE booking_actions
+                    SET consumed_at = $2, result = $3::jsonb
+                    WHERE id = $1 AND consumed_at IS NULL
+                    """,
+                    action_id,
+                    now,
+                    result_json,
+                )
+                if status != "UPDATE 1":
+                    raise RuntimeError("booking action conflict")
+        return ActionCompletion(
+            self._session_from_row(updated),
+            result_object,
+            False,
+        )
 
     async def list_owned_active_bookings(
         self,

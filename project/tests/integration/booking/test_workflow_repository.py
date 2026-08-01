@@ -304,27 +304,15 @@ async def test_concurrent_callback_has_one_port_effect_and_same_saved_result(
             "status": service_result.status,
             "message": service_result.message,
         }
-        terminal = replace(
-            awaiting,
-            phase="confirmed",
-            state={
-                **dict(awaiting.state),
-                "external_id": "external-1",
-                "starts_at": port.slot.starts_at.isoformat(),
-                "status": "confirmed",
-            },
-        )
-        await repository.checkpoint(
-            terminal,
+        completion = await repository.complete_action(
+            action.id,
+            "telegram",
+            "10",
+            "10",
+            saved,
             "booking_callback_completed",
-            action_id=action.id,
-            result=saved,
         )
-        replay = await repository.consume_action(
-            action.id, "telegram", "10", "10"
-        )
-        assert replay is not None
-        return replay.result
+        return completion.result
 
     first, second = await asyncio.gather(callback(), callback())
 
@@ -333,6 +321,114 @@ async def test_concurrent_callback_has_one_port_effect_and_same_saved_result(
         "status": "ok",
         "message": f"Запись подтверждена на {port.slot.starts_at.isoformat()}.",
     }
+    stored = await BookingRepository(database).get_scenario(awaiting.id)
+    assert stored.phase == "confirmed"
+    assert stored.state["external_id"] == "external-1"
+    assert stored.state["status"] == "confirmed"
+
+
+async def test_complete_action_preserves_escalated_state_and_replays_without_event(
+    database, repository, clock
+):
+    initial = await repository.start(
+        "create", "telegram", "10", "10", "start:escalated-action"
+    )
+    awaiting = await repository.checkpoint(
+        replace(initial, phase="awaiting_confirmation", state={"safe": True}),
+        "booking_confirmation_ready",
+    )
+    action = await repository.issue_action(
+        awaiting.id,
+        awaiting.revision,
+        "confirm",
+        {},
+        clock.now() + timedelta(minutes=30),
+    )
+    booking_repository = BookingRepository(database)
+    service_session = await booking_repository.get_scenario(awaiting.id)
+    await booking_repository.escalate(
+        replace(
+            service_session,
+            phase="escalated",
+            state={"provider_safe_state": "kept"},
+            error_code="booking_outcome_unknown",
+        ),
+        "booking_outcome_unknown",
+    )
+
+    first = await repository.complete_action(
+        action.id,
+        "telegram",
+        "10",
+        "10",
+        {"text": "safe result", "delivery_options": {}},
+        "booking_callback_completed",
+        {"status": "escalated", "error_code": "booking_outcome_unknown"},
+    )
+    events_before_replay = await booking_repository.list_events(awaiting.id)
+    clock.advance(hours=1)
+    replay = await repository.complete_action(
+        action.id,
+        "telegram",
+        "10",
+        "10",
+        {"text": "safe result", "delivery_options": {}},
+        "booking_callback_completed",
+        {"status": "escalated", "error_code": "booking_outcome_unknown"},
+    )
+    stored = await booking_repository.get_scenario(awaiting.id)
+
+    assert first.replayed is False
+    assert replay.replayed is True
+    assert replay.result == first.result
+    assert replay.session.revision == first.session.revision
+    assert await booking_repository.list_events(awaiting.id) == events_before_replay
+    assert stored.phase == "escalated"
+    assert stored.state == {"provider_safe_state": "kept"}
+    assert stored.error_code == "booking_outcome_unknown"
+
+
+async def test_complete_action_rejects_foreign_owner_and_conflicting_replay(
+    repository, clock
+):
+    scenario = await repository.start(
+        "create", "telegram", "10", "10", "start:complete-owner"
+    )
+    action = await repository.issue_action(
+        scenario.id,
+        scenario.revision,
+        "confirm",
+        {},
+        clock.now() + timedelta(minutes=30),
+    )
+
+    with pytest.raises(RuntimeError, match="^booking action conflict$"):
+        await repository.complete_action(
+            action.id,
+            "telegram",
+            "11",
+            "11",
+            {"text": "safe", "delivery_options": {}},
+            "must_not_commit",
+        )
+
+    await repository.complete_action(
+        action.id,
+        "telegram",
+        "10",
+        "10",
+        {"text": "safe", "delivery_options": {}},
+        "booking_callback_completed",
+    )
+    with pytest.raises(RuntimeError, match="^booking action result conflict$"):
+        await repository.complete_action(
+            action.id,
+            "telegram",
+            "10",
+            "10",
+            {"text": "different", "delivery_options": {}},
+            "booking_callback_completed",
+        )
 
 
 async def test_owned_active_bookings_and_human_mode_are_owner_bound(
