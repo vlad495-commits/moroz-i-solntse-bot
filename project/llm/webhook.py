@@ -13,6 +13,7 @@ import redis.asyncio as redis
 from redis.exceptions import RedisError
 
 from config import (
+    BOOKING_INTERACTIONS_ENABLED,
     BOT_PAUSE_KEY,
     BOT_PAUSED_REPLY,
     CONSENT_ADS_LABEL,
@@ -48,6 +49,9 @@ CONSENT_PII_CALLBACK_DATA = "consent:t:pii"
 CONSENT_ADS_CALLBACK_DATA = "consent:t:ads"
 CONSENT_DONE_CALLBACK_DATA = "consent:done"
 HEALTH_TIMEOUT_SECONDS = 2.0
+BOOKING_UNAVAILABLE_REPLY = (
+    "Онлайн-запись сейчас недоступна. Напишите ваш вопрос текстом, пожалуйста."
+)
 logger = logging.getLogger(__name__)
 
 
@@ -88,10 +92,21 @@ def _consent_prompt() -> str:
 
 
 def create_app(
-    *, database_url=None, redis_url=None, bot=None, webhook_secret=None, clock=None
+    *,
+    database_url=None,
+    redis_url=None,
+    bot=None,
+    webhook_secret=None,
+    clock=None,
+    booking_interactions_enabled=None,
 ) -> FastAPI:
     resolved_webhook_secret = webhook_secret or TELEGRAM_WEBHOOK_SECRET
     now = clock.now if clock is not None else lambda: datetime.now(UTC)
+    resolved_booking_interactions_enabled = (
+        BOOKING_INTERACTIONS_ENABLED
+        if booking_interactions_enabled is None
+        else booking_interactions_enabled
+    )
 
     @asynccontextmanager
     async def lifespan(webhook_app: FastAPI):
@@ -280,56 +295,65 @@ def create_app(
                 return Response(status_code=200)
             if callback.data is None or not callback.data.startswith("booking:"):
                 return Response(status_code=200)
-            if await is_bot_paused():
-                await send_static_reply(
-                    update_id=update.update_id,
-                    chat_id=callback.message.chat.id,
-                    text=BOT_PAUSED_REPLY,
-                    reply_kind="paused",
-                )
-                return Response(status_code=200)
-            user_id = str(callback.from_user.id)
-            has_processing_consent = (
-                await webhook_app.state.consent_service.has_processing_consent(
-                    "telegram", user_id
-                )
-            )
-            ingress = decide_ingress(
-                has_text=True,
-                has_processing_consent=has_processing_consent,
-            )
-            if ingress.action == "reply":
-                if ingress.code == "consent_required":
+            try:
+                if await is_bot_paused():
                     await send_static_reply(
                         update_id=update.update_id,
                         chat_id=callback.message.chat.id,
-                        text=_consent_prompt(),
-                        reply_kind="consent_prompt",
-                        delivery_options={
-                            "parse_mode": "HTML",
-                            "reply_markup": _consent_keyboard().model_dump(
-                                mode="json"
-                            ),
-                        },
+                        text=BOT_PAUSED_REPLY,
+                        reply_kind="paused",
                     )
-                await acknowledge_callback(callback.id)
-                return Response(status_code=200)
-            await webhook_app.state.message_service.accept(
-                IncomingMessage(
-                    update_id=str(update.update_id),
-                    message_id=str(callback.id),
-                    channel="telegram",
-                    chat_id=str(callback.message.chat.id),
-                    user_id=user_id,
-                    text="[booking callback]",
-                    received_at=now(),
-                    correlation_id=uuid4(),
-                    kind="callback",
-                    data={"callback_data": callback.data},
+                    return Response(status_code=200)
+                if not resolved_booking_interactions_enabled:
+                    await send_static_reply(
+                        update_id=update.update_id,
+                        chat_id=callback.message.chat.id,
+                        text=BOOKING_UNAVAILABLE_REPLY,
+                        reply_kind="booking_unavailable",
+                    )
+                    return Response(status_code=200)
+                user_id = str(callback.from_user.id)
+                has_processing_consent = (
+                    await webhook_app.state.consent_service.has_processing_consent(
+                        "telegram", user_id
+                    )
                 )
-            )
-            await acknowledge_callback(callback.id)
-            return Response(status_code=200)
+                ingress = decide_ingress(
+                    has_text=True,
+                    has_processing_consent=has_processing_consent,
+                )
+                if ingress.action == "reply":
+                    if ingress.code == "consent_required":
+                        await send_static_reply(
+                            update_id=update.update_id,
+                            chat_id=callback.message.chat.id,
+                            text=_consent_prompt(),
+                            reply_kind="consent_prompt",
+                            delivery_options={
+                                "parse_mode": "HTML",
+                                "reply_markup": _consent_keyboard().model_dump(
+                                    mode="json"
+                                ),
+                            },
+                        )
+                    return Response(status_code=200)
+                await webhook_app.state.message_service.accept(
+                    IncomingMessage(
+                        update_id=str(update.update_id),
+                        message_id=str(callback.id),
+                        channel="telegram",
+                        chat_id=str(callback.message.chat.id),
+                        user_id=user_id,
+                        text="[booking callback]",
+                        received_at=now(),
+                        correlation_id=uuid4(),
+                        kind="callback",
+                        data={"callback_data": callback.data},
+                    )
+                )
+                return Response(status_code=200)
+            finally:
+                await acknowledge_callback(callback.id)
 
         message = update.message
         if not message:
@@ -351,7 +375,9 @@ def create_app(
                 reply_kind="paused",
             )
             return Response(status_code=200)
-        if message.text is None and message.contact is None:
+        if message.text is None and (
+            message.contact is None or not resolved_booking_interactions_enabled
+        ):
             ingress = decide_ingress(
                 has_text=False,
                 has_processing_consent=False,

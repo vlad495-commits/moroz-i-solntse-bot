@@ -41,6 +41,13 @@ DATABASE_URL = database_url_from_env(os.environ, required=False)
 CONTEXT_MESSAGES_LIMIT = int(os.getenv("CONTEXT_MESSAGES_LIMIT", "20"))
 
 # --- Booking ---
+_booking_interactions_enabled = os.getenv(
+    "BOOKING_INTERACTIONS_ENABLED", "false"
+)
+if _booking_interactions_enabled not in {"true", "false"}:
+    raise ValueError("BOOKING_INTERACTIONS_ENABLED must be true or false")
+BOOKING_INTERACTIONS_ENABLED = _booking_interactions_enabled == "true"
+
 BOOKING_MODE = os.getenv("BOOKING_MODE", "disabled")
 if BOOKING_MODE not in {"disabled", "mock", "real"}:
     raise ValueError("BOOKING_MODE must be disabled, mock, or real")

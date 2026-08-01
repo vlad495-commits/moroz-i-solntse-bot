@@ -196,6 +196,22 @@ def test_compose_process_environment_overrides_external_test_credentials():
         assert "env_file" not in services[name]
 
 
+def test_bot_booking_rollout_gate_defaults_off_without_provider_secrets():
+    bot_environment = compose_services()["bot"]["environment"]
+
+    assert bot_environment["BOOKING_INTERACTIONS_ENABLED"] == (
+        "${BOOKING_INTERACTIONS_ENABLED:-false}"
+    )
+    assert {
+        "BOOKING_MODE",
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
+    }.isdisjoint(bot_environment)
+
+
 def test_reserve_llm_environment_is_limited_to_runtime_llm_services():
     services = compose_services()
     reserve_keys = {"RESERVE_API_KEY", "RESERVE_BASE_URL", "RESERVE_MODEL"}

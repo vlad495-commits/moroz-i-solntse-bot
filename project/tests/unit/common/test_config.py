@@ -58,6 +58,7 @@ def test_bot_and_admin_use_encoded_shared_database_fallback(monkeypatch, module_
 
 
 def test_booking_config_parses_allowlists_and_defaults(monkeypatch):
+    monkeypatch.setenv("BOOKING_INTERACTIONS_ENABLED", "true")
     monkeypatch.setenv("BOOKING_MODE", "mock")
     monkeypatch.setenv("YCLIENTS_SERVICE_ALLOWLIST", "17, 29")
     monkeypatch.setenv("YCLIENTS_STAFF_ALLOWLIST", "7, 8")
@@ -68,6 +69,7 @@ def test_booking_config_parses_allowlists_and_defaults(monkeypatch):
     config = importlib.reload(importlib.import_module("config"))
 
     assert config.BOOKING_MODE == "mock"
+    assert config.BOOKING_INTERACTIONS_ENABLED is True
     assert config.YCLIENTS_SERVICE_ALLOWLIST == ("17", "29")
     assert config.YCLIENTS_STAFF_ALLOWLIST == ("7", "8")
     assert config.BOOKING_HORIZON_DAYS == 14
@@ -78,6 +80,7 @@ def test_booking_config_parses_allowlists_and_defaults(monkeypatch):
 def test_booking_settings_defaults_are_safe(monkeypatch):
     for name in (
         "BOOKING_MODE",
+        "BOOKING_INTERACTIONS_ENABLED",
         "YCLIENTS_SERVICE_ALLOWLIST",
         "YCLIENTS_STAFF_ALLOWLIST",
         "BOOKING_HORIZON_DAYS",
@@ -89,6 +92,7 @@ def test_booking_settings_defaults_are_safe(monkeypatch):
     config = importlib.reload(importlib.import_module("config"))
 
     assert config.BOOKING_MODE == "disabled"
+    assert config.BOOKING_INTERACTIONS_ENABLED is False
     assert config.YCLIENTS_SERVICE_ALLOWLIST == ()
     assert config.YCLIENTS_STAFF_ALLOWLIST == ()
     assert config.BOOKING_HORIZON_DAYS == 14
@@ -114,4 +118,17 @@ def test_booking_config_rejects_empty_or_duplicate_active_allowlists(
     monkeypatch.setenv("YCLIENTS_STAFF_ALLOWLIST", staff)
 
     with pytest.raises(ValueError, match="allowlist must contain unique numeric ids"):
+        importlib.reload(importlib.import_module("config"))
+
+
+@pytest.mark.parametrize("value", ["", "TRUE", "False", "1", "yes", " true "])
+def test_booking_interactions_enabled_rejects_non_strict_booleans(
+    monkeypatch, value
+):
+    monkeypatch.setenv("BOOKING_INTERACTIONS_ENABLED", value)
+
+    with pytest.raises(
+        ValueError,
+        match="BOOKING_INTERACTIONS_ENABLED must be true or false",
+    ):
         importlib.reload(importlib.import_module("config"))

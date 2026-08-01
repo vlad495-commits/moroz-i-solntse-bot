@@ -22,6 +22,9 @@ pytestmark = pytest.mark.asyncio
 WEBHOOK_SECRET = "test-webhook-secret"
 SECRET = {"X-Telegram-Bot-Api-Secret-Token": WEBHOOK_SECRET}
 RECEIVED_AT = datetime(2026, 8, 1, 12, 30, tzinfo=UTC)
+BOOKING_UNAVAILABLE_REPLY = (
+    "Онлайн-запись сейчас недоступна. Напишите ваш вопрос текстом, пожалуйста."
+)
 
 
 class FrozenClock:
@@ -157,6 +160,25 @@ async def client(migrated_database_url, fake_telegram, redis_client):
         bot=fake_telegram,
         webhook_secret=WEBHOOK_SECRET,
         clock=FrozenClock(),
+        booking_interactions_enabled=True,
+    )
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers=SECRET,
+        ) as http_client:
+            yield http_client
+
+
+@pytest_asyncio.fixture
+async def disabled_client(migrated_database_url, fake_telegram, redis_client):
+    app = create_app(
+        database_url=migrated_database_url,
+        redis_url=os.environ["REDIS_URL"],
+        bot=fake_telegram,
+        webhook_secret=WEBHOOK_SECRET,
+        clock=FrozenClock(),
     )
     async with app.router.lifespan_context(app):
         async with AsyncClient(
@@ -277,6 +299,45 @@ async def test_callback_ack_failure_does_not_undo_durable_accept(
     assert "private failure" not in caplog.text
 
 
+async def test_disabled_booking_callback_is_acked_without_inbox_or_process_task(
+    disabled_client, database, fake_telegram
+):
+    response = await disabled_client.post(
+        "/telegram/webhook",
+        json=booking_callback(update_id=1008),
+    )
+
+    assert response.status_code == 200
+    assert await database.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert await database.fetchval(
+        "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
+    ) == 0
+    assert await database.fetchval("SELECT count(*) FROM messages") == 0
+    assert fake_telegram.answered_callback_queries == ["callback-1008"]
+    assert [message["text"] for message in fake_telegram.sent_messages] == [
+        BOOKING_UNAVAILABLE_REPLY
+    ]
+
+
+async def test_paused_booking_callback_is_always_acked(
+    client, database, redis_client, fake_telegram
+):
+    await redis_client.set("bot:paused", "1")
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=booking_callback(update_id=1009),
+    )
+
+    assert response.status_code == 200
+    assert await database.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert await database.fetchval(
+        "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
+    ) == 0
+    assert fake_telegram.answered_callback_queries == ["callback-1009"]
+    assert len(fake_telegram.sent_messages) == 1
+
+
 async def test_own_contact_is_accepted_without_placing_pii_in_display_text(
     client, database, redis_client
 ):
@@ -297,6 +358,36 @@ async def test_own_contact_is_accepted_without_placing_pii_in_display_text(
         "process_message:1002",
     )
     assert await redis_client.llen("buffer:10") == 0
+
+
+async def test_disabled_own_contact_never_stores_pii_or_publishes_process_task(
+    disabled_client, database, fake_telegram
+):
+    phone_number = "+79991112233"
+
+    response = await disabled_client.post(
+        "/telegram/webhook",
+        json=contact_update(update_id=1010, phone_number=phone_number),
+    )
+
+    assert response.status_code == 200
+    assert await database.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert await database.fetchval(
+        "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
+    ) == 0
+    assert await database.fetchval("SELECT count(*) FROM messages") == 0
+    stored_payloads = await database.fetch(
+        "SELECT payload::text FROM task_outbox"
+    )
+    stored_outbound = await database.fetch(
+        "SELECT text FROM outbound_messages"
+    )
+    assert phone_number not in json.dumps(
+        [row["payload"] for row in stored_payloads]
+        + [row["text"] for row in stored_outbound]
+    )
+    assert len(fake_telegram.sent_messages) == 1
+    assert fake_telegram.answered_callback_queries == []
 
 
 async def test_contact_must_belong_to_sender(client, database):
