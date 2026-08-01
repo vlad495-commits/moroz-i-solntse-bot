@@ -73,3 +73,45 @@ def test_booking_config_parses_allowlists_and_defaults(monkeypatch):
     assert config.BOOKING_HORIZON_DAYS == 14
     assert config.BOOKING_CONFIRMATION_TTL_SECONDS == 1800
     assert config.BOOKING_ROUTER_CONFIDENCE == 0.80
+
+
+def test_booking_settings_defaults_are_safe(monkeypatch):
+    for name in (
+        "BOOKING_MODE",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
+        "BOOKING_HORIZON_DAYS",
+        "BOOKING_CONFIRMATION_TTL_SECONDS",
+        "BOOKING_ROUTER_CONFIDENCE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = importlib.reload(importlib.import_module("config"))
+
+    assert config.BOOKING_MODE == "disabled"
+    assert config.YCLIENTS_SERVICE_ALLOWLIST == ()
+    assert config.YCLIENTS_STAFF_ALLOWLIST == ()
+    assert config.BOOKING_HORIZON_DAYS == 14
+    assert config.BOOKING_CONFIRMATION_TTL_SECONDS == 1800
+    assert config.BOOKING_ROUTER_CONFIDENCE == 0.80
+
+
+@pytest.mark.parametrize(
+    ("mode", "services", "staff"),
+    [
+        (mode, services, staff)
+        for mode in ("mock", "real")
+        for services, staff in (
+            ("", "7"), ("17,17", "7"), ("17", ""), ("17", "7,7")
+        )
+    ],
+)
+def test_booking_config_rejects_empty_or_duplicate_active_allowlists(
+    monkeypatch, mode, services, staff
+):
+    monkeypatch.setenv("BOOKING_MODE", mode)
+    monkeypatch.setenv("YCLIENTS_SERVICE_ALLOWLIST", services)
+    monkeypatch.setenv("YCLIENTS_STAFF_ALLOWLIST", staff)
+
+    with pytest.raises(ValueError, match="allowlist must contain unique numeric ids"):
+        importlib.reload(importlib.import_module("config"))

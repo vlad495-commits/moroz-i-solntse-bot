@@ -2024,3 +2024,16 @@
 [2026-08-01 14:53] Независимый review Task 1 завершён: `0 Critical / 0 Important / 0 Minor`, Ready. Подтверждены catalog/mock контракты, fail-closed allowlists для `mock`/`real`, worker-only allowlists и scope; внешний YCLIENTS/Telegram не вызывался.
 [2026-08-01 14:54] Финальная Task 1 verification: `git diff --check` без ошибок; report обновлён результатом независимого review. К коммиту будет добавлен только оговорённый Task 1 source/test/config/roadmap/changelog scope, без push.
 [2026-08-01 14:54] Task 1 зафиксирован локальным коммитом `feat: добавлен allowlisted booking catalog contract`; push не выполнялся.
+[2026-08-01 14:59] Независимый post-task review вернул Task 1 на fix: mock-каталог не применял configured allowlists, а config tests не защищали реальные disabled defaults и fail-closed active mode. Добавлены RED-тесты на скрытые fixture IDs и загрузку config с empty/duplicate allowlists; production-код ещё не изменён.
+[2026-08-01 14:59] Для Task 1 review fix успешно пересобран локальный Docker test-образ; далее выполняется RED-прогон новых проверок.
+[2026-08-01 15:00] Docker RED review fix воспроизведён: `3 failed, 13 passed`; все три новых mock-каталог сценария остановились ожидаемым `TypeError` на отсутствующих `service_allowlist`/`staff_allowlist`. Новые config tests уже подтвердили существующие safe defaults и fail-closed active mode.
+[2026-08-01 15:00] RED-тест mock-каталога уточнён: разрешённый мастер содержит также скрытый service ID, а ожидаемый наружный `CatalogStaff.service_ids` содержит только разрешённый ID. Это фиксирует границу allowlist не только для записей каталога, но и для вложенных IDs.
+[2026-08-01 15:01] В Task 1 mock-каталог добавлены обязательные configured service/staff allowlists: services и staff filterятся по ним, выбранный неразрешённый service возвращает пустой список, а вложенные `CatalogStaff.service_ids` урезаются до разрешённых. Далее — Docker GREEN.
+[2026-08-01 15:01] После review fix успешно пересобран локальный Docker test-образ для GREEN-прогона.
+[2026-08-01 15:02] Docker GREEN review fix прошёл: `16 passed in 0.15s` для Task 1 catalog/config tests; далее повторно проверяется Compose config render.
+[2026-08-01 15:02] Повторный Compose config render review fix завершился с exit 0. Обновлена дорожная карта: mock теперь явно применяет allowlists и не выпускает скрытые service/staff IDs.
+[2026-08-01 15:04] Независимый review review-fix подтвердил mock allowlist boundary, но нашёл неполное покрытие active config: empty/duplicate allowlists были проверены только для `mock`. Тест расширен на оба активных режима `mock` и `real`; production-код для этого не менялся, поскольку общий fail-closed путь уже один.
+[2026-08-01 15:04] Для финальной проверки параметризации `mock`/`real` успешно пересобран локальный Docker test-образ.
+[2026-08-01 15:05] Финальный Docker GREEN Task 1 review fix прошёл: `20 passed in 0.20s`; include скрытые fixture IDs, true disabled defaults и empty/duplicate allowlists в `mock`/`real`.
+[2026-08-01 15:05] Финальный Compose config render review fix завершился с exit 0. Повторный независимый review после расширения `mock`/`real` coverage — Ready, замечаний нет.
+[2026-08-01 15:06] Task 1 review fix зафиксирован отдельным локальным коммитом `fix: фильтровать mock catalog по allowlist`; исходный Task 1 commit не изменялся, push не выполнялся.
