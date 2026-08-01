@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 
 from moroz.booking.catalog import (
     BookingCatalogPort,
@@ -27,7 +28,7 @@ class YclientsCatalogAdapter(BookingCatalogPort):
         self._staff_allowlist = frozenset(staff_allowlist)
 
     async def list_services(self) -> list[CatalogService]:
-        items = _items(await self._read(
+        items = _service_items(await self._read(
             f"/api/v1/book_services/{self._company_id}"
         ))
         services = [_parse_service(item) for item in items]
@@ -40,31 +41,29 @@ class YclientsCatalogAdapter(BookingCatalogPort):
     async def list_staff(
         self, service_ids: tuple[str, ...]
     ) -> list[CatalogStaff]:
+        selected = _selected_services(
+            service_ids,
+            self._service_allowlist,
+        )
         items = _items(await self._read(
-            f"/api/v1/book_staff/{self._company_id}"
+            f"/api/v1/book_staff/{self._company_id}",
+            query=[("service_ids[]", value) for value in selected],
         ))
-        selected = set(service_ids)
-        result = []
-        for staff in (_parse_staff(item) for item in items):
-            allowed_services = tuple(
-                service_id
-                for service_id in staff.service_ids
-                if service_id in self._service_allowlist
-            )
-            if (
-                staff.id in self._staff_allowlist
-                and selected.issubset(allowed_services)
-            ):
-                result.append(CatalogStaff(
-                    staff.id,
-                    staff.name,
-                    allowed_services,
-                ))
-        return result
+        staff = [_parse_staff(item, selected) for item in items]
+        return [
+            member
+            for member, bookable in staff
+            if bookable and member.id in self._staff_allowlist
+        ]
 
-    async def _read(self, path: str) -> object:
+    async def _read(
+        self,
+        path: str,
+        *,
+        query: Sequence[tuple[str, object]] = (),
+    ) -> object:
         try:
-            response = await self._client.request("GET", path)
+            response = await self._client.request("GET", path, query=query)
         except YclientsTransportError:
             raise BookingTemporaryError() from None
         if response.status != 200:
@@ -94,6 +93,12 @@ def _items(data: object) -> list[dict[str, object]]:
     return data
 
 
+def _service_items(data: object) -> list[dict[str, object]]:
+    if not isinstance(data, dict) or "services" not in data:
+        raise BookingTemporaryError()
+    return _items(data["services"])
+
+
 def _parse_service(item: dict[str, object]) -> CatalogService:
     return CatalogService(
         _provider_id(item.get("id")),
@@ -102,19 +107,35 @@ def _parse_service(item: dict[str, object]) -> CatalogService:
     )
 
 
-def _parse_staff(item: dict[str, object]) -> CatalogStaff:
-    raw_services = item.get("services")
-    if not isinstance(raw_services, list) or not raw_services:
+def _parse_staff(
+    item: dict[str, object],
+    selected: tuple[str, ...],
+) -> tuple[CatalogStaff, bool]:
+    bookable = item.get("bookable")
+    if type(bookable) is not bool:
         raise BookingTemporaryError()
-    service_ids = tuple(sorted(
-        {_provider_id(value) for value in raw_services},
-        key=int,
-    ))
-    return CatalogStaff(
-        _provider_id(item.get("id")),
-        _required_text(item.get("name")),
-        service_ids,
+    return (
+        CatalogStaff(
+            _provider_id(item.get("id")),
+            _required_text(item.get("name")),
+            selected,
+        ),
+        bookable,
     )
+
+
+def _selected_services(
+    values: tuple[str, ...],
+    allowlist: frozenset[str],
+) -> tuple[str, ...]:
+    selected = tuple(_provider_id(value) for value in values)
+    if (
+        not selected
+        or len(set(selected)) != len(selected)
+        or any(value not in allowlist for value in selected)
+    ):
+        raise BookingTemporaryError()
+    return selected
 
 
 def _provider_id(value: object) -> str:

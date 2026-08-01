@@ -11,7 +11,9 @@ from moroz.booking.yclients_http import HttpResponse, YclientsTransportError
 class FakeHttp:
     def __init__(self) -> None:
         self.responses: list[HttpResponse | Exception] = []
-        self.requests: list[tuple[str, str, bool]] = []
+        self.requests: list[
+            tuple[str, str, tuple[tuple[str, object], ...], bool]
+        ] = []
 
     def queue(self, status: int, body: bytes) -> None:
         self.responses.append(HttpResponse(status, body))
@@ -20,9 +22,16 @@ class FakeHttp:
         self.queue(status, json.dumps(payload, ensure_ascii=False).encode())
 
     async def request(
-        self, method: str, path: str, *, user_auth: bool = False
+        self,
+        method: str,
+        path: str,
+        *,
+        query=(),
+        json_body=None,
+        user_auth: bool = False,
     ) -> HttpResponse:
-        self.requests.append((method, path, user_auth))
+        assert json_body is None
+        self.requests.append((method, path, tuple(query), user_auth))
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -42,10 +51,12 @@ async def test_catalog_returns_only_allowlisted_services_and_staff(
         200,
         {
             "success": True,
-            "data": [
-                {"id": 1, "title": "Крио", "duration": 1800},
-                {"id": 9, "title": "Скрытая", "duration": 600},
-            ],
+            "data": {
+                "services": [
+                    {"id": 1, "title": "Крио", "duration": 1800},
+                    {"id": 9, "title": "Скрытая", "duration": 600},
+                ],
+            },
         },
     )
     fake_http.queue_json(
@@ -53,8 +64,8 @@ async def test_catalog_returns_only_allowlisted_services_and_staff(
         {
             "success": True,
             "data": [
-                {"id": 7, "name": "Анна", "services": [1]},
-                {"id": 8, "name": "Скрытый", "services": [1]},
+                {"id": 7, "name": "Анна", "bookable": True},
+                {"id": 8, "name": "Скрытый", "bookable": True},
             ],
         },
     )
@@ -65,13 +76,18 @@ async def test_catalog_returns_only_allowlisted_services_and_staff(
         CatalogStaff("7", "Анна", ("1",))
     ]
     assert fake_http.requests == [
-        ("GET", "/api/v1/book_services/42", False),
-        ("GET", "/api/v1/book_staff/42", False),
+        ("GET", "/api/v1/book_services/42", (), False),
+        (
+            "GET",
+            "/api/v1/book_staff/42",
+            (("service_ids[]", "1"),),
+            False,
+        ),
     ]
 
 
 @pytest.mark.asyncio
-async def test_catalog_staff_must_support_every_selected_service(
+async def test_catalog_staff_uses_selected_services_and_excludes_unbookable(
     fake_http: FakeHttp,
 ) -> None:
     fake_http.queue_json(
@@ -79,8 +95,9 @@ async def test_catalog_staff_must_support_every_selected_service(
         {
             "success": True,
             "data": [
-                {"id": 7, "name": "Анна", "services": [1, 2]},
-                {"id": 8, "name": "Ирина", "services": [1]},
+                {"id": 7, "name": "Анна", "bookable": True},
+                {"id": 8, "name": "Ирина", "bookable": False},
+                {"id": 9, "name": "Скрытый", "bookable": True},
             ],
         },
     )
@@ -90,27 +107,30 @@ async def test_catalog_staff_must_support_every_selected_service(
     ).list_staff(("1", "2"))
 
     assert result == [CatalogStaff("7", "Анна", ("1", "2"))]
+    assert fake_http.requests == [
+        (
+            "GET",
+            "/api/v1/book_staff/42",
+            (("service_ids[]", "1"), ("service_ids[]", "2")),
+            False,
+        )
+    ]
 
 
 @pytest.mark.asyncio
-async def test_catalog_staff_does_not_expose_non_allowlisted_service_ids(
-    fake_http: FakeHttp,
+@pytest.mark.parametrize(
+    "service_ids",
+    [(), ("0",), ("abc",), ("9",), ("1", "1")],
+)
+async def test_catalog_staff_rejects_invalid_or_disallowed_services_before_http(
+    fake_http: FakeHttp, service_ids: tuple[str, ...]
 ) -> None:
-    fake_http.queue_json(
-        200,
-        {
-            "success": True,
-            "data": [
-                {"id": 7, "name": "Анна", "services": [1, 9]},
-            ],
-        },
-    )
+    with pytest.raises(BookingTemporaryError):
+        await YclientsCatalogAdapter(
+            fake_http, "42", ("1",), ("7",)
+        ).list_staff(service_ids)
 
-    result = await YclientsCatalogAdapter(
-        fake_http, "42", ("1",), ("7",)
-    ).list_staff(("1",))
-
-    assert result == [CatalogStaff("7", "Анна", ("1",))]
+    assert fake_http.requests == []
 
 
 @pytest.mark.asyncio
@@ -147,19 +167,29 @@ async def test_catalog_transport_failure_is_temporary_without_transport_detail(
     "payload",
     [
         b"not-json private body",
-        json.dumps({"success": False, "data": []}).encode(),
+        json.dumps({"success": False, "data": {"services": []}}).encode(),
         json.dumps({"success": True}).encode(),
         json.dumps({"success": True, "data": {}}).encode(),
+        json.dumps({"success": True, "data": {"services": {}}}).encode(),
+        json.dumps({"success": True, "data": []}).encode(),
         json.dumps(
             {
                 "success": True,
-                "data": [{"id": 1, "title": "Крио", "duration": 1801}],
+                "data": {
+                    "services": [
+                        {"id": 1, "title": "Крио", "duration": 1801}
+                    ]
+                },
             }
         ).encode(),
         json.dumps(
             {
                 "success": True,
-                "data": [{"id": 1, "title": "", "duration": 1800}],
+                "data": {
+                    "services": [
+                        {"id": 1, "title": "", "duration": 1800}
+                    ]
+                },
             }
         ).encode(),
     ],
@@ -167,7 +197,9 @@ async def test_catalog_transport_failure_is_temporary_without_transport_detail(
         "invalid-json",
         "unsuccessful-envelope",
         "missing-data",
-        "non-list-data",
+        "missing-services",
+        "non-list-services",
+        "non-object-data",
         "fractional-minute-duration",
         "empty-title",
     ],
@@ -189,12 +221,11 @@ async def test_service_catalog_malformed_response_fails_closed(
 @pytest.mark.parametrize(
     "item",
     [
-        {"id": 7, "name": "", "services": [1]},
-        {"id": 7, "name": "Анна", "services": "1"},
-        {"id": 7, "name": "Анна", "services": [True]},
-        {"id": 7, "name": "Анна", "services": []},
+        {"id": 7, "name": "", "bookable": True},
+        {"id": 7, "name": "Анна"},
+        {"id": 7, "name": "Анна", "bookable": "true"},
     ],
-    ids=["empty-name", "non-list-services", "boolean-service", "empty-services"],
+    ids=["empty-name", "missing-bookable", "non-boolean-bookable"],
 )
 async def test_staff_catalog_malformed_response_fails_closed(
     fake_http: FakeHttp, item: dict[str, object]
