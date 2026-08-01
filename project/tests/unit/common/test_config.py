@@ -55,3 +55,21 @@ def test_bot_and_admin_use_encoded_shared_database_fallback(monkeypatch, module_
     assert module.DATABASE_URL == (
         "postgresql://app%40team:p%40%3A%2F%25@postgres:5432/moroz%2Fdb"
     )
+
+
+def test_booking_config_parses_allowlists_and_defaults(monkeypatch):
+    monkeypatch.setenv("BOOKING_MODE", "mock")
+    monkeypatch.setenv("YCLIENTS_SERVICE_ALLOWLIST", "17, 29")
+    monkeypatch.setenv("YCLIENTS_STAFF_ALLOWLIST", "7, 8")
+    monkeypatch.setenv("BOOKING_HORIZON_DAYS", "14")
+    monkeypatch.setenv("BOOKING_CONFIRMATION_TTL_SECONDS", "1800")
+    monkeypatch.setenv("BOOKING_ROUTER_CONFIDENCE", "0.80")
+
+    config = importlib.reload(importlib.import_module("config"))
+
+    assert config.BOOKING_MODE == "mock"
+    assert config.YCLIENTS_SERVICE_ALLOWLIST == ("17", "29")
+    assert config.YCLIENTS_STAFF_ALLOWLIST == ("7", "8")
+    assert config.BOOKING_HORIZON_DAYS == 14
+    assert config.BOOKING_CONFIRMATION_TTL_SECONDS == 1800
+    assert config.BOOKING_ROUTER_CONFIDENCE == 0.80
