@@ -223,6 +223,16 @@ def test_bot_booking_rollout_gate_defaults_off_without_provider_secrets():
     }.isdisjoint(bot_environment)
 
 
+def test_bot_startup_waits_for_healthy_worker_without_dependency_cycle():
+    services = compose_services()
+
+    assert services["bot"]["depends_on"] == {
+        "postgres": {"condition": "service_healthy"},
+        "worker": {"condition": "service_healthy"},
+    }
+    assert "bot" not in services["worker"]["depends_on"]
+
+
 def test_reserve_llm_environment_is_limited_to_runtime_llm_services():
     services = compose_services()
     reserve_keys = {"RESERVE_API_KEY", "RESERVE_BASE_URL", "RESERVE_MODEL"}

@@ -221,6 +221,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      worker:
+        condition: service_healthy
     logging:
       driver: "json-file"
       options:
