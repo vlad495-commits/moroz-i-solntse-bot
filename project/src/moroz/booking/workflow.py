@@ -82,7 +82,7 @@ def _is_partial_service_change(
         for word in _WORD_PATTERN.findall(str(item.get("title", "")))
     }
     target_indexes = {
-        index: "service"
+        index: "selected_service" if word in service_words else "generic_service"
         for index, word in enumerate(words)
         if word.startswith(("услуг", "процедур")) or word in service_words
     }
@@ -94,22 +94,37 @@ def _is_partial_service_change(
             or word in _TIME_TARGET_WORDS
         }
     )
-    for action in action_indexes:
-        following = (target for target in target_indexes if target > action)
+    for position, action in enumerate(action_indexes):
+        previous_action = action_indexes[position - 1] if position else -1
+        next_action = (
+            action_indexes[position + 1]
+            if position + 1 < len(action_indexes)
+            else len(words)
+        )
+        targets = {
+            index: kind
+            for index, kind in target_indexes.items()
+            if previous_action < index < next_action
+        }
+        following = (target for target in targets if target > action)
         closest = min(following, default=None)
         if closest is None:
-            preceding = tuple(
-                target for target in target_indexes if target < action
-            )
+            preceding = tuple(target for target in targets if target < action)
             preceding_other = (
                 target
                 for target in preceding
-                if target_indexes[target] == "other"
+                if targets[target] == "other"
             )
             closest = max(preceding_other, default=None)
             if closest is None:
                 closest = max(preceding, default=None)
-        if closest is not None and target_indexes[closest] == "service":
+        if (
+            closest is not None
+            and targets[closest] == "generic_service"
+            and "other" in targets.values()
+        ):
+            continue
+        if closest is not None and targets[closest].endswith("service"):
             return True
     return False
 

@@ -285,6 +285,7 @@ async def test_partial_service_change_escalates_without_mutation(
         "Я хочу изменить набор услуг",
         "Удалите массаж из записи",
         "Хочу временно изменить услугу",
+        "Хочу изменить услугу и поменять время",
     ],
 )
 async def test_clear_inflected_partial_service_request_escalates(
@@ -363,6 +364,9 @@ async def test_temporary_adverb_does_not_hide_partial_service_target(
         "Мастера для услуги хочу поменять",
         "Время процедуры нужно поменять",
         "Времени для услуги хочу поменять",
+        "Время хочу поменять для услуги",
+        "Мастера хочу поменять для услуги",
+        "Дату хочу изменить для услуги",
     ],
 )
 @pytest.mark.parametrize("kind", ["reschedule", "cancel"])
@@ -376,7 +380,8 @@ async def test_service_mention_does_not_override_date_time_or_staff_target(
         reply = await workflow.start_reschedule(OWNER, f"change:ordinary:{text}")
         await _press(workflow, OWNER, reply, _button_texts(reply)[0])
     else:
-        await workflow.start_cancel(OWNER, f"cancel:ordinary:{text}")
+        reply = await workflow.start_cancel(OWNER, f"cancel:ordinary:{text}")
+        await _press(workflow, OWNER, reply, _button_texts(reply)[0])
 
     await workflow.handle(Interaction.text(OWNER, "ordinary", text))
 
