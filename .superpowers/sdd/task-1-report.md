@@ -1,65 +1,123 @@
-# Task 1 report: static RED contract
+# Task 1 Report: Domain, Migration, and Provider Mapping
 
-## Changes
+## Scope
 
-- Created `project/tests/unit/test_full_project_architecture_visual.py`.
-- The test uses Python stdlib `HTMLParser` and accepts
-  `FULL_ARCHITECTURE_HTML_PATH`; the host default is
-  `docs/moroz-i-solntse-full-architecture.html`.
-- It requires the agreed sections, all status-classified nodes, labels, factual
-  comparison tokens, git snapshot, static/self-contained HTML, no secret
-  assignments or external assets, and the CSS contract.
-- Did not create the target HTML or change runtime code and the existing
-  `docs/production-v1-architecture.html`.
+- Worktree: `D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.worktrees\yclients-lifecycle-0008`
+- Branch: `codex/yclients-lifecycle-0008`
+- No YCLIENTS, Telegram, staging, production, or main worktree requests were made.
 
-## Docker evidence
+## Delivered
 
-Initial baseline (without a docs mount):
+- Added `BookingStatus` with `confirmed`, `cancelled`, `completed`, `no_show`, and `unknown`.
+- Added validated optional `ExternalBooking.scheduled_end_at`.
+- Added YCLIENTS visit lifecycle mapping, including strict validation of `deleted` and `attendance`.
+- Calculated scheduled end from provider `seance_length` and preserved it in the mock adapter.
+- Added Alembic revision `0008_yclients_lifecycle`, durable `bookings.scheduled_end_at`, extended status constraint, and downgrade normalization.
+- Persisted scheduled end in booking INSERT/UPDATE, snapshots, and database-to-domain mapping.
 
-```text
-docker compose --env-file <original-repository-.env> run --rm test pytest \
-  tests/unit/test_architecture_visual.py tests/unit/test_message_path_visual.py
-=> 11 failed: FileNotFoundError for /docs/*.html
+## RED Evidence
+
+1. Adapter RED:
+
+```powershell
+Set-Location <worktree>\project
+$env:COMPOSE_PROJECT_NAME='moroz_lifecycle_0008'
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py -k lifecycle
 ```
 
-Corrected baseline (worktree `docs/` mounted at `/repo/docs:ro`, both existing
-path overrides supplied):
+Result: `7 failed, 90 deselected`. Failures showed lifecycle values collapsed to `confirmed`, missing `scheduled_end_at`, and no rejection for string attendance.
 
-```text
-=> 11 passed in 0.15s
+2. Migration RED:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm test pytest -q tests/integration/test_migrations.py -k lifecycle
 ```
 
-RED contract run (worktree `docs/` mounted at `/repo/docs:ro`):
+Result: `1 failed, 22 deselected`; `bookings.scheduled_end_at` did not exist.
 
-```text
-FULL_ARCHITECTURE_HTML_PATH=/repo/docs/moroz-i-solntse-full-architecture.html
-pytest /workspace/tests/unit/test_full_project_architecture_visual.py
-=> 5 failed: FileNotFoundError for the future HTML
+3. Repository RED:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm test pytest -q tests/integration/booking/test_booking_repository.py -k scheduled_end
 ```
 
-Compose interpolation used only the approved dummy values for missing
-`RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_URL`, and
-`TELEGRAM_WEBHOOK_SECRET`; the original repository `.env` was passed by its
-absolute path and its values were not printed.
+Result: `1 failed, 11 deselected`; readback returned `scheduled_end_at=None`.
+
+## GREEN Evidence
+
+1. Adapter lifecycle slice: `7 passed, 90 deselected`.
+2. Booking regression slice:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py tests/unit/booking tests/integration/booking
+```
+
+Result: `159 passed in 76.03s`.
+
+3. Lifecycle migration slice: `1 passed, 22 deselected`.
+4. Final focused Task 1 gate:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py tests/integration/test_migrations.py tests/integration/booking
+```
+
+Result: `133 passed in 137.74s`.
+
+All Compose invocations set the requested synthetic process-local credentials for Telegram webhook, RabbitMQ, PostgreSQL, and Redis before execution.
 
 ## Files
 
-- `project/tests/unit/test_full_project_architecture_visual.py`
+- `project/migrations/versions/0008_yclients_lifecycle.py`
+- `project/src/moroz/booking/models.py`
+- `project/src/moroz/booking/yclients.py`
+- `project/src/moroz/booking/mock_yclients.py`
+- `project/src/moroz/booking/repository.py`
+- `project/tests/contract/booking/test_yclients_adapter.py`
+- `project/tests/unit/booking/test_mock_adapter.py`
+- `project/tests/integration/test_migrations.py`
+- `project/tests/integration/booking/test_booking_repository.py`
 - `changelog.md`
-- `.superpowers/sdd/task-1-report.md`
 
-## Self-review
+## Self-review and Concerns
 
-- Checked every required section, node ID, label, factual token and CSS token
-  against `task-1-brief.md`.
-- The only new product-facing artifact is a failing test; no target HTML was
-  created.
-- Docker RED is caused by precisely the missing expected artifact, not a test
-  collection or container-path error.
-- `git diff --check` is run before commit.
+- Self-review found the read/write/snapshot paths consistent and all Task 1 focused tests green.
+- Follow-up correction: downgrade preserves existing `cancelled` records and normalizes only `completed`, `no_show`, and `unknown` to `confirmed`, matching the approved spec and Task 1 migration sample.
+- A legacy fake YCLIENTS record omitted `attendance`; the shared fixture now explicitly represents confirmed records with `attendance=0`, while `attendance=None` is covered as `unknown`.
 
-## Concerns
+## Follow-up RED/GREEN: Downgrade Cancellation Preservation
 
-- Docker reported pre-existing orphan-container and pytest cache-on-read-only-
-  mount warnings. They do not affect the corrected 11-test baseline or the
-  expected FileNotFoundError RED outcome.
+1. RED changed the lifecycle migration assertion to require grouped results
+   `cancelled=1` and `confirmed=4` after downgrade. The focused Docker command
+   below failed with `('confirmed', 5)`, proving the old predicate incorrectly
+   normalized the existing cancellation:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/test_migrations.py -k lifecycle
+```
+
+2. GREEN replaced the downgrade predicate with
+   `status IN ('completed', 'no_show', 'unknown')` and reran the same command.
+   Result: `1 passed, 22 deselected in 6.89s`.
+
+## Follow-up RED/GREEN: LocalBookingPort Scheduled End
+
+1. RED added a real database-backed `LocalBookingPort` read-path regression.
+   It inserted a booking with `scheduled_end_at` and failed because the port
+   returned `None`:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/notifications/test_jobs.py -k scheduled_end_at
+```
+
+Result: `1 failed, 3 deselected`; expected the durable scheduled end but read
+back `None`.
+
+2. GREEN added `scheduled_end_at` to the LocalBookingPort SELECT and
+   `ExternalBooking` mapping, then ran the affected notification and booking
+   suites:
+
+```powershell
+docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/notifications/test_jobs.py tests/unit/notifications tests/integration/booking
+```
+
+Result: `20 passed in 31.91s`.
