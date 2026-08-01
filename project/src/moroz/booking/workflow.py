@@ -106,6 +106,15 @@ def _is_partial_service_change(
             for index, kind in target_indexes.items()
             if previous_action < index < next_action
         }
+        ordered_targets = tuple(sorted(targets))
+        for left, right in zip(ordered_targets, ordered_targets[1:]):
+            kinds = {targets[left], targets[right]}
+            if (
+                words[left + 1 : right] == ("и",)
+                and "other" in kinds
+                and any(kind.endswith("service") for kind in kinds)
+            ):
+                return True
         following = (target for target in targets if target > action)
         closest = min(following, default=None)
         if closest is None:
@@ -122,6 +131,7 @@ def _is_partial_service_change(
             closest is not None
             and targets[closest] == "generic_service"
             and "other" in targets.values()
+            and "для" in words[action + 1 : closest]
         ):
             continue
         if closest is not None and targets[closest].endswith("service"):

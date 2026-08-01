@@ -313,6 +313,47 @@ async def test_clear_inflected_partial_service_request_escalates(
 @pytest.mark.parametrize(
     "text",
     [
+        "Хочу изменить услугу и время",
+        "Хочу поменять время и услугу",
+        "Хочу изменить время и массаж",
+    ],
+)
+@pytest.mark.parametrize("kind", ["reschedule", "cancel"])
+async def test_coordinated_service_target_escalates(
+    change_dependencies,
+    text,
+    kind,
+):
+    workflow, repository, _catalog, _port, service = change_dependencies
+    if kind == "reschedule":
+        reply = await workflow.start_reschedule(
+            OWNER,
+            f"change:coordinated:{text}",
+        )
+        await _press(workflow, OWNER, reply, _button_texts(reply)[0])
+    else:
+        reply = await workflow.start_cancel(OWNER, f"cancel:coordinated:{text}")
+        await _press(workflow, OWNER, reply, _button_texts(reply)[0])
+
+    result = await workflow.handle(
+        Interaction.text(OWNER, f"coordinated:{kind}:{text}", text)
+    )
+
+    assert "администратор" in result.text.casefold()
+    assert service.handle_calls == []
+    assert service.escalate_calls == [
+        (
+            repository.session.id,
+            BookingIdentity("user-10", True),
+            "partial_service_change_unsupported",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
         "Услугу хочу временно изменить",
         "Массаж хочу временно убрать",
     ],
