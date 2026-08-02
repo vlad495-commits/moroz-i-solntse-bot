@@ -15,13 +15,13 @@
 cd project && docker compose --env-file ../.env --profile yclients-readonly run --rm yclients-readonly
 ```
 
-Обязательные переменные: `YCLIENTS_PARTNER_TOKEN`, `YCLIENTS_COMPANY_ID`, `YCLIENTS_SERVICE_ALLOWLIST`, `YCLIENTS_STAFF_ALLOWLIST`, `YCLIENTS_ENVIRONMENT_LABEL`. Опциональны `YCLIENTS_BASE_URL`, `YCLIENTS_TIMEZONE`, `YCLIENTS_TIMEOUT_SECONDS`. `YCLIENTS_USER_TOKEN`, Telegram-, LLM-, PostgreSQL-, Redis- и RabbitMQ-секреты этому сервису не передаются: availability GET использует partner bearer, а непрозрачный slot ID подписывается локальным одноразовым sentinel и не выводится.
+Обязательные переменные: `YCLIENTS_PARTNER_TOKEN`, `YCLIENTS_COMPANY_ID`, `YCLIENTS_SERVICE_ALLOWLIST`, `YCLIENTS_STAFF_ALLOWLIST`, `YCLIENTS_ENVIRONMENT_LABEL`. Опциональны `YCLIENTS_BASE_URL`, `YCLIENTS_TIMEZONE`, `YCLIENTS_TIMEOUT_SECONDS`. `YCLIENTS_USER_TOKEN`, Telegram-, LLM-, PostgreSQL-, Redis- и RabbitMQ-секреты этому сервису не передаются: availability GET использует partner bearer, а непрозрачный slot ID подписывается `local non-provider sentinel` и не выводится.
 
 Успех — один JSON-объект с environment label, горизонтом `14`, настроенными service/staff IDs и агрегированными counts. Любая недоступность, redirect/неожиданный envelope, отсутствующий или дублированный configured ID, partial result либо неверная граница окна дают exit non-zero и только `{"ok":false}`.
 
 | Проверка | Команда / тесты | Время (UTC+3) | Среда | Exit | Санитизированный результат |
 |---|---|---:|---|---:|---|
-| Local fake GET-only | `pytest tests/unit/booking/test_yclients_readonly_check.py tests/unit/test_worker.py tests/contract/booking/test_yclients_catalog.py tests/contract/booking/test_yclients_http.py tests/contract/booking/test_yclients_adapter.py -q` через Compose test profile | 2026-08-02 04:00 | `local-fake` | 0 | `194 passed`; captured transport method set `{"GET"}`; exact 14-day window; no private fields |
+| Local fake GET-only | `pytest tests/unit/booking/test_yclients_readonly_check.py tests/unit/test_worker.py tests/unit/test_migration_profile.py tests/contract/booking/test_yclients_catalog.py tests/contract/booking/test_yclients_http.py tests/contract/booking/test_yclients_adapter.py -q` через Compose test profile | 2026-08-02 04:30 | `local-fake` | 0 | `216 passed in 64.58s`; captured transport method set `{"GET"}`; exact 14-day window; no private fields |
 | External YCLIENTS read-only | `docker compose --env-file ../.env --profile yclients-readonly run --rm yclients-readonly` | — | company scope not confirmed | — | **NOT RUN — awaiting explicit company/sandbox confirmation** |
 
 ## Сквозная матрица доказательств

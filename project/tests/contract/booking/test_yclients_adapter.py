@@ -458,6 +458,38 @@ async def test_requested_staff_is_sent_and_nonmatching_staff_is_not_queried(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "staff_payload",
+    [
+        [{"id": 77, "bookable": True}],
+        [
+            {"id": 6544, "bookable": True},
+            {"id": 6544, "bookable": True},
+        ],
+    ],
+)
+async def test_requested_staff_must_appear_exactly_once_before_time_lookup(
+    server: ScriptedServer,
+    staff_payload: list[dict[str, object]],
+) -> None:
+    server.responses.extend([
+        (200, {"success": True, "data": {"booking_dates": ["2026-07-29"]}}),
+        (200, {"success": True, "data": staff_payload}),
+    ])
+    timezone = ZoneInfo("Europe/Moscow")
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).list_slots(SlotQuery(
+            ("331",),
+            datetime(2026, 7, 29, tzinfo=timezone),
+            datetime(2026, 7, 30, tzinfo=timezone),
+            staff_id="6544",
+        ))
+
+    assert not any("/book_times/" in request[1] for request in server.requests)
+
+
+@pytest.mark.asyncio
 async def test_iso_booking_datetime_is_converted_to_branch_date(server: ScriptedServer) -> None:
     server.responses.extend([
         (200, {"success": True, "data": {"booking_dates": ["2026-07-28T22:00:00Z"]}}),

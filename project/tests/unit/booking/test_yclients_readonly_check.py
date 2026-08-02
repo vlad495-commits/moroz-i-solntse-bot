@@ -1,3 +1,4 @@
+import inspect
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,11 +26,13 @@ class FakeHttp:
     def __init__(self, payloads: list[object]) -> None:
         self.payloads = list(payloads)
         self.methods: list[str] = []
+        self.paths: list[str] = []
 
     async def request(self, method, path, *, query=(), json_body=None, user_auth=False):
         assert json_body is None
         assert user_auth is False
         self.methods.append(method)
+        self.paths.append(path)
         payload = self.payloads.pop(0)
         return HttpResponse(
             200,
@@ -91,6 +94,44 @@ async def test_readonly_check_calls_only_get_and_returns_sanitized_counts():
     }
     for private in ("private title", "private name", "phone", "token", "url"):
         assert private not in rendered.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "availability_staff",
+    [
+        [],
+        [
+            {"id": 7, "bookable": True},
+            {"id": 7, "bookable": True},
+        ],
+    ],
+)
+async def test_readonly_check_rejects_partial_availability_staff_response(
+    availability_staff,
+):
+    http = FakeHttp(
+        [
+            {"services": [{"id": 1, "title": "Service", "duration": 1800}]},
+            [{"id": 7, "name": "Staff", "bookable": True}],
+            [],
+            availability_staff,
+        ]
+    )
+    catalog, availability = _real_readers(http)
+
+    with pytest.raises(ReadonlyCheckError):
+        await run_readonly_check(
+            catalog,
+            availability,
+            service_ids=("1",),
+            staff_ids=("7",),
+            environment_label="local-fake",
+            now=NOW,
+        )
+
+    assert http.methods == ["GET"] * 4
+    assert not any("/book_times/" in path for path in http.paths)
 
 
 class FakeCatalog:
@@ -196,6 +237,14 @@ def test_readonly_module_has_no_mutation_method_references():
 
     for forbidden in ("create_booking", "reschedule_booking", "cancel_booking"):
         assert forbidden not in source
+
+
+def test_readonly_availability_transport_boundary_hardcodes_get():
+    assert tuple(inspect.signature(YclientsAvailabilityAdapter._read).parameters) == (
+        "self",
+        "path",
+        "query",
+    )
 
 
 def test_readonly_settings_need_no_provider_user_token():

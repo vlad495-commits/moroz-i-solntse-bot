@@ -245,13 +245,14 @@ def test_reserve_llm_environment_is_limited_to_runtime_llm_services():
         )
 
 
-def test_yclients_environment_is_passed_only_to_worker_and_smoke():
+def test_yclients_environment_is_limited_to_exact_runtime_profiles():
     services = compose_services()
     assert set(services) == {
         "test",
         "migrate",
         "cutover",
         "worker",
+        "yclients-readonly",
         "yclients-smoke",
         "scheduler",
         "bot",
@@ -282,8 +283,20 @@ def test_yclients_environment_is_passed_only_to_worker_and_smoke():
     )
     for name in ("test", "migrate", "cutover"):
         assert not runtime_keys & set(services[name]["environment"])
+    readonly_keys = {
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_TIMEZONE",
+        "YCLIENTS_TIMEOUT_SECONDS",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+    }
+    assert set(services["yclients-readonly"]["environment"]) == readonly_keys
+    assert "YCLIENTS_USER_TOKEN" not in services["yclients-readonly"]["environment"]
     for name, service in services.items():
-        if name not in {"worker", "yclients-smoke"}:
+        if name not in {"worker", "yclients-readonly", "yclients-smoke"}:
             assert not (runtime_keys | smoke_only_keys) & set(
                 service.get("environment", {})
             )
@@ -385,12 +398,23 @@ def test_host_ops_regression_checks_rendered_compose_environment_allowlists():
         encoding="utf-8"
     )
 
-    assert "--profile yclients-smoke config --format json" in script
+    rendered_profiles = (
+        "--profile yclients-readonly --profile yclients-smoke config --format json"
+    )
+    assert rendered_profiles in script
     assert '$expectedEnvironment = @{' in script
     worker_literal = re.search(r"worker = @\(([^)]*)\)", script)
     assert worker_literal
     scripted_worker_keys = set(re.findall(r'"([A-Z_]+)"', worker_literal.group(1)))
     assert scripted_worker_keys == set(compose_services()["worker"]["environment"])
+    readonly_literal = re.search(r'"yclients-readonly" = @\(([^)]*)\)', script)
+    assert readonly_literal
+    scripted_readonly_keys = set(
+        re.findall(r'"([A-Z_]+)"', readonly_literal.group(1))
+    )
+    assert scripted_readonly_keys == set(
+        compose_services()["yclients-readonly"]["environment"]
+    )
     smoke_literal = re.search(r'"yclients-smoke" = @\(([^)]*)\)', script)
     assert smoke_literal
     scripted_smoke_keys = set(re.findall(r'"([A-Z_]+)"', smoke_literal.group(1)))

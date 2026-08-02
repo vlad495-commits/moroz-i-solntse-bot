@@ -73,13 +73,20 @@ class YclientsAvailabilityAdapter:
         if staff_filter is not None:
             dates_query.append(("staff_id", staff_filter))
 
-        dates_data = await self._read("GET", f"/api/v1/book_dates/{self._config.company_id}", query=dates_query)
+        dates_data = await self._read(
+            f"/api/v1/book_dates/{self._config.company_id}",
+            query=dates_query,
+        )
         dates = _booking_dates(dates_data, self._timezone)
         staff_data = await self._read(
-            "GET",
             f"/api/v1/book_staff/{self._config.company_id}",
             query=[("service_ids[]", value) for value in services],
         )
+        if (
+            staff_filter is not None
+            and _staff_occurrences(staff_data, staff_filter) != 1
+        ):
+            raise BookingTemporaryError()
         staff_ids = _staff_ids(staff_data)
         if staff_filter is not None:
             staff_ids = [value for value in staff_ids if value == staff_filter]
@@ -88,7 +95,6 @@ class YclientsAvailabilityAdapter:
         for day in _relevant_dates(dates, local_after, local_before, self._timezone):
             for staff_id in staff_ids:
                 times_data = await self._read(
-                    "GET",
                     f"/api/v1/book_times/{self._config.company_id}/{staff_id}/{day.isoformat()}",
                     query=[("service_ids", value) for value in services],
                 )
@@ -114,13 +120,12 @@ class YclientsAvailabilityAdapter:
 
     async def _read(
         self,
-        method: str,
         path: str,
         *,
         query: list[tuple[str, object]],
     ) -> object:
         try:
-            response = await self._http.request(method, path, query=query)
+            response = await self._http.request("GET", path, query=query)
         except YclientsTransportError as error:
             raise BookingTemporaryError() from error
         if response.status != 200:
@@ -620,6 +625,14 @@ def _staff_ids(data: object) -> list[int]:
         if item.get("bookable") is True
     }
     return sorted(values)
+
+
+def _staff_occurrences(data: object, expected: int) -> int:
+    return sum(
+        _provider_id(item.get("id")) == expected
+        for item in _items(data)
+        if item.get("bookable") is True
+    )
 
 
 def _datetime(value: object, timezone: ZoneInfo) -> datetime:
