@@ -399,6 +399,56 @@ def test_real_booking_runtime_shares_one_http_boundary_without_network_call():
 
 
 @pytest.mark.asyncio
+async def test_real_booking_preflight_runs_same_readonly_gate(monkeypatch):
+    calls = []
+
+    async def fake_check(catalog, availability, **kwargs):
+        calls.append((catalog, availability, kwargs))
+        return object()
+
+    monkeypatch.setattr(worker_main, "run_readonly_check", fake_check)
+
+    await worker_main._preflight_real_booking(
+        mode="real",
+        service_allowlist=("1",),
+        staff_allowlist=("7",),
+        env={
+            "YCLIENTS_PARTNER_TOKEN": "synthetic-partner",
+            "YCLIENTS_USER_TOKEN": "synthetic-user",
+            "YCLIENTS_COMPANY_ID": "42",
+            "YCLIENTS_BASE_URL": "https://provider.invalid",
+        },
+        now=lambda: datetime(2026, 8, 2, 9, 0, tzinfo=UTC),
+    )
+
+    assert len(calls) == 1
+    catalog, availability, kwargs = calls[0]
+    assert catalog._client is availability._http
+    assert kwargs == {
+        "service_ids": ("1",),
+        "staff_ids": ("7",),
+        "environment_label": "worker-startup",
+        "now": datetime(2026, 8, 2, 9, 0, tzinfo=UTC),
+        "horizon_days": 14,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["disabled", "mock"])
+async def test_non_real_booking_preflight_is_network_free(monkeypatch, mode):
+    check = AsyncMock(side_effect=AssertionError("must stay network-free"))
+    monkeypatch.setattr(worker_main, "run_readonly_check", check)
+
+    assert await worker_main._preflight_real_booking(
+        mode=mode,
+        service_allowlist=(),
+        staff_allowlist=(),
+        env={},
+    ) is None
+    check.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_message_task_handler_processes_scheduler_job():
     job_id = uuid4()
     completed = []

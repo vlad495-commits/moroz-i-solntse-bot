@@ -49,7 +49,7 @@ class _SlotPayload:
     duration: int
 
 
-class YclientsAdapter(BookingPort):
+class YclientsAvailabilityAdapter:
     def __init__(
         self,
         config: YclientsConfig,
@@ -112,6 +112,23 @@ class YclientsAdapter(BookingPort):
                     )
         return sorted(slots.values(), key=lambda value: (value.starts_at, int(value.staff_id), value.id))
 
+    async def _read(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: list[tuple[str, object]],
+    ) -> object:
+        try:
+            response = await self._http.request(method, path, query=query)
+        except YclientsTransportError as error:
+            raise BookingTemporaryError() from error
+        if response.status != 200:
+            raise BookingTemporaryError()
+        return _envelope(response)
+
+
+class YclientsAdapter(YclientsAvailabilityAdapter, BookingPort):
     async def create_booking(self, command: CreateBooking) -> ExternalBooking:
         customer_id = _required_text(command.customer_id)
         customer_name = _required_text(command.customer_name)
@@ -400,22 +417,6 @@ class YclientsAdapter(BookingPort):
             raise SlotUnavailable()
         if response.status != 201 or envelope.get("success") is not True:
             raise BookingTemporaryError()
-
-    async def _read(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: list[tuple[str, object]],
-    ) -> object:
-        try:
-            response = await self._http.request(method, path, query=query)
-        except YclientsTransportError as error:
-            raise BookingTemporaryError() from error
-        if response.status != 200:
-            raise BookingTemporaryError()
-        return _envelope(response)
-
 
 def _provider_ids(values: tuple[str, ...]) -> list[int]:
     if not values:

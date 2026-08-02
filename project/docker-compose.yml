@@ -118,6 +118,24 @@ services:
       retries: 3
       start_period: 10s
 
+  yclients-readonly:
+    profiles: ["yclients-readonly"]
+    image: "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    restart: "no"
+    command: ["python", "-m", "moroz.booking.yclients_readonly_check"]
+    environment:
+      YCLIENTS_PARTNER_TOKEN: ${YCLIENTS_PARTNER_TOKEN:-}
+      YCLIENTS_COMPANY_ID: ${YCLIENTS_COMPANY_ID:-}
+      YCLIENTS_BASE_URL: ${YCLIENTS_BASE_URL:-}
+      YCLIENTS_TIMEZONE: ${YCLIENTS_TIMEZONE:-}
+      YCLIENTS_TIMEOUT_SECONDS: ${YCLIENTS_TIMEOUT_SECONDS:-}
+      YCLIENTS_SERVICE_ALLOWLIST: ${YCLIENTS_SERVICE_ALLOWLIST:-}
+      YCLIENTS_STAFF_ALLOWLIST: ${YCLIENTS_STAFF_ALLOWLIST:-}
+      YCLIENTS_ENVIRONMENT_LABEL: ${YCLIENTS_ENVIRONMENT_LABEL:-}
+
   yclients-smoke:
     profiles: ["yclients-smoke"]
     image: "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"

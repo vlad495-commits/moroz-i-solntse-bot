@@ -39,9 +39,10 @@ from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
 from moroz.booking.workflow import BookingWorkflow
 from moroz.booking.workflow_repository import BookingWorkflowRepository
-from moroz.booking.yclients import YclientsAdapter
+from moroz.booking.yclients import YclientsAdapter, YclientsAvailabilityAdapter
 from moroz.booking.yclients_catalog import YclientsCatalogAdapter
 from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient
+from moroz.booking.yclients_readonly_check import run_readonly_check
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
 from moroz.common.queue import MAX_RETRIES, QueueTask, RabbitQueue
@@ -352,6 +353,34 @@ def _build_booking_dispatcher(
         workflow,
         router=route_intent,
         consultant=generate_response,
+    )
+
+
+async def _preflight_real_booking(
+    *,
+    mode: str,
+    service_allowlist: tuple[str, ...],
+    staff_allowlist: tuple[str, ...],
+    env,
+    now: Callable[[], datetime] = _utc_now,
+) -> None:
+    if mode != "real":
+        return
+    config = YclientsConfig.from_env(env)
+    http = YclientsHttpClient(config)
+    await run_readonly_check(
+        YclientsCatalogAdapter(
+            http,
+            str(config.company_id),
+            service_allowlist,
+            staff_allowlist,
+        ),
+        YclientsAvailabilityAdapter(config, http=http),
+        service_ids=service_allowlist,
+        staff_ids=staff_allowlist,
+        environment_label="worker-startup",
+        now=now(),
+        horizon_days=14,
     )
 
 
@@ -1043,6 +1072,12 @@ async def run() -> None:
     worker_lock = None
     primary_error = None
     try:
+        await _preflight_real_booking(
+            mode=BOOKING_MODE,
+            service_allowlist=YCLIENTS_SERVICE_ALLOWLIST,
+            staff_allowlist=YCLIENTS_STAFF_ALLOWLIST,
+            env=os.environ,
+        )
         await database.connect()
         worker_lock = await _acquire_worker_lock(database)
         booking_dispatcher = _build_booking_dispatcher(
