@@ -56,6 +56,7 @@ def _load_json(value: object) -> object:
 def _reconciliation_snapshot_matches(
     scenario: BookingScenario,
     actual: ExternalBooking,
+    expected_booking_key: UUID,
 ) -> bool:
     state = scenario.state
     raw_services = state.get("selected_service_ids")
@@ -108,7 +109,7 @@ def _reconciliation_snapshot_matches(
     expected_status = "cancelled" if scenario.kind == "cancel" else "confirmed"
     return (
         actual.customer_id == scenario.customer_id
-        and actual.booking_key == scenario.id
+        and actual.booking_key == expected_booking_key
         and actual.slot_id == raw_slot
         and Counter(actual.service_ids) == Counter(raw_services)
         and actual.staff_id == raw_staff
@@ -260,6 +261,7 @@ class BookingRepository:
         self,
         scenario_id: UUID,
         booking: ExternalBooking,
+        expected_booking_key: UUID,
     ) -> bool:
         async with self._database.acquire() as connection:
             async with connection.transaction():
@@ -273,11 +275,21 @@ class BookingRepository:
                     stored = await self._get_local_booking_with_connection(
                         connection, scenario_id
                     )
-                    return stored == booking
+                    return (
+                        stored == booking
+                        and await self._has_successful_reconciliation_with_connection(
+                            connection, scenario_id
+                        )
+                    )
                 if (
                     scenario.phase != "escalated"
                     or scenario.error_code != "booking_outcome_unknown"
-                    or not _reconciliation_snapshot_matches(scenario, booking)
+                    or not self._scenario_uses_booking_key(
+                        scenario, expected_booking_key
+                    )
+                    or not _reconciliation_snapshot_matches(
+                        scenario, booking, expected_booking_key
+                    )
                 ):
                     return False
                 escalation = await connection.fetchrow(
@@ -340,6 +352,48 @@ class BookingRepository:
                     {"reason_code": "booking_reconciled_exact_match"},
                 )
                 return True
+
+    async def has_successful_reconciliation(self, scenario_id: UUID) -> bool:
+        async with self._database.acquire() as connection:
+            return await self._has_successful_reconciliation_with_connection(
+                connection, scenario_id
+            )
+
+    @staticmethod
+    async def _has_successful_reconciliation_with_connection(
+        connection: asyncpg.Connection,
+        scenario_id: UUID,
+    ) -> bool:
+        return bool(
+            await connection.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM booking_events
+                    WHERE scenario_id=$1
+                      AND event_type='booking_reconciled'
+                      AND payload->>'reason_code'='booking_reconciled_exact_match'
+                )
+                """,
+                scenario_id,
+            )
+        )
+
+    @staticmethod
+    def _scenario_uses_booking_key(
+        scenario: BookingScenario,
+        expected_booking_key: UUID,
+    ) -> bool:
+        if expected_booking_key.int == 0:
+            return False
+        if scenario.kind == "create":
+            return scenario.id == expected_booking_key
+        raw_booking_key = scenario.state.get("booking_key")
+        if not isinstance(raw_booking_key, str) or not raw_booking_key:
+            return False
+        try:
+            return UUID(raw_booking_key) == expected_booking_key
+        except ValueError:
+            return False
 
     async def get_local_booking(
         self,

@@ -241,8 +241,12 @@ class YclientsAdapter(BookingPort):
                 if fields.get(_BOOKING_KEY_FIELD) != str(booking_key):
                     continue
                 customer_id = fields.get(_CUSTOMER_ID_FIELD)
-                if not isinstance(customer_id, str) or not customer_id:
-                    continue
+                if (
+                    not isinstance(customer_id, str)
+                    or not customer_id
+                    or customer_id != customer_id.strip()
+                ):
+                    raise BookingTemporaryError()
                 try:
                     matches.append(
                         _external_booking(
