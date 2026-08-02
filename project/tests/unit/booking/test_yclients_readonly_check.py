@@ -105,6 +105,31 @@ async def test_readonly_check_calls_only_get_and_returns_sanitized_counts():
             {"id": 7, "bookable": True},
             {"id": 7, "bookable": True},
         ],
+        [
+            {"id": 7, "bookable": True},
+            {"id": 7, "bookable": False},
+        ],
+        [
+            {"id": 7, "bookable": True},
+            {"id": 7},
+        ],
+        [
+            {"id": 7, "bookable": True},
+            {"id": 7, "bookable": "true"},
+        ],
+        [{"id": 7}],
+        [{"id": 7, "bookable": False}],
+        [{"id": 7, "bookable": "true"}],
+    ],
+    ids=[
+        "missing-requested-id",
+        "duplicate-true",
+        "duplicate-true-false",
+        "duplicate-true-missing",
+        "duplicate-true-non-bool",
+        "single-missing-bookable",
+        "single-false",
+        "single-non-bool",
     ],
 )
 async def test_readonly_check_rejects_partial_availability_staff_response(

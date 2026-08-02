@@ -84,7 +84,7 @@ class YclientsAvailabilityAdapter:
         )
         if (
             staff_filter is not None
-            and _staff_occurrences(staff_data, staff_filter) != 1
+            and not _is_unique_bookable_staff(staff_data, staff_filter)
         ):
             raise BookingTemporaryError()
         staff_ids = _staff_ids(staff_data)
@@ -627,12 +627,16 @@ def _staff_ids(data: object) -> list[int]:
     return sorted(values)
 
 
-def _staff_occurrences(data: object, expected: int) -> int:
-    return sum(
-        _provider_id(item.get("id")) == expected
+def _is_unique_bookable_staff(data: object, expected: int) -> bool:
+    matching = [
+        item
         for item in _items(data)
-        if item.get("bookable") is True
-    )
+        if _provider_id(item.get("id")) == expected
+    ]
+    if len(matching) != 1:
+        return False
+    bookable = matching[0].get("bookable")
+    return type(bookable) is bool and bookable is True
 
 
 def _datetime(value: object, timezone: ZoneInfo) -> datetime:
