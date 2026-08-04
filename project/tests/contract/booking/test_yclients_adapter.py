@@ -1353,6 +1353,26 @@ async def test_cancel_404_is_not_found(server: ScriptedServer) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_rejects_foreign_customer_marker_before_delete(
+    server: ScriptedServer,
+) -> None:
+    server.responses.extend([
+        (200, {"success": True, "data": _record(custom_fields={
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "foreign-customer",
+        })}),
+        (204, {"success": True, "data": {}}),
+    ])
+
+    with pytest.raises(BookingNotFound):
+        await YclientsAdapter(_config(server)).cancel_booking(CancelBooking(
+            "9001", "customer-7", BOOKING_KEY, "key",
+        ))
+
+    assert sum(item[0] == "DELETE" for item in server.requests) == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [200, 500])
 async def test_cancel_unexpected_or_server_status_is_outcome_unknown(
     status: int, server: ScriptedServer,

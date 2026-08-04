@@ -106,7 +106,6 @@ class FakeBackend:
     async def list_slots(self, query):
         self._call("list_slots")
         assert query.service_ids == ("331",)
-        assert query.starts_after == NOW + timedelta(days=1)
         self.slot_query = query
         return self.slots
 
@@ -195,6 +194,7 @@ def test_sandbox_requires_exact_consent_marker_fake_identity_and_bounded_window(
         {"YCLIENTS_TEST_NAME": "Real Person"},
         {"YCLIENTS_TEST_PHONE": "+79991234567"},
         {"YCLIENTS_TEST_PHONE": "+7000123456"},
+        {"YCLIENTS_TEST_PHONE": "+7000١٢٣٤٥٦٧"},
         {"YCLIENTS_TEST_WINDOW_DAYS": "0"},
         {"YCLIENTS_TEST_WINDOW_DAYS": "15"},
         {"YCLIENTS_TEST_WINDOW_DAYS": "seven"},
@@ -277,6 +277,22 @@ async def test_sandbox_window_bounds_the_slot_query() -> None:
 
     assert result.exit_code == 0
     assert backend.slot_query.starts_before == NOW + timedelta(days=7)
+
+
+@pytest.mark.asyncio
+async def test_one_day_sandbox_window_starts_now_and_remains_nonempty() -> None:
+    backend = FakeBackend()
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_sandbox_env(YCLIENTS_TEST_WINDOW_DAYS="1")),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 0
+    assert backend.slot_query.starts_after == NOW
+    assert backend.slot_query.starts_before == NOW + timedelta(days=1)
 
 
 @pytest.mark.asyncio

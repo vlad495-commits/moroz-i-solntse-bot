@@ -38,7 +38,7 @@ cd project && docker compose --env-file ../.env --profile yclients-smoke run --r
 
 | Проверка | Команда / тесты | Время (UTC+3) | Среда | Exit | Санитизированный результат |
 |---|---|---:|---|---:|---|
-| Local Task 12 safety gate | `pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/unit/test_migration_profile.py -q` через Compose test profile | 2026-08-04 14:08 | `local-fake` | 0 | `60 passed`; exact consent/marker including whitespace rejection, fake identity/window and single reconciliation/cleanup contracts covered; внешние YCLIENTS mutations `NOT RUN` |
+| Local Task 12 safety gate | `pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/contract/booking/test_yclients_adapter.py tests/unit/test_migration_profile.py -q` через Compose test profile | 2026-08-04 14:22 | `local-fake` | 0 | `166 passed`; exact consent/marker including whitespace rejection, ASCII fake identity, non-empty 1-day window, exact cancel customer/key binding and single reconciliation/cleanup contracts covered; внешние YCLIENTS mutations `NOT RUN` |
 | External sandbox lifecycle | `docker compose --env-file ../.env --profile yclients-smoke run --rm yclients-smoke` | NOT RUN | `sandbox` | NOT RUN | Требует отдельного controller-owned запуска; в этой задаче provider mutations не выполнялись |
 
 ## Сквозная матрица доказательств

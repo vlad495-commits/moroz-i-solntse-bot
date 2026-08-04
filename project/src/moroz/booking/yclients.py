@@ -368,6 +368,7 @@ class YclientsAdapter(YclientsAvailabilityAdapter, BookingPort):
         provider_id = _provider_id(command.external_id)
         record = await self._get_record(provider_id)
         _require_booking_key(record, command.booking_key)
+        _require_customer_id(record, command.customer_id)
         try:
             response = await self._http.request(
                 "DELETE",
@@ -553,6 +554,16 @@ def _require_booking_key(record: Mapping[str, object], expected: UUID) -> UUID:
         raise BookingNotFound("booking ownership marker is invalid") from error
     if actual != expected or raw != str(expected):
         raise BookingNotFound("booking ownership marker does not match")
+    return actual
+
+
+def _require_customer_id(record: Mapping[str, object], expected: str) -> str:
+    fields = record.get("custom_fields")
+    if not isinstance(fields, Mapping):
+        raise BookingTemporaryError("booking custom fields are malformed")
+    actual = fields.get(_CUSTOMER_ID_FIELD)
+    if not isinstance(actual, str) or actual != expected:
+        raise BookingNotFound("booking customer marker does not match")
     return actual
 
 

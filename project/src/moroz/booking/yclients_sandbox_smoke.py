@@ -29,7 +29,7 @@ _PAGE_SIZE = 100
 _MAX_RECORD_PAGES = 20
 _SANDBOX_CONSENT = "I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS"
 _SANDBOX_LABEL = "sandbox"
-_FAKE_PHONE = re.compile(r"\A\+7000\d{7}\Z")
+_FAKE_PHONE = re.compile(r"\A\+7000[0-9]{7}\Z")
 _FAKE_NAME_PREFIX = "Synthetic Test "
 
 
@@ -225,7 +225,7 @@ async def run_smoke(
         summary["services_read"] = await actual.list_services(settings.service_id)
         slots = await actual.list_slots(SlotQuery(
             service_ids=(settings.service_id,),
-            starts_after=instant + timedelta(days=1),
+            starts_after=instant,
             starts_before=instant + timedelta(days=settings.window_days),
         ))
         first, second = _two_distinct_future_slots(slots, instant)
