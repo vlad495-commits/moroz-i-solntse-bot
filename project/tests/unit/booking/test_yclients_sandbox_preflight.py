@@ -45,11 +45,13 @@ class FakeReadBackend:
         failure: tuple[str, Exception] | None = None,
         slots: list[Slot] | None = None,
         records: dict[str, int] | None = None,
+        fields_read: int = 2,
     ) -> None:
         self.calls: list[str] = []
         self.failure = failure
         self.slots = slots or [_slot("slot-a", 48), _slot("slot-b", 72)]
         self.records = records or {"matches": 0, "active_matches": 0}
+        self.fields_read = fields_read
         self.slot_query = None
 
     def _call(self, name: str) -> None:
@@ -61,6 +63,10 @@ class FakeReadBackend:
         self._call("list_services")
         assert service_id == "331"
         return 1
+
+    async def list_record_custom_fields(self) -> int:
+        self._call("record_fields")
+        return self.fields_read
 
     async def list_slots(self, query):
         self._call("list_slots")
@@ -134,6 +140,119 @@ async def test_concrete_preflight_backend_exposes_only_read_methods_and_uses_get
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("backend_type", [YclientsPreflightBackend, YclientsSmokeBackend])
+async def test_concrete_readiness_requires_both_hidden_editable_text_ownership_fields(
+    backend_type,
+) -> None:
+    fields = {
+        "success": True,
+        "data": [
+            {
+                "custom_field": {
+                    "code": "moroz_booking_key",
+                    "type": {"code": "text"},
+                    "user_can_edit": True,
+                    "show_in_ui": False,
+                }
+            },
+            {
+                "custom_field": {
+                    "code": "moroz_customer_id",
+                    "type": {"code": "text"},
+                    "user_can_edit": True,
+                    "show_in_ui": False,
+                }
+            },
+        ],
+    }
+    http = FakeHttp([HttpResponse(200, json.dumps(fields).encode())])
+    backend = backend_type(YclientsConfig.from_env(_env()), http=http)
+
+    assert await backend.list_record_custom_fields() == 2
+    assert http.requests == [("GET", "/api/v1/custom_fields/record/123", (), True)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend_type", [YclientsPreflightBackend, YclientsSmokeBackend])
+@pytest.mark.parametrize(
+    "field_patch",
+    [
+        {"code": "other"},
+        {"type": {"code": "number"}},
+        {"user_can_edit": False},
+        {"show_in_ui": True},
+    ],
+)
+async def test_concrete_readiness_rejects_wrong_ownership_field_contract(
+    backend_type, field_patch,
+) -> None:
+    field = {
+        "code": "moroz_booking_key",
+        "type": {"code": "text"},
+        "user_can_edit": True,
+        "show_in_ui": False,
+    }
+    field.update(field_patch)
+    http = FakeHttp([HttpResponse(200, json.dumps({"success": True, "data": [{"custom_field": field}]}).encode())])
+    backend = backend_type(YclientsConfig.from_env(_env()), http=http)
+
+    with pytest.raises(BookingTemporaryError):
+        await backend.list_record_custom_fields()
+
+
+@pytest.mark.asyncio
+async def test_concrete_preflight_reconciliation_ignores_empty_legacy_fields_list() -> None:
+    http = FakeHttp([HttpResponse(200, json.dumps({
+        "success": True,
+        "data": [{"custom_fields": [], "deleted": True}],
+    }).encode())])
+    backend = YclientsPreflightBackend(YclientsConfig.from_env(_env()), http=http)
+
+    assert await backend.reconcile_booking_key(
+        RUN_ID, NOW, NOW + timedelta(days=1)
+    ) == {"matches": 0, "active_matches": 0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend_type", [YclientsPreflightBackend, YclientsSmokeBackend])
+async def test_reconciliation_rejects_exact_key_without_expected_customer_marker(
+    backend_type,
+) -> None:
+    http = FakeHttp([HttpResponse(200, json.dumps({
+        "success": True,
+        "data": [{
+            "custom_fields": {"moroz_booking_key": str(RUN_ID)},
+            "deleted": False,
+        }],
+    }).encode())])
+    backend = backend_type(YclientsConfig.from_env(_env()), http=http)
+
+    with pytest.raises(BookingTemporaryError):
+        await backend.reconcile_booking_key(RUN_ID, NOW, NOW + timedelta(days=1))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend_type", [YclientsPreflightBackend, YclientsSmokeBackend])
+async def test_reconciliation_ignores_records_without_the_requested_booking_key(
+    backend_type,
+) -> None:
+    http = FakeHttp([HttpResponse(200, json.dumps({
+        "success": True,
+        "data": [
+            {},
+            {"custom_fields": {}},
+            {"custom_fields": {"moroz_customer_id": "foreign"}},
+            {"custom_fields": []},
+        ],
+    }).encode())])
+    backend = backend_type(YclientsConfig.from_env(_env()), http=http)
+
+    assert await backend.reconcile_booking_key(
+        RUN_ID, NOW, NOW + timedelta(days=1)
+    ) == {"matches": 0, "active_matches": 0}
+
+
+@pytest.mark.asyncio
 async def test_preflight_sanitizes_default_backend_constructor_failure(monkeypatch) -> None:
     def failed_constructor(_config):
         raise RuntimeError("sensitive constructor failure")
@@ -172,10 +291,27 @@ async def test_preflight_reads_services_slots_and_records_without_mutation() -> 
     )
 
     assert result.exit_code == 0
-    assert backend.calls == ["list_services", "list_slots", "preflight_records"]
+    assert backend.calls == ["record_fields", "list_services", "list_slots", "preflight_records"]
     assert backend.slot_query.starts_before == NOW + timedelta(days=14)
     assert result.summary["matches"] == 0
     assert result.summary["active_matches"] == 0
+    assert result.summary["fields_read"] == 2
+
+
+@pytest.mark.asyncio
+async def test_preflight_stops_before_catalog_when_ownership_fields_are_missing() -> None:
+    backend = FakeReadBackend(fields_read=1)
+
+    result = await run_preflight(
+        SandboxPreflightSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert backend.calls == ["record_fields"]
+    assert result.summary["error"] == "record_field_preflight_mismatch"
 
 
 @pytest.mark.asyncio
@@ -190,7 +326,7 @@ async def test_preflight_requires_two_distinct_future_slots() -> None:
     )
 
     assert result.exit_code == 1
-    assert backend.calls == ["list_services", "list_slots"]
+    assert backend.calls == ["record_fields", "list_services", "list_slots"]
     assert result.summary["error"] == "insufficient_distinct_future_slots"
 
 
@@ -198,7 +334,7 @@ async def test_preflight_requires_two_distinct_future_slots() -> None:
 @pytest.mark.parametrize(
     ("failure", "expected_calls"),
     [
-        (("preflight_records", BookingTemporaryError()), ["list_services", "list_slots", "preflight_records"]),
+        (("preflight_records", BookingTemporaryError()), ["record_fields", "list_services", "list_slots", "preflight_records"]),
     ],
 )
 async def test_preflight_records_error_is_fail_closed(failure, expected_calls) -> None:
@@ -237,7 +373,7 @@ async def test_preflight_records_malformed_or_mismatched_is_fail_closed(records)
     )
 
     assert result.exit_code == 1
-    assert backend.calls == ["list_services", "list_slots", "preflight_records"]
+    assert backend.calls == ["record_fields", "list_services", "list_slots", "preflight_records"]
     assert result.summary["error"] == "record_read_preflight_mismatch"
 
 

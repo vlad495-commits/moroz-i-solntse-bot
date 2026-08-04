@@ -14,6 +14,7 @@ from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient, Ycli
 
 _MAX_RECORD_PAGES = 20
 _PAGE_SIZE = 100
+_OWNERSHIP_FIELD_CODES = {"moroz_booking_key", "moroz_customer_id"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,7 @@ class PreflightResult:
 
 
 class PreflightBackend(Protocol):
+    async def list_record_custom_fields(self) -> int: ...
     async def list_services(self, service_id: str) -> int: ...
     async def list_slots(self, query: SlotQuery) -> list[Slot]: ...
     async def reconcile_booking_key(
@@ -75,6 +77,39 @@ class YclientsPreflightBackend:
             raise BookingTemporaryError()
         return len(services)
 
+    async def list_record_custom_fields(self) -> int:
+        data = await self._read(
+            f"/api/v1/custom_fields/record/{self._config.company_id}",
+            user_auth=True,
+        )
+        if not isinstance(data, list):
+            raise BookingTemporaryError()
+        matches: dict[str, Mapping[str, object]] = {}
+        for wrapper in data:
+            if not isinstance(wrapper, Mapping):
+                raise BookingTemporaryError()
+            field = wrapper.get("custom_field")
+            if not isinstance(field, Mapping):
+                raise BookingTemporaryError()
+            code = field.get("code")
+            if code not in _OWNERSHIP_FIELD_CODES:
+                continue
+            if not isinstance(code, str) or code in matches:
+                raise BookingTemporaryError()
+            matches[code] = field
+        if set(matches) != _OWNERSHIP_FIELD_CODES:
+            raise BookingTemporaryError()
+        for field in matches.values():
+            field_type = field.get("type")
+            if (
+                not isinstance(field_type, Mapping)
+                or field_type.get("code") != "text"
+                or field.get("user_can_edit") is not True
+                or field.get("show_in_ui") is not False
+            ):
+                raise BookingTemporaryError()
+        return len(matches)
+
     async def list_slots(self, query: SlotQuery) -> list[Slot]:
         return await self._availability.list_slots(query)
 
@@ -101,10 +136,14 @@ class YclientsPreflightBackend:
                 if "custom_fields" not in item:
                     continue
                 fields = item["custom_fields"]
+                if fields == []:
+                    continue
                 if not isinstance(fields, Mapping):
                     raise BookingTemporaryError()
                 if fields.get("moroz_booking_key") != str(booking_key):
                     continue
+                if fields.get("moroz_customer_id") != f"smoke-{booking_key.hex}":
+                    raise BookingTemporaryError()
                 deleted = item.get("deleted")
                 if type(deleted) is not bool:
                     raise BookingTemporaryError()
@@ -158,6 +197,9 @@ async def run_preflight(
     try:
         actual = backend or YclientsPreflightBackend(settings.config)
         instant = now()
+        summary["fields_read"] = await actual.list_record_custom_fields()
+        if summary["fields_read"] != len(_OWNERSHIP_FIELD_CODES):
+            raise _PreflightFailure("record_field_preflight_mismatch")
         summary["services_read"] = await actual.list_services(settings.service_id)
         slots = await actual.list_slots(SlotQuery(
             service_ids=(settings.service_id,),
@@ -210,6 +252,7 @@ def _is_empty_reconciliation(records: dict[str, int]) -> bool:
 def _empty_summary() -> dict[str, object]:
     return {
         "success": False,
+        "fields_read": 0,
         "services_read": 0,
         "staff_read": 0,
         "slots_read": 0,
