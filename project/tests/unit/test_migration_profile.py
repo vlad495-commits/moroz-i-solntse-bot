@@ -274,6 +274,8 @@ def test_yclients_environment_is_limited_to_exact_runtime_profiles():
         "YCLIENTS_TEST_NAME",
         "YCLIENTS_TEST_PHONE",
         "YCLIENTS_SANDBOX_CONSENT",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_TEST_WINDOW_DAYS",
     }
 
     assert runtime_keys <= set(services["worker"]["environment"])
@@ -331,6 +333,8 @@ def test_yclients_smoke_is_an_explicit_bounded_profile() -> None:
         "YCLIENTS_TEST_NAME",
         "YCLIENTS_TEST_PHONE",
         "YCLIENTS_SANDBOX_CONSENT",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_TEST_WINDOW_DAYS",
     }
     assert service["environment"]["YCLIENTS_SANDBOX_CONSENT"] == (
         "${YCLIENTS_SANDBOX_CONSENT:-}"

@@ -24,6 +24,23 @@ cd project && docker compose --env-file ../.env --profile yclients-readonly run 
 | Local fake GET-only | `pytest tests/unit/booking/test_yclients_readonly_check.py tests/unit/test_worker.py tests/unit/test_migration_profile.py tests/contract/booking/test_yclients_catalog.py tests/contract/booking/test_yclients_http.py tests/contract/booking/test_yclients_adapter.py -q` через Compose test profile | 2026-08-02 04:43 | `local-fake` | 0 | `222 passed in 66.17s`; captured transport method set `{"GET"}`; exact 14-day window; raw requested-staff duplicates and malformed `bookable` fail before `/book_times`; no private fields |
 | External YCLIENTS read-only | `docker compose --env-file <external ignored .env> --profile yclients-readonly run -T --rm yclients-readonly` | 2026-08-04 13:45 | `sandbox` | 0 | Fresh completion run: `ok=true`; horizon `14`; service/staff counts `1/1`; availability total `336`; configured IDs matched exactly; profile has no User/Telegram/LLM/DB/queue secrets; no mutation method |
 
+## Permission-gated sandbox lifecycle
+
+Команда выполняется только после отдельного явного разрешения на lifecycle именно тестовой компании и фейкового набора данных:
+
+```bash
+cd project && docker compose --env-file ../.env --profile yclients-smoke run --rm yclients-smoke
+```
+
+Перед любым mutation профиль fail-closed требует: `YCLIENTS_SANDBOX_CONSENT=I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS`, `YCLIENTS_ENVIRONMENT_LABEL=sandbox`, имя с префиксом `Synthetic Test `, телефон строго формата `+7000` и ещё семь цифр, а также `YCLIENTS_TEST_WINDOW_DAYS` как целое от `1` до `14`. Слоты читаются только в этом окне; нужны два разных будущих слота.
+
+Каждый run использует новый UUID/key. Успех требует точную цепочку `create → get → reschedule → get → cancel → final get → reconciliation`, где итог reconciliation равен `matches=1`, `active_matches=0`. При неизвестном результате mutation дальнейшие mutations запрещены: выполняется ровно одна GET-only reconciliation и результат остаётся для ручной проверки. После definite сбоя post-create разрешена только одна cleanup-cancel по exact external ID/key, затем одна GET-only reconciliation; её ошибка также остаётся ручной проверкой. JSON-итог не содержит token, name, phone, run UUID или external booking ID.
+
+| Проверка | Команда / тесты | Время (UTC+3) | Среда | Exit | Санитизированный результат |
+|---|---|---:|---|---:|---|
+| Local Task 12 safety gate | `pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/unit/test_migration_profile.py -q` через Compose test profile | 2026-08-04 14:08 | `local-fake` | 0 | `60 passed`; exact consent/marker including whitespace rejection, fake identity/window and single reconciliation/cleanup contracts covered; внешние YCLIENTS mutations `NOT RUN` |
+| External sandbox lifecycle | `docker compose --env-file ../.env --profile yclients-smoke run --rm yclients-smoke` | NOT RUN | `sandbox` | NOT RUN | Требует отдельного controller-owned запуска; в этой задаче provider mutations не выполнялись |
+
 ## Сквозная матрица доказательств
 
 | Сценарий | Минимальное доказательство | Статус |

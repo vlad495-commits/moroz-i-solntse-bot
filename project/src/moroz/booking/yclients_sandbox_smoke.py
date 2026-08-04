@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -26,12 +27,17 @@ from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient, Ycli
 
 _PAGE_SIZE = 100
 _MAX_RECORD_PAGES = 20
+_SANDBOX_CONSENT = "I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS"
+_SANDBOX_LABEL = "sandbox"
+_FAKE_PHONE = re.compile(r"\A\+7000\d{7}\Z")
+_FAKE_NAME_PREFIX = "Synthetic Test "
 
 
 @dataclass(frozen=True, slots=True)
 class SandboxSmokeSettings:
     config: YclientsConfig = field(repr=False)
     service_id: str
+    window_days: int
     customer_name: str = field(repr=False)
     customer_phone: str = field(repr=False)
 
@@ -43,16 +49,28 @@ class SandboxSmokeSettings:
                 raise ValueError(f"{name} is required")
             return value
 
-        if env.get("YCLIENTS_SANDBOX_CONSENT", "").strip().lower() != "yes":
-            raise ValueError("YCLIENTS_SANDBOX_CONSENT=yes is required")
+        if env.get("YCLIENTS_SANDBOX_CONSENT", "") != _SANDBOX_CONSENT:
+            raise ValueError(f"YCLIENTS_SANDBOX_CONSENT={_SANDBOX_CONSENT} is required")
+        if env.get("YCLIENTS_ENVIRONMENT_LABEL", "") != _SANDBOX_LABEL:
+            raise ValueError("YCLIENTS_ENVIRONMENT_LABEL=sandbox is required")
         service_id = required("YCLIENTS_TEST_SERVICE_ID")
         if not service_id.isdigit() or int(service_id) <= 0 or str(int(service_id)) != service_id:
             raise ValueError("YCLIENTS_TEST_SERVICE_ID must be a positive integer")
+        window_text = required("YCLIENTS_TEST_WINDOW_DAYS")
+        if not window_text.isdigit() or not 1 <= int(window_text) <= 14:
+            raise ValueError("YCLIENTS_TEST_WINDOW_DAYS must be an integer from 1 to 14")
+        customer_name = required("YCLIENTS_TEST_NAME")
+        if not customer_name.startswith(_FAKE_NAME_PREFIX):
+            raise ValueError("YCLIENTS_TEST_NAME must use the reserved synthetic test value")
+        customer_phone = required("YCLIENTS_TEST_PHONE")
+        if _FAKE_PHONE.fullmatch(customer_phone) is None:
+            raise ValueError("YCLIENTS_TEST_PHONE must use the reserved +7000 fake prefix")
         return cls(
             config=YclientsConfig.from_env(env),
             service_id=service_id,
-            customer_name=required("YCLIENTS_TEST_NAME"),
-            customer_phone=required("YCLIENTS_TEST_PHONE"),
+            window_days=int(window_text),
+            customer_name=customer_name,
+            customer_phone=customer_phone,
         )
 
 
@@ -199,18 +217,26 @@ async def run_smoke(
     cancel_confirmed = False
     cancel_attempted = False
     mutation_unknown = False
+    mutation_started = False
+    reconciliation_done = False
+    reconciliation_bounds: tuple[datetime, datetime] | None = None
     instant = now()
     try:
         summary["services_read"] = await actual.list_services(settings.service_id)
         slots = await actual.list_slots(SlotQuery(
             service_ids=(settings.service_id,),
             starts_after=instant + timedelta(days=1),
-            starts_before=instant + timedelta(days=14),
+            starts_before=instant + timedelta(days=settings.window_days),
         ))
         first, second = _two_distinct_future_slots(slots, instant)
+        reconciliation_bounds = (
+            min(first.starts_at, second.starts_at),
+            max(first.starts_at, second.starts_at),
+        )
         summary["slots_read"] = len(slots)
         summary["staff_read"] = len({slot.staff_id for slot in slots})
 
+        mutation_started = True
         created = await actual.create_booking(CreateBooking(
             customer_id=customer_id,
             booking_key=booking_key,
@@ -231,6 +257,7 @@ async def run_smoke(
         _require_booking(fetched, customer_id, booking_key, first)
         summary["first_get"] = "confirmed"
 
+        mutation_started = True
         changed = await actual.reschedule_booking(RescheduleBooking(
             external_id=external_id,
             customer_id=customer_id,
@@ -247,6 +274,7 @@ async def run_smoke(
         _require_booking(fetched, customer_id, booking_key, second)
         summary["second_get"] = "confirmed"
 
+        mutation_started = True
         cancel_attempted = True
         await actual.cancel_booking(CancelBooking(
             external_id=external_id,
@@ -267,18 +295,15 @@ async def run_smoke(
                 raise _SmokeFailure("cancelled_record_not_confirmed")
             summary["final_state"] = "cancelled"
 
-        reconciliation = await actual.reconcile_booking_key(
-            booking_key,
-            min(first.starts_at, second.starts_at),
-            max(first.starts_at, second.starts_at),
-        )
+        reconciliation_done = True
+        reconciliation = await actual.reconcile_booking_key(booking_key, *reconciliation_bounds)
         summary.update(reconciliation)
         if reconciliation != {"matches": 1, "active_matches": 0}:
             raise _SmokeFailure("reconciliation_mismatch")
         summary["success"] = True
         return SmokeResult(0, summary)
     except BookingOutcomeUnknown as error:
-        mutation_unknown = True
+        mutation_unknown = mutation_started
         summary["manual_review_required"] = True
         summary["error"] = "mutation_outcome_unknown"
         _record_unknown_metadata(summary, error)
@@ -288,6 +313,8 @@ async def run_smoke(
             summary["manual_review_required"] = True
     except (BookingNotFound, BookingTemporaryError, SlotUnavailable):
         summary["error"] = "definite_provider_failure"
+        if reconciliation_done:
+            summary["manual_review_required"] = True
     except Exception:
         summary["error"] = "unexpected_failure"
 
@@ -301,6 +328,8 @@ async def run_smoke(
         and not mutation_unknown
     ):
         try:
+            mutation_started = True
+            cancel_attempted = True
             await actual.cancel_booking(CancelBooking(
                 external_id=external_id,
                 customer_id=customer_id,
@@ -309,12 +338,27 @@ async def run_smoke(
             ))
             summary["cancelled"] = "cleanup_confirmed"
         except BookingOutcomeUnknown as error:
+            mutation_unknown = True
             summary["cancelled"] = "cleanup_unknown"
             summary["manual_review_required"] = True
             _record_unknown_metadata(summary, error)
         except Exception:
             summary["cancelled"] = "cleanup_failed"
             summary["manual_review_required"] = True
+    if reconciliation_bounds is not None and not reconciliation_done and (
+        mutation_unknown or external_id is not None
+    ):
+        reconciliation_done = True
+        try:
+            reconciliation = await actual.reconcile_booking_key(
+                booking_key, *reconciliation_bounds
+            )
+        except Exception:
+            summary["manual_review_required"] = True
+        else:
+            summary.update(reconciliation)
+            if reconciliation != {"matches": 1, "active_matches": 0}:
+                summary["manual_review_required"] = True
     return SmokeResult(1, summary)
 
 

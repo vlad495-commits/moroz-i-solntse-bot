@@ -31,10 +31,24 @@ def _env(**changes: str) -> dict[str, str]:
         "YCLIENTS_USER_TOKEN": "user-sensitive",
         "YCLIENTS_COMPANY_ID": "123",
         "YCLIENTS_TEST_SERVICE_ID": "331",
-        "YCLIENTS_TEST_NAME": "Synthetic Sensitive Name",
+        "YCLIENTS_TEST_NAME": "Synthetic Test Booking",
         "YCLIENTS_TEST_PHONE": "+70000000000",
-        "YCLIENTS_SANDBOX_CONSENT": "yes",
+        "YCLIENTS_SANDBOX_CONSENT": "I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS",
+        "YCLIENTS_ENVIRONMENT_LABEL": "sandbox",
+        "YCLIENTS_TEST_WINDOW_DAYS": "14",
     }
+    values.update(changes)
+    return values
+
+
+def _sandbox_env(**changes: str) -> dict[str, str]:
+    values = _env()
+    values.update({
+        "YCLIENTS_SANDBOX_CONSENT": "I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS",
+        "YCLIENTS_ENVIRONMENT_LABEL": "sandbox",
+        "YCLIENTS_TEST_NAME": "Synthetic Test Booking",
+        "YCLIENTS_TEST_WINDOW_DAYS": "14",
+    })
     values.update(changes)
     return values
 
@@ -77,6 +91,7 @@ class FakeBackend:
             "matches": 1,
             "active_matches": 0,
         }
+        self.slot_query = None
 
     def _call(self, name: str) -> None:
         self.calls.append(name)
@@ -92,7 +107,7 @@ class FakeBackend:
         self._call("list_slots")
         assert query.service_ids == ("331",)
         assert query.starts_after == NOW + timedelta(days=1)
-        assert query.starts_before == NOW + timedelta(days=14)
+        self.slot_query = query
         return self.slots
 
     async def create_booking(self, command):
@@ -100,7 +115,7 @@ class FakeBackend:
         self.commands.append(command)
         assert command.customer_id == f"smoke-{RUN_ID.hex}"
         assert command.booking_key == RUN_ID
-        assert command.customer_name == "Synthetic Sensitive Name"
+        assert command.customer_name == "Synthetic Test Booking"
         assert command.customer_phone == "+70000000000"
         assert command.personal_data_processing_allowed is True
         assert RUN_ID.hex in command.idempotency_key
@@ -163,8 +178,29 @@ def test_settings_require_every_live_value_by_name_only(missing: str) -> None:
 
 
 def test_settings_require_explicit_consent() -> None:
-    with pytest.raises(ValueError, match="YCLIENTS_SANDBOX_CONSENT=yes"):
-        SandboxSmokeSettings.from_env(_env(YCLIENTS_SANDBOX_CONSENT="no"))
+    with pytest.raises(ValueError, match="I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS"):
+        SandboxSmokeSettings.from_env(_sandbox_env(YCLIENTS_SANDBOX_CONSENT="yes"))
+
+
+def test_sandbox_requires_exact_consent_marker_fake_identity_and_bounded_window() -> None:
+    settings = SandboxSmokeSettings.from_env(_sandbox_env(YCLIENTS_TEST_WINDOW_DAYS="7"))
+
+    assert settings.window_days == 7
+    for patch in (
+        {"YCLIENTS_SANDBOX_CONSENT": ""},
+        {"YCLIENTS_SANDBOX_CONSENT": "yes"},
+        {"YCLIENTS_SANDBOX_CONSENT": " I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS"},
+        {"YCLIENTS_ENVIRONMENT_LABEL": "production"},
+        {"YCLIENTS_ENVIRONMENT_LABEL": "sandbox "},
+        {"YCLIENTS_TEST_NAME": "Real Person"},
+        {"YCLIENTS_TEST_PHONE": "+79991234567"},
+        {"YCLIENTS_TEST_PHONE": "+7000123456"},
+        {"YCLIENTS_TEST_WINDOW_DAYS": "0"},
+        {"YCLIENTS_TEST_WINDOW_DAYS": "15"},
+        {"YCLIENTS_TEST_WINDOW_DAYS": "seven"},
+    ):
+        with pytest.raises(ValueError):
+            SandboxSmokeSettings.from_env(_sandbox_env(**patch))
 
 
 def test_cli_readiness_failure_prints_one_fixed_redacted_summary(
@@ -186,13 +222,14 @@ async def test_successful_smoke_runs_the_exact_bounded_flow() -> None:
     backend = FakeBackend()
 
     result = await run_smoke(
-        SandboxSmokeSettings.from_env(_env()),
+        SandboxSmokeSettings.from_env(_sandbox_env()),
         backend=backend,
         now=lambda: NOW,
         uuid_factory=lambda: RUN_ID,
     )
 
     assert result.exit_code == 0
+    assert backend.slot_query.starts_before == NOW + timedelta(days=14)
     assert backend.calls == [
         "list_services",
         "list_slots",
@@ -225,6 +262,21 @@ async def test_successful_smoke_runs_the_exact_bounded_flow() -> None:
         "unknown_status": None,
         "error": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_sandbox_window_bounds_the_slot_query() -> None:
+    backend = FakeBackend()
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_sandbox_env(YCLIENTS_TEST_WINDOW_DAYS="7")),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 0
+    assert backend.slot_query.starts_before == NOW + timedelta(days=7)
 
 
 @pytest.mark.asyncio
@@ -293,7 +345,7 @@ async def test_unknown_outcome_aborts_without_blind_cleanup_and_redacts_output()
             "forbidden detail", kind="http_status", status=503,
         ))
     )
-    settings = SandboxSmokeSettings.from_env(_env())
+    settings = SandboxSmokeSettings.from_env(_sandbox_env())
 
     result = await run_smoke(
         settings, backend=backend, now=lambda: NOW, uuid_factory=lambda: RUN_ID
@@ -307,7 +359,10 @@ async def test_unknown_outcome_aborts_without_blind_cleanup_and_redacts_output()
         "create_booking",
         "get_booking",
         "reschedule_booking",
+        "reconcile_booking_key",
     ]
+    assert backend.calls.count("reconcile_booking_key") == 1
+    assert backend.calls.count("cancel_booking") == 0
     assert result.summary["manual_review_required"] is True
     assert result.summary["error"] == "mutation_outcome_unknown"
     assert result.summary["unknown_kind"] == "http_status"
@@ -316,6 +371,48 @@ async def test_unknown_outcome_aborts_without_blind_cleanup_and_redacts_output()
         assert value not in rendered
     assert "forbidden detail" not in rendered
     assert RUN_ID.hex not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create_booking", "reschedule_booking", "cancel_booking"])
+async def test_unknown_mutation_outcome_performs_exactly_one_get_only_reconciliation(
+    operation: str,
+) -> None:
+    backend = FakeBackend(failure=(operation, BookingOutcomeUnknown()))
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_sandbox_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert result.summary["manual_review_required"] is True
+    assert backend.calls.count("reconcile_booking_key") == 1
+    assert backend.calls.count("cancel_booking") == (1 if operation == "cancel_booking" else 0)
+
+
+@pytest.mark.asyncio
+async def test_unknown_outcome_reconciliation_failure_remains_manual_review() -> None:
+    backend = FakeBackend(failure=("create_booking", BookingOutcomeUnknown()))
+    original_reconcile = backend.reconcile_booking_key
+
+    async def failed_reconcile(*args):
+        await original_reconcile(*args)
+        raise BookingTemporaryError()
+
+    backend.reconcile_booking_key = failed_reconcile
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_sandbox_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert result.summary["manual_review_required"] is True
+    assert backend.calls.count("reconcile_booking_key") == 1
 
 
 @pytest.mark.asyncio
@@ -369,8 +466,9 @@ async def test_each_mutation_unknown_stops_without_another_mutation(operation: s
     )
 
     assert result.exit_code == 1
-    assert backend.calls[-1] == operation
+    assert backend.calls[-1] == "reconcile_booking_key"
     assert backend.calls.count(operation) == 1
+    assert backend.calls.count("reconcile_booking_key") == 1
     assert result.summary["manual_review_required"] is True
 
 
@@ -392,6 +490,7 @@ async def test_definite_failure_after_create_attempts_one_cleanup_cancel() -> No
         "create_booking",
         "get_booking",
         "cancel_booking",
+        "reconcile_booking_key",
     ]
     assert result.summary["cancelled"] == "cleanup_confirmed"
     assert result.summary["manual_review_required"] is False
@@ -409,8 +508,9 @@ async def test_definite_primary_cancel_failure_is_not_retried_as_cleanup() -> No
     )
 
     assert result.exit_code == 1
-    assert backend.calls[-1] == "cancel_booking"
+    assert backend.calls[-1] == "reconcile_booking_key"
     assert backend.calls.count("cancel_booking") == 1
+    assert backend.calls.count("reconcile_booking_key") == 1
     assert result.summary["cancelled"] == "failed"
     assert result.summary["manual_review_required"] is True
 
