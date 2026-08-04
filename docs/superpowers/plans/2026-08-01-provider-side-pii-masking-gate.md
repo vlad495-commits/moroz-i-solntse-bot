@@ -32,7 +32,7 @@
 Run from `project/`:
 
 ```powershell
-docker compose --env-file ..\.env run --rm test pytest -q tests\unit\security tests\unit\test_safe_logging.py
+docker compose --env-file ../.env run --rm test pytest -q tests\unit\security tests\unit\test_safe_logging.py
 ```
 
 Expected: exit `4`, `ERROR: file or directory not found: tests\unit\security`.
@@ -42,7 +42,7 @@ Expected: exit `4`, `ERROR: file or directory not found: tests\unit\security`.
 Run from `project/` with the task-file unit environment variables:
 
 ```powershell
-docker compose --env-file ..\.env run --rm --no-deps test pytest -q tests/unit/security tests/unit/test_safe_logging.py
+docker compose --env-file ../.env run --rm --no-deps test pytest -q tests/unit/security tests/unit/test_safe_logging.py
 ```
 
 Expected: `243 passed`.
@@ -64,7 +64,7 @@ Verify `test_provider_sees_only_masked_current_input_and_history` asserts that `
 Run from `project/` with the task-file unit environment variables:
 
 ```powershell
-docker compose --env-file ..\.env run --rm --no-deps test pytest -q tests/e2e/test_security_pipeline.py::test_security_pipeline_masks_each_critical_pii_class
+docker compose --env-file ../.env run --rm --no-deps test pytest -q tests/e2e/test_security_pipeline.py::test_security_pipeline_masks_each_critical_pii_class
 ```
 
 Expected: `6 passed` for phone/email/name/address/payment/medical.

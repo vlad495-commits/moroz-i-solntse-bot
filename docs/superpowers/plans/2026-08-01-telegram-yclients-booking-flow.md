@@ -989,7 +989,7 @@ Expected: PASS, no unexpected deselections.
 
 - [ ] **Step 3: Run full project suite with the repository-required docs mount**
 
-Run: `cd project && docker compose --env-file ../.env --profile test run --rm -v "${PWD}/../docs:/repo/docs:ro" test pytest -q`
+Run: `cd project && docker compose --env-file ../.env --profile test run --rm -v "${PWD}/../docs:/repo/docs:ro" -v "${PWD}/../docs:/docs:ro" test pytest -q`
 
 Expected: PASS. If an already documented unrelated test remains excluded, name the exact node ID, reproduce it separately and do not report a clean full gate.
 
