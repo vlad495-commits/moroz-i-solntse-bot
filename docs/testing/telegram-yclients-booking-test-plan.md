@@ -32,20 +32,20 @@ cd project && docker compose --env-file ../.env --profile yclients-readonly run 
 cd project && docker compose --env-file ../.env --profile yclients-smoke run --rm yclients-smoke
 ```
 
-Перед любым mutation профиль fail-closed требует: `YCLIENTS_SANDBOX_CONSENT=I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS`, `YCLIENTS_ENVIRONMENT_LABEL=sandbox`, имя с префиксом `Synthetic Test `, телефон строго формата `+7000` и ещё семь цифр, а также `YCLIENTS_TEST_WINDOW_DAYS` как целое от `1` до `14`. Слоты читаются только в этом окне; нужны два разных будущих слота.
+Перед любым mutation профиль fail-closed требует: `YCLIENTS_SANDBOX_CONSENT=I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS`, `YCLIENTS_ENVIRONMENT_LABEL=sandbox`, имя с префиксом `Synthetic Test `, телефон строго формата `+7000` и ещё семь цифр, а также `YCLIENTS_TEST_WINDOW_DAYS` как целое от `1` до `14`. Слоты читаются только в этом окне; нужны два разных будущих слота. Затем bounded GET reconciliation по свежему UUID обязан вернуть строго `matches=0`, `active_matches=0`; auth/transport/shape failure или неожиданное совпадение останавливают flow до первого POST.
 
 Каждый run использует новый UUID/key. Успех требует точную цепочку `create → get → reschedule → get → cancel → final get → reconciliation`, где итог reconciliation равен `matches=1`, `active_matches=0`. При неизвестном результате mutation дальнейшие mutations запрещены: выполняется ровно одна GET-only reconciliation и результат остаётся для ручной проверки. После definite сбоя post-create разрешена только одна cleanup-cancel по exact external ID/key, затем одна GET-only reconciliation; её ошибка также остаётся ручной проверкой. JSON-итог не содержит token, name, phone, run UUID или external booking ID.
 
 | Проверка | Команда / тесты | Время (UTC+3) | Среда | Exit | Санитизированный результат |
 |---|---|---:|---|---:|---|
-| Local Task 12 safety gate | `pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/contract/booking/test_yclients_adapter.py tests/unit/test_migration_profile.py -q` через Compose test profile | 2026-08-04 14:22 | `local-fake` | 0 | `166 passed`; exact consent/marker including whitespace rejection, ASCII fake identity, non-empty 1-day window, exact cancel customer/key binding and single reconciliation/cleanup contracts covered; внешние YCLIENTS mutations `NOT RUN` |
-| External sandbox lifecycle | `docker compose --env-file ../.env --profile yclients-smoke run --rm yclients-smoke` | NOT RUN | `sandbox` | NOT RUN | Требует отдельного controller-owned запуска; в этой задаче provider mutations не выполнялись |
+| Local Task 12 safety gate | `pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/contract/booking/test_yclients_adapter.py tests/unit/test_migration_profile.py -q` через Compose test profile | 2026-08-04 14:43 | `local-fake` | 0 | `167 passed in 59.30s`; exact consent/marker, ASCII fake identity, non-empty 1-day window, pre-mutation record-read gate, exact cancel ownership и single reconciliation/cleanup contracts covered |
+| External sandbox lifecycle | `docker compose --env-file <external ignored .env> --profile yclients-smoke run -T --rm yclients-smoke` | 2026-08-04 14:42 | `sandbox` | 1 | Единственная разрешённая попытка: services/staff/slots `1/1/336`; records GET-preflight вернул definite provider failure (`HTTP 403` из отдельной санитизированной диагностики); create/get/reschedule/cancel все `not_started`, `manual_review_required=false`, mutations `0` |
 
 ## Сквозная матрица доказательств
 
 | Сценарий | Минимальное доказательство | Статус |
 |---|---|---|
-| create → get → reschedule → get → cancel | mock E2E, затем permission-gated sandbox lifecycle и reconciliation | mock готов; sandbox pending |
+| create → get → reschedule → get → cancel | mock E2E, затем permission-gated sandbox lifecycle и reconciliation | mock готов; sandbox blocked: User Token records access `403`, разрешённая попытка остановлена до mutation |
 | duplicate/replay | одинаковый update/callback, одна mutation, terminal replay | local mock готов |
 | race двух пользователей | один confirmed, второй slot unavailable | local mock готов |
 | чужая запись/action | owner binding, protected GET, отсутствие раскрытия деталей | local mock готов |
