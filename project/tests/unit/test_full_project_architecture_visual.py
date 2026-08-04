@@ -273,6 +273,25 @@ def test_visual_contains_status_labels_and_comparison_facts() -> None:
     assert re.search(r"git <code>[0-9a-f]{7,40}</code>", html)
 
 
+def test_visual_contains_current_audit_evidence_and_open_gates() -> None:
+    html, parser = load_visual()
+    assert "audit-status" in parser.elements_by_id
+    for token in (
+        "Срез 04.08.2026",
+        "git <code>6cd6463</code>",
+        "569 unit + 87 integration + 111 contract + 172 e2e = 939 passed",
+        "53 eval-кейса · 3 прогона · 90 результатов",
+        "Local-ready · staging-tested · production launch blocked",
+        "YCLIENTS live mutation smoke",
+        "staging smoke/load/failure",
+        "изолированный restore drill",
+        "внешний uptime и реальная доставка alert",
+        "prompt save + hot-reload",
+        "повторный прогон всех 53 eval-кейсов",
+    ):
+        assert token in html
+
+
 def test_visual_is_static_and_does_not_expose_secrets() -> None:
     html, parser = load_visual()
     normalized_html = html.casefold()

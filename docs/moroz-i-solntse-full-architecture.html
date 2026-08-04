@@ -120,7 +120,7 @@
   <header>
     <h1>МОРОЗ И СОЛНЦЕ — ПОЛНАЯ АРХИТЕКТУРА ПРОЕКТА</h1>
     <p class="sub">Фактический Telegram V1, функции с кодом без полного внешнего evidence и отдельно — согласованная целевая граница.</p>
-    <p class="sub"><b>Срез 01.08.2026</b> · git <code>06d7a14</code> · Alembic <code>0009_production_admin</code> · runtime: <code>worker</code>, <code>scheduler</code>, <code>bot</code>, <code>admin</code>, <code>redis</code>, <code>postgres</code>, <code>rabbitmq</code> · focused visual contract: <b>5 passed</b> · release evidence: <b>919 passed</b>, staging smoke <b>6/6</b> (актуальная запись проекта; новый full suite здесь не заявлен)</p>
+    <p class="sub"><b>Срез 04.08.2026</b> · база аудита: git <code>6cd6463</code> · Alembic <code>0009_production_admin</code> · runtime: <code>worker</code>, <code>scheduler</code>, <code>bot</code>, <code>admin</code>, <code>redis</code>, <code>postgres</code>, <code>rabbitmq</code></p>
     <p class="sub"><b>Цветное:</b> РАБОТАЕТ · <b style="color:#7b6014">Жёлтая плашка:</b> КОД ЕСТЬ · НУЖНА ПРОВЕРКА · <b style="color:#818c96">Серое пунктирное:</b> ПЛАН</p>
   </header>
 
@@ -133,8 +133,32 @@
     <span><i class="chip dash" style="background:#f4f5f7;border-color:#b9c0c8"></i>план</span>
   </div>
 
+  <section id="audit-status">
+    <h2 class="sect wide">0 · Аудит состояния на 04.08.2026</h2>
+    <div class="aside wide">
+      <div class="card done"><h3>Автоматические проверки</h3><p><b>569 unit + 87 integration + 111 contract + 172 e2e = 939 passed</b>. Слои запущены отдельными непересекающимися Docker-группами; <code>939 tests collected</code> подтверждает итог без двойного счёта.</p></div>
+      <div class="card done"><h3>Staging и качество ответов</h3><p>Последний targeted manual QA от 01.08.2026: Telegram, буфер, guardrails, provider-side PII и отсутствие фейковой записи — PASS. В админке сохранены <b>53 eval-кейса · 3 прогона · 90 результатов</b>; свежий повтор всех 53 кейсов ещё нужен.</p></div>
+      <div class="card warn"><h3>Релизный статус</h3><p><b>Local-ready · staging-tested · production launch blocked</b>. Код и локальные контракты сильные, но внешние доступы, восстановление, мониторинг и эксплуатационная подпись пока не дают честно назвать систему production-ready.</p></div>
+    </div>
+    <div class="tblwrap wide" style="margin-top:13px"><table class="grid">
+      <thead><tr><th>Приоритет</th><th>Что ещё подтвердить</th><th>Почему это не закрывается локальным pytest</th></tr></thead>
+      <tbody>
+        <tr><td>P0</td><td>YCLIENTS live mutation smoke</td><td>Нужны реальные test/sandbox-доступы и безопасная проверка create/reschedule/cancel/reconciliation без клиентской записи.</td></tr>
+        <tr><td>P0</td><td>staging smoke/load/failure</td><td>Нужен прогон подготовленных smoke/k6/failure gates на актуальном серверном checkout, включая Redis, RabbitMQ, LLM и YCLIENTS degradation.</td></tr>
+        <tr><td>P0</td><td>изолированный restore drill</td><td>Скрипты backup/verify/restore протестированы, но реальное восстановление серверного дампа в отдельную БД не подтверждено.</td></tr>
+        <tr><td>P0</td><td>внешний uptime и реальная доставка alert</td><td>Внутренний <code>/healthz</code> и alert-routing есть; независимый монитор и получение алерта человеком не проверены.</td></tr>
+        <tr><td>P1</td><td>prompt save + hot-reload</td><td>В истории есть <code>write_failed</code> серверной админки; нужно проверить права файла, новую версию в БД и применение без ручного restart.</td></tr>
+        <tr><td>P1</td><td>повторный прогон всех 53 eval-кейсов</td><td>Старые отчёты дают 25/25, а импортированный расширенный набор после последних prompt/security-изменений целиком не пересчитан.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="aside wide">
+      <div class="card warn"><h3>Документация требует синхронизации</h3><p><code>AGENTS.md</code> и значительная часть старых чекбоксов дорожной карты всё ещё описывают прототип, хотя runtime уже содержит Production V1-компоненты. До следующего большого этапа нужен отдельный cleanup статусов без переписывания истории.</p></div>
+      <div class="card blue"><h3>Наблюдаемость тестов</h3><p>Один немой <code>pytest -q</code> занимает несколько минут. Практичнее держать CI jobs по слоям и выводить slowest tests/heartbeat: так нормальный долгий прогон не выглядит как зависание.</p></div>
+    </div>
+  </section>
+
   <section id="comparison">
-    <h2 class="sect wide">0 · Сравнение с Lucky Hair Studio</h2>
+    <h2 class="sect wide">0.1 · Сравнение с Lucky Hair Studio</h2>
     <div class="tblwrap wide"><table class="grid">
       <thead><tr><th>Область</th><th>Lucky Hair Studio</th><th>Мороз и Солнце</th><th>Что расходится</th><th>Что можно перенять</th></tr></thead>
       <tbody>
