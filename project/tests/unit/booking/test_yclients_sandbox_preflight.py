@@ -5,9 +5,13 @@ from uuid import UUID
 import pytest
 
 from moroz.booking.models import BookingTemporaryError, Slot
+from moroz.booking.yclients import YclientsAdapter
+from moroz.booking.yclients_http import HttpResponse, YclientsConfig
+from moroz.booking.yclients_sandbox_smoke import YclientsSmokeBackend
 from moroz.booking.yclients_sandbox_preflight import (
     PreflightBackend,
     SandboxPreflightSettings,
+    YclientsPreflightBackend,
     run_preflight,
 )
 from moroz.booking import yclients_sandbox_preflight
@@ -72,6 +76,17 @@ class FakeReadBackend:
         return self.records
 
 
+class FakeHttp:
+    def __init__(self, responses: list[HttpResponse]) -> None:
+        self.responses = responses
+        self.requests: list[tuple[str, str, tuple[tuple[str, object], ...], bool]] = []
+
+    async def request(self, method, path, *, query=(), user_auth=False, json_body=None):
+        assert json_body is None
+        self.requests.append((method, path, tuple(query), user_auth))
+        return self.responses.pop(0)
+
+
 def test_settings_require_read_credentials_and_exact_sandbox_marker() -> None:
     settings = SandboxPreflightSettings.from_env(_env())
 
@@ -95,6 +110,54 @@ def test_preflight_backend_protocol_has_no_mutation_methods() -> None:
     forbidden = {"create_booking", "reschedule_booking", "cancel_booking"}
 
     assert not forbidden & set(PreflightBackend.__dict__)
+
+
+@pytest.mark.asyncio
+async def test_concrete_preflight_backend_exposes_only_read_methods_and_uses_get_transport() -> None:
+    http = FakeHttp([
+        HttpResponse(200, b'{"success":true,"data":{"services":[{"id":331}]}}'),
+        HttpResponse(200, b'{"success":true,"data":[]}'),
+    ])
+    backend = YclientsPreflightBackend(YclientsConfig.from_env(_env()), http=http)
+
+    assert not {"create_booking", "reschedule_booking", "cancel_booking"} & set(
+        YclientsPreflightBackend.__dict__
+    )
+    assert not isinstance(backend, YclientsSmokeBackend)
+    assert not isinstance(backend._availability, YclientsAdapter)
+    assert await backend.list_services("331") == 1
+    assert await backend.reconcile_booking_key(RUN_ID, NOW, NOW + timedelta(days=1)) == {
+        "matches": 0,
+        "active_matches": 0,
+    }
+    assert [request[0] for request in http.requests] == ["GET", "GET"]
+
+
+@pytest.mark.asyncio
+async def test_preflight_sanitizes_default_backend_constructor_failure(monkeypatch) -> None:
+    def failed_constructor(_config):
+        raise RuntimeError("sensitive constructor failure")
+
+    monkeypatch.setattr(yclients_sandbox_preflight, "YclientsPreflightBackend", failed_constructor)
+
+    result = await run_preflight(SandboxPreflightSettings.from_env(_env()))
+
+    assert result.exit_code == 1
+    assert result.summary["error"] == "unexpected_failure"
+    assert "sensitive" not in json.dumps(result.summary)
+
+
+@pytest.mark.asyncio
+async def test_preflight_sanitizes_now_failure() -> None:
+    result = await run_preflight(
+        SandboxPreflightSettings.from_env(_env()),
+        backend=FakeReadBackend(),
+        now=lambda: (_ for _ in ()).throw(RuntimeError("sensitive clock failure")),
+    )
+
+    assert result.exit_code == 1
+    assert result.summary["error"] == "unexpected_failure"
+    assert "sensitive" not in json.dumps(result.summary)
 
 
 @pytest.mark.asyncio
@@ -190,3 +253,25 @@ def test_cli_configuration_failure_prints_one_sanitized_json(monkeypatch, capsys
     for value in _env().values():
         assert value not in output
     assert "YCLIENTS_" not in output
+
+
+@pytest.mark.parametrize("stage", ["configuration", "runtime"])
+def test_cli_sanitizes_any_expected_exception(monkeypatch, capsys, stage: str) -> None:
+    if stage == "configuration":
+        monkeypatch.setattr(
+            yclients_sandbox_preflight.SandboxPreflightSettings,
+            "from_env",
+            lambda _env: (_ for _ in ()).throw(RuntimeError("sensitive config failure")),
+        )
+    else:
+        async def failed_run(_settings):
+            raise RuntimeError("sensitive runtime failure")
+
+        monkeypatch.setattr(yclients_sandbox_preflight, "run_preflight", failed_run)
+
+    assert yclients_sandbox_preflight.main() == 1
+
+    output = capsys.readouterr().out
+    assert output.count("\n") == 1
+    assert json.loads(output)["error"] in {"configuration_error", "unexpected_failure"}
+    assert "sensitive" not in output

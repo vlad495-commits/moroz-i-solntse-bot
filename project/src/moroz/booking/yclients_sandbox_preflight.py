@@ -8,8 +8,12 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from moroz.booking.models import BookingTemporaryError, Slot, SlotQuery
-from moroz.booking.yclients_http import YclientsConfig
-from moroz.booking.yclients_sandbox_smoke import YclientsSmokeBackend
+from moroz.booking.yclients import YclientsAvailabilityAdapter
+from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient, YclientsTransportError
+
+
+_MAX_RECORD_PAGES = 20
+_PAGE_SIZE = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +49,100 @@ class PreflightBackend(Protocol):
     ) -> dict[str, int]: ...
 
 
+class YclientsPreflightBackend:
+    """Concrete read-only transport for the sandbox records preflight."""
+
+    def __init__(
+        self,
+        config: YclientsConfig,
+        *,
+        http: YclientsHttpClient | None = None,
+    ) -> None:
+        self._config = config
+        self._http = http or YclientsHttpClient(config)
+        self._availability = YclientsAvailabilityAdapter(config, http=self._http)
+
+    async def list_services(self, service_id: str) -> int:
+        data = await self._read(
+            f"/api/v1/book_services/{self._config.company_id}", user_auth=False
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("services"), list):
+            raise BookingTemporaryError()
+        services = data["services"]
+        if any(not isinstance(item, dict) for item in services):
+            raise BookingTemporaryError()
+        if sum(str(item.get("id")) == service_id for item in services) != 1:
+            raise BookingTemporaryError()
+        return len(services)
+
+    async def list_slots(self, query: SlotQuery) -> list[Slot]:
+        return await self._availability.list_slots(query)
+
+    async def reconcile_booking_key(
+        self, booking_key: UUID, starts_at: datetime, ends_at: datetime
+    ) -> dict[str, int]:
+        matches = 0
+        active_matches = 0
+        for page in range(1, _MAX_RECORD_PAGES + 1):
+            data = await self._read(
+                f"/api/v1/records/{self._config.company_id}",
+                user_auth=True,
+                query=(
+                    ("page", page),
+                    ("count", _PAGE_SIZE),
+                    ("start_date", starts_at.date().isoformat()),
+                    ("end_date", ends_at.date().isoformat()),
+                    ("with_deleted", 1),
+                ),
+            )
+            if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+                raise BookingTemporaryError()
+            for item in data:
+                if "custom_fields" not in item:
+                    continue
+                fields = item["custom_fields"]
+                if not isinstance(fields, Mapping):
+                    raise BookingTemporaryError()
+                if fields.get("moroz_booking_key") != str(booking_key):
+                    continue
+                deleted = item.get("deleted")
+                if type(deleted) is not bool:
+                    raise BookingTemporaryError()
+                matches += 1
+                if not deleted:
+                    active_matches += 1
+            if len(data) < _PAGE_SIZE:
+                return {"matches": matches, "active_matches": active_matches}
+        raise BookingTemporaryError()
+
+    async def _read(
+        self,
+        path: str,
+        *,
+        user_auth: bool,
+        query: tuple[tuple[str, object], ...] = (),
+    ) -> object:
+        try:
+            response = await self._http.request(
+                "GET", path, query=query, user_auth=user_auth
+            )
+        except YclientsTransportError as error:
+            raise BookingTemporaryError() from error
+        if response.status != 200:
+            raise BookingTemporaryError()
+        try:
+            envelope = json.loads(response.body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise BookingTemporaryError() from error
+        if (
+            not isinstance(envelope, dict)
+            or envelope.get("success") is not True
+            or "data" not in envelope
+        ):
+            raise BookingTemporaryError()
+        return envelope["data"]
+
+
 class _PreflightFailure(Exception):
     pass
 
@@ -56,10 +154,10 @@ async def run_preflight(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     uuid_factory: Callable[[], UUID] = uuid4,
 ) -> PreflightResult:
-    actual = backend or YclientsSmokeBackend(settings.config)
     summary = _empty_summary()
-    instant = now()
     try:
+        actual = backend or YclientsPreflightBackend(settings.config)
+        instant = now()
         summary["services_read"] = await actual.list_services(settings.service_id)
         slots = await actual.list_slots(SlotQuery(
             service_ids=(settings.service_id,),
@@ -124,10 +222,13 @@ def _empty_summary() -> dict[str, object]:
 def main() -> int:
     try:
         settings = SandboxPreflightSettings.from_env(os.environ)
-    except ValueError:
+    except Exception:
         result = PreflightResult(1, {**_empty_summary(), "error": "configuration_error"})
     else:
-        result = asyncio.run(run_preflight(settings))
+        try:
+            result = asyncio.run(run_preflight(settings))
+        except Exception:
+            result = PreflightResult(1, {**_empty_summary(), "error": "unexpected_failure"})
     print(json.dumps(result.summary, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
     return result.exit_code
 
