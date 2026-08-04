@@ -145,7 +145,8 @@ class FakeBackend:
         assert command.external_id == "9001"
         assert command.customer_id == f"smoke-{RUN_ID.hex}"
         assert command.booking_key == RUN_ID
-        self.current = self.slots[1]
+        assert command.slot_id == self.slots[-1].id
+        self.current = self.slots[-1]
         return _booking(self.current)
 
     async def cancel_booking(self, command):
@@ -158,7 +159,7 @@ class FakeBackend:
     async def reconcile_booking_key(self, booking_key, starts_at, ends_at):
         assert booking_key == RUN_ID
         assert starts_at == self.slots[0].starts_at
-        assert ends_at == self.slots[1].starts_at
+        assert ends_at == self.slots[-1].starts_at
         self.reconciliation_calls += 1
         if self.reconciliation_calls == 1:
             self._call("preflight_records")
@@ -340,6 +341,26 @@ async def test_smoke_requires_two_distinct_future_instants_before_mutation() -> 
     assert result.exit_code == 1
     assert backend.calls == ["record_fields", "list_services", "list_slots"]
     assert result.summary["error"] == "insufficient_distinct_future_slots"
+
+
+@pytest.mark.asyncio
+async def test_smoke_skips_overlapping_reschedule_slot() -> None:
+    slots = [
+        _slot("slot-a", 48),
+        Slot("slot-overlap", ("331",), "6544", NOW + timedelta(hours=48, minutes=30), 60),
+        _slot("slot-safe", 50),
+    ]
+    backend = FakeBackend(slots=slots)
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 0
+    assert backend.current.id == "slot-safe"
 
 
 @pytest.mark.asyncio

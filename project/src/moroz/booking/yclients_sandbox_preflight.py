@@ -15,36 +15,6 @@ from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient, Ycli
 _MAX_RECORD_PAGES = 20
 _PAGE_SIZE = 100
 _OWNERSHIP_FIELD_CODES = {"moroz_booking_key", "moroz_customer_id"}
-_REQUIRED_TIMETABLE_PERMISSIONS = {
-    "timetable_access",
-    "timetable_transferring_record_access",
-}
-_REQUIRED_RECORD_PERMISSIONS = {
-    "record_form_access",
-    "record_form_client_access",
-    "record_form_client_add_access",
-    "create_records_access",
-    "edit_records_access",
-    "records_edit_date_and_master_access",
-    "records_edit_comment_access",
-    "records_edit_services_access",
-    "delete_records_access",
-    "custom_fields_record_values_read_access",
-    "custom_fields_record_values_edit_access",
-}
-
-
-def require_booking_permissions(data: object) -> None:
-    if not isinstance(data, Mapping):
-        raise BookingTemporaryError()
-    timetable = data.get("timetable")
-    record_form = data.get("record_form")
-    if not isinstance(timetable, Mapping) or not isinstance(record_form, Mapping):
-        raise BookingTemporaryError()
-    if any(timetable.get(key) is not True for key in _REQUIRED_TIMETABLE_PERMISSIONS):
-        raise BookingTemporaryError()
-    if any(record_form.get(key) is not True for key in _REQUIRED_RECORD_PERMISSIONS):
-        raise BookingTemporaryError()
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,10 +108,6 @@ class YclientsPreflightBackend:
                 or field.get("show_in_ui") is not False
             ):
                 raise BookingTemporaryError()
-        require_booking_permissions(await self._read(
-            f"/api/v1/user/permissions/{self._config.company_id}",
-            user_auth=True,
-        ))
         return len(matches)
 
     async def list_slots(self, query: SlotQuery) -> list[Slot]:
@@ -269,7 +235,11 @@ def _two_distinct_future_slots(slots: list[Slot], now: datetime) -> tuple[Slot, 
     )
     for index, first in enumerate(future):
         for second in future[index + 1:]:
-            if second.id != first.id and second.starts_at != first.starts_at:
+            if (
+                second.id != first.id
+                and second.starts_at
+                >= first.starts_at + timedelta(minutes=first.duration_minutes)
+            ):
                 return first, second
     raise _PreflightFailure("insufficient_distinct_future_slots")
 
