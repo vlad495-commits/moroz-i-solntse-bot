@@ -100,6 +100,8 @@ def _service_items(data: object) -> list[dict[str, object]]:
 
 
 def _parse_service(item: dict[str, object]) -> CatalogService:
+    if "seance_length" not in item:
+        raise BookingTemporaryError()
     return CatalogService(
         _provider_id(item.get("id")),
         _required_text(item.get("title")),

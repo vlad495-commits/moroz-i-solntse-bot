@@ -223,6 +223,16 @@ async def test_catalog_transport_failure_is_temporary_without_transport_detail(
                 "success": True,
                 "data": {
                     "services": [
+                        {"id": 1, "title": "Крио"}
+                    ]
+                },
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "success": True,
+                "data": {
+                    "services": [
                         {"id": 1, "title": "Крио", "seance_length": 1801}
                     ]
                 },
@@ -276,6 +286,7 @@ async def test_catalog_transport_failure_is_temporary_without_transport_detail(
         "missing-services",
         "non-list-services",
         "non-object-data",
+        "missing-seance-length",
         "fractional-minute-duration",
         "float-duration",
         "string-duration",
