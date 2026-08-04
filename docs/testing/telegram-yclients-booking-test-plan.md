@@ -22,7 +22,7 @@ cd project && docker compose --env-file ../.env --profile yclients-readonly run 
 | Проверка | Команда / тесты | Время (UTC+3) | Среда | Exit | Санитизированный результат |
 |---|---|---:|---|---:|---|
 | Local fake GET-only | `pytest tests/unit/booking/test_yclients_readonly_check.py tests/unit/test_worker.py tests/unit/test_migration_profile.py tests/contract/booking/test_yclients_catalog.py tests/contract/booking/test_yclients_http.py tests/contract/booking/test_yclients_adapter.py -q` через Compose test profile | 2026-08-02 04:43 | `local-fake` | 0 | `222 passed in 66.17s`; captured transport method set `{"GET"}`; exact 14-day window; raw requested-staff duplicates and malformed `bookable` fail before `/book_times`; no private fields |
-| External YCLIENTS read-only | `docker compose --env-file ../.env --profile yclients-readonly run --rm yclients-readonly` | — | company scope not confirmed | — | **NOT RUN — awaiting explicit company/sandbox confirmation** |
+| External YCLIENTS read-only | `docker compose --env-file <external ignored .env> --profile yclients-readonly run -T --rm yclients-readonly` | 2026-08-04 13:45 | `sandbox` | 0 | Fresh completion run: `ok=true`; horizon `14`; service/staff counts `1/1`; availability total `336`; configured IDs matched exactly; profile has no User/Telegram/LLM/DB/queue secrets; no mutation method |
 
 ## Сквозная матрица доказательств
 
