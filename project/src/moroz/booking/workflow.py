@@ -232,7 +232,6 @@ class BookingWorkflow:
                 {
                     "id": service.id,
                     "title": service.title,
-                    "duration_minutes": service.duration_minutes,
                 }
                 for service in services
             ],
@@ -1302,7 +1301,6 @@ class BookingWorkflow:
                         {
                             "id": service.id,
                             "title": service.title,
-                            "duration_minutes": service.duration_minutes,
                         }
                     )
                 staff = await self._catalog.list_staff(local.service_ids)

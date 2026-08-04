@@ -33,6 +33,19 @@ async def test_mock_catalog_returns_configured_services():
 
 
 @pytest.mark.asyncio
+async def test_mock_catalog_can_represent_unknown_service_duration():
+    service = CatalogService("1", "Крио", None)
+    catalog = MockBookingCatalog(
+        services=(service,),
+        staff=(),
+        service_allowlist=("1",),
+        staff_allowlist=(),
+    )
+
+    assert await catalog.list_services() == [service]
+
+
+@pytest.mark.asyncio
 async def test_mock_catalog_filters_staff_for_all_selected_services():
     catalog = MockBookingCatalog(
         services=(

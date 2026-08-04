@@ -479,6 +479,40 @@ async def test_services_are_paginated_and_multi_select_has_no_count_cap(
 
 
 @pytest.mark.asyncio
+async def test_unknown_catalog_duration_is_not_promised_and_slot_is_authoritative(
+    workflow,
+    owner,
+    dependencies,
+):
+    repository, catalog, port, _service = dependencies
+    catalog.services = [CatalogService("service-331", "Крио", None)]
+    port.slots = [
+        Slot(
+            "slot-provider-991",
+            ("service-331",),
+            "staff-6544",
+            datetime(2026, 8, 2, 7, 0, tzinfo=UTC),
+            45,
+        )
+    ]
+
+    reply = await workflow.start_create(owner, "command:unknown-duration")
+
+    assert _button_texts(reply) == ["Крио", "Готово", "Отмена"]
+    assert [dict(item) for item in repository.session.state["services"]] == [
+        {"id": "service-331", "title": "Крио"}
+    ]
+
+    reply = await _press(workflow, owner, reply, "Крио")
+    reply = await _press(workflow, owner, reply, "Готово")
+    reply = await _press(workflow, owner, reply, "Любой мастер")
+    reply = await _press(workflow, owner, reply, _button_texts(reply)[0])
+    await _press(workflow, owner, reply, _button_texts(reply)[0])
+
+    assert repository.session.state["duration_minutes"] == 45
+
+
+@pytest.mark.asyncio
 async def test_dates_and_slots_are_paginated_deterministically(
     workflow,
     owner,

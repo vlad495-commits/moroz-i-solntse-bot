@@ -156,7 +156,9 @@ def _required_text(value: object) -> str:
     return value.strip()
 
 
-def _duration_minutes(value: object) -> int:
+def _duration_minutes(value: object) -> int | None:
+    if value is None:
+        return None
     if type(value) is not int or value <= 0 or value % 60:
         raise BookingTemporaryError()
     return value // 60

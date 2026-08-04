@@ -110,6 +110,29 @@ async def test_catalog_parses_service_seance_length_from_live_contract(
 
 
 @pytest.mark.asyncio
+async def test_catalog_accepts_live_null_service_seance_length(
+    fake_http: FakeHttp,
+) -> None:
+    fake_http.queue_json(
+        200,
+        {
+            "success": True,
+            "data": {
+                "services": [
+                    {"id": 1, "title": "Крио", "seance_length": None},
+                ],
+            },
+        },
+    )
+
+    result = await YclientsCatalogAdapter(
+        fake_http, "42", ("1",), ("7",)
+    ).list_services()
+
+    assert result == [CatalogService("1", "Крио", None)]
+
+
+@pytest.mark.asyncio
 async def test_catalog_staff_uses_selected_services_and_excludes_unbookable(
     fake_http: FakeHttp,
 ) -> None:
@@ -210,6 +233,36 @@ async def test_catalog_transport_failure_is_temporary_without_transport_detail(
                 "success": True,
                 "data": {
                     "services": [
+                        {"id": 1, "title": "Крио", "seance_length": 1800.0}
+                    ]
+                },
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "success": True,
+                "data": {
+                    "services": [
+                        {"id": 1, "title": "Крио", "seance_length": "1800"}
+                    ]
+                },
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "success": True,
+                "data": {
+                    "services": [
+                        {"id": 1, "title": "Крио", "seance_length": True}
+                    ]
+                },
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "success": True,
+                "data": {
+                    "services": [
                         {"id": 1, "title": "", "seance_length": 1800}
                     ]
                 },
@@ -224,6 +277,9 @@ async def test_catalog_transport_failure_is_temporary_without_transport_detail(
         "non-list-services",
         "non-object-data",
         "fractional-minute-duration",
+        "float-duration",
+        "string-duration",
+        "boolean-duration",
         "empty-title",
     ],
 )

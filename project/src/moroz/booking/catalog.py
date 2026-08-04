@@ -6,7 +6,7 @@ from typing import Protocol
 class CatalogService:
     id: str
     title: str
-    duration_minutes: int
+    duration_minutes: int | None
 
 
 @dataclass(frozen=True, slots=True)
