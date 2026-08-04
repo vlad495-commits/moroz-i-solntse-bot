@@ -236,6 +236,12 @@ async def run_smoke(
         summary["slots_read"] = len(slots)
         summary["staff_read"] = len({slot.staff_id for slot in slots})
 
+        preflight = await actual.reconcile_booking_key(
+            booking_key, *reconciliation_bounds
+        )
+        if preflight != {"matches": 0, "active_matches": 0}:
+            raise _SmokeFailure("record_read_preflight_mismatch")
+
         mutation_started = True
         created = await actual.create_booking(CreateBooking(
             customer_id=customer_id,

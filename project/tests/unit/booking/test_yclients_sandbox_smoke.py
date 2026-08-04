@@ -91,6 +91,7 @@ class FakeBackend:
             "matches": 1,
             "active_matches": 0,
         }
+        self.reconciliation_calls = 0
         self.slot_query = None
 
     def _call(self, name: str) -> None:
@@ -149,10 +150,14 @@ class FakeBackend:
         assert command.booking_key == RUN_ID
 
     async def reconcile_booking_key(self, booking_key, starts_at, ends_at):
-        self._call("reconcile_booking_key")
         assert booking_key == RUN_ID
         assert starts_at == self.slots[0].starts_at
         assert ends_at == self.slots[1].starts_at
+        self.reconciliation_calls += 1
+        if self.reconciliation_calls == 1:
+            self._call("preflight_records")
+            return {"matches": 0, "active_matches": 0}
+        self._call("reconcile_booking_key")
         return self.reconciliation
 
 
@@ -233,6 +238,7 @@ async def test_successful_smoke_runs_the_exact_bounded_flow() -> None:
     assert backend.calls == [
         "list_services",
         "list_slots",
+        "preflight_records",
         "create_booking",
         "get_booking",
         "reschedule_booking",
@@ -329,6 +335,23 @@ async def test_availability_failure_stops_before_all_mutations() -> None:
 
 
 @pytest.mark.asyncio
+async def test_record_read_preflight_failure_stops_before_first_mutation() -> None:
+    backend = FakeBackend(failure=("preflight_records", BookingTemporaryError()))
+
+    result = await run_smoke(
+        SandboxSmokeSettings.from_env(_env()),
+        backend=backend,
+        now=lambda: NOW,
+        uuid_factory=lambda: RUN_ID,
+    )
+
+    assert result.exit_code == 1
+    assert result.summary["error"] == "definite_provider_failure"
+    assert backend.calls == ["list_services", "list_slots", "preflight_records"]
+    assert backend.commands == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("booking_key", [UUID(int=2), None])
 async def test_invalid_create_result_never_triggers_cleanup_mutation(booking_key) -> None:
     backend = FakeBackend(created=ExternalBooking(
@@ -350,7 +373,9 @@ async def test_invalid_create_result_never_triggers_cleanup_mutation(booking_key
     )
 
     assert result.exit_code == 1
-    assert backend.calls == ["list_services", "list_slots", "create_booking"]
+    assert backend.calls == [
+        "list_services", "list_slots", "preflight_records", "create_booking",
+    ]
     assert len(backend.commands) == 1
 
 
@@ -372,6 +397,7 @@ async def test_unknown_outcome_aborts_without_blind_cleanup_and_redacts_output()
     assert backend.calls == [
         "list_services",
         "list_slots",
+        "preflight_records",
         "create_booking",
         "get_booking",
         "reschedule_booking",
@@ -415,8 +441,10 @@ async def test_unknown_outcome_reconciliation_failure_remains_manual_review() ->
     original_reconcile = backend.reconcile_booking_key
 
     async def failed_reconcile(*args):
-        await original_reconcile(*args)
-        raise BookingTemporaryError()
+        result = await original_reconcile(*args)
+        if backend.reconciliation_calls > 1:
+            raise BookingTemporaryError()
+        return result
 
     backend.reconcile_booking_key = failed_reconcile
     result = await run_smoke(
@@ -503,6 +531,7 @@ async def test_definite_failure_after_create_attempts_one_cleanup_cancel() -> No
     assert backend.calls == [
         "list_services",
         "list_slots",
+        "preflight_records",
         "create_booking",
         "get_booking",
         "cancel_booking",
