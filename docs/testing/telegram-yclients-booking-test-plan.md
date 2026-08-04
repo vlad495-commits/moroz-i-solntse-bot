@@ -41,6 +41,15 @@ cd project && docker compose --env-file ../.env --profile yclients-smoke run --r
 | Local Task 12 safety gate | `pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/contract/booking/test_yclients_adapter.py tests/unit/test_migration_profile.py -q` через Compose test profile | 2026-08-04 14:43 | `local-fake` | 0 | `167 passed in 59.30s`; exact consent/marker, ASCII fake identity, non-empty 1-day window, pre-mutation record-read gate, exact cancel ownership и single reconciliation/cleanup contracts covered |
 | External sandbox lifecycle | `docker compose --env-file <external ignored .env> --profile yclients-smoke run -T --rm yclients-smoke` | 2026-08-04 14:42 | `sandbox` | 1 | Единственная разрешённая попытка: services/staff/slots `1/1/336`; records GET-preflight вернул definite provider failure (`HTTP 403` из отдельной санитизированной диагностики); create/get/reschedule/cancel все `not_started`, `manual_review_required=false`, mutations `0` |
 
+## Post-booking scheduler gate
+
+Scheduler остаётся выключенным в staging до успешного external lifecycle и отдельного разрешения. Локальный gate проходит через Telegram mock workflow, реальный PostgreSQL `scheduler_jobs`, `LocalBookingPort` и `NotificationOutbox`; внешние Telegram/YCLIENTS вызовы отсутствуют.
+
+| Проверка | Команда / тесты | Время (UTC+3) | Среда | Exit | Санитизированный результат |
+|---|---|---:|---|---:|---|
+| Telegram booking → reminders E2E | `pytest -q tests/e2e/notifications/test_booking_flow_reminders.py` через isolated Compose project `moroz-ea5c-task13` | 2026-08-04 15:53 | `local-mock` | 0 | `4 passed in 13.68s`; confirmed create создал exact future jobs, reschedule перевёл старые jobs в `skipped` и создал один новый план, replay не дал duplicate keys, cancel оставил pending `0`, foreign/outcome-unknown создали jobs `0`, immediate reminder replay дал один outbound тому же owner |
+| Full notification regression | `pytest -q tests/unit/notifications tests/integration/notifications tests/e2e/notifications` в том же isolated Compose project | 2026-08-04 15:55 | `local-mock` | 0 | `49 passed in 39.65s`; scheduler repository/concurrency, retry/DLQ, lifecycle, feedback, ownership и новый Telegram gate зелёные |
+
 ## Сквозная матрица доказательств
 
 | Сценарий | Минимальное доказательство | Статус |
@@ -53,6 +62,6 @@ cd project && docker compose --env-file ../.env --profile yclients-smoke run --r
 | outcome unknown | durable escalation/human mode и GET-only reconciliation | local fake готов |
 | Telegram UI | opaque callback, exact confirmation, create/change/cancel | local mock готов |
 | PostgreSQL | inbox/outbox/actions/events/escalations/audit replay и atomicity | local integration готов |
-| scheduler/reminders | только confirmed owned snapshot; replace/skip после reschedule/cancel | отдельный post-booking gate pending |
+| scheduler/reminders | только confirmed owned snapshot; replace/skip после reschedule/cancel | local Telegram/PostgreSQL gate готов; staging enable заблокирован external lifecycle `403` и требует отдельного разрешения |
 
 Финальный отчёт должен для каждой строки добавить точную Docker-команду, node IDs, timestamp, pass count и санитизированные DB assertions. Незапущенные внешние проверки остаются явно `NOT RUN`.
