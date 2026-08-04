@@ -158,6 +158,25 @@ services:
       YCLIENTS_ENVIRONMENT_LABEL: ${YCLIENTS_ENVIRONMENT_LABEL:-}
       YCLIENTS_TEST_WINDOW_DAYS: ${YCLIENTS_TEST_WINDOW_DAYS:-}
 
+  yclients-sandbox-preflight:
+    profiles: ["yclients-sandbox-preflight"]
+    image: "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    restart: "no"
+    command: ["python", "-m", "moroz.booking.yclients_sandbox_preflight"]
+    environment:
+      YCLIENTS_PARTNER_TOKEN: ${YCLIENTS_PARTNER_TOKEN:-}
+      YCLIENTS_USER_TOKEN: ${YCLIENTS_USER_TOKEN:-}
+      YCLIENTS_COMPANY_ID: ${YCLIENTS_COMPANY_ID:-}
+      YCLIENTS_BASE_URL: ${YCLIENTS_BASE_URL:-}
+      YCLIENTS_TIMEZONE: ${YCLIENTS_TIMEZONE:-}
+      YCLIENTS_TIMEOUT_SECONDS: ${YCLIENTS_TIMEOUT_SECONDS:-}
+      YCLIENTS_TEST_SERVICE_ID: ${YCLIENTS_TEST_SERVICE_ID:-}
+      YCLIENTS_ENVIRONMENT_LABEL: ${YCLIENTS_ENVIRONMENT_LABEL:-}
+      YCLIENTS_TEST_WINDOW_DAYS: ${YCLIENTS_TEST_WINDOW_DAYS:-}
+
   scheduler:
     build:
       context: .

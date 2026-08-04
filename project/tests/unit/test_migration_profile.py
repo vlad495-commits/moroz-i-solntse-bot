@@ -254,6 +254,7 @@ def test_yclients_environment_is_limited_to_exact_runtime_profiles():
         "worker",
         "yclients-readonly",
         "yclients-smoke",
+        "yclients-sandbox-preflight",
         "scheduler",
         "bot",
         "admin",
@@ -297,8 +298,19 @@ def test_yclients_environment_is_limited_to_exact_runtime_profiles():
     }
     assert set(services["yclients-readonly"]["environment"]) == readonly_keys
     assert "YCLIENTS_USER_TOKEN" not in services["yclients-readonly"]["environment"]
+    preflight_keys = runtime_keys | {
+        "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_TEST_WINDOW_DAYS",
+    }
+    assert set(services["yclients-sandbox-preflight"]["environment"]) == preflight_keys
     for name, service in services.items():
-        if name not in {"worker", "yclients-readonly", "yclients-smoke"}:
+        if name not in {
+            "worker",
+            "yclients-readonly",
+            "yclients-smoke",
+            "yclients-sandbox-preflight",
+        }:
             assert not (runtime_keys | smoke_only_keys) & set(
                 service.get("environment", {})
             )
@@ -339,6 +351,36 @@ def test_yclients_smoke_is_an_explicit_bounded_profile() -> None:
     assert service["environment"]["YCLIENTS_SANDBOX_CONSENT"] == (
         "${YCLIENTS_SANDBOX_CONSENT:-}"
     )
+
+
+def test_yclients_sandbox_preflight_is_an_explicit_get_only_profile() -> None:
+    services = compose_services()
+    service = services["yclients-sandbox-preflight"]
+
+    assert service["profiles"] == ["yclients-sandbox-preflight"]
+    assert service["image"] == services["worker"]["image"]
+    assert service["image"] == (
+        "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
+    )
+    assert service["build"] == {"context": ".", "dockerfile": "worker/Dockerfile"}
+    assert service["command"] == [
+        "python", "-m", "moroz.booking.yclients_sandbox_preflight"
+    ]
+    assert service["restart"] == "no"
+    assert "depends_on" not in service
+    assert "ports" not in service
+    assert "volumes" not in service
+    assert set(service["environment"]) == {
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_TIMEZONE",
+        "YCLIENTS_TIMEOUT_SECONDS",
+        "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_TEST_WINDOW_DAYS",
+    }
 
 
 def test_worker_image_installs_only_exact_pipeline_dependencies():
