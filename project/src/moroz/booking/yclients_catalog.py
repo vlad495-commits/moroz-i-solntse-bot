@@ -103,7 +103,7 @@ def _parse_service(item: dict[str, object]) -> CatalogService:
     return CatalogService(
         _provider_id(item.get("id")),
         _required_text(item.get("title")),
-        _duration_minutes(item.get("duration")),
+        _duration_minutes(item.get("seance_length")),
     )
 
 

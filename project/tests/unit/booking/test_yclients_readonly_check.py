@@ -59,7 +59,11 @@ def _real_readers(http: FakeHttp):
 async def test_readonly_check_calls_only_get_and_returns_sanitized_counts():
     http = FakeHttp(
         [
-            {"services": [{"id": 1, "title": "Private title", "duration": 1800}]},
+            {
+                "services": [
+                    {"id": 1, "title": "Private title", "seance_length": 1800}
+                ]
+            },
             [{"id": 7, "name": "Private name", "bookable": True}],
             [],
             [{"id": 7, "name": "Private name", "bookable": True}],
@@ -137,7 +141,11 @@ async def test_readonly_check_rejects_partial_availability_staff_response(
 ):
     http = FakeHttp(
         [
-            {"services": [{"id": 1, "title": "Service", "duration": 1800}]},
+            {
+                "services": [
+                    {"id": 1, "title": "Service", "seance_length": 1800}
+                ]
+            },
             [{"id": 7, "name": "Staff", "bookable": True}],
             [],
             availability_staff,

@@ -53,8 +53,8 @@ async def test_catalog_returns_only_allowlisted_services_and_staff(
             "success": True,
             "data": {
                 "services": [
-                    {"id": 1, "title": "Крио", "duration": 1800},
-                    {"id": 9, "title": "Скрытая", "duration": 600},
+                    {"id": 1, "title": "Крио", "seance_length": 1800},
+                    {"id": 9, "title": "Скрытая", "seance_length": 600},
                 ],
             },
         },
@@ -84,6 +84,29 @@ async def test_catalog_returns_only_allowlisted_services_and_staff(
             False,
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_catalog_parses_service_seance_length_from_live_contract(
+    fake_http: FakeHttp,
+) -> None:
+    fake_http.queue_json(
+        200,
+        {
+            "success": True,
+            "data": {
+                "services": [
+                    {"id": 1, "title": "Крио", "seance_length": 1800},
+                ],
+            },
+        },
+    )
+
+    result = await YclientsCatalogAdapter(
+        fake_http, "42", ("1",), ("7",)
+    ).list_services()
+
+    assert result == [CatalogService("1", "Крио", 30)]
 
 
 @pytest.mark.asyncio
@@ -177,7 +200,7 @@ async def test_catalog_transport_failure_is_temporary_without_transport_detail(
                 "success": True,
                 "data": {
                     "services": [
-                        {"id": 1, "title": "Крио", "duration": 1801}
+                        {"id": 1, "title": "Крио", "seance_length": 1801}
                     ]
                 },
             }
@@ -187,7 +210,7 @@ async def test_catalog_transport_failure_is_temporary_without_transport_detail(
                 "success": True,
                 "data": {
                     "services": [
-                        {"id": 1, "title": "", "duration": 1800}
+                        {"id": 1, "title": "", "seance_length": 1800}
                     ]
                 },
             }
