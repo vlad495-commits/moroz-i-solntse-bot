@@ -30,6 +30,8 @@ cd project && docker compose --env-file ../.env --profile yclients-readonly run 
 | New sandbox affected regression | `pytest -q tests/unit/booking/test_yclients_sandbox_preflight.py tests/unit/booking/test_yclients_sandbox_smoke.py tests/contract/booking tests/e2e/booking/test_yclients_fail_closed.py` через isolated Compose namespace | 2026-08-04 20:12 | `local-fake` | 0 | `207 passed in 63.32s`; external provider mutations absent; exact cleanup `containers=0 volumes=0 networks=0 images=0` |
 | New sandbox ownership field gate | `yclients-sandbox-preflight` после UI-создания двух hidden text record fields | 2026-08-04 20:44 | `sandbox` | 0 | GET-only: `fields/services/staff/slots=2/1/1/322`; exact `moroz_booking_key` + `moroz_customer_id` contract; `matches=0 active_matches=0 success=true`; provider mutations `0` |
 | Ownership gate affected regression | preflight/smoke + contract/fail-closed, затем полный booking/Telegram/PostgreSQL/reminders набор через Docker | 2026-08-04 21:07 | `local-fake` | 0 | Review-fix focused `78 passed`; affected `225 passed in 66.13s`; full booking flow `624 passed in 563.20s`; exact key требует связанный customer marker, unrelated records без requested key игнорируются |
+| Second new-sandbox lifecycle + permission diagnosis | один отдельно разрешённый `yclients-smoke`, затем только GET reconciliation/permissions | 2026-08-04 21:50 | `sandbox` | 1 | `fields/services/staff/slots=2/1/1/322`; create/get confirmed; reschedule definite provider failure; встроенный exact cleanup confirmed; reconciliation `matches=1 active_matches=0`, unknown отсутствует. Официальный GET permissions подтвердил root cause: `records_edit_date_and_master_access=false`; повторного lifecycle не было |
+| Pre-mutation permission gate regression | TDD field+permission gate, affected booking/contract/fail-closed и booking/Telegram/PostgreSQL/reminders через Docker | 2026-08-04 21:54 | `local-fake` | 0 | RED `4 failed`; focused GREEN `12 passed`; affected `227 passed in 64.31s`; full functional `624 passed`, Redis-dependent Telegram ingress после readiness `11 passed`; final exact source `80 passed`; re-review `0/0/0 approve`; внешний GET-only gate при missing transfer right ожидаемо остановился `exit 1` до каталога/mutation; cleanup `0/0/0/0` |
 
 ## Permission-gated sandbox lifecycle
 
@@ -39,7 +41,7 @@ cd project && docker compose --env-file ../.env --profile yclients-readonly run 
 cd project && docker compose --env-file ../.env --profile yclients-smoke run --rm yclients-smoke
 ```
 
-Перед любым mutation профиль fail-closed требует: `YCLIENTS_SANDBOX_CONSENT=I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS`, `YCLIENTS_ENVIRONMENT_LABEL=sandbox`, имя с префиксом `Synthetic Test `, телефон строго формата `+7000` и ещё семь цифр, а также `YCLIENTS_TEST_WINDOW_DAYS` как целое от `1` до `14`. Слоты читаются только в этом окне; нужны два разных будущих слота. Затем bounded GET reconciliation по свежему UUID обязан вернуть строго `matches=0`, `active_matches=0`; auth/transport/shape failure или неожиданное совпадение останавливают flow до первого POST.
+Перед любым mutation профиль fail-closed требует: `YCLIENTS_SANDBOX_CONSENT=I_UNDERSTAND_THIS_CREATES_TEST_BOOKINGS`, `YCLIENTS_ENVIRONMENT_LABEL=sandbox`, имя с префиксом `Synthetic Test `, телефон строго формата `+7000` и ещё семь цифр, а также `YCLIENTS_TEST_WINDOW_DAYS` как целое от `1` до `14`. До каталога он GET-only проверяет оба ownership field и полный набор реально используемых прав системного пользователя, включая отдельное `records_edit_date_and_master_access`; любой missing/non-boolean permission останавливает flow до первого POST. Слоты читаются только в заданном окне; нужны два разных будущих слота. Затем bounded GET reconciliation по свежему UUID обязан вернуть строго `matches=0`, `active_matches=0`; auth/transport/shape failure или неожиданное совпадение также останавливают flow до mutation.
 
 Каждый run использует новый UUID/key. Успех требует точную цепочку `create → get → reschedule → get → cancel → final get → reconciliation`, где итог reconciliation равен `matches=1`, `active_matches=0`. При неизвестном результате mutation дальнейшие mutations запрещены: выполняется ровно одна GET-only reconciliation и результат остаётся для ручной проверки. После definite сбоя post-create разрешена только одна cleanup-cancel по exact external ID/key, затем одна GET-only reconciliation; её ошибка также остаётся ручной проверкой. JSON-итог не содержит token, name, phone, run UUID или external booking ID.
 
@@ -50,6 +52,7 @@ Safety clarification after the 2026-08-04 incident: исходное разре�
 | Local Task 12 safety gate | `pytest tests/unit/booking/test_yclients_sandbox_smoke.py tests/contract/booking/test_yclients_adapter.py tests/unit/test_migration_profile.py -q` через Compose test profile | 2026-08-04 14:43 | `local-fake` | 0 | `167 passed in 59.30s`; exact consent/marker, ASCII fake identity, non-empty 1-day window, pre-mutation record-read gate, exact cancel ownership и single reconciliation/cleanup contracts covered |
 | External sandbox lifecycle | `docker compose --env-file <external ignored .env> --profile yclients-smoke run -T --rm yclients-smoke` | 2026-08-04 14:42 | `sandbox` | 1 | Единственная разрешённая попытка: services/staff/slots `1/1/336`; records GET-preflight вернул definite provider failure (`HTTP 403` из отдельной санитизированной диагностики); create/get/reschedule/cancel все `not_started`, `manual_review_required=false`, mutations `0` |
 | New sandbox lifecycle + bounded cleanup | тот же permission-gated профиль, затем read-only reconciliation и manual exact cleanup | 2026-08-04 20:32 | `sandbox` | 1 | Единственный create получил HTTP `201`, но response/ownership shape не подтвердился: `mutation_outcome_unknown`, `manual_review_required=true`; lifecycle runner остановился, blind create retry отсутствовал. UI/individual GET нашли одну synthetic-запись, после чего manual DELETE завершил cleanup и GET подтвердил `deleted=true`, active exact `0`. Это зафиксировано как process safety incident: исходное cleanup-разрешение не должно было расширяться на DELETE после unknown без нового отдельного разрешения. |
+| Second new sandbox lifecycle | один новый отдельно разрешённый runner command с встроенным bounded cleanup | 2026-08-04 21:50 | `sandbox` | 1 | create/get confirmed; reschedule definite provider failure; runner выполнил один exact cleanup cancel, reconciliation `matches=1 active_matches=0`; `manual_review_required=false`, unknown отсутствует. Read-only permissions доказал missing `records_edit_date_and_master_access`; следующий mutation запрещён до исправления права, успешного GET-only gate и нового отдельного разрешения |
 
 ## Post-booking scheduler gate
 
@@ -64,7 +67,7 @@ Scheduler остаётся выключенным в staging до успешно
 
 | Сценарий | Минимальное доказательство | Статус |
 |---|---|---|
-| create → get → reschedule → get → cancel | mock E2E, затем permission-gated sandbox lifecycle и reconciliation | mock готов; sandbox blocked: User Token records access `403`, разрешённая попытка остановлена до mutation |
+| create → get → reschedule → get → cancel | mock E2E, затем permission-gated sandbox lifecycle и reconciliation | mock готов; sandbox create/get/cleanup доказаны, полный lifecycle blocked на отдельном праве `records_edit_date_and_master_access=false` |
 | duplicate/replay | одинаковый update/callback, одна mutation, terminal replay | local mock готов |
 | race двух пользователей | один confirmed, второй slot unavailable | local mock готов |
 | чужая запись/action | owner binding, protected GET, отсутствие раскрытия деталей | local mock готов |
@@ -72,7 +75,7 @@ Scheduler остаётся выключенным в staging до успешно
 | outcome unknown | durable escalation/human mode и GET-only reconciliation | local fake готов |
 | Telegram UI | opaque callback, exact confirmation, create/change/cancel | local mock готов |
 | PostgreSQL | inbox/outbox/actions/events/escalations/audit replay и atomicity | local integration готов |
-| scheduler/reminders | только confirmed owned snapshot; replace/skip после reschedule/cancel | local Telegram/PostgreSQL gate готов; staging enable заблокирован external lifecycle `403` и требует отдельного разрешения |
+| scheduler/reminders | только confirmed owned snapshot; replace/skip после reschedule/cancel | local Telegram/PostgreSQL gate готов; staging enable заблокирован до успешного external reschedule/full lifecycle и отдельного разрешения |
 
 ## Task 14: индекс финальных доказательств
 

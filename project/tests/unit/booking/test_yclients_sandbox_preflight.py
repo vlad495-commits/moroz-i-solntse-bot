@@ -38,6 +38,30 @@ def _slot(slot_id: str, hours: int) -> Slot:
     return Slot(slot_id, ("331",), "6544", NOW + timedelta(hours=hours), 60)
 
 
+def _permissions(**changes: bool) -> dict[str, object]:
+    timetable = {
+        "timetable_access": True,
+        "timetable_transferring_record_access": True,
+    }
+    record_form = {
+        "record_form_access": True,
+        "record_form_client_access": True,
+        "record_form_client_add_access": True,
+        "create_records_access": True,
+        "edit_records_access": True,
+        "records_edit_date_and_master_access": True,
+        "records_edit_comment_access": True,
+        "records_edit_services_access": True,
+        "delete_records_access": True,
+        "custom_fields_record_values_read_access": True,
+        "custom_fields_record_values_edit_access": True,
+    }
+    for key, value in changes.items():
+        target = timetable if key in timetable else record_form
+        target[key] = value
+    return {"success": True, "data": {"timetable": timetable, "record_form": record_form}}
+
+
 class FakeReadBackend:
     def __init__(
         self,
@@ -165,11 +189,51 @@ async def test_concrete_readiness_requires_both_hidden_editable_text_ownership_f
             },
         ],
     }
-    http = FakeHttp([HttpResponse(200, json.dumps(fields).encode())])
+    http = FakeHttp([
+        HttpResponse(200, json.dumps(fields).encode()),
+        HttpResponse(200, json.dumps(_permissions()).encode()),
+    ])
     backend = backend_type(YclientsConfig.from_env(_env()), http=http)
 
     assert await backend.list_record_custom_fields() == 2
-    assert http.requests == [("GET", "/api/v1/custom_fields/record/123", (), True)]
+    assert http.requests == [
+        ("GET", "/api/v1/custom_fields/record/123", (), True),
+        ("GET", "/api/v1/user/permissions/123", (), True),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend_type", [YclientsPreflightBackend, YclientsSmokeBackend])
+async def test_concrete_readiness_rejects_missing_record_time_transfer_permission(
+    backend_type,
+) -> None:
+    fields = {
+        "success": True,
+        "data": [
+            {"custom_field": {
+                "code": "moroz_booking_key",
+                "type": {"code": "text"},
+                "user_can_edit": True,
+                "show_in_ui": False,
+            }},
+            {"custom_field": {
+                "code": "moroz_customer_id",
+                "type": {"code": "text"},
+                "user_can_edit": True,
+                "show_in_ui": False,
+            }},
+        ],
+    }
+    http = FakeHttp([
+        HttpResponse(200, json.dumps(fields).encode()),
+        HttpResponse(200, json.dumps(_permissions(
+            records_edit_date_and_master_access=False,
+        )).encode()),
+    ])
+    backend = backend_type(YclientsConfig.from_env(_env()), http=http)
+
+    with pytest.raises(BookingTemporaryError):
+        await backend.list_record_custom_fields()
 
 
 @pytest.mark.asyncio

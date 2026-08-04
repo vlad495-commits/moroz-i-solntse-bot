@@ -23,6 +23,7 @@ from moroz.booking.models import (
 )
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient, YclientsTransportError
+from moroz.booking.yclients_sandbox_preflight import require_booking_permissions
 
 
 _PAGE_SIZE = 100
@@ -150,6 +151,10 @@ class YclientsSmokeBackend:
                 or field.get("show_in_ui") is not False
             ):
                 raise BookingTemporaryError()
+        require_booking_permissions(await self._read(
+            f"/api/v1/user/permissions/{self._config.company_id}",
+            user_auth=True,
+        ))
         return len(matches)
 
     async def list_slots(self, query: SlotQuery) -> list[Slot]:
