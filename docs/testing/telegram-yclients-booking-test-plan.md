@@ -26,6 +26,8 @@ cd project && docker compose --env-file ../.env --profile yclients-readonly run 
 | New sandbox browser fixture | Авторизованный YCLIENTS UI, только санитизированные counts | 2026-08-04 18:18 | `sandbox` | 0 | `companies=1`; `services=1`; configured bookable `staff=1`; future 60-minute `slots>=2` inside 14 days; clients `0`; records `0`; no API/lifecycle mutation, IDs, tokens or ПД |
 | New sandbox partner catalog GET | `yclients-readonly` через isolated Compose namespace | 2026-08-04 18:24 | `sandbox` | 0 | `ok=true`; services/staff `1/1`; future slots `322` in 14 days; no User/Telegram/LLM/DB/queue secrets and no mutation method |
 | New sandbox records preflight GET | `yclients-sandbox-preflight` через тот же isolated namespace | 2026-08-04 18:25 | `sandbox` | 1 | Fail-closed `definite_provider_failure`; services/staff/slots `1/1/322`; `matches=0`, `active_matches=0`, `success=false`; provider mutations `0` |
+| New sandbox records preflight after app connection | `yclients-sandbox-preflight` через isolated Compose namespace | 2026-08-04 20:10 | `sandbox` | 0 | Existing app connected to the new branch with approved record/custom-field rights; `success=true`; services/staff/slots `1/1/322`; `matches=0`, `active_matches=0`; provider mutations `0` |
+| New sandbox affected regression | `pytest -q tests/unit/booking/test_yclients_sandbox_preflight.py tests/unit/booking/test_yclients_sandbox_smoke.py tests/contract/booking tests/e2e/booking/test_yclients_fail_closed.py` через isolated Compose namespace | 2026-08-04 20:12 | `local-fake` | 0 | `207 passed in 63.32s`; external provider mutations absent; exact cleanup `containers=0 volumes=0 networks=0 images=0` |
 
 ## Permission-gated sandbox lifecycle
 
