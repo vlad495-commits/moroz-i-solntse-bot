@@ -103,7 +103,7 @@ def test_staging_bot_healthcheck_probes_http_listener():
     bot = load_staging()["services"]["bot"]
     health = " ".join(bot["healthcheck"]["test"])
 
-    assert bot["environment"]["TELEGRAM_MODE"] == "webhook"
+    assert "TELEGRAM_MODE" not in bot.get("environment", {})
     assert "http://127.0.0.1:8081/healthz" in health
     assert "/openapi.json" not in health
     assert "/proc/1/cmdline" not in health

@@ -61,3 +61,13 @@ async def create_version(
             content, author, comment,
         )
     return int(row["id"])
+
+
+async def delete_version(version_id: int) -> None:
+    if not database._pool:
+        raise RuntimeError("DB pool не инициализирован")
+    async with database._pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM prompt_versions WHERE id = $1",
+            version_id,
+        )

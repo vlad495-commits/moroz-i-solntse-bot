@@ -33,11 +33,12 @@ services:
   bot:
     image: ${BOT_IMAGE:-moroz-i-solntse-bot:local}
     ports: []
-    environment:
-      TELEGRAM_MODE: webhook
 
   worker:
     image: ${WORKER_IMAGE:-moroz-i-solntse-worker:local}
+    environment:
+      TECHNICAL_ALERT_CHAT_ID: ${TECHNICAL_ALERT_CHAT_ID:?set TECHNICAL_ALERT_CHAT_ID outside Git}
+      BUSINESS_ALERT_CHAT_ID: ${BUSINESS_ALERT_CHAT_ID:-}
 
   scheduler:
     image: ${SCHEDULER_IMAGE:-moroz-i-solntse-scheduler:local}
@@ -49,6 +50,30 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./ops:/ops:ro
       - pgbackups:/backups/postgres
+
+  backup:
+    image: ${BACKUP_IMAGE:-moroz-i-solntse-backup:local}
+    build:
+      context: .
+      dockerfile: ops/Dockerfile.backup
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER outside Git}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY outside Git}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ./ops:/ops:ro
+      - pgbackups:/backups/postgres
+    tmpfs:
+      - /tmp:size=${BACKUP_TMPFS_SIZE:-1g},mode=0700,uid=70,gid=70
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "/ops/run-backups.sh"]
 
   ops-check:
     profiles: ["ops"]

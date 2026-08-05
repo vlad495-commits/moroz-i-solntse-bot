@@ -1,5 +1,4 @@
 import ast
-import asyncio
 import importlib
 import logging
 from pathlib import Path
@@ -150,35 +149,44 @@ def test_logs_route_failure_log_is_safe(caplog):
     assert sentinel not in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_bot_polling_failure_is_retrieved_and_redacted(caplog):
+def test_webhook_runtime_configures_shared_file_logging():
+    source = (PROJECT_ROOT / "llm" / "webhook.py").read_text(encoding="utf-8")
+
+    assert "from logging_config import configure_logging" in source
+    assert "configure_logging()" in source
+
+
+def test_log_auto_refresh_keeps_missing_file_warning_visible():
+    source = (PROJECT_ROOT / "admin" / "templates" / "logs.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "if (!data.log_exists)" in source
+    assert "Файл логов недоступен" in source
+
+
+def test_file_logging_setup_reports_unavailable_handler(monkeypatch, capsys):
     root = logging.getLogger()
     previous_handlers = list(root.handlers)
     bot_module = importlib.import_module("bot")
-    root.handlers[:] = previous_handlers
-    sentinel = "https://api:token@telegram polling-user-sentinel"
-    loop = asyncio.get_running_loop()
-    previous_exception_handler = loop.get_exception_handler()
-    exception_contexts = []
-    loop.set_exception_handler(lambda _loop, context: exception_contexts.append(context))
 
-    async def fail():
-        raise RuntimeSentinelError(sentinel)
+    def fail_file_handler(*_args, **_kwargs):
+        raise PermissionError("private-path-sentinel")
 
+    monkeypatch.setattr(bot_module, "RotatingFileHandler", fail_file_handler)
     try:
-        task = asyncio.create_task(fail())
-        await asyncio.sleep(0)
-        reporter = getattr(bot_module, "_report_polling_task", None)
-        with caplog.at_level(logging.ERROR, logger=bot_module.logger.name):
-            if reporter is None:
-                task.exception()
-            else:
-                reporter(task)
-        await asyncio.sleep(0)
+        bot_module._setup_logging()
+        captured = capsys.readouterr()
     finally:
-        loop.set_exception_handler(previous_exception_handler)
+        root.handlers[:] = previous_handlers
 
-    assert reporter is not None
-    assert "polling_failed error_type=RuntimeSentinelError" in caplog.text
-    assert sentinel not in caplog.text
-    assert exception_contexts == []
+    assert "file_logging_unavailable error_type=PermissionError" in captured.err
+    assert "private-path-sentinel" not in captured.err
+
+
+@pytest.mark.asyncio
+async def test_legacy_polling_entrypoint_fails_closed_before_initialization():
+    bot_module = importlib.import_module("bot")
+
+    with pytest.raises(RuntimeError, match="polling is disabled"):
+        await bot_module.main()

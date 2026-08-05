@@ -16,6 +16,7 @@ if [ $# -ne 1 ]; then
 fi
 
 require POSTGRES_DB
+require POSTGRES_USER
 require RESTORE_TARGET_DB
 require BACKUP_ENCRYPTION_KEY
 
@@ -34,6 +35,6 @@ tmp_dump="$(mktemp)"
 trap 'rm -f "$tmp_dump"' EXIT
 
 openssl enc -d -aes-256-cbc -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY -in "$backup" -out "$tmp_dump"
-createdb "$RESTORE_TARGET_DB"
-pg_restore --clean --if-exists --no-owner --no-acl --dbname "$RESTORE_TARGET_DB" "$tmp_dump"
-psql --dbname "$RESTORE_TARGET_DB" --tuples-only --command "SELECT version_num FROM alembic_version;"
+createdb --username "$POSTGRES_USER" "$RESTORE_TARGET_DB"
+pg_restore --clean --if-exists --no-owner --no-acl --username "$POSTGRES_USER" --dbname "$RESTORE_TARGET_DB" "$tmp_dump"
+psql --username "$POSTGRES_USER" --dbname "$RESTORE_TARGET_DB" --tuples-only --command "SELECT version_num FROM alembic_version;"

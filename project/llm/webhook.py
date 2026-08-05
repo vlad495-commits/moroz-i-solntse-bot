@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request, Response
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 
+from logging_config import configure_logging
 from config import (
     BOT_PAUSE_KEY,
     BOT_PAUSED_REPLY,
@@ -43,10 +44,23 @@ from moroz.security.consent import (
 )
 
 
-CONSENT_PII_CALLBACK_DATA = "consent:t:pii"
-CONSENT_ADS_CALLBACK_DATA = "consent:t:ads"
+CONSENT_PII_CALLBACK_DATA = "consent:set:pii:on"
+CONSENT_PII_CLEAR_CALLBACK_DATA = "consent:set:pii:off"
+CONSENT_ADS_CALLBACK_DATA = "consent:set:ads:on"
+CONSENT_ADS_CLEAR_CALLBACK_DATA = "consent:set:ads:off"
 CONSENT_DONE_CALLBACK_DATA = "consent:done"
+_LEGACY_CONSENT_PII_CALLBACK_DATA = "consent:t:pii"
+_LEGACY_CONSENT_ADS_CALLBACK_DATA = "consent:t:ads"
+_CONSENT_CALLBACK_TARGETS = {
+    CONSENT_PII_CALLBACK_DATA: ("pii", True),
+    CONSENT_PII_CLEAR_CALLBACK_DATA: ("pii", False),
+    CONSENT_ADS_CALLBACK_DATA: ("ads", True),
+    CONSENT_ADS_CLEAR_CALLBACK_DATA: ("ads", False),
+    _LEGACY_CONSENT_PII_CALLBACK_DATA: ("pii", True),
+    _LEGACY_CONSENT_ADS_CALLBACK_DATA: ("ads", True),
+}
 HEALTH_TIMEOUT_SECONDS = 2.0
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -63,13 +77,21 @@ def _consent_keyboard(checked: set[str] | None = None) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=f"{pii_box} {CONSENT_PII_LABEL}",
-                    callback_data=CONSENT_PII_CALLBACK_DATA,
+                    callback_data=(
+                        CONSENT_PII_CLEAR_CALLBACK_DATA
+                        if "pii" in checked
+                        else CONSENT_PII_CALLBACK_DATA
+                    ),
                 )
             ],
             [
                 InlineKeyboardButton(
                     text=f"{ads_box} {CONSENT_ADS_LABEL}",
-                    callback_data=CONSENT_ADS_CALLBACK_DATA,
+                    callback_data=(
+                        CONSENT_ADS_CLEAR_CALLBACK_DATA
+                        if "ads" in checked
+                        else CONSENT_ADS_CALLBACK_DATA
+                    ),
                 )
             ],
             [
@@ -213,16 +235,19 @@ def create_app(
                 or callback.message.chat.type != ChatType.PRIVATE
             ):
                 return Response(status_code=200)
-            if callback.data in (CONSENT_PII_CALLBACK_DATA, CONSENT_ADS_CALLBACK_DATA):
-                kind = "pii" if callback.data == CONSENT_PII_CALLBACK_DATA else "ads"
+            target = _CONSENT_CALLBACK_TARGETS.get(callback.data)
+            if target is not None:
+                kind, enabled = target
                 checked = await consent_checked(
                     callback.message.chat.id,
                     callback.from_user.id,
                 )
-                if kind in checked:
-                    checked.remove(kind)
-                else:
+                if (kind in checked) == enabled:
+                    return Response(status_code=200)
+                if enabled:
                     checked.add(kind)
+                else:
+                    checked.remove(kind)
                 await save_consent_checked(
                     callback.message.chat.id,
                     callback.from_user.id,
@@ -235,6 +260,10 @@ def create_app(
                 )
                 return Response(status_code=200)
             if callback.data == CONSENT_DONE_CALLBACK_DATA:
+                if await webhook_app.state.consent_service.has_processing_consent(
+                    "telegram", str(callback.from_user.id)
+                ):
+                    return Response(status_code=200)
                 checked = await consent_checked(
                     callback.message.chat.id,
                     callback.from_user.id,

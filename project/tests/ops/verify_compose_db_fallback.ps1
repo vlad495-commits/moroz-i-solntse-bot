@@ -21,6 +21,7 @@ if ($LASTEXITCODE -ne 0) {
 $services = ($renderedConfig -join "`n" | ConvertFrom-Json).services
 $expectedEnvironment = @{
     worker = @(
+        "BUSINESS_ALERT_CHAT_ID",
         "CONTEXT_MESSAGES_LIMIT",
         "DATABASE_URL",
         "LLM_API_KEY",
@@ -40,6 +41,7 @@ $expectedEnvironment = @{
         "RESERVE_MODEL",
         "STAFF_TELEGRAM_CHAT_ID",
         "TELEGRAM_BOT_TOKEN",
+        "TECHNICAL_ALERT_CHAT_ID",
         "YCLIENTS_BASE_URL",
         "YCLIENTS_COMPANY_ID",
         "YCLIENTS_PARTNER_TOKEN",
@@ -109,7 +111,7 @@ foreach ($serviceProperty in $services.PSObject.Properties) {
 }
 
 $requiredRuntimeKeys = @{
-    bot = @("DATABASE_URL", "POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER", "TELEGRAM_MODE")
+    bot = @("DATABASE_URL", "POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")
     admin = @("DATABASE_URL", "POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")
 }
 foreach ($serviceName in $requiredRuntimeKeys.Keys) {

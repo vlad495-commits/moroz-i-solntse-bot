@@ -150,9 +150,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
             assert services[name]["environment"][key] == (
                 f"${{{key}:?set {key} outside Git}}"
             )
-    assert services["bot"]["environment"]["TELEGRAM_MODE"] == (
-        "${TELEGRAM_MODE:-webhook}"
-    )
+    assert "TELEGRAM_MODE" not in services["bot"]["environment"]
     assert "POLICY_URL" in services["bot"]["environment"]
     assert {
         "CONSENT_PROMPT",
@@ -174,6 +172,8 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
         "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN:-}",
         "STAFF_TELEGRAM_CHAT_ID": "${STAFF_TELEGRAM_CHAT_ID:-}",
+        "TECHNICAL_ALERT_CHAT_ID": "${TECHNICAL_ALERT_CHAT_ID:-}",
+        "BUSINESS_ALERT_CHAT_ID": "${BUSINESS_ALERT_CHAT_ID:-}",
         "LLM_API_KEY": "${LLM_API_KEY:-}",
         "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
         "LLM_BASE_URL": "${LLM_BASE_URL:-}",
@@ -327,14 +327,21 @@ def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
     assert "75" in scheduler_health
 
 
-def test_bot_healthcheck_supports_webhook_and_polling_modes():
+def test_bot_healthcheck_only_probes_webhook_runtime():
     health = " ".join(compose_services()["bot"]["healthcheck"]["test"])
 
-    assert "$${TELEGRAM_MODE:-webhook}" in health
     assert "http://127.0.0.1:8081/healthz" in health
     assert "/openapi.json" not in health
-    assert "/proc/1/cmdline" in health
-    assert "python bot.py" in health
+    assert "TELEGRAM_MODE" not in health
+    assert "python bot.py" not in health
+
+
+def test_bot_image_only_starts_webhook_runtime():
+    dockerfile = (ROOT / "llm/Dockerfile").read_text(encoding="utf-8")
+
+    assert 'CMD ["uvicorn", "webhook:app", "--host", "0.0.0.0", "--port", "8081"]' in dockerfile
+    assert "TELEGRAM_MODE" not in dockerfile
+    assert "python bot.py" not in dockerfile
 
 
 def test_admin_port_is_isolatable_without_changing_default_url():

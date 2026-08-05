@@ -43,8 +43,55 @@ def test_worker_reads_explicit_pipeline_settings_without_aggregate_settings():
 
 def test_worker_compose_forwards_staff_chat_id():
     compose = Path("/workspace/docker-compose.yml").read_text(encoding="utf-8")
+    production = Path("/workspace/docker-compose.prod.yml").read_text(encoding="utf-8")
 
     assert "STAFF_TELEGRAM_CHAT_ID: ${STAFF_TELEGRAM_CHAT_ID:-}" in compose
+    assert "TECHNICAL_ALERT_CHAT_ID: ${TECHNICAL_ALERT_CHAT_ID:-}" in compose
+    assert "BUSINESS_ALERT_CHAT_ID: ${BUSINESS_ALERT_CHAT_ID:-}" in compose
+    assert (
+        "TECHNICAL_ALERT_CHAT_ID: "
+        "${TECHNICAL_ALERT_CHAT_ID:?set TECHNICAL_ALERT_CHAT_ID outside Git}"
+        in production
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_task_failure_emits_runtime_alert_and_preserves_error():
+    task = QueueTask(
+        kind="process_message",
+        payload={"personal_data": "+7 999 000-00-00"},
+        idempotency_key="private-id",
+    )
+    primary = ConsumerFailure("private provider details")
+    handler = AsyncMock(side_effect=primary)
+    router = SimpleNamespace(emit=AsyncMock(return_value=True))
+
+    with pytest.raises(ConsumerFailure) as raised:
+        await worker_main._handle_with_alerts(task, handler, router)
+
+    assert raised.value is primary
+    router.emit.assert_awaited_once_with(
+        code="worker_task_failed",
+        subject="process_message",
+        severity="critical",
+        text="worker task failed error_type=ConsumerFailure",
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_alert_failure_does_not_mask_original_error(caplog):
+    task = QueueTask(kind="scheduler_job", payload={}, idempotency_key="private-id")
+    primary = ConsumerFailure("private provider details")
+    handler = AsyncMock(side_effect=primary)
+    router = SimpleNamespace(emit=AsyncMock(side_effect=RuntimeError("chat secret")))
+
+    with pytest.raises(ConsumerFailure) as raised:
+        await worker_main._handle_with_alerts(task, handler, router)
+
+    assert raised.value is primary
+    assert "worker_alert_failed error_type=RuntimeError" in caplog.text
+    assert "chat secret" not in caplog.text
+    assert "private provider details" not in caplog.text
 
 
 class FakeQueue:

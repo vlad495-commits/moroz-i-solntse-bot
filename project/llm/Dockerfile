@@ -24,9 +24,9 @@ COPY src/ /app/src/
 RUN mkdir -p /app/logs
 
 # Non-root system user без home
-RUN groupadd --system appuser && \
-    useradd --system --gid appuser --no-create-home appuser && \
+RUN groupadd --system --gid 10001 appuser && \
+    useradd --system --uid 10001 --gid 10001 --no-create-home appuser && \
     chown -R appuser:appuser /app
 USER appuser
 
-CMD ["sh", "-c", "if [ \"${TELEGRAM_MODE:-webhook}\" = polling ]; then exec python bot.py; else exec uvicorn webhook:app --host 0.0.0.0 --port 8081; fi"]
+CMD ["uvicorn", "webhook:app", "--host", "0.0.0.0", "--port", "8081"]
