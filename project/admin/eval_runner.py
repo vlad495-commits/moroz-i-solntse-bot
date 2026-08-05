@@ -7,7 +7,6 @@
 - Двухступенчатая проверка: regex/keywords → если не прошёл → LLM-judge.
 """
 
-import asyncio
 import json
 import logging
 import math
@@ -21,7 +20,7 @@ from openai import AsyncOpenAI
 import eval_database as evdb
 from moroz.security.eval_gate import (
     SecurityEvalResult,
-    SecurityGateResult,
+    SecurityGateResult as SecurityGateResult,
     is_critical_category,
     security_gate,
 )
