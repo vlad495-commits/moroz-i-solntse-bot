@@ -1,8 +1,8 @@
 # Аудит тестирования Moroz i Solntse Bot
 
-Дата: 2026-08-05 (Europe/Moscow)  
-Режим: read-only аудит; исправления, деплой, push и внешние мутации не выполнялись.  
-Срез кода: `91012dd` (`main`, рабочий task находится в detached HEAD; локальный `main` указывает на тот же commit).  
+Дата: 2026-08-05 (Europe/Moscow)
+Режим: read-only аудит; исправления, деплой, push и внешние мутации не выполнялись.
+Срез кода: `91012dd` (`main`, рабочий task находится в detached HEAD; локальный `main` указывает на тот же commit).
 Рабочее дерево до отчёта: чистое. Сам отчёт лежит в игнорируемом корневом `tmp/`.
 
 ## Короткий итог
@@ -200,4 +200,3 @@
 7. запретить небезопасный polling либо провести его через общий privacy/durable pipeline.
 
 После локального TDD и полного Docker gate — отдельная staging-задача на smoke/load/failure, real restore и test alert delivery. YCLIENTS mutation smoke без новой причины не повторять.
-
