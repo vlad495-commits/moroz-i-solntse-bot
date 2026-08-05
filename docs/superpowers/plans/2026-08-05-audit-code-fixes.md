@@ -105,4 +105,3 @@
 - [ ] Inspect `git diff --check`, status, prompt-file diff and changed-file scope; system prompt must be unchanged.
 - [ ] Dispatch a read-only independent reviewer from base SHA; fix every Critical/Important finding and re-run affected tests.
 - [ ] Create local logical commits only after fresh verification; do not push or deploy.
-
