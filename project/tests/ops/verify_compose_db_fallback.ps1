@@ -9,18 +9,23 @@ $env:RABBITMQ_USER = "task5_$suffix"
 $env:RABBITMQ_PASSWORD = [guid]::NewGuid().ToString("N")
 $env:RABBITMQ_URL = "amqp://$($env:RABBITMQ_USER):$($env:RABBITMQ_PASSWORD)@rabbitmq:5672/"
 
-docker compose --env-file ../.env --profile yclients-smoke config --quiet
+docker compose --env-file ../.env --profile yclients-readonly --profile yclients-smoke config --quiet
 if ($LASTEXITCODE -ne 0) {
     throw "Canonical Compose config rejected PostgreSQL-parts fallback"
 }
 
-$renderedConfig = docker compose --env-file ../.env --profile yclients-smoke config --format json
+$renderedConfig = docker compose --env-file ../.env --profile yclients-readonly --profile yclients-smoke config --format json
 if ($LASTEXITCODE -ne 0) {
     throw "Canonical Compose config could not be rendered as JSON"
 }
 $services = ($renderedConfig -join "`n" | ConvertFrom-Json).services
 $expectedEnvironment = @{
     worker = @(
+        "BOOKING_CONFIRMATION_TTL_SECONDS",
+        "BOOKING_HORIZON_DAYS",
+        "BOOKING_INTERACTIONS_ENABLED",
+        "BOOKING_MODE",
+        "BOOKING_ROUTER_CONFIDENCE",
         "CONTEXT_MESSAGES_LIMIT",
         "DATABASE_URL",
         "LLM_API_KEY",
@@ -43,6 +48,8 @@ $expectedEnvironment = @{
         "YCLIENTS_BASE_URL",
         "YCLIENTS_COMPANY_ID",
         "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
         "YCLIENTS_TIMEOUT_SECONDS",
         "YCLIENTS_TIMEZONE",
         "YCLIENTS_USER_TOKEN"
@@ -50,14 +57,26 @@ $expectedEnvironment = @{
     "yclients-smoke" = @(
         "YCLIENTS_BASE_URL",
         "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_ENVIRONMENT_LABEL",
         "YCLIENTS_PARTNER_TOKEN",
         "YCLIENTS_SANDBOX_CONSENT",
         "YCLIENTS_TEST_NAME",
         "YCLIENTS_TEST_PHONE",
         "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_TEST_WINDOW_DAYS",
         "YCLIENTS_TIMEOUT_SECONDS",
         "YCLIENTS_TIMEZONE",
         "YCLIENTS_USER_TOKEN"
+    )
+    "yclients-readonly" = @(
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
+        "YCLIENTS_TIMEOUT_SECONDS",
+        "YCLIENTS_TIMEZONE"
     )
     redis = @("REDIS_PASSWORD")
     postgres = @("POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER")
@@ -84,10 +103,14 @@ $yclientsKeys = @(
     "YCLIENTS_BASE_URL",
     "YCLIENTS_COMPANY_ID",
     "YCLIENTS_PARTNER_TOKEN",
+    "YCLIENTS_ENVIRONMENT_LABEL",
+    "YCLIENTS_SERVICE_ALLOWLIST",
+    "YCLIENTS_STAFF_ALLOWLIST",
     "YCLIENTS_SANDBOX_CONSENT",
     "YCLIENTS_TEST_NAME",
     "YCLIENTS_TEST_PHONE",
     "YCLIENTS_TEST_SERVICE_ID",
+    "YCLIENTS_TEST_WINDOW_DAYS",
     "YCLIENTS_TIMEOUT_SECONDS",
     "YCLIENTS_TIMEZONE",
     "YCLIENTS_USER_TOKEN"
@@ -98,7 +121,7 @@ foreach ($serviceProperty in $services.PSObject.Properties) {
     if ($service.PSObject.Properties.Name -contains "env_file") {
         throw "Rendered Compose service still contains env_file: $serviceName"
     }
-    if ($serviceName -notin @("worker", "yclients-smoke")) {
+    if ($serviceName -notin @("worker", "yclients-readonly", "yclients-smoke")) {
         $leakedKeys = @($service.environment.PSObject.Properties.Name | Where-Object {
             $_ -in $yclientsKeys
         })

@@ -29,7 +29,7 @@ async def database(migrated_database_url):
 
 @pytest.fixture
 def repo(database):
-    return BookingRepository(database)
+    return BookingRepository(database, staff_chat_id="900001")
 
 
 @pytest.fixture
@@ -54,6 +54,8 @@ def confirmed_booking(*, status="confirmed"):
         customer_id="customer-7",
         booking_key=BOOKING_KEY,
         slot_id="slot-9",
+        service_ids=("service-1", "service-2"),
+        staff_id="staff-7",
         starts_at=datetime(2026, 7, 25, 14, 0, tzinfo=UTC),
         status=status,
     )
@@ -150,6 +152,8 @@ async def test_confirm_atomically_persists_terminal_scenario_and_booking(
     snapshot = json.loads(row["snapshot"])
     assert snapshot["external_id"] == booking.external_id
     assert snapshot["booking_key"] == str(booking.booking_key)
+    assert snapshot["service_ids"] == list(booking.service_ids)
+    assert snapshot["staff_id"] == booking.staff_id
     assert snapshot["starts_at"] == booking.starts_at.isoformat()
 
 
@@ -322,20 +326,16 @@ async def test_escalate_stores_error_and_admin_attention_event(repo, scenario):
 
     await repo.escalate(
         escalated,
-        "provider_outcome_unknown",
+        "booking_outcome_unknown",
         {"operation": "create", "attempts": [1, 2]},
     )
 
     stored = await repo.get_scenario(scenario.id)
     events = await repo.list_events(scenario.id)
     assert stored.phase == "escalated"
-    assert stored.error_code == "provider_outcome_unknown"
+    assert stored.error_code == "booking_outcome_unknown"
     assert events[-1].event_type == "admin_attention_required"
-    assert events[-1].payload == {
-        "operation": "create",
-        "attempts": (1, 2),
-        "error_code": "provider_outcome_unknown",
-    }
+    assert events[-1].payload == {"error_code": "booking_outcome_unknown"}
 
 
 async def test_cancellation_upserts_snapshot_resolvable_by_earlier_scenario(

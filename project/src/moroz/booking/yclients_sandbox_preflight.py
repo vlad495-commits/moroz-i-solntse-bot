@@ -1,0 +1,284 @@
+import asyncio
+import json
+import os
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
+from uuid import UUID, uuid4
+
+from moroz.booking.models import BookingTemporaryError, Slot, SlotQuery
+from moroz.booking.yclients import YclientsAvailabilityAdapter
+from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient, YclientsTransportError
+
+
+_MAX_RECORD_PAGES = 20
+_PAGE_SIZE = 100
+_OWNERSHIP_FIELD_CODES = {"moroz_booking_key", "moroz_customer_id"}
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxPreflightSettings:
+    config: YclientsConfig = field(repr=False)
+    service_id: str
+    window_days: int
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> "SandboxPreflightSettings":
+        if env.get("YCLIENTS_ENVIRONMENT_LABEL", "") != "sandbox":
+            raise ValueError("YCLIENTS_ENVIRONMENT_LABEL=sandbox is required")
+        service_id = env.get("YCLIENTS_TEST_SERVICE_ID", "").strip()
+        window = env.get("YCLIENTS_TEST_WINDOW_DAYS", "").strip()
+        if not service_id.isdigit() or int(service_id) <= 0 or str(int(service_id)) != service_id:
+            raise ValueError("YCLIENTS_TEST_SERVICE_ID must be a positive integer")
+        if not window.isdigit() or not 1 <= int(window) <= 14:
+            raise ValueError("YCLIENTS_TEST_WINDOW_DAYS must be an integer from 1 to 14")
+        return cls(YclientsConfig.from_env(env), service_id, int(window))
+
+
+@dataclass(frozen=True, slots=True)
+class PreflightResult:
+    exit_code: int
+    summary: dict[str, object]
+
+
+class PreflightBackend(Protocol):
+    async def list_record_custom_fields(self) -> int: ...
+    async def list_services(self, service_id: str) -> int: ...
+    async def list_slots(self, query: SlotQuery) -> list[Slot]: ...
+    async def reconcile_booking_key(
+        self, booking_key: UUID, starts_at: datetime, ends_at: datetime
+    ) -> dict[str, int]: ...
+
+
+class YclientsPreflightBackend:
+    """Concrete read-only transport for the sandbox records preflight."""
+
+    def __init__(
+        self,
+        config: YclientsConfig,
+        *,
+        http: YclientsHttpClient | None = None,
+    ) -> None:
+        self._config = config
+        self._http = http or YclientsHttpClient(config)
+        self._availability = YclientsAvailabilityAdapter(config, http=self._http)
+
+    async def list_services(self, service_id: str) -> int:
+        data = await self._read(
+            f"/api/v1/book_services/{self._config.company_id}", user_auth=False
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("services"), list):
+            raise BookingTemporaryError()
+        services = data["services"]
+        if any(not isinstance(item, dict) for item in services):
+            raise BookingTemporaryError()
+        if sum(str(item.get("id")) == service_id for item in services) != 1:
+            raise BookingTemporaryError()
+        return len(services)
+
+    async def list_record_custom_fields(self) -> int:
+        data = await self._read(
+            f"/api/v1/custom_fields/record/{self._config.company_id}",
+            user_auth=True,
+        )
+        if not isinstance(data, list):
+            raise BookingTemporaryError()
+        matches: dict[str, Mapping[str, object]] = {}
+        for wrapper in data:
+            if not isinstance(wrapper, Mapping):
+                raise BookingTemporaryError()
+            field = wrapper.get("custom_field")
+            if not isinstance(field, Mapping):
+                raise BookingTemporaryError()
+            code = field.get("code")
+            if code not in _OWNERSHIP_FIELD_CODES:
+                continue
+            if not isinstance(code, str) or code in matches:
+                raise BookingTemporaryError()
+            matches[code] = field
+        if set(matches) != _OWNERSHIP_FIELD_CODES:
+            raise BookingTemporaryError()
+        for field in matches.values():
+            field_type = field.get("type")
+            if (
+                not isinstance(field_type, Mapping)
+                or field_type.get("code") != "text"
+                or field.get("user_can_edit") is not True
+                or field.get("show_in_ui") is not False
+            ):
+                raise BookingTemporaryError()
+        return len(matches)
+
+    async def list_slots(self, query: SlotQuery) -> list[Slot]:
+        return await self._availability.list_slots(query)
+
+    async def reconcile_booking_key(
+        self, booking_key: UUID, starts_at: datetime, ends_at: datetime
+    ) -> dict[str, int]:
+        matches = 0
+        active_matches = 0
+        for page in range(1, _MAX_RECORD_PAGES + 1):
+            data = await self._read(
+                f"/api/v1/records/{self._config.company_id}",
+                user_auth=True,
+                query=(
+                    ("page", page),
+                    ("count", _PAGE_SIZE),
+                    ("start_date", starts_at.date().isoformat()),
+                    ("end_date", ends_at.date().isoformat()),
+                    ("with_deleted", 1),
+                ),
+            )
+            if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+                raise BookingTemporaryError()
+            for item in data:
+                if "custom_fields" not in item:
+                    continue
+                fields = item["custom_fields"]
+                if fields == []:
+                    continue
+                if not isinstance(fields, Mapping):
+                    raise BookingTemporaryError()
+                if fields.get("moroz_booking_key") != str(booking_key):
+                    continue
+                if fields.get("moroz_customer_id") != f"smoke-{booking_key.hex}":
+                    raise BookingTemporaryError()
+                deleted = item.get("deleted")
+                if type(deleted) is not bool:
+                    raise BookingTemporaryError()
+                matches += 1
+                if not deleted:
+                    active_matches += 1
+            if len(data) < _PAGE_SIZE:
+                return {"matches": matches, "active_matches": active_matches}
+        raise BookingTemporaryError()
+
+    async def _read(
+        self,
+        path: str,
+        *,
+        user_auth: bool,
+        query: tuple[tuple[str, object], ...] = (),
+    ) -> object:
+        try:
+            response = await self._http.request(
+                "GET", path, query=query, user_auth=user_auth
+            )
+        except YclientsTransportError as error:
+            raise BookingTemporaryError() from error
+        if response.status != 200:
+            raise BookingTemporaryError()
+        try:
+            envelope = json.loads(response.body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise BookingTemporaryError() from error
+        if (
+            not isinstance(envelope, dict)
+            or envelope.get("success") is not True
+            or "data" not in envelope
+        ):
+            raise BookingTemporaryError()
+        return envelope["data"]
+
+
+class _PreflightFailure(Exception):
+    pass
+
+
+async def run_preflight(
+    settings: SandboxPreflightSettings,
+    *,
+    backend: PreflightBackend | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    uuid_factory: Callable[[], UUID] = uuid4,
+) -> PreflightResult:
+    summary = _empty_summary()
+    try:
+        actual = backend or YclientsPreflightBackend(settings.config)
+        instant = now()
+        summary["fields_read"] = await actual.list_record_custom_fields()
+        if summary["fields_read"] != len(_OWNERSHIP_FIELD_CODES):
+            raise _PreflightFailure("record_field_preflight_mismatch")
+        summary["services_read"] = await actual.list_services(settings.service_id)
+        slots = await actual.list_slots(SlotQuery(
+            service_ids=(settings.service_id,),
+            starts_after=instant,
+            starts_before=instant + timedelta(days=settings.window_days),
+        ))
+        first, second = _two_distinct_future_slots(slots, instant)
+        summary["slots_read"] = len(slots)
+        summary["staff_read"] = len({slot.staff_id for slot in slots})
+        records = await actual.reconcile_booking_key(
+            uuid_factory(),
+            min(first.starts_at, second.starts_at),
+            max(first.starts_at, second.starts_at),
+        )
+        if not _is_empty_reconciliation(records):
+            raise _PreflightFailure("record_read_preflight_mismatch")
+        summary.update(records)
+        summary["success"] = True
+        return PreflightResult(0, summary)
+    except _PreflightFailure as error:
+        summary["error"] = str(error)
+    except BookingTemporaryError:
+        summary["error"] = "definite_provider_failure"
+    except Exception:
+        summary["error"] = "unexpected_failure"
+    return PreflightResult(1, summary)
+
+
+def _two_distinct_future_slots(slots: list[Slot], now: datetime) -> tuple[Slot, Slot]:
+    future = sorted(
+        (slot for slot in slots if slot.starts_at > now),
+        key=lambda slot: (slot.starts_at, slot.staff_id, slot.id),
+    )
+    for index, first in enumerate(future):
+        for second in future[index + 1:]:
+            if (
+                second.id != first.id
+                and second.starts_at
+                >= first.starts_at + timedelta(minutes=first.duration_minutes)
+            ):
+                return first, second
+    raise _PreflightFailure("insufficient_distinct_future_slots")
+
+
+def _is_empty_reconciliation(records: dict[str, int]) -> bool:
+    return (
+        set(records) == {"matches", "active_matches"}
+        and type(records["matches"]) is int
+        and type(records["active_matches"]) is int
+        and records == {"matches": 0, "active_matches": 0}
+    )
+
+
+def _empty_summary() -> dict[str, object]:
+    return {
+        "success": False,
+        "fields_read": 0,
+        "services_read": 0,
+        "staff_read": 0,
+        "slots_read": 0,
+        "matches": 0,
+        "active_matches": 0,
+        "error": None,
+    }
+
+
+def main() -> int:
+    try:
+        settings = SandboxPreflightSettings.from_env(os.environ)
+    except Exception:
+        result = PreflightResult(1, {**_empty_summary(), "error": "configuration_error"})
+    else:
+        try:
+            result = asyncio.run(run_preflight(settings))
+        except Exception:
+            result = PreflightResult(1, {**_empty_summary(), "error": "unexpected_failure"})
+    print(json.dumps(result.summary, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
+    return result.exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -25,6 +25,8 @@ def test_external_booking_rejects_invalid_scheduled_end_at(scheduled_end_at):
             customer_id="customer-1",
             booking_key=uuid4(),
             slot_id="slot-1",
+            service_ids=("service-1",),
+            staff_id="staff-1",
             starts_at=STARTS_AT,
             status="confirmed",
             scheduled_end_at=scheduled_end_at,
@@ -37,9 +39,14 @@ def test_external_booking_accepts_aware_scheduled_end_after_start():
         customer_id="customer-1",
         booking_key=uuid4(),
         slot_id="slot-1",
+        service_ids=["service-1", "service-2"],
+        staff_id="staff-7",
         starts_at=STARTS_AT,
         status="confirmed",
         scheduled_end_at=STARTS_AT + timedelta(minutes=1),
     )
 
     assert booking.scheduled_end_at == STARTS_AT + timedelta(minutes=1)
+    assert booking.service_ids == ("service-1", "service-2")
+    assert booking.staff_id == "staff-7"
+    assert isinstance(booking.service_ids, tuple)

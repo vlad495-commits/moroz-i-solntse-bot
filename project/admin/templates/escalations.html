@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Эскалации{% endblock %}
+{% block content %}
+<h1>Открытые эскалации</h1>
+{% for escalation in escalations %}
+<section class="card">
+    <h2>{{ escalation.reason_code }}</h2>
+    <p>Сценарий: {{ escalation.scenario_id or '—' }}</p>
+    {% if escalation.messages %}
+    <h3>Новые сообщения клиента</h3>
+    <ul>
+        {% for message in escalation.messages %}<li>{{ message }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="{{ request.scope.get('root_path', '') }}/escalations/{{ escalation.id }}/reply">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <textarea name="text" maxlength="4000" required></textarea>
+        <button type="submit">Ответить клиенту</button>
+    </form>
+    <form method="post" action="{{ request.scope.get('root_path', '') }}/escalations/{{ escalation.id }}/resolve">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input name="reason" maxlength="4000" required>
+        <button type="submit">Закрыть эскалацию и вернуть бота</button>
+    </form>
+</section>
+{% else %}
+<p>Открытых эскалаций нет.</p>
+{% endfor %}
+{% endblock %}

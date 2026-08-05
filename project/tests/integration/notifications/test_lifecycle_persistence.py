@@ -58,6 +58,8 @@ def booking(*, booking_key, status="confirmed", starts_at=STARTS_AT, scheduled_e
         customer_id="customer-7",
         booking_key=booking_key,
         slot_id="slot-1",
+        service_ids=("service-1", "service-2"),
+        staff_id="staff-7",
         starts_at=starts_at,
         status=status,
         scheduled_end_at=scheduled_end_at,
@@ -82,7 +84,7 @@ async def seed_booking(database, local):
             INSERT INTO bookings
                 (id, last_scenario_id, external_id, customer_id, booking_key,
                  slot_id, starts_at, scheduled_end_at, status, snapshot)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
             """,
             uuid4(),
             scenario_id,
@@ -93,6 +95,10 @@ async def seed_booking(database, local):
             local.starts_at,
             local.scheduled_end_at,
             local.status,
+            json.dumps({
+                "service_ids": list(local.service_ids),
+                "staff_id": local.staff_id,
+            }),
         )
 
 
@@ -122,7 +128,10 @@ async def test_refresh_persists_completed_status_and_scheduled_end(database):
         )
     assert row["status"] == "completed"
     assert row["scheduled_end_at"] == END_AT
-    assert json.loads(row["snapshot"])["status"] == "completed"
+    snapshot = json.loads(row["snapshot"])
+    assert snapshot["status"] == "completed"
+    assert snapshot["service_ids"] == ["service-1", "service-2"]
+    assert snapshot["staff_id"] == "staff-7"
 
 
 async def test_refresh_does_not_overwrite_concurrent_cancel(database):

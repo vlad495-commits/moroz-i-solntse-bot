@@ -1,13 +1,40 @@
 import json
+from collections import Counter
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 import asyncpg
 
 from moroz.booking.models import BookingEvent, BookingScenario, ExternalBooking
 from moroz.common.db import Database
+from moroz.messaging.repository import MessageRepository
 from moroz.notifications.planner import plan_booking_notifications
+
+
+_BOOKING_ESCALATION_REASON_CODES = frozenset(
+    {
+        "booking_temporarily_unavailable",
+        "booking_outcome_unknown",
+        "late_booking_change",
+        "booking_identity_unconfirmed",
+        "partial_service_change_unsupported",
+    }
+)
+_ESCALATABLE_SCENARIO_PHASES = frozenset(
+    {"collecting", "awaiting_confirmation", "executing"}
+)
+_TERMINAL_SCENARIO_PHASES = frozenset({"failed", "confirmed", "escalated"})
+
+
+def _validate_booking_escalation_reason(error_code: object) -> str:
+    if not isinstance(error_code, str) or error_code not in (
+        _BOOKING_ESCALATION_REASON_CODES
+    ):
+        raise ValueError("unsupported booking escalation reason code")
+    return error_code
 
 
 def _thaw_json(value: object) -> object:
@@ -26,9 +53,77 @@ def _load_json(value: object) -> object:
     return json.loads(value) if isinstance(value, str) else value
 
 
+def _reconciliation_snapshot_matches(
+    scenario: BookingScenario,
+    actual: ExternalBooking,
+    expected_booking_key: UUID,
+) -> bool:
+    state = scenario.state
+    raw_services = state.get("selected_service_ids")
+    if scenario.kind == "cancel":
+        raw_staff = state.get("old_staff_id")
+        raw_slot = state.get("original_slot_id")
+        raw_start = state.get("starts_at")
+        raw_end = state.get("old_scheduled_end_at")
+    else:
+        raw_staff = state.get("actual_staff_id")
+        raw_slot = state.get("selected_slot_id")
+        raw_start = (
+            state.get("selected_new_starts_at")
+            if scenario.kind == "reschedule"
+            else state.get("starts_at")
+        )
+        raw_duration = state.get("duration_minutes")
+        raw_end = None
+    if (
+        not isinstance(raw_services, tuple)
+        or not raw_services
+        or not all(isinstance(item, str) and item for item in raw_services)
+        or not isinstance(raw_staff, str)
+        or not raw_staff
+        or not isinstance(raw_slot, str)
+        or not raw_slot
+        or not isinstance(raw_start, str)
+    ):
+        return False
+    try:
+        starts_at = datetime.fromisoformat(raw_start)
+        if scenario.kind == "cancel":
+            if not isinstance(raw_end, str):
+                return False
+            scheduled_end_at = datetime.fromisoformat(raw_end)
+        else:
+            if not isinstance(raw_duration, int) or raw_duration <= 0:
+                return False
+            scheduled_end_at = starts_at + timedelta(minutes=raw_duration)
+    except ValueError:
+        return False
+    if (
+        starts_at.tzinfo is None
+        or starts_at.utcoffset() is None
+        or scheduled_end_at.tzinfo is None
+        or scheduled_end_at.utcoffset() is None
+        or scheduled_end_at <= starts_at
+    ):
+        return False
+    expected_status = "cancelled" if scenario.kind == "cancel" else "confirmed"
+    return (
+        actual.customer_id == scenario.customer_id
+        and actual.booking_key == expected_booking_key
+        and actual.slot_id == raw_slot
+        and Counter(actual.service_ids) == Counter(raw_services)
+        and actual.staff_id == raw_staff
+        and actual.starts_at == starts_at
+        and actual.scheduled_end_at == scheduled_end_at
+        and actual.status == expected_status
+    )
+
+
 class BookingRepository:
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, *, staff_chat_id: str = ""):
         self._database = database
+        self._staff_chat_id = staff_chat_id.strip()
+        self._messages = MessageRepository(database)
 
     @asynccontextmanager
     async def serialized_scenario(
@@ -147,6 +242,7 @@ class BookingRepository:
         error_code: str,
         payload: Mapping[str, object] | None = None,
     ) -> None:
+        error_code = _validate_booking_escalation_reason(error_code)
         async with self._database.acquire() as connection:
             async with connection.transaction():
                 await self._lock_scenario(connection, scenario.id)
@@ -160,6 +256,144 @@ class BookingRepository:
         booking: ExternalBooking,
     ) -> None:
         await self._complete(scenario, booking, "booking_cancelled")
+
+    async def resolve_reconciled_booking(
+        self,
+        scenario_id: UUID,
+        booking: ExternalBooking,
+        expected_booking_key: UUID,
+    ) -> bool:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._lock_scenario(connection, scenario_id)
+                row = await connection.fetchrow(
+                    "SELECT * FROM booking_scenarios WHERE id = $1",
+                    scenario_id,
+                )
+                scenario = self._scenario_from_row(row)
+                if scenario.phase == "confirmed":
+                    stored = await self._get_local_booking_with_connection(
+                        connection, scenario_id
+                    )
+                    return (
+                        stored == booking
+                        and await self._has_successful_reconciliation_with_connection(
+                            connection, scenario_id
+                        )
+                    )
+                if (
+                    scenario.phase != "escalated"
+                    or scenario.error_code != "booking_outcome_unknown"
+                    or not self._scenario_uses_booking_key(
+                        scenario, expected_booking_key
+                    )
+                    or not _reconciliation_snapshot_matches(
+                        scenario, booking, expected_booking_key
+                    )
+                ):
+                    return False
+                escalation = await connection.fetchrow(
+                    """
+                    SELECT e.id
+                    FROM escalations e
+                    JOIN human_mode h
+                      ON h.escalation_id=e.id
+                     AND h.customer_id=e.customer_id
+                    WHERE e.source='booking'
+                      AND e.status='open'
+                      AND e.customer_id=$1
+                      AND e.payload->>'scenario_id'=$2
+                      AND h.enabled=true
+                    FOR UPDATE OF e, h
+                    """,
+                    scenario.customer_id,
+                    str(scenario.id),
+                )
+                if escalation is None:
+                    return False
+                terminal = replace(
+                    scenario,
+                    phase="confirmed",
+                    error_code=None,
+                )
+                await self._complete_with_connection(
+                    connection,
+                    terminal,
+                    booking,
+                    (
+                        "booking_cancelled"
+                        if scenario.kind == "cancel"
+                        else "booking_confirmed"
+                    ),
+                )
+                await connection.execute(
+                    """
+                    UPDATE escalations
+                    SET status='resolved', resolved_at=now(),
+                        resolved_by='booking_reconciler',
+                        resolution_reason='booking_reconciled_exact_match'
+                    WHERE id=$1 AND status='open'
+                    """,
+                    escalation["id"],
+                )
+                await connection.execute(
+                    """
+                    UPDATE human_mode
+                    SET enabled=false
+                    WHERE customer_id=$1 AND escalation_id=$2 AND enabled=true
+                    """,
+                    scenario.customer_id,
+                    escalation["id"],
+                )
+                await self._insert_event(
+                    connection,
+                    scenario.id,
+                    "booking_reconciled",
+                    {"reason_code": "booking_reconciled_exact_match"},
+                )
+                return True
+
+    async def has_successful_reconciliation(self, scenario_id: UUID) -> bool:
+        async with self._database.acquire() as connection:
+            return await self._has_successful_reconciliation_with_connection(
+                connection, scenario_id
+            )
+
+    @staticmethod
+    async def _has_successful_reconciliation_with_connection(
+        connection: asyncpg.Connection,
+        scenario_id: UUID,
+    ) -> bool:
+        return bool(
+            await connection.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM booking_events
+                    WHERE scenario_id=$1
+                      AND event_type='booking_reconciled'
+                      AND payload->>'reason_code'='booking_reconciled_exact_match'
+                )
+                """,
+                scenario_id,
+            )
+        )
+
+    @staticmethod
+    def _scenario_uses_booking_key(
+        scenario: BookingScenario,
+        expected_booking_key: UUID,
+    ) -> bool:
+        if expected_booking_key.int == 0:
+            return False
+        if scenario.kind == "create":
+            return scenario.id == expected_booking_key
+        raw_booking_key = scenario.state.get("booking_key")
+        if not isinstance(raw_booking_key, str) or not raw_booking_key:
+            return False
+        try:
+            return UUID(raw_booking_key) == expected_booking_key
+        except ValueError:
+            return False
 
     async def get_local_booking(
         self,
@@ -178,7 +412,7 @@ class BookingRepository:
         row = await connection.fetchrow(
             """
             SELECT b.external_id, b.customer_id, b.booking_key, b.slot_id,
-                   b.starts_at, b.scheduled_end_at, b.status
+                   b.starts_at, b.scheduled_end_at, b.status, b.snapshot
             FROM booking_scenarios AS s
             JOIN bookings AS b
               ON b.external_id = s.state->>'external_id'
@@ -188,11 +422,14 @@ class BookingRepository:
         )
         if row is None:
             return None
+        snapshot = _load_json(row["snapshot"])
         return ExternalBooking(
             external_id=row["external_id"],
             customer_id=row["customer_id"],
             booking_key=row["booking_key"],
             slot_id=row["slot_id"],
+            service_ids=tuple(snapshot["service_ids"]),
+            staff_id=snapshot["staff_id"],
             starts_at=row["starts_at"],
             status=row["status"],
             scheduled_end_at=row["scheduled_end_at"],
@@ -270,6 +507,8 @@ class BookingRepository:
             "customer_id": booking.customer_id,
             "booking_key": str(booking.booking_key),
             "slot_id": booking.slot_id,
+            "service_ids": list(booking.service_ids),
+            "staff_id": booking.staff_id,
             "starts_at": booking.starts_at.isoformat(),
             "scheduled_end_at": (
                 booking.scheduled_end_at.isoformat()
@@ -400,8 +639,30 @@ class BookingRepository:
         error_code: str,
         payload: Mapping[str, object] | None = None,
     ) -> None:
-        event_payload = dict(_thaw_json(payload or {}))
-        event_payload["error_code"] = error_code
+        current = await connection.fetchrow(
+            """
+            SELECT phase, customer_id
+            FROM booking_scenarios
+            WHERE id = $1
+            """,
+            scenario.id,
+        )
+        if current is None:
+            raise KeyError(f"booking scenario {scenario.id} not found")
+        current_phase = current["phase"]
+        if current_phase in _TERMINAL_SCENARIO_PHASES:
+            return
+        if current_phase not in _ESCALATABLE_SCENARIO_PHASES:
+            raise RuntimeError("unsupported booking scenario phase")
+        if current["customer_id"] != scenario.customer_id:
+            raise RuntimeError("booking scenario ownership conflict")
+        if not self._staff_chat_id:
+            raise RuntimeError("STAFF_TELEGRAM_CHAT_ID is not configured")
+        scenario = replace(
+            scenario,
+            phase="escalated",
+            error_code=error_code,
+        )
         await self._update_scenario(
             connection,
             scenario,
@@ -411,7 +672,76 @@ class BookingRepository:
             connection,
             scenario.id,
             "admin_attention_required",
-            event_payload,
+            {"error_code": error_code},
+        )
+        payload_json = _dump_json({"scenario_id": str(scenario.id)})
+        escalation_id = await connection.fetchval(
+            """
+            SELECT id
+            FROM escalations
+            WHERE source = 'booking'
+              AND status = 'open'
+              AND customer_id = $1
+              AND payload->>'scenario_id' = $2
+            FOR UPDATE
+            """,
+            scenario.customer_id,
+            str(scenario.id),
+        )
+        if escalation_id is None:
+            escalation_id = uuid4()
+            await connection.execute(
+                """
+                INSERT INTO escalations
+                    (id, source, customer_id, status, reason_code, payload)
+                VALUES ($1, 'booking', $2, 'open', $3, $4::jsonb)
+                """,
+                escalation_id,
+                scenario.customer_id,
+                error_code,
+                payload_json,
+            )
+        else:
+            await connection.execute(
+                "UPDATE escalations SET reason_code = $2 WHERE id = $1",
+                escalation_id,
+                error_code,
+            )
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id, enabled_at)
+            VALUES ($1, true, $2, $3, now())
+            ON CONFLICT (customer_id) DO UPDATE SET
+                enabled = true,
+                reason_code = EXCLUDED.reason_code,
+                escalation_id = EXCLUDED.escalation_id,
+                enabled_at = EXCLUDED.enabled_at,
+                expires_at = NULL
+            """,
+            scenario.customer_id,
+            error_code,
+            escalation_id,
+        )
+        await self._messages.enqueue_outbound_in_transaction(
+            connection,
+            channel="telegram",
+            chat_id=scenario.customer_id,
+            text=(
+                "Не удалось надёжно завершить действие с записью. "
+                "Администратор проверит ситуацию и ответит Вам."
+            ),
+            idempotency_key=f"booking_escalation:{scenario.id}:client",
+        )
+        await self._messages.enqueue_outbound_in_transaction(
+            connection,
+            channel="telegram",
+            chat_id=self._staff_chat_id,
+            text=(
+                f"Booking escalation: {error_code}; "
+                f"scenario: {scenario.id}"
+            ),
+            idempotency_key=f"booking_escalation:{scenario.id}:staff",
         )
 
     @staticmethod
@@ -534,6 +864,7 @@ class BookingScenarioSession:
         error_code: str,
         payload: Mapping[str, object] | None = None,
     ) -> None:
+        error_code = _validate_booking_escalation_reason(error_code)
         async with self._connection.transaction():
             await self._repository._lock_scenario(self._connection, scenario.id)
             await self._repository._escalate_with_connection(

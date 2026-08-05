@@ -352,6 +352,11 @@ async def test_create_repeat_keeps_original_terminal_after_reschedule_and_cancel
         state={
             "external_id": booking.external_id,
             "starts_at": booking.starts_at.isoformat(),
+            "old_starts_at": booking.starts_at.isoformat(),
+            "old_scheduled_end_at": booking.scheduled_end_at.isoformat(),
+            "original_slot_id": booking.slot_id,
+            "selected_service_ids": list(booking.service_ids),
+            "old_staff_id": booking.staff_id,
             "slot_query": {
                 "service_ids": ["331"],
                 "starts_after": "2026-07-29T15:00:00+00:00",
@@ -377,6 +382,13 @@ async def test_create_repeat_keeps_original_terminal_after_reschedule_and_cancel
         state={
             "external_id": booking.external_id,
             "starts_at": _slot("slot-new", 16).starts_at.isoformat(),
+            "old_starts_at": _slot("slot-new", 16).starts_at.isoformat(),
+            "old_scheduled_end_at": (
+                _slot("slot-new", 16).starts_at + timedelta(hours=1)
+            ).isoformat(),
+            "original_slot_id": "slot-new",
+            "selected_service_ids": ["331"],
+            "old_staff_id": "6544",
         },
         error_code=None,
         created_at=NOW,

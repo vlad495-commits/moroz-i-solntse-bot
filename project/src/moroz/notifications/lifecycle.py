@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 from types import MappingProxyType
 from uuid import UUID
@@ -49,7 +50,9 @@ class LifecycleService:
                   AND starts_at = $2
                   AND status = 'confirmed'
                 RETURNING external_id, customer_id, booking_key, slot_id,
-                          starts_at, status, scheduled_end_at
+                          starts_at, status, scheduled_end_at,
+                          snapshot->'service_ids' AS service_ids,
+                          snapshot->>'staff_id' AS staff_id
                 """,
                 local.booking_key,
                 local.starts_at,
@@ -108,7 +111,13 @@ def _booking_from_row(row) -> ExternalBooking:
         customer_id=row["customer_id"],
         booking_key=row["booking_key"],
         slot_id=row["slot_id"],
+        service_ids=tuple(_json_value(row["service_ids"])),
+        staff_id=row["staff_id"],
         starts_at=row["starts_at"],
         status=row["status"],
         scheduled_end_at=row["scheduled_end_at"],
     )
+
+
+def _json_value(value):
+    return json.loads(value) if isinstance(value, str) else value

@@ -95,11 +95,14 @@ class ExternalBooking:
     customer_id: str
     booking_key: UUID
     slot_id: str
+    service_ids: tuple[str, ...]
+    staff_id: str
     starts_at: datetime
     status: BookingStatus
     scheduled_end_at: datetime | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "service_ids", tuple(self.service_ids))
         _require_aware(self.starts_at)
         if self.scheduled_end_at is not None:
             _require_aware(self.scheduled_end_at)

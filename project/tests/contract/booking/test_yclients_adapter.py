@@ -7,7 +7,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import parse_qsl, urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -128,7 +128,10 @@ def _record(
         "datetime": "2026-07-29T12:00:00+03:00",
         "seance_length": 3600,
         "attendance": 0,
-        "custom_fields": {"moroz_booking_key": str(BOOKING_KEY)},
+        "custom_fields": {
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "customer-7",
+        },
         "deleted": deleted,
     }
     record.update(changes)
@@ -184,6 +187,8 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
     assert booking.customer_id == "customer-7"
     assert booking.booking_key == BOOKING_KEY
     assert booking.slot_id == slots[0].id
+    assert booking.service_ids == ("331",)
+    assert booking.staff_id == "6544"
     assert fetched == booking
     paths = [urlsplit(request[1]).path for request in server.requests]
     assert paths == [
@@ -221,7 +226,10 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
         "send_sms": False,
         "comment": "contract test",
         "attendance": 0,
-        "custom_fields": {"moroz_booking_key": str(BOOKING_KEY)},
+        "custom_fields": {
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "customer-7",
+        },
         "client_agreements": {
             "is_personal_data_processing_allowed": True,
             "is_newsletter_allowed": False,
@@ -230,6 +238,119 @@ async def test_availability_create_and_get_use_official_contract_without_cache(
     assert "api_id" not in server.requests[4][3]
     assert all("Idempotency-Key" not in request[2] for request in server.requests)
     assert "local-key-only" not in json.dumps(server.requests)
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_lookup_fails_closed_on_exact_key_without_owner_binding(
+    server: ScriptedServer,
+) -> None:
+    bound = _record(
+        custom_fields={
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "customer-7",
+        }
+    )
+    unbound = _record(
+        id=9002,
+        custom_fields={"moroz_booking_key": str(BOOKING_KEY)},
+    )
+    server.responses.append(
+        (200, {"success": True, "data": [bound, unbound]})
+    )
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).find_by_booking_key(BOOKING_KEY)
+
+    assert [request[0] for request in server.requests] == ["GET"]
+    assert urlsplit(server.requests[0][1]).path == "/api/v1/records/123"
+    assert parse_qsl(urlsplit(server.requests[0][1]).query) == [
+        ("page", "1"),
+        ("count", "100"),
+        ("with_deleted", "1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_lookup_rejects_whitespace_exact_owner_binding(
+    server: ScriptedServer,
+) -> None:
+    server.responses.append((200, {"success": True, "data": [_record(
+        custom_fields={
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "   ",
+        }
+    )]}))
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).find_by_booking_key(BOOKING_KEY)
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_lookup_counts_valid_wrong_owner_across_bounded_pages(
+    server: ScriptedServer,
+) -> None:
+    first = _record(custom_fields={
+        "moroz_booking_key": str(BOOKING_KEY),
+        "moroz_customer_id": "customer-7",
+    })
+    filler = [
+        _record(
+            id=9100 + index,
+            custom_fields={
+                "moroz_booking_key": str(uuid4()),
+                "moroz_customer_id": "irrelevant",
+            },
+        )
+        for index in range(99)
+    ]
+    wrong_owner = _record(id=9999, custom_fields={
+        "moroz_booking_key": str(BOOKING_KEY),
+        "moroz_customer_id": "foreign-customer",
+    })
+    server.responses.extend([
+        (200, {"success": True, "data": [first, *filler]}),
+        (200, {"success": True, "data": [wrong_owner]}),
+    ])
+
+    found = await YclientsAdapter(_config(server)).find_by_booking_key(BOOKING_KEY)
+
+    assert [booking.customer_id for booking in found] == [
+        "customer-7", "foreign-customer"
+    ]
+    assert [request[0] for request in server.requests] == ["GET", "GET"]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_lookup_fails_on_malformed_exact_match_on_later_page(
+    server: ScriptedServer,
+) -> None:
+    first = _record(custom_fields={
+        "moroz_booking_key": str(BOOKING_KEY),
+        "moroz_customer_id": "customer-7",
+    })
+    filler = [
+        _record(
+            id=9200 + index,
+            custom_fields={
+                "moroz_booking_key": str(uuid4()),
+                "moroz_customer_id": "irrelevant",
+            },
+        )
+        for index in range(99)
+    ]
+    malformed = _record(id=9998, custom_fields={
+        "moroz_booking_key": str(BOOKING_KEY),
+        "moroz_customer_id": "",
+    })
+    server.responses.extend([
+        (200, {"success": True, "data": [first, *filler]}),
+        (200, {"success": True, "data": [malformed]}),
+    ])
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).find_by_booking_key(BOOKING_KEY)
+
+    assert [request[0] for request in server.requests] == ["GET", "GET"]
 
 
 @pytest.mark.asyncio
@@ -334,6 +455,38 @@ async def test_requested_staff_is_sent_and_nonmatching_staff_is_not_queried(
     assert [urlsplit(request[1]).path for request in server.requests if "/book_times/" in request[1]] == [
         "/api/v1/book_times/123/6544/2026-07-29"
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "staff_payload",
+    [
+        [{"id": 77, "bookable": True}],
+        [
+            {"id": 6544, "bookable": True},
+            {"id": 6544, "bookable": True},
+        ],
+    ],
+)
+async def test_requested_staff_must_appear_exactly_once_before_time_lookup(
+    server: ScriptedServer,
+    staff_payload: list[dict[str, object]],
+) -> None:
+    server.responses.extend([
+        (200, {"success": True, "data": {"booking_dates": ["2026-07-29"]}}),
+        (200, {"success": True, "data": staff_payload}),
+    ])
+    timezone = ZoneInfo("Europe/Moscow")
+
+    with pytest.raises(BookingTemporaryError):
+        await YclientsAdapter(_config(server)).list_slots(SlotQuery(
+            ("331",),
+            datetime(2026, 7, 29, tzinfo=timezone),
+            datetime(2026, 7, 30, tzinfo=timezone),
+            staff_id="6544",
+        ))
+
+    assert not any("/book_times/" in request[1] for request in server.requests)
 
 
 @pytest.mark.asyncio
@@ -883,6 +1036,8 @@ async def test_reschedule_uses_protected_get_check_put_and_preserves_minimum_rec
     )
 
     assert booking.slot_id == target_slot
+    assert booking.service_ids == ("331",)
+    assert booking.staff_id == "77"
     assert booking.customer_id == "trusted-customer"
     assert booking.booking_key == BOOKING_KEY
     assert [urlsplit(item[1]).path for item in server.requests] == [
@@ -1195,6 +1350,26 @@ async def test_cancel_404_is_not_found(server: ScriptedServer) -> None:
         await YclientsAdapter(_config(server)).cancel_booking(CancelBooking(
             "9001", "customer-7", BOOKING_KEY, "key",
         ))
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_foreign_customer_marker_before_delete(
+    server: ScriptedServer,
+) -> None:
+    server.responses.extend([
+        (200, {"success": True, "data": _record(custom_fields={
+            "moroz_booking_key": str(BOOKING_KEY),
+            "moroz_customer_id": "foreign-customer",
+        })}),
+        (204, {"success": True, "data": {}}),
+    ])
+
+    with pytest.raises(BookingNotFound):
+        await YclientsAdapter(_config(server)).cancel_booking(CancelBooking(
+            "9001", "customer-7", BOOKING_KEY, "key",
+        ))
+
+    assert sum(item[0] == "DELETE" for item in server.requests) == 0
 
 
 @pytest.mark.asyncio

@@ -33,9 +33,12 @@ from moroz.booking.yclients_http import (
 
 _SLOT_PREFIX = "yclients:v1:"
 _BOOKING_KEY_FIELD = "moroz_booking_key"
+_CUSTOMER_ID_FIELD = "moroz_customer_id"
 _SLOT_KEYS = {"services", "staff", "start", "duration"}
 _CONFLICT_CODES = {433, 436, 437, 438}
 _DEFINITE_MUTATION_REJECTIONS = {400, 401, 403, 409, 422, 429}
+_LOOKUP_PAGE_SIZE = 100
+_LOOKUP_MAX_PAGES = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +49,7 @@ class _SlotPayload:
     duration: int
 
 
-class YclientsAdapter(BookingPort):
+class YclientsAvailabilityAdapter:
     def __init__(
         self,
         config: YclientsConfig,
@@ -70,13 +73,20 @@ class YclientsAdapter(BookingPort):
         if staff_filter is not None:
             dates_query.append(("staff_id", staff_filter))
 
-        dates_data = await self._read("GET", f"/api/v1/book_dates/{self._config.company_id}", query=dates_query)
+        dates_data = await self._read(
+            f"/api/v1/book_dates/{self._config.company_id}",
+            query=dates_query,
+        )
         dates = _booking_dates(dates_data, self._timezone)
         staff_data = await self._read(
-            "GET",
             f"/api/v1/book_staff/{self._config.company_id}",
             query=[("service_ids[]", value) for value in services],
         )
+        if (
+            staff_filter is not None
+            and not _is_unique_bookable_staff(staff_data, staff_filter)
+        ):
+            raise BookingTemporaryError()
         staff_ids = _staff_ids(staff_data)
         if staff_filter is not None:
             staff_ids = [value for value in staff_ids if value == staff_filter]
@@ -85,7 +95,6 @@ class YclientsAdapter(BookingPort):
         for day in _relevant_dates(dates, local_after, local_before, self._timezone):
             for staff_id in staff_ids:
                 times_data = await self._read(
-                    "GET",
                     f"/api/v1/book_times/{self._config.company_id}/{staff_id}/{day.isoformat()}",
                     query=[("service_ids", value) for value in services],
                 )
@@ -109,6 +118,22 @@ class YclientsAdapter(BookingPort):
                     )
         return sorted(slots.values(), key=lambda value: (value.starts_at, int(value.staff_id), value.id))
 
+    async def _read(
+        self,
+        path: str,
+        *,
+        query: list[tuple[str, object]],
+    ) -> object:
+        try:
+            response = await self._http.request("GET", path, query=query)
+        except YclientsTransportError as error:
+            raise BookingTemporaryError() from error
+        if response.status != 200:
+            raise BookingTemporaryError()
+        return _envelope(response)
+
+
+class YclientsAdapter(YclientsAvailabilityAdapter, BookingPort):
     async def create_booking(self, command: CreateBooking) -> ExternalBooking:
         customer_id = _required_text(command.customer_id)
         customer_name = _required_text(command.customer_name)
@@ -126,7 +151,10 @@ class YclientsAdapter(BookingPort):
             "seance_length": payload.duration,
             "send_sms": False,
             "attendance": 0,
-            "custom_fields": {_BOOKING_KEY_FIELD: str(command.booking_key)},
+            "custom_fields": {
+                _BOOKING_KEY_FIELD: str(command.booking_key),
+                _CUSTOMER_ID_FIELD: customer_id,
+            },
             "client_agreements": {
                 "is_personal_data_processing_allowed": True,
                 "is_newsletter_allowed": False,
@@ -198,6 +226,70 @@ class YclientsAdapter(BookingPort):
             raise
         except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
             raise BookingTemporaryError() from error
+
+    async def find_by_booking_key(
+        self,
+        booking_key: UUID,
+    ) -> list[ExternalBooking]:
+        matches: list[ExternalBooking] = []
+        for page in range(1, _LOOKUP_MAX_PAGES + 1):
+            try:
+                response = await self._http.request(
+                    "GET",
+                    f"/api/v1/records/{self._config.company_id}",
+                    query=[
+                        ("page", page),
+                        ("count", _LOOKUP_PAGE_SIZE),
+                        ("with_deleted", 1),
+                    ],
+                    user_auth=True,
+                )
+            except YclientsTransportError as error:
+                raise BookingTemporaryError() from error
+            if response.status != 200:
+                raise BookingTemporaryError()
+            try:
+                data = _envelope(response)
+            except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
+                raise BookingTemporaryError() from error
+            if not isinstance(data, list) or any(
+                not isinstance(item, Mapping) for item in data
+            ):
+                raise BookingTemporaryError()
+            for item in data:
+                fields = item.get("custom_fields")
+                if not isinstance(fields, Mapping):
+                    continue
+                if fields.get(_BOOKING_KEY_FIELD) != str(booking_key):
+                    continue
+                customer_id = fields.get(_CUSTOMER_ID_FIELD)
+                if (
+                    not isinstance(customer_id, str)
+                    or not customer_id
+                    or customer_id != customer_id.strip()
+                ):
+                    raise BookingTemporaryError()
+                try:
+                    matches.append(
+                        _external_booking(
+                            item,
+                            self._timezone,
+                            self._config,
+                            customer_id,
+                            booking_key,
+                        )
+                    )
+                except (
+                    BookingNotFound,
+                    BookingTemporaryError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                ) as error:
+                    raise BookingTemporaryError() from error
+            if len(data) < _LOOKUP_PAGE_SIZE:
+                return matches
+        raise BookingTemporaryError()
 
     async def reschedule_booking(self, command: RescheduleBooking) -> ExternalBooking:
         provider_id = _provider_id(command.external_id)
@@ -276,6 +368,7 @@ class YclientsAdapter(BookingPort):
         provider_id = _provider_id(command.external_id)
         record = await self._get_record(provider_id)
         _require_booking_key(record, command.booking_key)
+        _require_customer_id(record, command.customer_id)
         try:
             response = await self._http.request(
                 "DELETE",
@@ -330,22 +423,6 @@ class YclientsAdapter(BookingPort):
             raise SlotUnavailable()
         if response.status != 201 or envelope.get("success") is not True:
             raise BookingTemporaryError()
-
-    async def _read(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: list[tuple[str, object]],
-    ) -> object:
-        try:
-            response = await self._http.request(method, path, query=query)
-        except YclientsTransportError as error:
-            raise BookingTemporaryError() from error
-        if response.status != 200:
-            raise BookingTemporaryError()
-        return _envelope(response)
-
 
 def _provider_ids(values: tuple[str, ...]) -> list[int]:
     if not values:
@@ -480,6 +557,16 @@ def _require_booking_key(record: Mapping[str, object], expected: UUID) -> UUID:
     return actual
 
 
+def _require_customer_id(record: Mapping[str, object], expected: str) -> str:
+    fields = record.get("custom_fields")
+    if not isinstance(fields, Mapping):
+        raise BookingTemporaryError("booking custom fields are malformed")
+    actual = fields.get(_CUSTOMER_ID_FIELD)
+    if not isinstance(actual, str) or actual != expected:
+        raise BookingNotFound("booking customer marker does not match")
+    return actual
+
+
 def _json_or_temporary(response: HttpResponse) -> dict[str, object]:
     try:
         value = json.loads(response.body)
@@ -551,6 +638,18 @@ def _staff_ids(data: object) -> list[int]:
     return sorted(values)
 
 
+def _is_unique_bookable_staff(data: object, expected: int) -> bool:
+    matching = [
+        item
+        for item in _items(data)
+        if _provider_id(item.get("id")) == expected
+    ]
+    if len(matching) != 1:
+        return False
+    bookable = matching[0].get("bookable")
+    return type(bookable) is bool and bookable is True
+
+
 def _datetime(value: object, timezone: ZoneInfo) -> datetime:
     if isinstance(value, bool):
         raise BookingTemporaryError()
@@ -605,6 +704,8 @@ def _external_booking(
         customer_id=customer_id,
         booking_key=booking_key,
         slot_id=slot_id,
+        service_ids=tuple(str(value) for value in services),
+        staff_id=str(staff),
         starts_at=starts_at,
         status=_visit_status(record),
         scheduled_end_at=scheduled_end_at,

@@ -413,6 +413,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
         await conn.close()
 
     new_tables = {
+        "booking_actions",
         "booking_events",
         "booking_scenarios",
         "bookings",
@@ -458,7 +459,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0009_production_admin"
+            "0010_telegram_booking_flow"
         )
     finally:
         await conn.close()
@@ -597,7 +598,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0009_production_admin"
+        assert current_revision == "0010_telegram_booking_flow"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -707,6 +708,225 @@ async def test_booking_key_migration_backfills_legacy_rows_and_enforces_uniquene
         await conn.close()
 
 
+async def test_telegram_booking_flow_migration_backfills_and_round_trips(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "0009_production_admin")
+    active_id = uuid4()
+    terminal_id = uuid4()
+    escalation_id = uuid4()
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        await conn.execute(
+            """
+            INSERT INTO booking_scenarios
+                (id, kind, phase, idempotency_key, customer_id, state)
+            VALUES
+                ($1, 'create', 'collecting', $2, 'legacy-owner', '{}'::jsonb),
+                ($3, 'create', 'confirmed', $4, 'legacy-owner', '{}'::jsonb)
+            """,
+            active_id,
+            f"legacy-active:{active_id}",
+            terminal_id,
+            f"legacy-terminal:{terminal_id}",
+        )
+        await conn.execute(
+            """
+            INSERT INTO escalations
+                (id, source, customer_id, status, reason_code, payload)
+            VALUES ($1, 'booking', 'legacy-owner', 'open', 'legacy', '{}'::jsonb)
+            """,
+            escalation_id,
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        scenario = await conn.fetchrow(
+            """
+            SELECT channel, chat_id, revision, expires_at
+            FROM booking_scenarios WHERE id = $1
+            """,
+            active_id,
+        )
+        action_columns = {
+            row["column_name"]: (
+                row["data_type"],
+                row["is_nullable"],
+                row["column_default"],
+            )
+            for row in await conn.fetch(
+                """
+                SELECT column_name, data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_name = 'booking_actions'
+                """
+            )
+        }
+        indexdef = await conn.fetchval(
+            """
+            SELECT indexdef FROM pg_indexes
+            WHERE indexname = 'uq_booking_scenarios_active_telegram_identity'
+            """
+        )
+        escalation_columns = {
+            row["column_name"]
+            for row in await conn.fetch(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'escalations'
+                """
+            )
+        }
+
+        assert tuple(scenario.values()) == ("telegram", "legacy-owner", 0, None)
+        assert set(action_columns) == {
+            "id",
+            "scenario_id",
+            "customer_id",
+            "channel",
+            "chat_id",
+            "revision",
+            "action_kind",
+            "payload",
+            "expires_at",
+            "consumed_at",
+            "result",
+        }
+        assert action_columns["id"][:2] == ("text", "NO")
+        assert action_columns["revision"] == ("integer", "NO", None)
+        assert action_columns["expires_at"][:2] == (
+            "timestamp with time zone",
+            "NO",
+        )
+        assert "CREATE UNIQUE INDEX" in indexdef
+        assert "channel = 'telegram'::text" in indexdef
+        assert all(
+            phase in indexdef
+            for phase in ("collecting", "awaiting_confirmation", "executing")
+        )
+        assert {"resolved_by", "resolution_reason"}.issubset(
+            escalation_columns
+        )
+
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await conn.execute(
+                """
+                INSERT INTO booking_scenarios
+                    (id, kind, phase, idempotency_key, customer_id, state,
+                     channel, chat_id)
+                VALUES ($1, 'create', 'executing', $2, 'legacy-owner',
+                        '{}'::jsonb, 'telegram', 'legacy-owner')
+                """,
+                uuid4(),
+                f"duplicate-active:{uuid4()}",
+            )
+        await conn.execute(
+            """
+            INSERT INTO booking_scenarios
+                (id, kind, phase, idempotency_key, customer_id, state,
+                 channel, chat_id)
+            VALUES ($1, 'create', 'confirmed', $2, 'legacy-owner',
+                    '{}'::jsonb, 'telegram', 'legacy-owner')
+            """,
+            uuid4(),
+            f"allowed-terminal:{uuid4()}",
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "downgrade", "0009_production_admin")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            "SELECT to_regclass('public.booking_actions')"
+        ) is None
+        assert await conn.fetchval(
+            """
+            SELECT count(*) FROM information_schema.columns
+            WHERE (table_name = 'booking_scenarios'
+                   AND column_name IN ('channel', 'chat_id', 'revision', 'expires_at'))
+               OR (table_name = 'escalations'
+                   AND column_name IN ('resolved_by', 'resolution_reason'))
+            """
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM booking_scenarios WHERE customer_id = 'legacy-owner'"
+        ) == 3
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            "SELECT version_num FROM alembic_version"
+        ) == "0010_telegram_booking_flow"
+        assert await conn.fetchval(
+            """
+            SELECT count(*) FROM booking_scenarios
+            WHERE customer_id = 'legacy-owner'
+              AND channel = 'telegram' AND chat_id = customer_id
+              AND revision = 0
+            """
+        ) == 3
+    finally:
+        await conn.close()
+
+
+async def test_telegram_booking_flow_migration_fails_without_deleting_conflicts(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "0009_production_admin")
+    first_id = uuid4()
+    second_id = uuid4()
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        await conn.execute(
+            """
+            INSERT INTO booking_scenarios
+                (id, kind, phase, idempotency_key, customer_id, state)
+            VALUES
+                ($1, 'create', 'collecting', $2, 'conflict-owner', '{}'::jsonb),
+                ($3, 'cancel', 'executing', $4, 'conflict-owner', '{}'::jsonb)
+            """,
+            first_id,
+            f"conflict:{first_id}",
+            second_id,
+            f"conflict:{second_id}",
+        )
+    finally:
+        await conn.close()
+
+    result = run_alembic_result(disposable_database_url, "upgrade", "head")
+
+    assert result.returncode != 0
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            "SELECT version_num FROM alembic_version"
+        ) == "0009_production_admin"
+        assert await conn.fetchval(
+            "SELECT count(*) FROM booking_scenarios WHERE customer_id = 'conflict-owner'"
+        ) == 2
+        assert await conn.fetchval(
+            """
+            SELECT count(*) FROM information_schema.columns
+            WHERE table_name = 'booking_scenarios' AND column_name = 'channel'
+            """
+        ) == 0
+        await conn.execute(
+            "DELETE FROM booking_scenarios WHERE id = $1",
+            second_id,
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
+
+
 async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0006(
     disposable_database_url,
 ):
@@ -760,7 +980,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0009_production_admin"
+        assert current_revision == "0010_telegram_booking_flow"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -857,7 +1077,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0009_production_admin"
+        assert current_revision == "0010_telegram_booking_flow"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 

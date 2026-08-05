@@ -72,6 +72,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
+      BOOKING_INTERACTIONS_ENABLED: ${BOOKING_INTERACTIONS_ENABLED:-false}
+      BOOKING_MODE: ${BOOKING_MODE:-disabled}
+      YCLIENTS_SERVICE_ALLOWLIST: ${YCLIENTS_SERVICE_ALLOWLIST:-}
+      YCLIENTS_STAFF_ALLOWLIST: ${YCLIENTS_STAFF_ALLOWLIST:-}
+      BOOKING_HORIZON_DAYS: ${BOOKING_HORIZON_DAYS:-14}
+      BOOKING_CONFIRMATION_TTL_SECONDS: ${BOOKING_CONFIRMATION_TTL_SECONDS:-1800}
+      BOOKING_ROUTER_CONFIDENCE: ${BOOKING_ROUTER_CONFIDENCE:-0.80}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       STAFF_TELEGRAM_CHAT_ID: ${STAFF_TELEGRAM_CHAT_ID:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -111,6 +118,24 @@ services:
       retries: 3
       start_period: 10s
 
+  yclients-readonly:
+    profiles: ["yclients-readonly"]
+    image: "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    restart: "no"
+    command: ["python", "-m", "moroz.booking.yclients_readonly_check"]
+    environment:
+      YCLIENTS_PARTNER_TOKEN: ${YCLIENTS_PARTNER_TOKEN:-}
+      YCLIENTS_COMPANY_ID: ${YCLIENTS_COMPANY_ID:-}
+      YCLIENTS_BASE_URL: ${YCLIENTS_BASE_URL:-}
+      YCLIENTS_TIMEZONE: ${YCLIENTS_TIMEZONE:-}
+      YCLIENTS_TIMEOUT_SECONDS: ${YCLIENTS_TIMEOUT_SECONDS:-}
+      YCLIENTS_SERVICE_ALLOWLIST: ${YCLIENTS_SERVICE_ALLOWLIST:-}
+      YCLIENTS_STAFF_ALLOWLIST: ${YCLIENTS_STAFF_ALLOWLIST:-}
+      YCLIENTS_ENVIRONMENT_LABEL: ${YCLIENTS_ENVIRONMENT_LABEL:-}
+
   yclients-smoke:
     profiles: ["yclients-smoke"]
     image: "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
@@ -130,6 +155,27 @@ services:
       YCLIENTS_TEST_NAME: ${YCLIENTS_TEST_NAME:-}
       YCLIENTS_TEST_PHONE: ${YCLIENTS_TEST_PHONE:-}
       YCLIENTS_SANDBOX_CONSENT: ${YCLIENTS_SANDBOX_CONSENT:-}
+      YCLIENTS_ENVIRONMENT_LABEL: ${YCLIENTS_ENVIRONMENT_LABEL:-}
+      YCLIENTS_TEST_WINDOW_DAYS: ${YCLIENTS_TEST_WINDOW_DAYS:-}
+
+  yclients-sandbox-preflight:
+    profiles: ["yclients-sandbox-preflight"]
+    image: "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    restart: "no"
+    command: ["python", "-m", "moroz.booking.yclients_sandbox_preflight"]
+    environment:
+      YCLIENTS_PARTNER_TOKEN: ${YCLIENTS_PARTNER_TOKEN:-}
+      YCLIENTS_USER_TOKEN: ${YCLIENTS_USER_TOKEN:-}
+      YCLIENTS_COMPANY_ID: ${YCLIENTS_COMPANY_ID:-}
+      YCLIENTS_BASE_URL: ${YCLIENTS_BASE_URL:-}
+      YCLIENTS_TIMEZONE: ${YCLIENTS_TIMEZONE:-}
+      YCLIENTS_TIMEOUT_SECONDS: ${YCLIENTS_TIMEOUT_SECONDS:-}
+      YCLIENTS_TEST_SERVICE_ID: ${YCLIENTS_TEST_SERVICE_ID:-}
+      YCLIENTS_ENVIRONMENT_LABEL: ${YCLIENTS_ENVIRONMENT_LABEL:-}
+      YCLIENTS_TEST_WINDOW_DAYS: ${YCLIENTS_TEST_WINDOW_DAYS:-}
 
   scheduler:
     build:
@@ -174,6 +220,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_MODE: ${TELEGRAM_MODE:-webhook}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET outside Git}
+      BOOKING_INTERACTIONS_ENABLED: ${BOOKING_INTERACTIONS_ENABLED:-false}
       LLM_API_KEY: ${LLM_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -212,6 +259,8 @@ services:
       - ./logs:/app/logs:rw
     depends_on:
       postgres:
+        condition: service_healthy
+      worker:
         condition: service_healthy
     logging:
       driver: "json-file"

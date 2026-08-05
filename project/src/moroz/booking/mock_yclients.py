@@ -1,5 +1,5 @@
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from moroz.booking.models import (
     BookingNotFound,
@@ -43,6 +43,8 @@ class MockYclientsAdapter(BookingPort):
             customer_id=command.customer_id,
             booking_key=command.booking_key,
             slot_id=slot.id,
+            service_ids=slot.service_ids,
+            staff_id=slot.staff_id,
             starts_at=slot.starts_at,
             status="confirmed",
             scheduled_end_at=slot.starts_at + timedelta(minutes=slot.duration_minutes),
@@ -67,6 +69,8 @@ class MockYclientsAdapter(BookingPort):
             customer_id=command.customer_id,
             booking_key=command.booking_key,
             slot_id=slot.id,
+            service_ids=slot.service_ids,
+            staff_id=slot.staff_id,
             starts_at=slot.starts_at,
             status="confirmed",
             scheduled_end_at=slot.starts_at + timedelta(minutes=slot.duration_minutes),
@@ -90,6 +94,8 @@ class MockYclientsAdapter(BookingPort):
             customer_id=command.customer_id,
             booking_key=command.booking_key,
             slot_id=booking.slot_id,
+            service_ids=booking.service_ids,
+            staff_id=booking.staff_id,
             starts_at=booking.starts_at,
             status="cancelled",
             scheduled_end_at=booking.scheduled_end_at,
@@ -111,10 +117,22 @@ class MockYclientsAdapter(BookingPort):
             customer_id=command.customer_id,
             booking_key=command.booking_key,
             slot_id=booking.slot_id,
+            service_ids=booking.service_ids,
+            staff_id=booking.staff_id,
             starts_at=booking.starts_at,
             status=booking.status,
             scheduled_end_at=booking.scheduled_end_at,
         )
+
+    async def find_by_booking_key(
+        self,
+        booking_key: UUID,
+    ) -> list[ExternalBooking]:
+        return [
+            booking
+            for booking in self._bookings.values()
+            if booking.booking_key == booking_key
+        ]
 
     def _available_slot(self, slot_id: str, *, excluding_external_id: str | None = None) -> Slot:
         try:

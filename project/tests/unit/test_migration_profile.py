@@ -172,6 +172,17 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD outside Git}",
         "POSTGRES_DB": "${POSTGRES_DB:?set POSTGRES_DB outside Git}",
         "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
+        "BOOKING_INTERACTIONS_ENABLED": (
+            "${BOOKING_INTERACTIONS_ENABLED:-false}"
+        ),
+        "BOOKING_MODE": "${BOOKING_MODE:-disabled}",
+        "YCLIENTS_SERVICE_ALLOWLIST": "${YCLIENTS_SERVICE_ALLOWLIST:-}",
+        "YCLIENTS_STAFF_ALLOWLIST": "${YCLIENTS_STAFF_ALLOWLIST:-}",
+        "BOOKING_HORIZON_DAYS": "${BOOKING_HORIZON_DAYS:-14}",
+        "BOOKING_CONFIRMATION_TTL_SECONDS": (
+            "${BOOKING_CONFIRMATION_TTL_SECONDS:-1800}"
+        ),
+        "BOOKING_ROUTER_CONFIDENCE": "${BOOKING_ROUTER_CONFIDENCE:-0.80}",
         "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN:-}",
         "STAFF_TELEGRAM_CHAT_ID": "${STAFF_TELEGRAM_CHAT_ID:-}",
         "LLM_API_KEY": "${LLM_API_KEY:-}",
@@ -196,6 +207,32 @@ def test_compose_process_environment_overrides_external_test_credentials():
         assert "env_file" not in services[name]
 
 
+def test_bot_booking_rollout_gate_defaults_off_without_provider_secrets():
+    bot_environment = compose_services()["bot"]["environment"]
+
+    assert bot_environment["BOOKING_INTERACTIONS_ENABLED"] == (
+        "${BOOKING_INTERACTIONS_ENABLED:-false}"
+    )
+    assert {
+        "BOOKING_MODE",
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
+    }.isdisjoint(bot_environment)
+
+
+def test_bot_startup_waits_for_healthy_worker_without_dependency_cycle():
+    services = compose_services()
+
+    assert services["bot"]["depends_on"] == {
+        "postgres": {"condition": "service_healthy"},
+        "worker": {"condition": "service_healthy"},
+    }
+    assert "bot" not in services["worker"]["depends_on"]
+
+
 def test_reserve_llm_environment_is_limited_to_runtime_llm_services():
     services = compose_services()
     reserve_keys = {"RESERVE_API_KEY", "RESERVE_BASE_URL", "RESERVE_MODEL"}
@@ -208,14 +245,16 @@ def test_reserve_llm_environment_is_limited_to_runtime_llm_services():
         )
 
 
-def test_yclients_environment_is_passed_only_to_worker_and_smoke():
+def test_yclients_environment_is_limited_to_exact_runtime_profiles():
     services = compose_services()
     assert set(services) == {
         "test",
         "migrate",
         "cutover",
         "worker",
+        "yclients-readonly",
         "yclients-smoke",
+        "yclients-sandbox-preflight",
         "scheduler",
         "bot",
         "admin",
@@ -236,6 +275,8 @@ def test_yclients_environment_is_passed_only_to_worker_and_smoke():
         "YCLIENTS_TEST_NAME",
         "YCLIENTS_TEST_PHONE",
         "YCLIENTS_SANDBOX_CONSENT",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_TEST_WINDOW_DAYS",
     }
 
     assert runtime_keys <= set(services["worker"]["environment"])
@@ -245,8 +286,31 @@ def test_yclients_environment_is_passed_only_to_worker_and_smoke():
     )
     for name in ("test", "migrate", "cutover"):
         assert not runtime_keys & set(services[name]["environment"])
+    readonly_keys = {
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_TIMEZONE",
+        "YCLIENTS_TIMEOUT_SECONDS",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+    }
+    assert set(services["yclients-readonly"]["environment"]) == readonly_keys
+    assert "YCLIENTS_USER_TOKEN" not in services["yclients-readonly"]["environment"]
+    preflight_keys = runtime_keys | {
+        "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_TEST_WINDOW_DAYS",
+    }
+    assert set(services["yclients-sandbox-preflight"]["environment"]) == preflight_keys
     for name, service in services.items():
-        if name not in {"worker", "yclients-smoke"}:
+        if name not in {
+            "worker",
+            "yclients-readonly",
+            "yclients-smoke",
+            "yclients-sandbox-preflight",
+        }:
             assert not (runtime_keys | smoke_only_keys) & set(
                 service.get("environment", {})
             )
@@ -281,10 +345,42 @@ def test_yclients_smoke_is_an_explicit_bounded_profile() -> None:
         "YCLIENTS_TEST_NAME",
         "YCLIENTS_TEST_PHONE",
         "YCLIENTS_SANDBOX_CONSENT",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_TEST_WINDOW_DAYS",
     }
     assert service["environment"]["YCLIENTS_SANDBOX_CONSENT"] == (
         "${YCLIENTS_SANDBOX_CONSENT:-}"
     )
+
+
+def test_yclients_sandbox_preflight_is_an_explicit_get_only_profile() -> None:
+    services = compose_services()
+    service = services["yclients-sandbox-preflight"]
+
+    assert service["profiles"] == ["yclients-sandbox-preflight"]
+    assert service["image"] == services["worker"]["image"]
+    assert service["image"] == (
+        "${COMPOSE_PROJECT_NAME:-moroz-i-solntse}-worker:local"
+    )
+    assert service["build"] == {"context": ".", "dockerfile": "worker/Dockerfile"}
+    assert service["command"] == [
+        "python", "-m", "moroz.booking.yclients_sandbox_preflight"
+    ]
+    assert service["restart"] == "no"
+    assert "depends_on" not in service
+    assert "ports" not in service
+    assert "volumes" not in service
+    assert set(service["environment"]) == {
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_COMPANY_ID",
+        "YCLIENTS_BASE_URL",
+        "YCLIENTS_TIMEZONE",
+        "YCLIENTS_TIMEOUT_SECONDS",
+        "YCLIENTS_TEST_SERVICE_ID",
+        "YCLIENTS_ENVIRONMENT_LABEL",
+        "YCLIENTS_TEST_WINDOW_DAYS",
+    }
 
 
 def test_worker_image_installs_only_exact_pipeline_dependencies():
@@ -348,12 +444,23 @@ def test_host_ops_regression_checks_rendered_compose_environment_allowlists():
         encoding="utf-8"
     )
 
-    assert "--profile yclients-smoke config --format json" in script
+    rendered_profiles = (
+        "--profile yclients-readonly --profile yclients-smoke config --format json"
+    )
+    assert rendered_profiles in script
     assert '$expectedEnvironment = @{' in script
     worker_literal = re.search(r"worker = @\(([^)]*)\)", script)
     assert worker_literal
     scripted_worker_keys = set(re.findall(r'"([A-Z_]+)"', worker_literal.group(1)))
     assert scripted_worker_keys == set(compose_services()["worker"]["environment"])
+    readonly_literal = re.search(r'"yclients-readonly" = @\(([^)]*)\)', script)
+    assert readonly_literal
+    scripted_readonly_keys = set(
+        re.findall(r'"([A-Z_]+)"', readonly_literal.group(1))
+    )
+    assert scripted_readonly_keys == set(
+        compose_services()["yclients-readonly"]["environment"]
+    )
     smoke_literal = re.search(r'"yclients-smoke" = @\(([^)]*)\)', script)
     assert smoke_literal
     scripted_smoke_keys = set(re.findall(r'"([A-Z_]+)"', smoke_literal.group(1)))

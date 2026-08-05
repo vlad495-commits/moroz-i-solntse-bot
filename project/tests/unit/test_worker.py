@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -6,6 +7,8 @@ from uuid import uuid4
 
 import pytest
 
+from moroz.booking.interaction import Interaction
+from moroz.booking.models import SlotQuery
 from moroz.common.queue import MAX_RETRIES, QueueTask
 from moroz.notifications.models import JobResult, SchedulerJob
 from worker import main as worker_main
@@ -45,6 +48,27 @@ def test_worker_compose_forwards_staff_chat_id():
     compose = Path("/workspace/docker-compose.yml").read_text(encoding="utf-8")
 
     assert "STAFF_TELEGRAM_CHAT_ID: ${STAFF_TELEGRAM_CHAT_ID:-}" in compose
+
+
+def test_compose_shares_booking_gate_without_leaking_yclients_to_bot():
+    compose = Path("/workspace/docker-compose.yml").read_text(encoding="utf-8")
+    worker = compose.split("\n  worker:\n", 1)[1].split("\n  yclients-smoke:\n", 1)[0]
+    bot = compose.split("\n  bot:\n", 1)[1].split("\n  admin:\n", 1)[0]
+    gate = (
+        "BOOKING_INTERACTIONS_ENABLED: "
+        "${BOOKING_INTERACTIONS_ENABLED:-false}"
+    )
+
+    assert gate in worker
+    assert gate in bot
+    for secret in (
+        "YCLIENTS_PARTNER_TOKEN",
+        "YCLIENTS_USER_TOKEN",
+        "YCLIENTS_SERVICE_ALLOWLIST",
+        "YCLIENTS_STAFF_ALLOWLIST",
+    ):
+        assert secret in worker
+        assert secret not in bot
 
 
 class FakeQueue:
@@ -142,6 +166,286 @@ async def test_unknown_task_fails_closed_without_logging_payload_or_identifiers(
 
     assert "private payload" not in caplog.text
     assert "private identifier" not in caplog.text
+
+
+@pytest.mark.parametrize("kind", ["callback", "contact"])
+def test_non_text_payload_guard_raises_safe_retryable_error(kind, caplog):
+    secret = "private callback or phone"
+
+    with pytest.raises(
+        RuntimeError,
+        match="non-text interaction requires structured dispatcher",
+    ) as raised:
+        worker_main._require_text_payloads(
+            [{"kind": kind, "text": "[private]", "data": {"secret": secret}}]
+        )
+
+    assert secret not in str(raised.value)
+    assert secret not in caplog.text
+
+
+def _persisted_payload(
+    *,
+    update_id="1",
+    chat_id="101",
+    user_id="101",
+    kind="text",
+    text="Вопрос",
+    data=None,
+):
+    return {
+        "update_id": update_id,
+        "message_id": "10",
+        "channel": "telegram",
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "text": text,
+        "received_at": "2026-08-01T12:00:00+00:00",
+        "correlation_id": str(uuid4()),
+        "kind": kind,
+        "data": {} if data is None else data,
+    }
+
+
+def test_text_payloads_normalize_as_one_private_interaction():
+    interaction = worker_main._normalize_persisted_interaction(
+        [
+            _persisted_payload(update_id="1", text="Первое"),
+            _persisted_payload(update_id="2", text="Второе"),
+        ],
+        "process_message:1,2",
+        processing_consent=False,
+    )
+
+    assert interaction == Interaction.text(
+        interaction.owner,
+        "process_message:1,2",
+        "Первое\nВторое",
+    )
+    assert interaction.owner.chat_id == interaction.owner.customer_id == "101"
+
+
+@pytest.mark.parametrize(
+    "payloads",
+    [
+        [_persisted_payload(chat_id="101", user_id="102")],
+        [
+            _persisted_payload(update_id="1"),
+            _persisted_payload(
+                update_id="2",
+                kind="callback",
+                text="[booking callback]",
+                data={"callback_data": "booking:opaque"},
+            ),
+        ],
+        [
+            _persisted_payload(
+                kind="callback",
+                text="[booking callback]",
+                data={"callback_data": "booking:opaque", "extra": "no"},
+            )
+        ],
+        [
+            _persisted_payload(
+                kind="contact",
+                text="[contact]",
+                data={"phone_number": 79990000000},
+            )
+        ],
+    ],
+)
+def test_persisted_identity_kind_and_data_schema_fail_closed(payloads, caplog):
+    with pytest.raises(ValueError, match="persisted interaction is invalid"):
+        worker_main._normalize_persisted_interaction(
+            payloads,
+            "process_message:strict",
+            processing_consent=True,
+        )
+
+    assert "79990000000" not in caplog.text
+    assert "booking:opaque" not in caplog.text
+
+
+def test_contact_requires_current_durable_consent_without_leaking_phone(caplog):
+    phone = "+79990000000"
+    payload = _persisted_payload(
+        kind="contact",
+        text="[contact]",
+        data={"phone_number": phone},
+    )
+
+    with pytest.raises(ValueError, match="persisted interaction is invalid") as raised:
+        worker_main._normalize_persisted_interaction(
+            [payload],
+            "process_message:contact",
+            processing_consent=False,
+        )
+
+    assert phone not in str(raised.value)
+    assert phone not in caplog.text
+
+
+def test_enabled_booking_runtime_rejects_disabled_or_incomplete_mode():
+    with pytest.raises(RuntimeError, match="booking mode must be ready"):
+        worker_main._build_booking_dispatcher(
+            object(),
+            enabled=True,
+            mode="disabled",
+            service_allowlist=(),
+            staff_allowlist=(),
+            env={},
+        )
+
+    with pytest.raises(ValueError, match="staff Telegram chat"):
+        worker_main._build_booking_dispatcher(
+            object(),
+            enabled=True,
+            mode="mock",
+            service_allowlist=("1",),
+            staff_allowlist=("7",),
+            env={},
+        )
+    with pytest.raises(ValueError, match="YCLIENTS booking configuration"):
+        worker_main._build_booking_dispatcher(
+            object(),
+            enabled=True,
+            mode="real",
+            service_allowlist=("1",),
+            staff_allowlist=("7",),
+            env={
+                "YCLIENTS_COMPANY_ID": "42",
+                "STAFF_TELEGRAM_CHAT_ID": "900001",
+            },
+        )
+
+
+def test_disabled_booking_runtime_preserves_legacy_without_dependencies():
+    assert worker_main._build_booking_dispatcher(
+        object(),
+        enabled=False,
+        mode="disabled",
+        service_allowlist=(),
+        staff_allowlist=(),
+        env={},
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_mock_booking_runtime_is_exact_and_clock_deterministic():
+    fixed_now = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+    build = lambda: worker_main._build_booking_dispatcher(
+        object(),
+        enabled=True,
+        mode="mock",
+        service_allowlist=("1", "2"),
+        staff_allowlist=("7",),
+        env={"STAFF_TELEGRAM_CHAT_ID": "900001"},
+        now=lambda: fixed_now,
+    )
+    dispatcher = build()
+
+    workflow = dispatcher._workflow
+    assert type(workflow._catalog).__name__ == "MockBookingCatalog"
+    assert type(workflow._booking_port).__name__ == "_RuntimeMockYclientsAdapter"
+    query = SlotQuery(
+        ("1",),
+        fixed_now,
+        fixed_now + timedelta(days=14),
+        None,
+    )
+    single = await workflow._booking_port.list_slots(query)
+    repeated = await build()._workflow._booking_port.list_slots(query)
+    multiple = await workflow._booking_port.list_slots(
+        SlotQuery(
+            ("1", "2"),
+            fixed_now,
+            fixed_now + timedelta(days=14),
+            None,
+        )
+    )
+
+    assert single
+    assert [item.id for item in single] == [item.id for item in repeated]
+    assert [item.starts_at for item in single] == [
+        item.starts_at for item in repeated
+    ]
+    assert {item.service_ids for item in single} == {("1",)}
+    assert {item.service_ids for item in multiple} == {("1", "2")}
+    assert [item.id for item in single] != [item.id for item in multiple]
+    assert all(
+        item.starts_at.tzinfo is not None
+        for item in single
+    )
+
+
+def test_real_booking_runtime_shares_one_http_boundary_without_network_call():
+    dispatcher = worker_main._build_booking_dispatcher(
+        object(),
+        enabled=True,
+        mode="real",
+        service_allowlist=("1",),
+        staff_allowlist=("7",),
+        env={
+            "YCLIENTS_PARTNER_TOKEN": "synthetic-partner",
+            "YCLIENTS_USER_TOKEN": "synthetic-user",
+            "YCLIENTS_COMPANY_ID": "42",
+            "YCLIENTS_BASE_URL": "https://provider.invalid",
+            "STAFF_TELEGRAM_CHAT_ID": "900001",
+        },
+    )
+
+    workflow = dispatcher._workflow
+    assert workflow._booking_port._http is workflow._catalog._client
+
+
+@pytest.mark.asyncio
+async def test_real_booking_preflight_runs_same_readonly_gate(monkeypatch):
+    calls = []
+
+    async def fake_check(catalog, availability, **kwargs):
+        calls.append((catalog, availability, kwargs))
+        return object()
+
+    monkeypatch.setattr(worker_main, "run_readonly_check", fake_check)
+
+    await worker_main._preflight_real_booking(
+        mode="real",
+        service_allowlist=("1",),
+        staff_allowlist=("7",),
+        env={
+            "YCLIENTS_PARTNER_TOKEN": "synthetic-partner",
+            "YCLIENTS_USER_TOKEN": "synthetic-user",
+            "YCLIENTS_COMPANY_ID": "42",
+            "YCLIENTS_BASE_URL": "https://provider.invalid",
+        },
+        now=lambda: datetime(2026, 8, 2, 9, 0, tzinfo=UTC),
+    )
+
+    assert len(calls) == 1
+    catalog, availability, kwargs = calls[0]
+    assert catalog._client is availability._http
+    assert kwargs == {
+        "service_ids": ("1",),
+        "staff_ids": ("7",),
+        "environment_label": "worker-startup",
+        "now": datetime(2026, 8, 2, 9, 0, tzinfo=UTC),
+        "horizon_days": 14,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["disabled", "mock"])
+async def test_non_real_booking_preflight_is_network_free(monkeypatch, mode):
+    check = AsyncMock(side_effect=AssertionError("must stay network-free"))
+    monkeypatch.setattr(worker_main, "run_readonly_check", check)
+
+    assert await worker_main._preflight_real_booking(
+        mode=mode,
+        service_allowlist=(),
+        staff_allowlist=(),
+        env={},
+    ) is None
+    check.assert_not_awaited()
 
 
 @pytest.mark.asyncio

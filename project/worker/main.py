@@ -3,17 +3,46 @@ import json
 import logging
 import os
 import signal
+from collections.abc import Callable
+from datetime import UTC, datetime, time, timedelta
+from hashlib import sha256
 from pathlib import Path
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 
-from config import CONTEXT_MESSAGES_LIMIT
-from llm import generate_response, init_llm, prompt_reload_listener
-from moroz.booking.yclients import YclientsAdapter
-from moroz.booking.yclients_http import YclientsConfig
+from config import (
+    BOOKING_CONFIRMATION_TTL_SECONDS,
+    BOOKING_HORIZON_DAYS,
+    BOOKING_INTERACTIONS_ENABLED,
+    BOOKING_MODE,
+    CONTEXT_MESSAGES_LIMIT,
+    YCLIENTS_SERVICE_ALLOWLIST,
+    YCLIENTS_STAFF_ALLOWLIST,
+)
+from llm import (
+    generate_response,
+    init_llm,
+    prompt_reload_listener,
+    route_intent,
+)
+from moroz.booking.catalog import CatalogService, CatalogStaff
+from moroz.booking.dispatcher import DispatchResult, MessageDispatcher
+from moroz.booking.interaction import BookingOwner, Interaction, WorkflowReply
+from moroz.booking.mock_catalog import MockBookingCatalog
+from moroz.booking.mock_yclients import MockYclientsAdapter
+from moroz.booking.models import Slot, SlotQuery
+from moroz.booking.repository import BookingRepository
+from moroz.booking.service import BookingService
+from moroz.booking.workflow import BookingWorkflow
+from moroz.booking.workflow_repository import BookingWorkflowRepository
+from moroz.booking.yclients import YclientsAdapter, YclientsAvailabilityAdapter
+from moroz.booking.yclients_catalog import YclientsCatalogAdapter
+from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient
+from moroz.booking.yclients_readonly_check import run_readonly_check
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
 from moroz.common.queue import MAX_RETRIES, QueueTask, RabbitQueue
@@ -26,6 +55,7 @@ from moroz.notifications.handlers import handle_scheduler_job
 from moroz.notifications.lifecycle import LifecycleService
 from moroz.notifications.ports import LocalBookingPort, NotificationOutbox
 from moroz.notifications.repository import SchedulerJobRepository
+from moroz.security.consent import PROCESSING_CONSENT_VERSION
 
 
 logging.basicConfig(
@@ -38,11 +68,399 @@ PUMP_INTERVAL_SECONDS = 0.5
 REDIS_RETRY_INTERVAL_SECONDS = 5.0
 SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS = 24.0
 WORKER_LOCK_NAME = "moroz:worker:singleton"
+_PERSISTED_PAYLOAD_FIELDS = {
+    "update_id",
+    "message_id",
+    "channel",
+    "chat_id",
+    "user_id",
+    "text",
+    "received_at",
+    "correlation_id",
+    "kind",
+    "data",
+}
+_STRUCTURED_REJECTED_TEXT = (
+    "Не удалось обработать действие. Нажмите «Записаться» и попробуйте снова."
+)
 
 
 async def handle(task: QueueTask) -> None:
     logger.error("No worker task handler is registered; task will be retried")
     raise NotImplementedError("No worker task handlers are registered")
+
+
+def _require_text_payloads(payloads: list[dict[str, object]]) -> None:
+    if any(payload.get("kind", "text") != "text" for payload in payloads):
+        raise RuntimeError(
+            "non-text interaction requires structured dispatcher"
+        )
+
+
+def _invalid_interaction() -> ValueError:
+    return ValueError("persisted interaction is invalid")
+
+
+def _private_telegram_id(value: object) -> str:
+    if not isinstance(value, str) or not value.isdigit():
+        raise _invalid_interaction()
+    parsed = int(value)
+    if parsed <= 0 or str(parsed) != value:
+        raise _invalid_interaction()
+    return value
+
+
+def _normalize_persisted_interaction(
+    payloads: list[dict[str, object]],
+    idempotency_key: str,
+    *,
+    processing_consent: bool,
+) -> Interaction:
+    if not payloads or not idempotency_key:
+        raise _invalid_interaction()
+    for payload in payloads:
+        if set(payload) != _PERSISTED_PAYLOAD_FIELDS:
+            raise _invalid_interaction()
+        if payload.get("channel") != "telegram":
+            raise _invalid_interaction()
+        for field in (
+            "update_id",
+            "message_id",
+            "text",
+            "received_at",
+            "correlation_id",
+        ):
+            if not isinstance(payload.get(field), str):
+                raise _invalid_interaction()
+        try:
+            received_at = datetime.fromisoformat(payload["received_at"])
+            UUID(payload["correlation_id"])
+        except (TypeError, ValueError):
+            raise _invalid_interaction() from None
+        if received_at.tzinfo is None or received_at.utcoffset() is None:
+            raise _invalid_interaction()
+    chat_ids = {_private_telegram_id(item.get("chat_id")) for item in payloads}
+    user_ids = {_private_telegram_id(item.get("user_id")) for item in payloads}
+    if len(chat_ids) != 1 or chat_ids != user_ids:
+        raise _invalid_interaction()
+    owner_id = next(iter(chat_ids))
+    owner = BookingOwner("telegram", owner_id, owner_id)
+    kinds = {item.get("kind") for item in payloads}
+    if kinds == {"text"}:
+        if any(item.get("data") != {} for item in payloads):
+            raise _invalid_interaction()
+        return Interaction.text(
+            owner,
+            idempotency_key,
+            "\n".join(str(item["text"]) for item in payloads),
+        )
+    if len(payloads) != 1 or len(kinds) != 1:
+        raise _invalid_interaction()
+    payload = payloads[0]
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise _invalid_interaction()
+    if kinds == {"callback"}:
+        if set(data) != {"callback_data"} or not isinstance(
+            data.get("callback_data"), str
+        ):
+            raise _invalid_interaction()
+        return Interaction.callback(
+            owner,
+            idempotency_key,
+            data["callback_data"],
+        )
+    if kinds == {"contact"}:
+        if (
+            set(data) != {"phone_number"}
+            or not isinstance(data.get("phone_number"), str)
+            or not data["phone_number"]
+            or processing_consent is not True
+        ):
+            raise _invalid_interaction()
+        return Interaction.contact(
+            owner,
+            idempotency_key,
+            contact_user_id=owner_id,
+            phone_number=data["phone_number"],
+            personal_data_processing_allowed=True,
+        )
+    raise _invalid_interaction()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class _RuntimeMockYclientsAdapter(MockYclientsAdapter):
+    def __init__(
+        self,
+        slot_templates: list[Slot],
+        service_allowlist: tuple[str, ...],
+    ) -> None:
+        super().__init__([])
+        self._slot_templates = tuple(slot_templates)
+        self._service_allowlist = frozenset(service_allowlist)
+
+    async def list_slots(self, query: SlotQuery) -> list[Slot]:
+        selected = tuple(query.service_ids)
+        if (
+            not selected
+            or len(selected) != len(set(selected))
+            or not set(selected).issubset(self._service_allowlist)
+        ):
+            return []
+        selection_key = sha256(",".join(selected).encode()).hexdigest()[:10]
+        slots = []
+        for template in self._slot_templates:
+            if (
+                template.starts_at < query.starts_after
+                or (
+                    query.starts_before is not None
+                    and template.starts_at >= query.starts_before
+                )
+                or (
+                    query.staff_id is not None
+                    and template.staff_id != query.staff_id
+                )
+            ):
+                continue
+            slot = Slot(
+                f"{template.id}-{selection_key}",
+                selected,
+                template.staff_id,
+                template.starts_at,
+                30 * len(selected),
+            )
+            self._slots[slot.id] = slot
+            if not self._is_occupied(slot.id):
+                slots.append(slot)
+        return slots
+
+
+def _mock_booking_adapters(
+    service_allowlist: tuple[str, ...],
+    staff_allowlist: tuple[str, ...],
+    *,
+    now: datetime,
+):
+    services = tuple(
+        CatalogService(value, f"Услуга {index}", 30)
+        for index, value in enumerate(service_allowlist, 1)
+    )
+    staff = tuple(
+        CatalogStaff(value, f"Мастер {index}", service_allowlist)
+        for index, value in enumerate(staff_allowlist, 1)
+    )
+    timezone = ZoneInfo("Europe/Moscow")
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("booking mock clock must be timezone-aware")
+    local_now = now.astimezone(timezone)
+    slots = []
+    for day in range(1, 15):
+        slot_date = local_now.date() + timedelta(days=day)
+        for index, member in enumerate(staff):
+            starts_at = datetime.combine(
+                slot_date,
+                time(10 + index % 8, 0),
+                tzinfo=timezone,
+            ).astimezone(UTC)
+            slots.append(
+                Slot(
+                    f"mock-{day}-{member.id}",
+                    service_allowlist,
+                    member.id,
+                    starts_at,
+                    30 * len(service_allowlist),
+                )
+            )
+    return (
+        MockBookingCatalog(
+            services,
+            staff,
+            service_allowlist,
+            staff_allowlist,
+        ),
+        _RuntimeMockYclientsAdapter(slots, service_allowlist),
+        timezone,
+    )
+
+
+def _build_booking_dispatcher(
+    database: Database,
+    *,
+    enabled: bool,
+    mode: str,
+    service_allowlist: tuple[str, ...],
+    staff_allowlist: tuple[str, ...],
+    env,
+    now: Callable[[], datetime] = _utc_now,
+) -> MessageDispatcher | None:
+    if not enabled:
+        return None
+    if mode == "disabled":
+        raise RuntimeError("booking mode must be ready when interactions are enabled")
+    if not service_allowlist or not staff_allowlist:
+        raise ValueError("booking allowlists are incomplete")
+    staff_chat_id = str(env.get("STAFF_TELEGRAM_CHAT_ID", "")).strip()
+    if not staff_chat_id:
+        raise ValueError("staff Telegram chat is not configured")
+    if mode == "mock":
+        catalog, booking_port, timezone = _mock_booking_adapters(
+            service_allowlist,
+            staff_allowlist,
+            now=now(),
+        )
+    elif mode == "real":
+        required = (
+            "YCLIENTS_PARTNER_TOKEN",
+            "YCLIENTS_USER_TOKEN",
+            "YCLIENTS_COMPANY_ID",
+        )
+        if any(not str(env.get(name, "")).strip() for name in required):
+            raise ValueError("YCLIENTS booking configuration is incomplete")
+        config = YclientsConfig.from_env(env)
+        http = YclientsHttpClient(config)
+        catalog = YclientsCatalogAdapter(
+            http,
+            str(config.company_id),
+            service_allowlist,
+            staff_allowlist,
+        )
+        booking_port = YclientsAdapter(config, http=http)
+        timezone = ZoneInfo(config.timezone_name)
+    else:
+        raise ValueError("booking mode is invalid")
+    workflow_repository = BookingWorkflowRepository(database)
+    workflow = BookingWorkflow(
+        catalog,
+        booking_port,
+        workflow_repository,
+        BookingService(
+            booking_port,
+            BookingRepository(
+                database,
+                staff_chat_id=staff_chat_id,
+            ),
+        ),
+        now=now,
+        timezone=timezone,
+        horizon_days=BOOKING_HORIZON_DAYS,
+        confirmation_ttl_seconds=BOOKING_CONFIRMATION_TTL_SECONDS,
+    )
+    return MessageDispatcher(
+        workflow_repository,
+        workflow,
+        router=route_intent,
+        consultant=generate_response,
+    )
+
+
+async def _preflight_real_booking(
+    *,
+    mode: str,
+    service_allowlist: tuple[str, ...],
+    staff_allowlist: tuple[str, ...],
+    env,
+    now: Callable[[], datetime] = _utc_now,
+) -> None:
+    if mode != "real":
+        return
+    config = YclientsConfig.from_env(env)
+    http = YclientsHttpClient(config)
+    await run_readonly_check(
+        YclientsCatalogAdapter(
+            http,
+            str(config.company_id),
+            service_allowlist,
+            staff_allowlist,
+        ),
+        YclientsAvailabilityAdapter(config, http=http),
+        service_ids=service_allowlist,
+        staff_ids=staff_allowlist,
+        environment_label="worker-startup",
+        now=now(),
+        horizon_days=14,
+    )
+
+
+async def _has_processing_consent(connection, user_id: str) -> bool:
+    return bool(
+        await connection.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM processing_consents
+                WHERE channel = 'telegram'
+                  AND user_id = $1
+                  AND consent_version = $2
+            )
+            """,
+            user_id,
+            PROCESSING_CONSENT_VERSION,
+        )
+    )
+
+
+async def _reject_structured_in_transaction(
+    connection,
+    repository: MessageRepository,
+    *,
+    chat_id: str,
+    accepted,
+    reply_key: str,
+) -> None:
+    await repository.enqueue_outbound_in_transaction(
+        connection,
+        channel="telegram",
+        chat_id=chat_id,
+        text=_STRUCTURED_REJECTED_TEXT,
+        idempotency_key=reply_key,
+        delivery_options={
+            "reply_markup": {
+                "keyboard": [[{"text": "Записаться"}]],
+                "resize_keyboard": True,
+            }
+        },
+    )
+    await connection.execute(
+        """
+        UPDATE message_inbox
+        SET status = 'processed',
+            payload = jsonb_build_object(
+                'update_id', external_message_id,
+                'channel', channel,
+                'chat_id', chat_id,
+                'kind', 'rejected',
+                'data', jsonb_build_object('rejected', true)
+            )
+        WHERE channel = 'telegram'
+          AND external_message_id = ANY($1::text[])
+        """,
+        [row["external_message_id"] for row in accepted],
+    )
+
+
+def _safe_interaction_history(interaction: Interaction) -> str:
+    if interaction.kind == "callback":
+        return "[Действие в сценарии записи]"
+    if interaction.kind == "contact":
+        return "[Контакт передан через Telegram]"
+    return interaction.text_value or ""
+
+
+def _ensure_contact_reply_is_safe(
+    interaction: Interaction,
+    reply: WorkflowReply,
+) -> None:
+    if interaction.kind != "contact":
+        return
+    phone = interaction.phone_number or ""
+    material = reply.text + json.dumps(
+        reply.delivery_options,
+        ensure_ascii=False,
+    )
+    if phone and phone in material:
+        raise RuntimeError("contact data escaped workflow state")
 
 
 class MessageTaskHandler:
@@ -56,8 +474,12 @@ class MessageTaskHandler:
         booking_port=None,
         notification_outbox=None,
         lifecycle=None,
+        dispatcher: MessageDispatcher | None = None,
+        booking_interactions_enabled: bool = False,
         scheduler_handler=handle_scheduler_job,
     ):
+        if booking_interactions_enabled and dispatcher is None:
+            raise RuntimeError("booking dispatcher is required when enabled")
         self._database = database
         self._llm = llm
         self._telegram = telegram
@@ -66,6 +488,8 @@ class MessageTaskHandler:
         self._booking_port = booking_port
         self._notification_outbox = notification_outbox
         self._lifecycle = lifecycle
+        self._dispatcher = dispatcher
+        self._booking_interactions_enabled = booking_interactions_enabled
         self._scheduler_handler = scheduler_handler
 
     async def handle(self, task: QueueTask) -> None:
@@ -208,11 +632,54 @@ class MessageTaskHandler:
                     ):
                         raise ValueError("process_message persisted payload is invalid")
                     payloads.append(payload)
-                user_ids = {payload["user_id"] for payload in payloads}
-                if len(user_ids) != 1:
-                    raise ValueError("process_message spans multiple users")
-                user_id = int(user_ids.pop())
-                persisted_text = "\n".join(payload["text"] for payload in payloads)
+                interaction = None
+                if self._booking_interactions_enabled:
+                    processing_consent = False
+                    if (
+                        len(payloads) == 1
+                        and payloads[0].get("kind") == "contact"
+                        and isinstance(payloads[0].get("user_id"), str)
+                    ):
+                        processing_consent = await _has_processing_consent(
+                            connection,
+                            payloads[0]["user_id"],
+                        )
+                    try:
+                        interaction = _normalize_persisted_interaction(
+                            payloads,
+                            task.idempotency_key,
+                            processing_consent=processing_consent,
+                        )
+                    except ValueError:
+                        await _reject_structured_in_transaction(
+                            connection,
+                            self._repository,
+                            chat_id=chat_id,
+                            accepted=accepted,
+                            reply_key=reply_key,
+                        )
+                        return
+                    user_id = int(interaction.owner.customer_id)
+                    persisted_text = _safe_interaction_history(interaction)
+                else:
+                    try:
+                        _require_text_payloads(payloads)
+                    except RuntimeError:
+                        await _reject_structured_in_transaction(
+                            connection,
+                            self._repository,
+                            chat_id=chat_id,
+                            accepted=accepted,
+                            reply_key=reply_key,
+                        )
+                        return
+                    user_ids = {payload["user_id"] for payload in payloads}
+                    if len(user_ids) != 1:
+                        raise ValueError("process_message spans multiple users")
+                    user_id = int(user_ids.pop())
+                    persisted_text = "\n".join(
+                        payload["text"] for payload in payloads
+                    )
 
                 rows = await connection.fetch(
                     """
@@ -239,11 +706,23 @@ class MessageTaskHandler:
                     """,
                     chat_id,
                 )
-                result = await self._llm(
-                    persisted_text,
-                    context,
-                    recent_message_count=int(recent_message_count),
-                )
+                if interaction is None:
+                    llm_result = await self._llm(
+                        persisted_text,
+                        context,
+                        recent_message_count=int(recent_message_count),
+                    )
+                    result = DispatchResult(
+                        WorkflowReply(llm_result.text, {}),
+                        usage=llm_result,
+                    )
+                else:
+                    result = await self._dispatcher.dispatch(
+                        interaction,
+                        context,
+                        int(recent_message_count),
+                    )
+                    _ensure_contact_reply_is_safe(interaction, result.reply)
 
                 await connection.execute(
                     """
@@ -254,30 +733,47 @@ class MessageTaskHandler:
                     numeric_chat_id,
                     user_id,
                     persisted_text,
-                    result.text,
+                    result.reply.text,
                 )
-                await connection.execute(
-                    """
-                    INSERT INTO token_usage
-                        (chat_id, user_id, prompt_tokens, completion_tokens,
-                         cached_tokens, total_tokens, model)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    """,
-                    numeric_chat_id,
-                    user_id,
-                    result.prompt_tokens,
-                    result.completion_tokens,
-                    result.cached_tokens,
-                    result.total_tokens,
-                    result.model,
-                )
+                if result.usage is not None:
+                    await connection.execute(
+                        """
+                        INSERT INTO token_usage
+                            (chat_id, user_id, prompt_tokens, completion_tokens,
+                             cached_tokens, total_tokens, model)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        """,
+                        numeric_chat_id,
+                        user_id,
+                        result.usage.prompt_tokens,
+                        result.usage.completion_tokens,
+                        result.usage.cached_tokens,
+                        result.usage.total_tokens,
+                        result.usage.model,
+                    )
                 await self._repository.enqueue_outbound_in_transaction(
                     connection,
                     channel="telegram",
                     chat_id=chat_id,
-                    text=result.text,
+                    text=result.reply.text,
                     idempotency_key=reply_key,
+                    delivery_options=result.reply.delivery_options,
                 )
+                if interaction is not None and interaction.kind == "contact":
+                    await connection.execute(
+                        """
+                        UPDATE message_inbox
+                        SET payload = jsonb_set(
+                            payload,
+                            '{data}',
+                            '{"contact_shared": true}'::jsonb,
+                            true
+                        )
+                        WHERE channel = 'telegram'
+                          AND external_message_id = ANY($1::text[])
+                        """,
+                        [row["external_message_id"] for row in accepted],
+                    )
                 await connection.execute(
                     """
                     UPDATE message_inbox
@@ -576,8 +1072,22 @@ async def run() -> None:
     worker_lock = None
     primary_error = None
     try:
+        await _preflight_real_booking(
+            mode=BOOKING_MODE,
+            service_allowlist=YCLIENTS_SERVICE_ALLOWLIST,
+            staff_allowlist=YCLIENTS_STAFF_ALLOWLIST,
+            env=os.environ,
+        )
         await database.connect()
         worker_lock = await _acquire_worker_lock(database)
+        booking_dispatcher = _build_booking_dispatcher(
+            database,
+            enabled=BOOKING_INTERACTIONS_ENABLED,
+            mode=BOOKING_MODE,
+            service_allowlist=YCLIENTS_SERVICE_ALLOWLIST,
+            staff_allowlist=YCLIENTS_STAFF_ALLOWLIST,
+            env=os.environ,
+        )
         lifecycle = _build_lifecycle_service(database)
         repository = MessageRepository(database)
         reconciled = await repository.reconcile_stale_outbound_deliveries()
@@ -598,6 +1108,8 @@ async def run() -> None:
                 staff_chat_id=os.environ.get("STAFF_TELEGRAM_CHAT_ID", ""),
             ),
             lifecycle=lifecycle,
+            dispatcher=booking_dispatcher,
+            booking_interactions_enabled=BOOKING_INTERACTIONS_ENABLED,
         )
         pump = PipelinePump(
             MessageBuffer(redis_client, database),

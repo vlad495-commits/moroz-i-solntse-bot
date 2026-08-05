@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -137,6 +138,11 @@ def _scenario(
     state: dict[str, object] = {
         "external_id": external_id,
         "starts_at": starts_at.isoformat(),
+        "old_starts_at": starts_at.isoformat(),
+        "old_scheduled_end_at": (starts_at + timedelta(hours=1)).isoformat(),
+        "original_slot_id": "slot-old",
+        "selected_service_ids": ["service-1"],
+        "old_staff_id": "staff-1",
     }
     if kind == "reschedule":
         state.update(
@@ -303,6 +309,34 @@ async def test_reschedule_persists_old_and_new_snapshot_and_repeat_is_stable(rep
     assert json.loads(json.dumps(_thaw(stored.state))) == _thaw(stored.state)
 
 
+async def test_partial_service_escalation_is_durable_without_provider_mutation(repo):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    original = await _seed_booking(repo, port)
+    scenario = _scenario(
+        "reschedule",
+        original.external_id,
+        phase="collecting",
+    )
+    await repo.create_scenario(scenario)
+
+    result = await BookingService(port, repo, now=lambda: NOW).escalate(
+        scenario.id,
+        identity=BookingIdentity("customer-7", confirmed=True),
+        error_code="partial_service_change_unsupported",
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "partial_service_change_unsupported",
+    )
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    stored = await repo.get_scenario(scenario.id)
+    assert (stored.phase, stored.error_code) == (
+        "escalated",
+        "partial_service_change_unsupported",
+    )
+
+
 async def test_cancel_at_exactly_three_hours_uses_local_snapshot_and_mutates_once(repo):
     port = CountingChangeAdapter([_slot("slot-old", 14)])
     original = await _seed_booking(repo, port)
@@ -317,7 +351,7 @@ async def test_cancel_at_exactly_three_hours_uses_local_snapshot_and_mutates_onc
     assert result == repeated
     assert result.status == "ok"
     assert OLD_START.isoformat() in result.message
-    assert (port.cancel_calls, port.list_calls, port.get_calls) == (1, 0, 1)
+    assert (port.cancel_calls, port.list_calls, port.get_calls) == (1, 0, 2)
     assert port.last_cancel is not None
     assert port.last_cancel.customer_id == original.customer_id
     assert port.last_cancel.booking_key == original.booking_key
@@ -330,12 +364,9 @@ async def test_cancel_at_exactly_three_hours_uses_local_snapshot_and_mutates_onc
 
 
 @pytest.mark.parametrize("kind", ["reschedule", "cancel"])
-async def test_change_under_three_hours_escalates_before_any_port_call(repo, kind):
-    original = await _seed_booking(
-        repo,
-        CountingChangeAdapter([_slot("slot-old", 14)]),
-    )
-    port = CountingChangeAdapter([_slot("slot-new", 16)])
+async def test_change_under_three_hours_protects_get_before_late_rule(repo, kind):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    original = await _seed_booking(repo, port)
     scenario = _scenario(kind, original.external_id)
     await repo.create_scenario(scenario)
 
@@ -350,12 +381,170 @@ async def test_change_under_three_hours_escalates_before_any_port_call(repo, kin
     )
 
     assert (result.status, result.error_code) == ("escalated", "late_booking_change")
-    assert (port.list_calls, port.reschedule_calls, port.cancel_calls, port.get_calls) == (
-        0,
-        0,
-        0,
-        0,
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    assert port.get_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("external_id", "foreign-record"),
+        ("customer_id", "other-customer"),
+        ("booking_key", uuid4()),
+        ("slot_id", "different-slot"),
+        ("service_ids", ("service-1", "service-2")),
+        ("staff_id", "different-staff"),
+        ("starts_at", OLD_START + timedelta(minutes=1)),
+        ("status", "cancelled"),
+        ("scheduled_end_at", OLD_START + timedelta(hours=2)),
+    ],
+)
+async def test_change_repeats_exact_protected_get_before_mutation(
+    repo,
+    field,
+    value,
+):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    original = await _seed_booking(repo, port)
+    provider = replace(original, **{field: value})
+
+    async def mismatched_get(_command):
+        port.get_calls += 1
+        return provider
+
+    port.get_booking = mismatched_get
+    scenario = _scenario("reschedule", original.external_id)
+    await repo.create_scenario(scenario)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        scenario.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-7", confirmed=True),
     )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
+    assert result.message == "Статус записи проверит администратор."
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    assert port.get_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("state_key", "corrupt_value"),
+    [
+        ("selected_service_ids", []),
+        ("original_slot_id", "stale-slot"),
+        ("old_staff_id", "stale-staff"),
+        ("old_starts_at", (OLD_START + timedelta(minutes=1)).isoformat()),
+        (
+            "old_scheduled_end_at",
+            (OLD_START + timedelta(hours=2)).isoformat(),
+        ),
+        ("slot_query.service_ids", []),
+    ],
+    ids=[
+        "partial-services",
+        "stale-original-slot",
+        "stale-old-staff",
+        "stale-old-start",
+        "stale-old-end",
+        "partial-slot-query-services",
+    ],
+)
+async def test_reschedule_rejects_corrupt_persisted_change_state_before_slots(
+    repo,
+    state_key,
+    corrupt_value,
+):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    original = await _seed_booking(repo, port)
+    scenario = _scenario("reschedule", original.external_id)
+    state = dict(scenario.state)
+    if state_key == "slot_query.service_ids":
+        state["slot_query"] = {**state["slot_query"], "service_ids": corrupt_value}
+    else:
+        state[state_key] = corrupt_value
+    scenario = replace(scenario, state=state)
+    await repo.create_scenario(scenario)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        scenario.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-7", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    assert port.get_calls == 1
+
+
+@pytest.mark.parametrize(
+    "invalid_end",
+    [0, False, {}, []],
+    ids=["integer", "boolean", "object", "array"],
+)
+async def test_invalid_old_scheduled_end_type_fails_before_slots_or_mutation(
+    repo,
+    invalid_end,
+):
+    port = CountingChangeAdapter([_slot("slot-old", 14), _slot("slot-new", 16)])
+    original = await _seed_booking(repo, port)
+    provider_without_end = replace(original, scheduled_end_at=None)
+    port._bookings[original.external_id] = provider_without_end
+    async with repo._database.acquire() as connection:
+        await connection.execute(
+            "UPDATE bookings SET scheduled_end_at = NULL WHERE external_id = $1",
+            original.external_id,
+        )
+    scenario = _scenario("reschedule", original.external_id)
+    scenario = replace(
+        scenario,
+        state={**scenario.state, "old_scheduled_end_at": invalid_end},
+    )
+    await repo.create_scenario(scenario)
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        scenario.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-7", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    assert port.get_calls == 1
+
+
+async def test_non_confirmed_local_snapshot_never_matches_confirmed_provider(repo):
+    port = CountingChangeAdapter([_slot("slot-old", 14)])
+    original = await _seed_booking(repo, port)
+    scenario = _scenario("cancel", original.external_id)
+    await repo.create_scenario(scenario)
+    async with repo._database.acquire() as connection:
+        await connection.execute(
+            "UPDATE bookings SET status = 'cancelled' WHERE external_id = $1",
+            original.external_id,
+        )
+
+    result = await BookingService(port, repo, now=lambda: NOW).handle(
+        scenario.id,
+        confirmed=True,
+        identity=BookingIdentity("customer-7", confirmed=True),
+    )
+
+    assert (result.status, result.error_code) == (
+        "escalated",
+        "booking_temporarily_unavailable",
+    )
+    assert (port.list_calls, port.reschedule_calls, port.cancel_calls) == (0, 0, 0)
+    assert port.get_calls == 1
 
 
 @pytest.mark.parametrize("kind", ["reschedule", "cancel"])
