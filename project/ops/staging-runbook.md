@@ -61,6 +61,7 @@ chmod 600 /opt/moroz-staging/.env
 
 ```bash
 cd /opt/moroz-staging/project
+set -eu
 candidate_commit="$(git rev-parse HEAD)"
 test "$(git status --porcelain)" = ""
 export STAGING_IMAGE_TAG="rc-${candidate_commit}"
@@ -432,9 +433,11 @@ verify_runtime_ids() {
   manifest=$1
   for service in bot worker admin; do
     expected_id="$(awk -v service="$service" '$1==service{print $2}' "$manifest")"
-    test -n "$expected_id"
-    test "$(docker inspect -f '{{.Image}}' "moroz-staging-${service}-1")" = "$expected_id"
+    test -n "$expected_id" || return 1
+    actual_id="$(docker inspect -f '{{.Image}}' "moroz-staging-${service}-1")" || return 1
+    test "$actual_id" = "$expected_id" || return 1
   done
+  return 0
 }
 restore_candidate() {
   export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"

@@ -111,6 +111,7 @@ def test_staging_runbook_protects_rc_tag_and_exact_runtime_rollback():
     )[0]
 
     assert "candidate image tag already exists" in build
+    assert "cd /opt/moroz-staging/project\nset -eu\n" in build
     assert "candidate-image-ids" in build
     assert "bot worker admin migrate" in build
 
@@ -128,6 +129,9 @@ def test_staging_runbook_protects_rc_tag_and_exact_runtime_rollback():
     assert 'pin-staging-image-tag.sh ../.env "$STAGING_CANDIDATE_IMAGE_TAG"' in rollback
     assert "previous-image-ids" in rollback
     assert "candidate-image-ids" in rollback
+    assert 'test -n "$expected_id" || return 1' in rollback
+    assert '= "$expected_id" || return 1' in rollback
+    assert "  return 0\n}" in rollback
 
 
 def load_staging_module():
