@@ -229,7 +229,7 @@ async def prompt_save(
         try:
             version_id = await pdb.create_version(
                 content=content,
-                author=user.username,
+                author=user.username[:64],
                 comment=comment.strip() or None,
             )
         except Exception as error:
@@ -330,7 +330,7 @@ async def prompt_rollback(
         try:
             new_id = await pdb.create_version(
                 content=content,
-                author=user.username,
+                author=user.username[:64],
                 comment=f"Откат на версию #{version_id}",
             )
         except Exception as error:

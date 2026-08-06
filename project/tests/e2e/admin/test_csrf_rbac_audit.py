@@ -15,10 +15,10 @@ rbac = importlib.import_module("rbac")
 audit_repository = importlib.import_module("audit_repository")
 
 
-def user(role="owner", csrf_token="known-csrf"):
+def user(role="owner", csrf_token="known-csrf", username="owner"):
     return auth.AuthenticatedUser(
         id=7,
-        username="owner",
+        username=username,
         role=role,
         csrf_token=csrf_token,
         session_id="session-id",
@@ -112,7 +112,7 @@ async def test_prompt_save_reports_reload_delivery_failure(monkeypatch):
     created = {}
 
     async def current_user(_request):
-        return user()
+        return user(username="o" * 65)
 
     async def create_version(**kwargs):
         created.update(kwargs)
@@ -139,7 +139,7 @@ async def test_prompt_save_reports_reload_delivery_failure(monkeypatch):
 
     assert response.status_code == 302
     assert response.headers["location"] == "/prompt/?saved=17&error=reload_failed"
-    assert created["author"] == "owner"
+    assert created["author"] == "o" * 64
 
 
 @pytest.mark.asyncio
