@@ -50,11 +50,16 @@
         const level = (new URL(location.href)).searchParams.get('level') || 'ALL';
         const search = (new URL(location.href)).searchParams.get('search') || '';
         try {
-    const resp = await fetch(`{{ request.scope.get('root_path', '') }}/logs/tail?level=${encodeURIComponent(level)}&search=${encodeURIComponent(search)}&lines=300`);
+            const resp = await fetch(`{{ request.scope.get('root_path', '') }}/logs/tail?level=${encodeURIComponent(level)}&search=${encodeURIComponent(search)}&lines=300`);
             const data = await resp.json();
-            const html = (data.rows || []).map(r =>
-                `<div class="log-line log-level-${r.level}">${escapeHtml(r.text)}</div>`
-            ).join('') || '<div class="empty">Записей нет.</div>';
+            let html;
+            if (!data.log_exists) {
+                html = '<div class="empty">Файл логов недоступен. Проверьте runtime file logging и права каталога.</div>';
+            } else {
+                html = (data.rows || []).map(r =>
+                    `<div class="log-line log-level-${r.level}">${escapeHtml(r.text)}</div>`
+                ).join('') || '<div class="empty">Записей нет.</div>';
+            }
             out.innerHTML = html;
             out.scrollTop = out.scrollHeight;
         } catch (e) {

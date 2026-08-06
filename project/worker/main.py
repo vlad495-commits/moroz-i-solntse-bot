@@ -14,6 +14,7 @@ from config import CONTEXT_MESSAGES_LIMIT
 from llm import generate_response, init_llm, prompt_reload_listener
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_http import YclientsConfig
+from moroz.common.alerts import AlertRouter
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
 from moroz.common.queue import MAX_RETRIES, QueueTask, RabbitQueue
@@ -43,6 +44,41 @@ WORKER_LOCK_NAME = "moroz:worker:singleton"
 async def handle(task: QueueTask) -> None:
     logger.error("No worker task handler is registered; task will be retried")
     raise NotImplementedError("No worker task handlers are registered")
+
+
+async def _handle_with_alerts(task: QueueTask, handler, alert_router) -> None:
+    try:
+        await handler(task)
+    except Exception as error:
+        try:
+            await alert_router.emit(
+                code="worker_task_failed",
+                subject=task.kind,
+                severity="critical",
+                text=f"worker task failed error_type={type(error).__name__}",
+            )
+        except Exception as alert_error:
+            logger.error(
+                "worker_alert_failed error_type=%s",
+                type(alert_error).__name__,
+            )
+        raise
+
+
+def _build_alert_router(redis_client, telegram: Bot):
+    technical_chat_id = os.environ.get("TECHNICAL_ALERT_CHAT_ID", "").strip()
+    if not technical_chat_id:
+        return None
+
+    async def send_alert(chat_id: str, text: str) -> None:
+        await telegram.send_message(chat_id=chat_id, text=text)
+
+    return AlertRouter(
+        redis_client,
+        send_alert,
+        technical_chat_id=technical_chat_id,
+        business_chat_id=os.environ.get("BUSINESS_ALERT_CHAT_ID", "").strip(),
+    )
 
 
 class MessageTaskHandler:
@@ -599,6 +635,14 @@ async def run() -> None:
             ),
             lifecycle=lifecycle,
         )
+        alert_router = _build_alert_router(redis_client, telegram)
+
+        async def runtime_handler(task: QueueTask) -> None:
+            if alert_router is None:
+                await task_handler.handle(task)
+                return
+            await _handle_with_alerts(task, task_handler.handle, alert_router)
+
         pump = PipelinePump(
             MessageBuffer(redis_client, database),
             OutboxRelay(database, queue),
@@ -608,7 +652,7 @@ async def run() -> None:
         await _supervise(
             queue,
             stop,
-            handler=task_handler.handle,
+            handler=runtime_handler,
             pump=pump,
             prompt_listener=prompt_reload_listener,
             shutdown_budget=shutdown_budget,

@@ -1,6 +1,5 @@
 import asyncio
 
-import aio_pika
 import pytest
 
 from moroz.common.queue import QueueTask, RabbitQueue

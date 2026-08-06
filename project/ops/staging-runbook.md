@@ -65,6 +65,7 @@ export STAGING_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ls
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml config --quiet bot worker admin migrate postgres redis rabbitmq caddy staging-webhook staging-smoke
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml build bot worker admin migrate
+sudo sh ./ops/prepare-runtime-dirs.sh
 docker image inspect --format '{{.Config.User}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-admin:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
 docker image inspect --format '{{.Id}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-admin:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
 set -o pipefail

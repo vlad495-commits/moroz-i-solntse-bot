@@ -24,7 +24,7 @@ from moroz.booking.models import (
     SlotUnavailable,
 )
 from moroz.booking.yclients import YclientsAdapter
-from moroz.booking.yclients_http import YclientsConfig, YclientsHttpClient
+from moroz.booking.yclients_http import YclientsConfig
 
 
 BOOKING_KEY = UUID("3b53e155-7fd7-4dd0-9ff3-871e0db59577")

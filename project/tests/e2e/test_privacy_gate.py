@@ -28,8 +28,9 @@ from webhook import create_app
 pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
 
-CONSENT_PII_CALLBACK_DATA = "consent:t:pii"
-CONSENT_ADS_CALLBACK_DATA = "consent:t:ads"
+CONSENT_PII_CALLBACK_DATA = "consent:set:pii:on"
+CONSENT_PII_CLEAR_CALLBACK_DATA = "consent:set:pii:off"
+CONSENT_ADS_CALLBACK_DATA = "consent:set:ads:on"
 CONSENT_DONE_CALLBACK_DATA = "consent:done"
 CONSENT_PROMPT = (
     "Чтобы начать, отметьте согласия и нажмите «Готово»\n\n"
@@ -309,9 +310,48 @@ async def test_consent_checkbox_toggles_markup_without_persisting(
     assert await db.fetchval("SELECT count(*) FROM processing_consents") == 0
     keyboard = fake_telegram.edited_reply_markups[-1]["reply_markup"].inline_keyboard
     assert [(row[0].text, row[0].callback_data) for row in keyboard] == [
-        (f"☑ {CONSENT_PII_LABEL}", CONSENT_PII_CALLBACK_DATA),
+        (f"☑ {CONSENT_PII_LABEL}", CONSENT_PII_CLEAR_CALLBACK_DATA),
         (f"☐ {CONSENT_ADS_LABEL}", CONSENT_ADS_CALLBACK_DATA),
         (CONSENT_DONE_LABEL, CONSENT_DONE_CALLBACK_DATA),
+    ]
+
+
+async def test_duplicate_consent_checkbox_callback_is_idempotent(
+    client, db, redis_client, fake_telegram
+):
+    update = telegram_consent_callback(
+        update_id=930,
+        data=CONSENT_PII_CALLBACK_DATA,
+    )
+
+    first = await client.post("/telegram/webhook", json=update)
+    duplicate = await client.post("/telegram/webhook", json=update)
+
+    assert first.status_code == duplicate.status_code == 200
+    assert await db.fetchval("SELECT count(*) FROM processing_consents") == 0
+    assert await redis_client.get("consent:state:telegram:42:7") == "pii"
+    assert len(fake_telegram.edited_reply_markups) == 1
+
+
+async def test_duplicate_consent_done_callback_is_idempotent(
+    client, db, fake_telegram
+):
+    await client.post(
+        "/telegram/webhook",
+        json=telegram_consent_callback(
+            update_id=931,
+            data=CONSENT_PII_CALLBACK_DATA,
+        ),
+    )
+    done = telegram_consent_callback(update_id=932)
+
+    first = await client.post("/telegram/webhook", json=done)
+    duplicate = await client.post("/telegram/webhook", json=done)
+
+    assert first.status_code == duplicate.status_code == 200
+    assert await db.fetchval("SELECT count(*) FROM processing_consents") == 1
+    assert [message["text"] for message in fake_telegram.sent_messages] == [
+        CONSENT_THANKS
     ]
 
 

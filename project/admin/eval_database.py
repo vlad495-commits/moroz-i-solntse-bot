@@ -1,7 +1,6 @@
 """CRUD для eval-таблиц: тест-кейсы, прогоны, результаты."""
 
 import logging
-from datetime import datetime
 from typing import Any
 
 import database

@@ -26,6 +26,21 @@ async def test_login_page_requires_totp_code():
 
 
 @pytest.mark.asyncio
+async def test_logs_tail_requires_authenticated_session():
+    transport = ASGITransport(app=admin_app.app)
+
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=False,
+    ) as client:
+        response = await client.get("/logs/tail")
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+
+
+@pytest.mark.asyncio
 async def test_login_submit_passes_totp_and_sets_session_cookie(monkeypatch):
     seen = {}
 

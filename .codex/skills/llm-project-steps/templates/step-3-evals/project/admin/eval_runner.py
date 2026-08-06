@@ -8,7 +8,6 @@
 - Двухступенчатая проверка: regex/keywords → если не прошёл → LLM-judge.
 """
 
-import asyncio
 import json
 import logging
 import os

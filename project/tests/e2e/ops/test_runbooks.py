@@ -79,3 +79,25 @@ def test_launch_checklist_names_blocking_evidence():
     assert "external uptime monitor" in doc
     assert "GET /healthz" in doc
     assert "owner-only `/admin/metrics`" in doc
+
+
+def test_runtime_bind_directories_are_prepared_for_stable_non_root_user():
+    prepare = read("prepare-runtime-dirs.sh")
+    staging = read("staging-runbook.md")
+    deploy = read("deploy-runbook.md")
+
+    assert "RUNTIME_UID=10001" in prepare
+    assert "RUNTIME_GID=10001" in prepare
+    assert "llm/prompts" in prepare
+    assert "logs" in prepare
+    assert "sudo sh ./ops/prepare-runtime-dirs.sh" in staging
+    assert "sudo sh ./ops/prepare-runtime-dirs.sh" in deploy
+
+    for dockerfile in (
+        PROJECT_ROOT / "admin" / "Dockerfile",
+        PROJECT_ROOT / "llm" / "Dockerfile",
+        PROJECT_ROOT / "worker" / "Dockerfile",
+    ):
+        source = dockerfile.read_text(encoding="utf-8")
+        assert "--uid 10001" in source
+        assert "--gid 10001" in source
