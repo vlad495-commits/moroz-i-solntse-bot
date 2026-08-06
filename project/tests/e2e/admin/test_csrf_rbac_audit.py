@@ -109,10 +109,13 @@ async def test_prompt_save_rejects_admin_role_before_file_write(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_prompt_save_reports_reload_delivery_failure(monkeypatch):
+    created = {}
+
     async def current_user(_request):
         return user()
 
-    async def create_version(**_kwargs):
+    async def create_version(**kwargs):
+        created.update(kwargs)
         return 17
 
     async def reload_not_delivered(_version_id, _content):
@@ -136,6 +139,46 @@ async def test_prompt_save_reports_reload_delivery_failure(monkeypatch):
 
     assert response.status_code == 302
     assert response.headers["location"] == "/prompt/?saved=17&error=reload_failed"
+    assert created["author"] == "owner"
+
+
+@pytest.mark.asyncio
+async def test_prompt_rollback_persists_username_not_user_object(monkeypatch):
+    created = {}
+
+    async def current_user(_request):
+        return user()
+
+    async def get_version(_version_id):
+        return {"content": "same prompt\n"}
+
+    async def create_version(**kwargs):
+        created.update(kwargs)
+        return 18
+
+    async def reload_applied(_version_id, _content):
+        return prompt_routes.PROMPT_RELOAD_APPLIED
+
+    async def no_audit(**_kwargs):
+        return None
+
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes.pdb, "get_version", get_version)
+    monkeypatch.setattr(prompt_routes.pdb, "create_version", create_version)
+    monkeypatch.setattr(prompt_routes, "_read_prompt_snapshot", lambda: "same prompt\n")
+    monkeypatch.setattr(prompt_routes, "_write_prompt", lambda _content: True)
+    monkeypatch.setattr(prompt_routes, "_publish_reload", reload_applied)
+    monkeypatch.setattr(prompt_routes, "record_audit", no_audit)
+
+    response = await prompt_routes.prompt_rollback(
+        SimpleNamespace(scope={}),
+        version_id=17,
+        csrf_token="known-csrf",
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/prompt/?saved=18"
+    assert created["author"] == "owner"
 
 
 @pytest.mark.asyncio
