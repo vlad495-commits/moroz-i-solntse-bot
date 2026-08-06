@@ -77,6 +77,59 @@ def test_pin_staging_image_tag_rejects_non_immutable_tag_without_mutation(tmp_pa
     assert env_file.read_text(encoding="utf-8") == original
 
 
+def test_pin_staging_image_tag_accepts_service_mapped_rollback_tag(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("STAGING_IMAGE_TAG=rc-0123456789ab\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "sh",
+            str(PIN_IMAGE_TAG),
+            str(env_file),
+            "rollback-20260806T115200Z",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text(encoding="utf-8") == (
+        "STAGING_IMAGE_TAG=rollback-20260806T115200Z\n"
+    )
+
+
+def test_staging_runbook_protects_rc_tag_and_exact_runtime_rollback():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    build = text.split("## 4. Config, build и image evidence", 1)[1].split(
+        "### 4.1.", 1
+    )[0]
+    capture = build
+    apps = text.split("## 7. Apps, health и HTTPS", 1)[1].split("## 8.", 1)[0]
+    rollback = text.split("## 13. Image-only rollback", 1)[1].split(
+        "## 14.", 1
+    )[0]
+
+    assert "candidate image tag already exists" in build
+    assert "candidate-image-ids" in build
+    assert "bot worker admin migrate" in build
+
+    assert "previous-image-ids" in capture
+    assert 'docker image tag "$image_id"' in capture
+    assert "rollback-tag" in capture
+    assert "bot worker admin" in capture
+
+    assert "candidate-image-ids" in apps
+    assert "docker inspect -f '{{.Image}}'" in apps
+    assert "bot worker admin" in apps
+
+    assert "bot worker admin" in rollback
+    assert 'pin-staging-image-tag.sh ../.env "$STAGING_PREVIOUS_IMAGE_TAG"' in rollback
+    assert 'pin-staging-image-tag.sh ../.env "$STAGING_CANDIDATE_IMAGE_TAG"' in rollback
+    assert "previous-image-ids" in rollback
+    assert "candidate-image-ids" in rollback
+
+
 def load_staging_module():
     spec = importlib.util.spec_from_file_location(
         "staging_ops", ROOT / "ops/staging.py"

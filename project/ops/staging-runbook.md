@@ -66,10 +66,46 @@ test "$(git status --porcelain)" = ""
 export STAGING_IMAGE_TAG="rc-${candidate_commit}"
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ls
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml config --quiet bot worker admin migrate postgres redis rabbitmq caddy staging-webhook staging-smoke
+for service in bot worker admin migrate; do
+  if docker image inspect "moroz-staging-${service}:${STAGING_IMAGE_TAG}" >/dev/null 2>&1; then
+    printf '%s\n' 'candidate image tag already exists' >&2
+    exit 1
+  fi
+done
+
+rollback_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+rollback_tag="rollback-${rollback_stamp}"
+rollback_dir="/opt/moroz-staging-state/rollbacks/${rollback_stamp}-${candidate_commit}"
+install -d -m 0700 "$rollback_dir"
+install -m 0600 ../.env "$rollback_dir/.env.before"
+git bundle create "$rollback_dir/code.bundle" HEAD
+: > "$rollback_dir/previous-image-ids"
+for service in bot worker admin; do
+  container="moroz-staging-${service}-1"
+  test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container")" = moroz-staging
+  image_id="$(docker inspect -f '{{.Image}}' "$container")"
+  printf '%s %s\n' "$service" "$image_id" >> "$rollback_dir/previous-image-ids"
+  docker image tag "$image_id" "moroz-staging-${service}:${rollback_tag}"
+  test "$(docker image inspect -f '{{.Id}}' "moroz-staging-${service}:${rollback_tag}")" = "$image_id"
+done
+previous_worker_ref="$(docker inspect -f '{{.Config.Image}}' moroz-staging-worker-1)"
+previous_app_tag="${previous_worker_ref##*:}"
+migrate_image_id="$(docker image inspect -f '{{.Id}}' "moroz-staging-migrate:${previous_app_tag}")"
+printf '%s %s\n' migrate "$migrate_image_id" >> "$rollback_dir/previous-image-ids"
+docker image tag "$migrate_image_id" "moroz-staging-migrate:${rollback_tag}"
+test "$(docker image inspect -f '{{.Id}}' "moroz-staging-migrate:${rollback_tag}")" = "$migrate_image_id"
+printf '%s\n' "$rollback_tag" > "$rollback_dir/rollback-tag"
+chmod 0600 "$rollback_dir/code.bundle" "$rollback_dir/previous-image-ids" "$rollback_dir/rollback-tag"
+
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml build bot worker admin migrate
 sudo sh ./ops/prepare-runtime-dirs.sh
 docker image inspect --format '{{.Config.User}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-admin:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
-docker image inspect --format '{{.Id}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-admin:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
+: > "$rollback_dir/candidate-image-ids"
+for service in bot worker admin migrate; do
+  image_id="$(docker image inspect -f '{{.Id}}' "moroz-staging-${service}:${STAGING_IMAGE_TAG}")"
+  printf '%s %s\n' "$service" "$image_id" >> "$rollback_dir/candidate-image-ids"
+done
+chmod 0600 "$rollback_dir/candidate-image-ids"
 set -o pipefail
 {
   docker image inspect --format '{{json .Config.Env}}' "moroz-staging-bot:${STAGING_IMAGE_TAG}" "moroz-staging-worker:${STAGING_IMAGE_TAG}" "moroz-staging-admin:${STAGING_IMAGE_TAG}" "moroz-staging-migrate:${STAGING_IMAGE_TAG}"
@@ -80,7 +116,7 @@ set -o pipefail
 } | docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run -T --rm staging-smoke scan-logs
 ```
 
-Сохранить commit, четыре image ID/digest и `.Config.User`, но не полный inspect. Все четыре image tag обязаны содержать полный текущий commit после префикса `rc-`. Пустой/неожиданный user, грязный checkout, config failure или build failure — blocker.
+Сохранить commit, service→image ID manifests и `.Config.User`, но не полный inspect. Все четыре candidate image tag обязаны отсутствовать до первой сборки и содержать полный текущий commit после префикса `rc-`. Существующий candidate tag, пустой/неожиданный user, неизвестный previous migrate image, грязный checkout, config failure или build failure — blocker. Не удалять и не пересобирать частично созданный RC tag без отдельного расследования.
 
 ### 4.1. Backward compatibility gate
 
@@ -93,10 +129,7 @@ healthy. Изолированный project не использует staging vo
 cd /opt/moroz-staging/project
 set -eu
 export STAGING_CANDIDATE_IMAGE_TAG="${STAGING_IMAGE_TAG:?candidate tag required}"
-export STAGING_PREVIOUS_IMAGE_TAG='<previous-immutable-tag>'
-case "$STAGING_PREVIOUS_IMAGE_TAG" in
-  '<previous-immutable-tag>') printf '%s\n' 'previous image tag required' >&2; exit 1 ;;
-esac
+export STAGING_PREVIOUS_IMAGE_TAG="${rollback_tag:?rollback tag required}"
 compat_project="moroz-staging-compat-${STAGING_CANDIDATE_IMAGE_TAG}"
 compat_bot_port="${STAGING_COMPAT_BOT_PORT:-18082}"
 compatibility_cleanup() {
@@ -141,31 +174,19 @@ export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
 Любая ошибка предыдущей миграции, candidate upgrade, `alembic current` или
 healthcheck предыдущего bot/worker — blocker. Рабочую staging-базу не мигрировать.
 
-### 4.2. Persistent image pin и rollback
+### 4.2. Persistent image pin
 
-Только после успешных build, image evidence и backward compatibility gate создать
-защищённый rollback bundle. Полный `.env` не печатать. Предыдущие container image ID
-и tag записываются только для staging app services; отсутствие любого предыдущего
-image делает rollout blocker.
+Только после успешных build, image evidence и backward compatibility gate закрепить
+candidate tag в `.env`. Защищённый rollback bundle и service→image manifests уже
+созданы до build; полный `.env` не печатать.
 
 ```bash
-cd /opt/moroz-staging/project
-set -eu
-rollback_dir="/opt/moroz-staging-state/rollbacks/$(date -u +%Y%m%dT%H%M%SZ)-${candidate_commit}"
-install -d -m 0700 "$rollback_dir"
-install -m 0600 ../.env "$rollback_dir/.env.before"
-git bundle create "$rollback_dir/code.bundle" HEAD
-for service in bot worker admin; do
-  container="moroz-staging-${service}-1"
-  test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container")" = moroz-staging
-  docker inspect -f '{{.Image}}' "$container" >> "$rollback_dir/app-image-ids"
-done
-chmod 0600 "$rollback_dir/code.bundle" "$rollback_dir/app-image-ids"
-
 sh ./ops/pin-staging-image-tag.sh ../.env "$STAGING_IMAGE_TAG"
 test "$(awk -F= '/^STAGING_IMAGE_TAG=/{value=$2; count++} END{if(count==1) print value}' ../.env)" = "$STAGING_IMAGE_TAG"
 for service in bot worker admin migrate; do
-  test "$(docker image inspect -f '{{index .RepoTags 0}}' "moroz-staging-${service}:${STAGING_IMAGE_TAG}" | sed 's/^[^:]*://')" = "$STAGING_IMAGE_TAG"
+  expected_id="$(awk -v service="$service" '$1==service{print $2}' "$rollback_dir/candidate-image-ids")"
+  test -n "$expected_id"
+  test "$(docker image inspect -f '{{.Id}}' "moroz-staging-${service}:${STAGING_IMAGE_TAG}")" = "$expected_id"
 done
 ```
 
@@ -217,6 +238,12 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 cd /opt/moroz-staging/project
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --wait --wait-timeout 120 bot worker admin
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker admin postgres redis rabbitmq
+for service in bot worker admin; do
+  expected_id="$(awk -v service="$service" '$1==service{print $2}' "$rollback_dir/candidate-image-ids")"
+  test "$(docker inspect -f '{{.Image}}' "moroz-staging-${service}-1")" = "$expected_id"
+done
+expected_migrate_id="$(awk '$1=="migrate"{print $2}' "$rollback_dir/candidate-image-ids")"
+test "$(docker image inspect -f '{{.Id}}' "moroz-staging-migrate:${STAGING_IMAGE_TAG}")" = "$expected_migrate_id"
 test "$(curl --fail --silent --show-error http://127.0.0.1:18081/healthz)" = '{"status":"ok"}'
 ```
 
@@ -394,27 +421,39 @@ docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f dock
 
 ## 13. Image-only rollback
 
-Выбрать ранее записанный immutable image tag полного комплекта bot/worker/migrate. На первом staging-релизе предыдущего комплекта нет: это явный rollback blocker до следующего app release, а не разрешение использовать текущий tag как фиктивный откат. Stores сохраняются, schema command в rollback отсутствует.
+Использовать только service→image manifests и общий rollback tag, созданные до build. Они намеренно сводят даже исходный mixed-tag runtime к одному проверяемому rollback tag без переназначения image IDs. Stores сохраняются, schema command в rollback отсутствует.
 
 ```bash
 cd /opt/moroz-staging/project
-set -e
+set -eu
 export STAGING_CANDIDATE_IMAGE_TAG="${STAGING_IMAGE_TAG:?current tag required}"
-export STAGING_PREVIOUS_IMAGE_TAG='<previous-immutable-tag>'
+export STAGING_PREVIOUS_IMAGE_TAG="$(cat "$rollback_dir/rollback-tag")"
+verify_runtime_ids() {
+  manifest=$1
+  for service in bot worker admin; do
+    expected_id="$(awk -v service="$service" '$1==service{print $2}' "$manifest")"
+    test -n "$expected_id"
+    test "$(docker inspect -f '{{.Image}}' "moroz-staging-${service}-1")" = "$expected_id"
+  done
+}
 restore_candidate() {
   export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
-  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker &&
-  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq &&
-  curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null &&
+  sh ./ops/pin-staging-image-tag.sh ../.env "$STAGING_CANDIDATE_IMAGE_TAG" >/dev/null &&
+  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker admin &&
+  docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker admin postgres redis rabbitmq &&
+  verify_runtime_ids "$rollback_dir/candidate-image-ids" &&
+  curl --fail --silent --show-error http://127.0.0.1:18081/healthz >/dev/null &&
   docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status
 }
 trap restore_candidate EXIT HUP INT TERM
 export STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"
+sh ./ops/pin-staging-image-tag.sh ../.env "$STAGING_PREVIOUS_IMAGE_TAG" >/dev/null
 set +e
-docker image inspect "moroz-staging-bot:$STAGING_IMAGE_TAG" "moroz-staging-worker:$STAGING_IMAGE_TAG" "moroz-staging-migrate:$STAGING_IMAGE_TAG" >/dev/null &&
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker &&
-docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker postgres redis rabbitmq &&
-curl --fail --silent --show-error http://127.0.0.1:18081/openapi.json >/dev/null &&
+docker image inspect "moroz-staging-bot:$STAGING_IMAGE_TAG" "moroz-staging-worker:$STAGING_IMAGE_TAG" "moroz-staging-admin:$STAGING_IMAGE_TAG" "moroz-staging-migrate:$STAGING_IMAGE_TAG" >/dev/null &&
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build --wait --wait-timeout 120 bot worker admin &&
+docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ps --status running bot worker admin postgres redis rabbitmq &&
+verify_runtime_ids "$rollback_dir/previous-image-ids" &&
+curl --fail --silent --show-error http://127.0.0.1:18081/healthz >/dev/null &&
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run --rm staging-webhook status
 rollback_result=$?
 set -e

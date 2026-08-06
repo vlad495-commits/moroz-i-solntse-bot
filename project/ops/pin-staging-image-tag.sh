@@ -8,23 +8,36 @@ fi
 
 env_file=$1
 image_tag=$2
-hex=${image_tag#rc-}
 
-if [ "$hex" = "$image_tag" ]; then
-  printf '%s\n' 'image tag must use rc-COMMIT format' >&2
-  exit 2
-fi
-case "$hex" in
-  ''|*[!0-9a-f]*)
-    printf '%s\n' 'image tag must use lowercase hexadecimal commit' >&2
+case "$image_tag" in
+  rc-*)
+    hex=${image_tag#rc-}
+    case "$hex" in
+      ''|*[!0-9a-f]*)
+        printf '%s\n' 'image tag must use lowercase hexadecimal commit' >&2
+        exit 2
+        ;;
+    esac
+    hex_length=${#hex}
+    if [ "$hex_length" -lt 12 ] || [ "$hex_length" -gt 40 ]; then
+      printf '%s\n' 'image tag commit must contain 12 to 40 hexadecimal characters' >&2
+      exit 2
+    fi
+    ;;
+  rollback-????????T??????Z)
+    rollback_stamp=${image_tag#rollback-}
+    case "$rollback_stamp" in
+      *[!0-9TZ]*)
+        printf '%s\n' 'rollback tag must use UTC timestamp' >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  *)
+    printf '%s\n' 'image tag must use rc-COMMIT or rollback-UTC format' >&2
     exit 2
     ;;
 esac
-hex_length=${#hex}
-if [ "$hex_length" -lt 12 ] || [ "$hex_length" -gt 40 ]; then
-  printf '%s\n' 'image tag commit must contain 12 to 40 hexadecimal characters' >&2
-  exit 2
-fi
 if [ ! -f "$env_file" ] || [ -L "$env_file" ]; then
   printf '%s\n' 'env file must be an existing regular non-symlink file' >&2
   exit 2
