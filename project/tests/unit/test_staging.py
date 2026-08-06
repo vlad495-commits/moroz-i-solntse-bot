@@ -12,6 +12,7 @@ import yaml
 
 ROOT = Path("/workspace")
 BASE = ROOT / "docker-compose.yml"
+ENV_EXAMPLE = ROOT / ".env.example"
 STAGING = ROOT / "docker-compose.staging.yml"
 CADDYFILE = ROOT / "ops/staging/Caddyfile"
 PIN_IMAGE_TAG = ROOT / "ops/pin-staging-image-tag.sh"
@@ -289,6 +290,21 @@ def test_merged_staging_enables_admin_disables_scheduler_and_resets_admin_ports(
             "${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET}"
         ),
     }
+
+
+def test_base_compose_admin_bootstrap_defaults_fail_closed():
+    compose_text = BASE.read_text(encoding="utf-8")
+    example_text = ENV_EXAMPLE.read_text(encoding="utf-8")
+
+    assert compose_text.count("ADMIN_USERNAME: ${ADMIN_USERNAME:-}") == 2
+    assert compose_text.count("ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}") == 2
+    assert compose_text.count("ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}") == 2
+    assert "ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}" not in compose_text
+    assert "ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}" not in compose_text
+    assert "ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-me" not in compose_text
+    assert "ADMIN_USERNAME=\n" in example_text
+    assert "ADMIN_PASSWORD=\n" in example_text
+    assert "ADMIN_SESSION_SECRET=\n" in example_text
 
 
 def test_staging_webhook_receives_only_required_environment():

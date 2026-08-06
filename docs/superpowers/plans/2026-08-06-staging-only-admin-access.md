@@ -4,7 +4,7 @@
 
 **Goal:** Убрать нерабочие локальные `admin/admin` и оставить server-only staging `.env` единственным источником рабочего доступа к админке.
 
-**Architecture:** Базовый Compose и локальный `.env` fail-closed оставляют bootstrap credentials пустыми. `AGENTS.md` фиксирует границу: staging credentials читаются только на staging-сервере и никогда не берутся из локального `.env`.
+**Architecture:** Базовый Compose и локальный `.env` fail-closed оставляют bootstrap credentials пустыми. Auth принимает sessionless bootstrap-cookie только при полностью настроенных credentials и session secret длиной не меньше 32 символов. `AGENTS.md` фиксирует границу: staging credentials читаются только на staging-сервере и никогда не берутся из локального `.env`.
 
 **Tech Stack:** Docker Compose, pytest, Markdown, ignored `.env`.
 
@@ -31,22 +31,22 @@
 - Consumes: Compose environment interpolation for `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
 - Produces: empty local defaults; staging override remains mandatory in `docker-compose.staging.yml`.
 
-- [ ] **Step 1: Write the failing contract test**
+- [x] **Step 1: Write the failing contract test**
 
 Add a test that rejects `ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}` and `ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}`, requires empty base defaults, and keeps staging `:?set` requirements.
 
-- [ ] **Step 2: Verify RED in Docker**
+- [x] **Step 2: Verify RED in Docker**
 
 Run focused `test_staging.py` in the project test container. Expected: the new contract fails on both legacy Compose defaults.
 
-- [ ] **Step 3: Implement the minimum fix**
+- [x] **Step 3: Implement the minimum fix**
 
-Change only the two base Compose defaults to `${ADMIN_USERNAME:-}` and `${ADMIN_PASSWORD:-}`, empty the example/local values, and add the staging-only source-of-truth rule to `AGENTS.md`.
+Change base Compose defaults to empty values, reject bootstrap cookies when bootstrap configuration is absent or unsafe, empty the example/local login values, and add the staging-only source-of-truth rule to `AGENTS.md`.
 
-- [ ] **Step 4: Verify GREEN and staging invariants**
+- [x] **Step 4: Verify GREEN and staging invariants**
 
 Run the focused Docker test, Compose render with local empty values, and read-only staging check proving its username remains non-empty and `admin_users=0` without printing a password.
 
-- [ ] **Step 5: Record and commit**
+- [x] **Step 5: Record and commit**
 
 Update roadmap/changelog, run `git diff --check`, and create one local commit without push.

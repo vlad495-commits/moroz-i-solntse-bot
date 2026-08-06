@@ -21,6 +21,14 @@ Telegram LLM-assistant for the Moroz i Solntse tanning and cryotherapy center. S
 - `Дорожная карта.md` — живой план задач и статусов.
 - `changelog.md` — обязательный лог всех значимых действий.
 
+## Единственный рабочий контур админки
+
+- До отдельного production rollout рабочая админка находится только на staging: `https://moroz-staging.109.71.246.167.sslip.io/admin/login`.
+- Единственный источник staging credentials — server-only файл `/opt/moroz-staging/.env`. Локальный `.env` не является источником staging-логина или staging-пароля.
+- Не направлять пользователя к локальному `.env` за staging-доступом и не копировать staging-пароль в Git, документацию, changelog или чат.
+- Локальный admin bootstrap отключён пустыми `ADMIN_USERNAME` и `ADMIN_PASSWORD`; базовый Compose не должен подставлять `admin/admin` или публичный session secret.
+- `AGENTS.md` управляет работой Codex/разработчиков. Приложение и контейнеры его не читают; Docker build context находится в `project/`.
+
 ## Структура проекта (на ступени 1)
 
 ```

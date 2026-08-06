@@ -46,6 +46,7 @@ def authenticate(username: str, password: str) -> bool:
         or expected_username == _DEFAULT_USERNAME
         or expected_password == _DEFAULT_PASSWORD
         or SESSION_SECRET == _DEFAULT_SESSION_SECRET
+        or len(SESSION_SECRET) < 32
     ):
         return False
     return username == expected_username and password == expected_password
@@ -137,7 +138,11 @@ async def get_current_user(request: Request) -> AuthenticatedUser:
     if not user:
         raise _LoginRequired()
     if not user.session_id:
-        if user.id is None and await user_repository.count_admin_users() == 0:
+        if (
+            user.id is None
+            and await user_repository.count_admin_users() == 0
+            and authenticate(user.username, os.getenv("ADMIN_PASSWORD", ""))
+        ):
             return user
         raise _LoginRequired()
     session = await user_repository.get_active_session(user.session_id)
