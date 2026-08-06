@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ ROOT = Path("/workspace")
 BASE = ROOT / "docker-compose.yml"
 STAGING = ROOT / "docker-compose.staging.yml"
 CADDYFILE = ROOT / "ops/staging/Caddyfile"
+PIN_IMAGE_TAG = ROOT / "ops/pin-staging-image-tag.sh"
 
 
 class ComposeLoader(yaml.SafeLoader):
@@ -30,6 +32,49 @@ def load_compose(path):
 
 def load_staging():
     return load_compose(STAGING)
+
+
+def test_pin_staging_image_tag_replaces_drift_without_touching_secrets(tmp_path):
+    env_file = tmp_path / ".env"
+    private_value = "private-value-that-must-not-be-printed"
+    env_file.write_text(
+        "ADMIN_PASSWORD=" + private_value + "\n"
+        "STAGING_IMAGE_TAG=stale-tag\n"
+        "START_REPLY=approved external value\n"
+        "STAGING_IMAGE_TAG=duplicate-stale-tag\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["sh", str(PIN_IMAGE_TAG), str(env_file), "rc-0123456789ab"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text(encoding="utf-8") == (
+        "ADMIN_PASSWORD=" + private_value + "\n"
+        "STAGING_IMAGE_TAG=rc-0123456789ab\n"
+        "START_REPLY=approved external value\n"
+    )
+    assert private_value not in result.stdout + result.stderr
+
+
+def test_pin_staging_image_tag_rejects_non_immutable_tag_without_mutation(tmp_path):
+    env_file = tmp_path / ".env"
+    original = "STAGING_IMAGE_TAG=known-good\n"
+    env_file.write_text(original, encoding="utf-8")
+
+    result = subprocess.run(
+        ["sh", str(PIN_IMAGE_TAG), str(env_file), "latest"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert env_file.read_text(encoding="utf-8") == original
 
 
 def load_staging_module():

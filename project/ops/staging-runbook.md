@@ -61,7 +61,9 @@ chmod 600 /opt/moroz-staging/.env
 
 ```bash
 cd /opt/moroz-staging/project
-export STAGING_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
+candidate_commit="$(git rev-parse HEAD)"
+test "$(git status --porcelain)" = ""
+export STAGING_IMAGE_TAG="rc-${candidate_commit}"
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml ls
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml config --quiet bot worker admin migrate postgres redis rabbitmq caddy staging-webhook staging-smoke
 docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml build bot worker admin migrate
@@ -78,7 +80,7 @@ set -o pipefail
 } | docker compose --env-file ../.env -p moroz-staging -f docker-compose.yml -f docker-compose.staging.yml --profile staging-tools run -T --rm staging-smoke scan-logs
 ```
 
-Сохранить commit, четыре image ID/digest и `.Config.User`, но не полный inspect. Пустой/неожиданный user, config failure или build failure — blocker.
+Сохранить commit, четыре image ID/digest и `.Config.User`, но не полный inspect. Все четыре image tag обязаны содержать полный текущий commit после префикса `rc-`. Пустой/неожиданный user, грязный checkout, config failure или build failure — blocker.
 
 ### 4.1. Backward compatibility gate
 
@@ -138,6 +140,38 @@ export STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"
 
 Любая ошибка предыдущей миграции, candidate upgrade, `alembic current` или
 healthcheck предыдущего bot/worker — blocker. Рабочую staging-базу не мигрировать.
+
+### 4.2. Persistent image pin и rollback
+
+Только после успешных build, image evidence и backward compatibility gate создать
+защищённый rollback bundle. Полный `.env` не печатать. Предыдущие container image ID
+и tag записываются только для staging app services; отсутствие любого предыдущего
+image делает rollout blocker.
+
+```bash
+cd /opt/moroz-staging/project
+set -eu
+rollback_dir="/opt/moroz-staging-state/rollbacks/$(date -u +%Y%m%dT%H%M%SZ)-${candidate_commit}"
+install -d -m 0700 "$rollback_dir"
+install -m 0600 ../.env "$rollback_dir/.env.before"
+git bundle create "$rollback_dir/code.bundle" HEAD
+for service in bot worker admin; do
+  container="moroz-staging-${service}-1"
+  test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container")" = moroz-staging
+  docker inspect -f '{{.Image}}' "$container" >> "$rollback_dir/app-image-ids"
+done
+chmod 0600 "$rollback_dir/code.bundle" "$rollback_dir/app-image-ids"
+
+sh ./ops/pin-staging-image-tag.sh ../.env "$STAGING_IMAGE_TAG"
+test "$(awk -F= '/^STAGING_IMAGE_TAG=/{value=$2; count++} END{if(count==1) print value}' ../.env)" = "$STAGING_IMAGE_TAG"
+for service in bot worker admin migrate; do
+  test "$(docker image inspect -f '{{index .RepoTags 0}}' "moroz-staging-${service}:${STAGING_IMAGE_TAG}" | sed 's/^[^:]*://')" = "$STAGING_IMAGE_TAG"
+done
+```
+
+Если pin или post-check не прошёл, атомарно вернуть `$rollback_dir/.env.before` на
+место и остановиться до recreate. Один и тот же `rc-<full-commit>` нельзя
+пересобирать или переназначать другому image ID.
 
 ## 5. Stores и migration
 
