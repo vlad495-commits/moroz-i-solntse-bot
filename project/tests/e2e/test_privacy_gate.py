@@ -18,6 +18,7 @@ from config import (
     NON_TEXT_REPLY,
     START_REPLY,
 )
+from customer_data_deletion import delete_customer_data
 from moroz.common.db import Database
 from moroz.messaging.ingress import IngressDecision
 from moroz.messaging.repository import MessageRepository
@@ -327,6 +328,35 @@ async def test_deletion_marker_blocks_consent_callback_mutation(
     assert await db.fetchval("SELECT count(*) FROM processing_consents") == 0
     assert await db.fetchval("SELECT count(*) FROM outbound_messages") == 0
     assert fake_telegram.edited_reply_markups == []
+
+
+async def test_message_after_deletion_returns_to_consent_flow(
+    client, db, message_database, redis_client, fake_telegram
+):
+    await grant_policy_consent(client)
+    await db.execute(
+        "INSERT INTO messages (chat_id, user_id, role, content) "
+        "VALUES (42, 7, 'user', 'old secret')"
+    )
+
+    result = await delete_customer_data(
+        pool=message_database,
+        redis_client=redis_client,
+        chat_id=42,
+        actor_id=1,
+        ip_address=None,
+        user_agent=None,
+    )
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_text_update(update_id=992, text="Новое обращение"),
+    )
+
+    assert result.status == "deleted"
+    assert response.status_code == 200
+    assert await db.fetchval("SELECT count(*) FROM messages WHERE chat_id = 42") == 0
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert fake_telegram.last_text == CONSENT_PROMPT
 
 
 async def test_consent_done_without_policy_refuses_and_keeps_gate(

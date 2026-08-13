@@ -41,3 +41,9 @@ docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.y
 ```
 
 Never set `RESTORE_TARGET_DB` equal to `POSTGRES_DB`. Swap or production recovery is a manual incident decision after the restored database is inspected.
+
+### Privacy gate after restore
+
+Восстановленная база остаётся изолированной. Не направлять в неё Telegram, worker, scheduler или admin traffic, пока не проверены возраст backup и окно удалений клиентских данных. Backup-архивы удаляются по утверждённому сроку хранения; старый архив нельзя восстанавливать прямо поверх production.
+
+Срок хранения backup до production launch должен быть зафиксирован владельцем как обязательный launch input.

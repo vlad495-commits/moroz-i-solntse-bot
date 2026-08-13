@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from uuid import uuid4
@@ -241,3 +242,45 @@ async def test_redis_cleanup_failure_rolls_back_postgres(migrated_database_url):
         await cache.aclose()
         await pool.close()
         await conn.close()
+
+
+async def test_waits_for_existing_telegram_advisory_lock(migrated_database_url):
+    lock_conn = await asyncpg.connect(migrated_database_url)
+    pool = Database(migrated_database_url, min_size=1, max_size=2)
+    await pool.connect()
+    cache = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    transaction = lock_conn.transaction()
+    await transaction.start()
+    await lock_conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        "telegram:42",
+    )
+    task = asyncio.create_task(
+        delete_customer_data(
+            pool=pool,
+            redis_client=cache,
+            chat_id=42,
+            actor_id=1,
+            ip_address=None,
+            user_agent=None,
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert task.done() is False
+        assert await cache.get("privacy:deleting:telegram:42") == "1"
+
+        await transaction.rollback()
+        result = await asyncio.wait_for(task, timeout=3)
+
+        assert result.status == "already_absent"
+        assert await cache.get("privacy:deleting:telegram:42") is None
+    finally:
+        if not task.done():
+            task.cancel()
+        if lock_conn.is_in_transaction():
+            await transaction.rollback()
+        await cache.delete("privacy:deleting:telegram:42")
+        await cache.aclose()
+        await pool.close()
+        await lock_conn.close()
