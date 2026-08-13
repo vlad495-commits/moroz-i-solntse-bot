@@ -232,7 +232,7 @@ git commit -m "feat: добавить транзакционное удален�
 ### Task 3: Real PostgreSQL and Redis integration coverage
 
 **Files:**
-- Create: `project/tests/integration/admin/test_customer_data_deletion.py`
+- Create: `project/tests/integration/admin/test_customer_data_deletion_postgres.py`
 
 **Interfaces:**
 - Consumes: `delete_customer_data(...)` from Task 2.
@@ -270,13 +270,13 @@ Inject a Redis client whose `delete` raises before SQL deletion. Assert all targ
 - [ ] **Step 4: Run integration GREEN and commit**
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q tests/integration/admin/test_customer_data_deletion.py
+docker compose --env-file ../.env run --rm test pytest -q tests/integration/admin/test_customer_data_deletion_postgres.py
 ```
 
 Expected: PASS.
 
 ```powershell
-git add project/tests/integration/admin/test_customer_data_deletion.py "Дорожная карта.md" changelog.md
+git add project/tests/integration/admin/test_customer_data_deletion_postgres.py "Дорожная карта.md" changelog.md
 git commit -m "test: проверить полное удаление данных клиента"
 ```
 
@@ -377,7 +377,7 @@ git commit -m "feat: добавить удаление данных в адми�
 
 **Files:**
 - Modify: `project/tests/e2e/test_privacy_gate.py`
-- Modify: `project/tests/integration/admin/test_customer_data_deletion.py`
+- Modify: `project/tests/integration/admin/test_customer_data_deletion_postgres.py`
 - Modify: `project/ops/backup-runbook.md`
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`
@@ -406,7 +406,7 @@ Record the configured backup retention value or mark it as a blocking launch inp
 - [ ] **Step 3: Run focused and full Docker verification**
 
 ```powershell
-docker compose --env-file ../.env run --rm test pytest -q tests/unit/admin/test_customer_data_deletion.py tests/integration/admin/test_customer_data_deletion.py tests/e2e/admin/test_csrf_rbac_audit.py tests/e2e/test_privacy_gate.py
+docker compose --env-file ../.env run --rm test pytest -q tests/unit/admin/test_customer_data_deletion.py tests/integration/admin/test_customer_data_deletion_postgres.py tests/e2e/admin/test_csrf_rbac_audit.py tests/e2e/test_privacy_gate.py
 docker compose --env-file ../.env run --rm test pytest -q
 docker compose --env-file ../.env config --quiet
 git diff --check
