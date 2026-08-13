@@ -643,6 +643,33 @@ select:focus {
 .msg-time { color: var(--muted); }
 .msg-body { white-space: pre-wrap; word-break: break-word; }
 
+.customer-events { margin: 28px 0; }
+.customer-events-list { display: grid; gap: 10px; }
+.customer-event {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--muted);
+    border-radius: 10px;
+    padding: 12px 14px;
+    background: var(--surface);
+}
+.customer-event-category-message { border-left-color: #4f8cff; }
+.customer-event-category-booking { border-left-color: #46a758; }
+.customer-event-category-notification { border-left-color: #d99000; }
+.customer-event-category-handoff { border-left-color: #c15fbb; }
+.customer-event-category-admin { border-left-color: #697386; }
+.customer-event-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 5px;
+}
+.customer-event-category { text-transform: uppercase; font-weight: 800; }
+.customer-event p { margin: 7px 0 0; white-space: pre-wrap; word-break: break-word; }
+.customer-event-status { display: inline-block; margin-top: 7px; color: var(--muted); }
+.customer-events-pagination { display: flex; justify-content: space-between; margin-top: 14px; }
+
 .badge,
 .chip {
     display: inline-flex;

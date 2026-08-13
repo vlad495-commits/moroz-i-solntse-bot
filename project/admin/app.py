@@ -12,7 +12,7 @@ _ROOT_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
 if _ROOT_ENV.exists():
     load_dotenv(_ROOT_ENV)
 
-from fastapi import FastAPI, Form, Request  # noqa: E402
+from fastapi import FastAPI, Form, Query, Request  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.templating import Jinja2Templates  # noqa: E402
@@ -191,11 +191,20 @@ async def index(request: Request):
 
 
 @app.get("/chats/{chat_id}", response_class=HTMLResponse)
-async def chat_detail(request: Request, chat_id: int):
+async def chat_detail(
+    request: Request,
+    chat_id: int,
+    events_offset: int = Query(0, ge=0),
+):
     user = await get_current_user(request)
     detail = await database.get_chat_detail(chat_id)
     if not detail:
         return RedirectResponse(url=admin_url(request, "/"), status_code=302)
+    events = await database.get_customer_events(
+        chat_id,
+        limit=50,
+        offset=events_offset,
+    )
     await record_audit(
         actor_id=user.id,
         action="chat.view",
@@ -220,7 +229,7 @@ async def chat_detail(request: Request, chat_id: int):
     return templates.TemplateResponse(
         request,
         "chat_detail.html",
-        {"user": user, "chat": detail},
+        {"user": user, "chat": detail, "events": events},
     )
 
 

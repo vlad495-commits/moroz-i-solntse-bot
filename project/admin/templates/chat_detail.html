@@ -19,6 +19,33 @@
     <div class="stat"><div class="stat-label">Модель</div><div class="stat-value model">{{ chat.stats.last_model or '—' }}</div></div>
 </div>
 
+<section class="customer-events">
+    <h2>События клиента</h2>
+    {% if events['items'] %}
+    <div class="customer-events-list">
+        {% for event in events['items'] %}
+        <article class="customer-event customer-event-category-{{ event.category }}">
+            <div class="customer-event-head">
+                <span class="customer-event-category">{{ event.category }}</span>
+                <time>{{ event.occurred_at.strftime('%Y-%m-%d %H:%M:%S') }}</time>
+            </div>
+            <strong>{{ event.title }}</strong>
+            {% if event.description %}<p>{{ event.description }}</p>{% endif %}
+            {% if event.status %}<span class="customer-event-status">{{ event.status }}</span>{% endif %}
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">Событий пока нет.</p>
+    {% endif %}
+    {% if events.previous_offset is not none or events.next_offset is not none %}
+    <nav class="customer-events-pagination" aria-label="Страницы событий">
+        {% if events.previous_offset is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ chat.chat_id }}?events_offset={{ events.previous_offset }}">← Новее</a>{% endif %}
+        {% if events.next_offset is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ chat.chat_id }}?events_offset={{ events.next_offset }}">Раньше →</a>{% endif %}
+    </nav>
+    {% endif %}
+</section>
+
 <h2>Сообщения</h2>
 <div class="messages">
     {% for msg in chat.messages %}
