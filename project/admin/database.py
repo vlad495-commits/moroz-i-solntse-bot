@@ -2,6 +2,9 @@
 
 Админка только читает, не пишет (кроме логина/сессии)."""
 
+import base64
+import binascii
+import json
 import logging
 import os
 from datetime import datetime
@@ -140,24 +143,21 @@ async def get_chat_detail(chat_id: int) -> dict[str, Any] | None:
 async def get_customer_events(
     chat_id: int,
     limit: int = 50,
-    offset: int = 0,
-    anchor: datetime | None = None,
+    cursor: str | None = None,
 ) -> dict[str, Any]:
     """Return one safe, newest-first page of existing customer events."""
-    if not 1 <= limit <= 50 or offset < 0:
+    if not 1 <= limit <= 50:
         raise ValueError("customer events page bounds")
+    boundary = _decode_customer_events_cursor(cursor)
     empty = {
         "items": [],
-        "offset": offset,
-        "next_offset": None,
-        "previous_offset": max(0, offset - limit) if offset else None,
+        "next_cursor": None,
         "has_more": False,
     }
     if not _pool:
         return empty
     customer_id = str(chat_id)
     async with _pool.acquire() as conn:
-        resolved_anchor = anchor or await conn.fetchval("SELECT now()")
         rows = await conn.fetch(
             """
             WITH customer_events AS (
@@ -251,26 +251,75 @@ async def get_customer_events(
             )
             SELECT source, source_id, occurred_at, kind, description, status
             FROM customer_events
-            WHERE occurred_at <= $5
+            WHERE $3::timestamptz IS NULL
+               OR (occurred_at, source, source_id)
+                    < ($3::timestamptz, $4::text, $5::text)
             ORDER BY occurred_at DESC, source DESC, source_id DESC
-            LIMIT $3 OFFSET $4
+            LIMIT $6
             """,
             chat_id,
             customer_id,
+            boundary[0] if boundary else None,
+            boundary[1] if boundary else None,
+            boundary[2] if boundary else None,
             limit + 1,
-            offset,
-            resolved_anchor,
         )
     has_more = len(rows) > limit
-    items = [normalize_customer_event(row) for row in rows[:limit]]
+    page_rows = list(rows[:limit])
+    items = [normalize_customer_event(row) for row in page_rows]
+    next_cursor = None
+    if page_rows and has_more:
+        last = page_rows[-1]
+        next_cursor = _encode_customer_events_cursor(
+            last["occurred_at"],
+            last["source"],
+            last["source_id"],
+        )
     return {
         "items": items,
-        "offset": offset,
-        "next_offset": offset + limit if has_more else None,
-        "previous_offset": max(0, offset - limit) if offset else None,
+        "next_cursor": next_cursor,
         "has_more": has_more,
-        "anchor": resolved_anchor,
     }
+
+
+def _encode_customer_events_cursor(
+    occurred_at: datetime,
+    source: str,
+    source_id: str,
+) -> str:
+    payload = json.dumps(
+        [occurred_at.isoformat(), source, source_id],
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def _decode_customer_events_cursor(
+    cursor: str | None,
+) -> tuple[datetime, str, str] | None:
+    if cursor is None:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        values = json.loads(raw)
+        if (
+            not isinstance(values, list)
+            or len(values) != 3
+            or not all(isinstance(value, str) for value in values)
+        ):
+            raise ValueError
+        occurred_at = datetime.fromisoformat(values[0])
+        if occurred_at.tzinfo is None:
+            raise ValueError
+        return occurred_at, values[1], values[2]
+    except (
+        ValueError,
+        TypeError,
+        UnicodeDecodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ) as error:
+        raise ValueError("customer events cursor") from error
 
 
 async def get_global_stats() -> dict[str, Any]:

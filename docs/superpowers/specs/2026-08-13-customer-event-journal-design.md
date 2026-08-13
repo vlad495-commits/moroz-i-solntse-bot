@@ -19,7 +19,7 @@
 
 1. `messages` по `chat_id`: сообщения клиента и бота.
 2. `booking_events` через `booking_scenarios.customer_id`: этапы создания, переноса и отмены записи.
-3. `scheduler_jobs` по `payload.customer_id` либо через `booking_key` и `bookings.customer_id`: создание задачи и её терминальный результат.
+3. `scheduler_jobs`: строковый `payload.customer_id` является каноническим владельцем; только при его отсутствии используется связь `booking_key` → `bookings.customer_id`. Показываются создание задачи и её терминальный результат.
 4. `escalations` по `customer_id`: открытие и закрытие обращения к человеку.
 5. `human_mode` по `customer_id`: включение текущего ручного режима.
 6. `admin_audit_events` только когда `object_type = 'customer'` и `object_id = chat_id`: будущие адресные действия администратора.
@@ -54,7 +54,7 @@
 
 ## Получение данных
 
-В `admin/database.py` добавляется `get_customer_events(chat_id, limit=50, offset=0, anchor=None)`. Функция валидирует границы (`1..50`, `offset >= 0`), фиксирует PostgreSQL-time якорь первой страницы, выполняет SQL `UNION ALL`, отсекает более новые события, сортирует по `occurred_at DESC, source DESC, source_id DESC` и запрашивает `limit + 1` строку. Лишняя строка формирует `has_more`; наружу возвращаются события, якорь и следующий offset. Один anchor передаётся по ссылкам всей сессии просмотра, поэтому новые события не сдвигают уже открытую ленту.
+В `admin/database.py` добавляется `get_customer_events(chat_id, limit=50, cursor=None)`. Функция валидирует `limit` (`1..50`) и bounded opaque URL-safe cursor, выполняет SQL `UNION ALL`, сортирует по `occurred_at DESC, source DESC, source_id DESC` и запрашивает `limit + 1` строку. Кнопка «Раньше» использует одностороннюю keyset-границу по полному sort key, поэтому новое или поздно зафиксированное событие не дублируется на следующей странице. Возврат к свежим событиям выполняется возвратом/перезагрузкой карточки. Cursor не содержит клиентских данных.
 
 Карточка диалога продолжает получать сообщения и статистику существующим `get_chat_detail`. Route отдельно запрашивает страницу событий и передаёт её в шаблон. Это не смешивает профиль диалога с timeline-query и не меняет существующий контракт сообщений.
 

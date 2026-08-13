@@ -3,7 +3,6 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,7 +12,7 @@ _ROOT_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
 if _ROOT_ENV.exists():
     load_dotenv(_ROOT_ENV)
 
-from fastapi import FastAPI, Form, Query, Request  # noqa: E402
+from fastapi import FastAPI, Form, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.templating import Jinja2Templates  # noqa: E402
@@ -195,19 +194,20 @@ async def index(request: Request):
 async def chat_detail(
     request: Request,
     chat_id: int,
-    events_offset: int = Query(0, ge=0),
-    events_anchor: datetime | None = Query(None),
+    events_cursor: str | None = Query(None, max_length=2048),
 ):
     user = await get_current_user(request)
     detail = await database.get_chat_detail(chat_id)
     if not detail:
         return RedirectResponse(url=admin_url(request, "/"), status_code=302)
-    events = await database.get_customer_events(
-        chat_id,
-        limit=50,
-        offset=events_offset,
-        anchor=events_anchor,
-    )
+    try:
+        events = await database.get_customer_events(
+            chat_id,
+            limit=50,
+            cursor=events_cursor,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="invalid events cursor") from error
     await record_audit(
         actor_id=user.id,
         action="chat.view",

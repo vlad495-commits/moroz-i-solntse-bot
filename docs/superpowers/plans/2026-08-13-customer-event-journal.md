@@ -44,7 +44,7 @@ def test_unknown_kind_is_neutral_and_does_not_copy_extra_fields():
         "event_id": "scheduler:job-1",
         "occurred_at": NOW,
         "category": "notification",
-        "kind": "secret_internal_kind",
+        "kind": "unknown",
         "title": "Системное событие",
         "description": None,
         "status": "failed",
@@ -63,7 +63,7 @@ Expected: FAIL because `customer_events` does not exist.
 
 - [ ] **Step 3: Implement the minimal allowlist mapper**
 
-Создать `SOURCE_CATEGORIES`, `EVENT_TITLES` и функцию, которая формирует новый словарь только из шести разрешённых входных полей. Unknown kind получает `Системное событие`; raw kind остаётся только как CSS-safe диагностическая строка и никогда не используется как HTML.
+Создать `SOURCE_CATEGORIES`, `EVENT_TITLES` и функцию, которая формирует новый словарь только из шести разрешённых входных полей. Unknown kind получает `unknown` и `Системное событие`; raw kind не передаётся в шаблон.
 
 - [ ] **Step 4: Run GREEN**
 
@@ -84,7 +84,7 @@ git commit -m "feat: добавить модель событий клиента
 
 **Interfaces:**
 - Consumes: `normalize_customer_event(row)` из Task 1.
-- Produces: `get_customer_events(chat_id: int, limit: int = 50, offset: int = 0, anchor: datetime | None = None) -> dict[str, object]`, где результат содержит `items`, `offset`, `next_offset`, `previous_offset`, `has_more`, `anchor`.
+- Produces: `get_customer_events(chat_id: int, limit: int = 50, cursor: str | None = None) -> dict[str, object]`, где результат содержит `items`, `next_cursor`, `has_more`.
 
 - [ ] **Step 1: Write the failing PostgreSQL integration tests**
 
@@ -123,12 +123,12 @@ source, source_id, occurred_at, kind, description, status
 
 - `messages`: `message.user` / `message.assistant`, description = `content`;
 - `booking_events JOIN booking_scenarios`: `booking.` + `event_type`, без `payload`;
-- `scheduler_jobs`: событие `scheduler.scheduled` на `created_at` и `scheduler.` + `status` на `finished_at`, customer определяется точным `payload->>'customer_id'` либо `booking_key` из customer booking;
+- `scheduler_jobs`: событие `scheduler.scheduled` на `created_at` и `scheduler.` + `status` на `finished_at`; строковый `payload.customer_id` имеет приоритет, booking fallback разрешён только при его отсутствии;
 - `escalations`: `handoff.opened` на `created_at` и `handoff.resolved` на `resolved_at`, description = `reason_code`;
 - `human_mode`: `handoff.enabled` на `enabled_at`, description = `reason_code`;
 - `admin_audit_events`: только `object_type = 'customer' AND object_id = $1`, kind = `admin.` + `action`, без `before/after`.
 
-Внешний запрос использует один PostgreSQL-time anchor для всех страниц, сортирует `occurred_at DESC, source DESC, source_id DESC`, применяет LIMIT как `limit + 1` и OFFSET. Python отбрасывает лишнюю строку, нормализует остальные и вычисляет offsets.
+Внешний запрос сортирует `occurred_at DESC, source DESC, source_id DESC`, применяет LIMIT как `limit + 1` и односторонний keyset predicate по bounded opaque cursor. Python отбрасывает лишнюю строку и формирует следующий cursor для кнопки «Раньше». Обратный snapshot-navigation намеренно отсутствует: mutable источники не позволяют честно восстановить прошлую версию без отдельного event store.
 
 - [ ] **Step 4: Run GREEN and existing database regressions**
 
@@ -157,7 +157,7 @@ git commit -m "feat: собрать события клиента из PostgreSQ
 - Modify: `project/tests/e2e/admin/test_csrf_rbac_audit.py`
 
 **Interfaces:**
-- Consumes: `database.get_customer_events(chat_id, limit=50, offset=events_offset, anchor=events_anchor)`.
+- Consumes: `database.get_customer_events(chat_id, limit=50, cursor=events_cursor)`.
 - Produces: HTML block `.customer-events`, safe page links with `events_offset`, and unchanged message/danger-zone UI.
 
 - [ ] **Step 1: Write failing route/template tests**

@@ -42,11 +42,8 @@ def _events():
                 "status": None,
             }
         ],
-        "offset": 0,
-        "next_offset": 50,
-        "previous_offset": None,
+        "next_cursor": "next-safe-cursor",
         "has_more": True,
-        "anchor": datetime(2026, 8, 13, 20, 1, tzinfo=UTC),
     }
 
 
@@ -61,8 +58,8 @@ async def test_chat_detail_renders_safe_event_page_for_both_roles(
     async def get_detail(_chat_id):
         return _detail()
 
-    async def get_events(chat_id, *, limit, offset, anchor):
-        assert (chat_id, limit, offset, anchor) == (42, 50, 0, None)
+    async def get_events(chat_id, *, limit, cursor):
+        assert (chat_id, limit, cursor) == (42, 50, None)
         return _events()
 
     async def no_audit(**_kwargs):
@@ -82,8 +79,7 @@ async def test_chat_detail_renders_safe_event_page_for_both_roles(
     assert response.status_code == 200
     assert "События клиента" in response.text
     assert "Сообщение клиента" in response.text
-    assert "events_offset=50" in response.text
-    assert "events_anchor=" in response.text
+    assert "events_cursor=next-safe-cursor" in response.text
     assert "<script>alert('journal')</script>" not in response.text
     assert "&lt;script&gt;alert" in response.text
     if role == "owner":
@@ -93,7 +89,7 @@ async def test_chat_detail_renders_safe_event_page_for_both_roles(
 
 
 @pytest.mark.asyncio
-async def test_chat_detail_rejects_negative_event_offset(monkeypatch):
+async def test_chat_detail_rejects_malformed_event_cursor(monkeypatch):
     async def current_user(_request):
         return _user("owner")
 
@@ -102,7 +98,7 @@ async def test_chat_detail_rejects_negative_event_offset(monkeypatch):
         transport=ASGITransport(app=admin_app.app),
         base_url="http://test",
     ) as client:
-        response = await client.get("/chats/42?events_offset=-1")
+        response = await client.get("/chats/42?events_cursor=not-a-cursor")
 
     assert response.status_code == 422
 

@@ -139,24 +139,20 @@ async def test_customer_events_merge_sources_paginate_and_isolate_customer(
         await connection.execute(
             "INSERT INTO messages (chat_id, user_id, role, content, created_at) "
             "VALUES (42, 7, 'user', 'new-after-first-page', $1)",
-            base + timedelta(days=2),
+            base + timedelta(minutes=5, seconds=30),
         )
         second = await admin_database.get_customer_events(
             42,
             limit=3,
-            offset=first["next_offset"],
-            anchor=first["anchor"],
+            cursor=first["next_cursor"],
         )
-
         assert [event["title"] for event in first["items"]] == [
             "Заметка администратора",
             "Обращение администратора закрыто",
             "Уведомление отправлено",
         ]
         assert first["has_more"] is True
-        assert first["next_offset"] == 3
-        assert first["previous_offset"] is None
-        assert second["previous_offset"] == 0
+        assert first["next_cursor"]
         assert {item["event_id"] for item in first["items"]}.isdisjoint(
             item["event_id"] for item in second["items"]
         )
@@ -174,9 +170,14 @@ async def test_customer_events_merge_sources_paginate_and_isolate_customer(
 
 
 @pytest.mark.parametrize(
-    ("limit", "offset"),
-    [(0, 0), (51, 0), (50, -1)],
+    "limit",
+    [0, 51],
 )
-async def test_customer_events_reject_invalid_page_bounds(limit, offset):
+async def test_customer_events_reject_invalid_page_bounds(limit):
     with pytest.raises(ValueError, match="customer events page bounds"):
-        await admin_database.get_customer_events(42, limit=limit, offset=offset)
+        await admin_database.get_customer_events(42, limit=limit)
+
+
+async def test_customer_events_reject_malformed_cursor():
+    with pytest.raises(ValueError, match="customer events cursor"):
+        await admin_database.get_customer_events(42, cursor="not-a-cursor")
