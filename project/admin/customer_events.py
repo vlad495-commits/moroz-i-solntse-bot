@@ -1,0 +1,48 @@
+"""Safe presentation model for a customer's read-only event timeline."""
+
+from collections.abc import Mapping
+
+
+SOURCE_CATEGORIES = {
+    "message": "message",
+    "booking": "booking",
+    "scheduler": "notification",
+    "escalation": "handoff",
+    "human_mode": "handoff",
+    "admin": "admin",
+}
+
+EVENT_TITLES = {
+    "message.user": "Сообщение клиента",
+    "message.assistant": "Ответ бота",
+    "booking.booking_scenario_created": "Начат сценарий записи",
+    "booking.booking_execution_started": "Начато изменение записи",
+    "booking.booking_confirmed": "Запись подтверждена",
+    "booking.booking_cancelled": "Запись отменена",
+    "booking.booking_rescheduled": "Запись перенесена",
+    "booking.slot_unavailable": "Выбранное время недоступно",
+    "booking.admin_attention_required": "Требуется помощь администратора",
+    "scheduler.scheduled": "Уведомление запланировано",
+    "scheduler.finished": "Уведомление отправлено",
+    "scheduler.skipped": "Уведомление пропущено",
+    "scheduler.failed": "Ошибка уведомления",
+    "handoff.opened": "Передано администратору",
+    "handoff.resolved": "Обращение администратора закрыто",
+    "handoff.enabled": "Включён ручной режим",
+    "admin.customer.note": "Заметка администратора",
+}
+
+
+def normalize_customer_event(row: Mapping[str, object]) -> dict[str, object]:
+    source = str(row["source"])
+    raw_kind = str(row["kind"])
+    known = raw_kind in EVENT_TITLES
+    return {
+        "event_id": f"{source}:{row['source_id']}",
+        "occurred_at": row["occurred_at"],
+        "category": SOURCE_CATEGORIES.get(source, "admin"),
+        "kind": raw_kind if known else "unknown",
+        "title": EVENT_TITLES.get(raw_kind, "Системное событие"),
+        "description": row.get("description"),
+        "status": row.get("status"),
+    }
