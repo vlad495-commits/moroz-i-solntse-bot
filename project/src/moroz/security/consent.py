@@ -30,9 +30,23 @@ class ConsentService:
         channel: str,
         user_id: str,
         consent_version: str,
+        *,
+        connection=None,
     ) -> None:
-        async with self._database.acquire() as connection:
-            await connection.execute(
+        if connection is not None:
+            await self._grant(
+                connection, channel, user_id, consent_version
+            )
+            return
+        async with self._database.acquire() as owned_connection:
+            await self._grant(
+                owned_connection, channel, user_id, consent_version
+            )
+
+    async def _grant(
+        self, connection, channel: str, user_id: str, consent_version: str
+    ) -> None:
+        await connection.execute(
                 """
                 INSERT INTO processing_consents
                     (channel, user_id, consent_version)
@@ -42,4 +56,4 @@ class ConsentService:
                 channel,
                 user_id,
                 consent_version,
-            )
+        )

@@ -54,7 +54,6 @@
 
 - `chat:{chat_id}:messages`;
 - `buffer:{chat_id}`;
-- `lock:buffer:{chat_id}`;
 - элемент `{chat_id}` из `buffer:deadlines`;
 - `consent:state:telegram:{chat_id}:{user_id}` для найденных `user_id`;
 - временная метка удаления.
@@ -63,15 +62,19 @@
 
 ## Порядок и конкурентность
 
-1. Админка ставит Redis-метку `privacy:deleting:telegram:{chat_id}` с TTL 300 секунд.
+1. Админка получает tokenized Redis lock одного удаления, ставит метку `privacy:deleting:telegram:{chat_id}` с TTL 300 секунд и получает существующий `lock:buffer:{chat_id}`.
 2. Telegram webhook проверяет метку до consent flow и `MessageService.accept`. Во время удаления он отвечает HTTP 200, но не создаёт клиентские записи. Никакой новый текст не логируется.
-3. Сервис открывает PostgreSQL-транзакцию и выполняет `pg_advisory_xact_lock(hashtextextended('telegram:' || chat_id, 0))` — тот же ключ, который использует worker для Telegram-чата.
+3. Сервис открывает PostgreSQL-транзакцию и выполняет `pg_advisory_xact_lock(hashtextextended(chat_id, 0))` — канонический ключ, который использует worker для Telegram-чата.
 4. После получения lock сервис собирает `user_id`, UUID сценариев и booking keys.
 5. Пока транзакция и ingress-метка активны, сервис очищает Redis. Ошибка Redis прерывает операцию и откатывает SQL.
 6. PostgreSQL удаляется в порядке зависимостей: события и задания, бронирования, сценарии, messaging-данные, согласия и legacy-история.
 7. Перед commit сервис повторно считает связанные строки. Ненулевой остаток считается ошибкой и вызывает rollback.
 8. В той же транзакции создаётся обезличенный audit event.
-9. После commit снимается ingress-метка. Если снятие не удалось, TTL гарантированно освободит клиента не позднее пяти минут; данные при этом уже удалены.
+9. После commit marker остаётся ещё на 5 секунд, чтобы запросы, начавшиеся до lock, повторно увидели удаление; затем Redis удаляет его по TTL. Privacy и buffer locks освобождаются только своими token.
+
+Webhook-вставка inbox берёт тот же PostgreSQL lock и повторно проверяет durable consent. Buffer pump сериализован тем же Redis buffer lock. Scheduler worker держит customer lock вокруг локальных и YCLIENTS side effects и перечитывает job после ожидания lock.
+
+Новые RabbitMQ `process_message` envelopes содержат только opaque update IDs, без `chat_id`; старый envelope с удалённым inbox подтверждается без retry/DLQ. Staff outbound находится по структурированному booking-key сегменту и удаляется вместе со своим opaque send-task.
 
 Потеря Redis-контекста при последующей ошибке PostgreSQL допустима: постоянные данные остаются в БД, а временная память безопасно восстановится с нового диалога.
 

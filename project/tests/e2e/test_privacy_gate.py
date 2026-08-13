@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from datetime import datetime
@@ -330,6 +331,39 @@ async def test_deletion_marker_blocks_consent_callback_mutation(
     assert fake_telegram.edited_reply_markups == []
 
 
+async def test_consent_callback_rechecks_marker_after_customer_lock(
+    client, db, redis_client
+):
+    await redis_client.set("consent:state:telegram:42:7", "pii", ex=3600)
+    transaction = db.transaction()
+    await transaction.start()
+    await db.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "42"
+    )
+    callback = asyncio.create_task(
+        client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=993,
+                data=CONSENT_DONE_CALLBACK_DATA,
+            ),
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert callback.done() is False
+        await redis_client.set("privacy:deleting:telegram:42", "1", ex=300)
+        await transaction.rollback()
+
+        assert (await asyncio.wait_for(callback, timeout=3)).status_code == 200
+        assert await db.fetchval("SELECT count(*) FROM processing_consents") == 0
+    finally:
+        if not callback.done():
+            callback.cancel()
+        if db.is_in_transaction():
+            await transaction.rollback()
+
+
 async def test_message_after_deletion_returns_to_consent_flow(
     client, db, message_database, redis_client, fake_telegram
 ):
@@ -347,6 +381,7 @@ async def test_message_after_deletion_returns_to_consent_flow(
         ip_address=None,
         user_agent=None,
     )
+    await redis_client.delete("privacy:deleting:telegram:42")
     response = await client.post(
         "/telegram/webhook",
         json=telegram_text_update(update_id=992, text="Новое обращение"),
@@ -552,7 +587,6 @@ async def test_redis_failure_after_consent_creates_single_message_task(
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 1
     assert task["kind"] == "process_message"
     assert json.loads(task["payload"]) == {
-        "chat_id": "42",
         "update_ids": ["910"],
     }
     assert tuple(task.values())[2:] == ("process_message:910", "pending")

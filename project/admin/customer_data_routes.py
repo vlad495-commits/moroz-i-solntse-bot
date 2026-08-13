@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse
 import database
 from audit_repository import request_ip_address, request_user_agent
 from auth import get_current_user
-from customer_data_deletion import CustomerDataDeletionError, delete_customer_data
+from customer_data_deletion import delete_customer_data
 from paths import admin_url
 from rbac import require_role, validate_csrf
 
@@ -57,7 +57,7 @@ async def customer_data_delete(
             url=admin_url(request, f"/?deleted={result.status}"),
             status_code=302,
         )
-    except CustomerDataDeletionError as error:
+    except Exception as error:
         logger.error(
             "customer_data_delete_failed error_type=%s",
             type(error).__name__,

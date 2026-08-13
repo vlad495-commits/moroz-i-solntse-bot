@@ -6,7 +6,13 @@ import json
 from dataclasses import dataclass
 from typing import Literal
 
-from moroz.privacy import DELETION_MARKER_TTL_SECONDS, deletion_marker_key
+from moroz.privacy import (
+    DELETION_MARKER_TTL_SECONDS,
+    POST_DELETE_MARKER_TTL_SECONDS,
+    customer_lock_subject,
+    deletion_lock_key,
+    deletion_marker_key,
+)
 
 
 DELETION_CHANNEL = "telegram"
@@ -26,7 +32,7 @@ def _delete_count(command_tag: str) -> int:
     try:
         return int(command_tag.rsplit(" ", 1)[-1])
     except (TypeError, ValueError):
-        return 0
+        raise CustomerDataDeletionError("customer data deletion failed")
 
 
 async def _clear_redis(redis_client, chat_id: str, user_ids: set[str]) -> None:
@@ -34,7 +40,6 @@ async def _clear_redis(redis_client, chat_id: str, user_ids: set[str]) -> None:
     pipe.delete(
         f"chat:{chat_id}:messages",
         f"buffer:{chat_id}",
-        f"lock:buffer:{chat_id}",
     )
     pipe.zrem("buffer:deadlines", chat_id)
     for user_id in sorted(user_ids):
@@ -57,19 +62,41 @@ async def delete_customer_data(
 ) -> DeletionResult:
     chat = str(chat_id)
     marker = deletion_marker_key(DELETION_CHANNEL, chat)
+    privacy_lock = None
+    buffer_lock = None
     marker_set = False
+    privacy_lock_acquired = False
+    buffer_lock_acquired = False
+    committed = False
     try:
+        privacy_lock = redis_client.lock(
+            deletion_lock_key(DELETION_CHANNEL, chat),
+            timeout=DELETION_MARKER_TTL_SECONDS,
+            blocking_timeout=1,
+        )
+        buffer_lock = redis_client.lock(
+            f"lock:buffer:{chat}",
+            timeout=30,
+            blocking_timeout=2,
+        )
+        if not await privacy_lock.acquire():
+            raise CustomerDataDeletionError("customer data deletion failed")
+        privacy_lock_acquired = True
         await redis_client.set(
             marker,
             "1",
             ex=DELETION_MARKER_TTL_SECONDS,
         )
         marker_set = True
+        if not await buffer_lock.acquire():
+            raise CustomerDataDeletionError("customer data deletion failed")
+        buffer_lock_acquired = True
         async with pool.acquire() as conn:
             async with conn.transaction():
+                await conn.execute("SET LOCAL lock_timeout = '10s'")
                 await conn.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                    f"{DELETION_CHANNEL}:{chat}",
+                    customer_lock_subject(chat),
                 )
 
                 user_ids = {chat}
@@ -89,6 +116,17 @@ async def delete_customer_data(
                     chat,
                 )
                 user_ids.update(row["user_id"] for row in user_rows)
+                update_ids = [
+                    row["external_message_id"]
+                    for row in await conn.fetch(
+                        """
+                        SELECT external_message_id FROM message_inbox
+                        WHERE channel = $1 AND chat_id = $2
+                        """,
+                        DELETION_CHANNEL,
+                        chat,
+                    )
+                ]
                 scenarios = [
                     row["id"]
                     for row in await conn.fetch(
@@ -108,10 +146,13 @@ async def delete_customer_data(
                     for row in await conn.fetch(
                         """
                         SELECT id FROM outbound_messages
-                        WHERE channel = $1 AND chat_id = $2
+                        WHERE (channel = $1 AND chat_id = $2)
+                           OR split_part(idempotency_key, ':', 2)
+                              = ANY($3::text[])
                         """,
                         DELETION_CHANNEL,
                         chat,
+                        [str(value) for value in booking_keys],
                     )
                 ]
 
@@ -172,16 +213,23 @@ async def delete_customer_data(
                        OR payload->>'user_id' = ANY($2::text[])
                        OR payload->>'customer_id' = $1
                        OR payload->>'outbound_id' = ANY($3::text[])
+                       OR EXISTS (
+                           SELECT 1 FROM jsonb_array_elements_text(
+                               COALESCE(payload->'update_ids', '[]'::jsonb)
+                           ) AS item(value)
+                           WHERE item.value = ANY($4::text[])
+                       )
                     """,
                     chat,
                     sorted(user_ids),
                     outbound_ids,
+                    update_ids,
                 )
                 await _delete(
                     conn, counts, "outbound_messages",
-                    "DELETE FROM outbound_messages WHERE channel = $1 AND chat_id = $2",
-                    DELETION_CHANNEL,
-                    chat,
+                    "DELETE FROM outbound_messages "
+                    "WHERE id::text = ANY($1::text[])",
+                    outbound_ids,
                 )
                 await _delete(
                     conn, counts, "message_inbox",
@@ -235,19 +283,22 @@ async def delete_customer_data(
                         ),
                         await conn.fetchval(
                             "SELECT count(*) FROM outbound_messages "
-                            "WHERE channel = $1 AND chat_id = $2",
-                            DELETION_CHANNEL,
-                            chat,
+                            "WHERE id::text = ANY($1::text[])",
+                            outbound_ids,
                         ),
                         await conn.fetchval(
                             "SELECT count(*) FROM task_outbox "
                             "WHERE payload->>'chat_id' = $1 "
                             "OR payload->>'user_id' = ANY($2::text[]) "
                             "OR payload->>'customer_id' = $1 "
-                            "OR payload->>'outbound_id' = ANY($3::text[])",
+                            "OR payload->>'outbound_id' = ANY($3::text[]) "
+                            "OR EXISTS (SELECT 1 FROM jsonb_array_elements_text("
+                            "COALESCE(payload->'update_ids', '[]'::jsonb)) item(value) "
+                            "WHERE item.value = ANY($4::text[]))",
                             chat,
                             sorted(user_ids),
                             outbound_ids,
+                            update_ids,
                         ),
                         await conn.fetchval(
                             "SELECT count(*) FROM processing_consents "
@@ -294,6 +345,14 @@ async def delete_customer_data(
                 if remaining:
                     raise CustomerDataDeletionError("customer data deletion failed")
 
+                if await conn.fetchval(
+                    "SELECT to_regclass('public.security_incidents')"
+                ) and await conn.fetchval(
+                    "SELECT count(*) FROM security_incidents WHERE chat_id = $1",
+                    chat_id,
+                ):
+                    raise CustomerDataDeletionError("customer data deletion failed")
+
                 status = "deleted" if sum(counts.values()) else "already_absent"
                 await conn.execute(
                     """
@@ -315,14 +374,30 @@ async def delete_customer_data(
                     ip_address,
                     user_agent,
                 )
+        committed = True
         return DeletionResult(status=status, deleted_counts=counts)
     except CustomerDataDeletionError:
         raise
     except Exception as error:
         raise CustomerDataDeletionError("customer data deletion failed") from error
     finally:
-        if marker_set:
+        if marker_set and committed:
+            try:
+                await redis_client.expire(marker, POST_DELETE_MARKER_TTL_SECONDS)
+            except Exception:
+                pass
+        elif marker_set:
             try:
                 await redis_client.delete(marker)
+            except Exception:
+                pass
+        if buffer_lock_acquired and buffer_lock is not None:
+            try:
+                await buffer_lock.release()
+            except Exception:
+                pass
+        if privacy_lock_acquired and privacy_lock is not None:
+            try:
+                await privacy_lock.release()
             except Exception:
                 pass

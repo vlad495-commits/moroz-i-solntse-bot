@@ -19,7 +19,6 @@ async def enqueue_process_message(
     idempotency_key = process_message_key(update_ids)
     payload = json.dumps(
         {
-            "chat_id": chat_id,
             "update_ids": list(update_ids),
         },
         ensure_ascii=False,

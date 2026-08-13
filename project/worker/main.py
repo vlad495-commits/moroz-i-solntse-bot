@@ -27,6 +27,7 @@ from moroz.notifications.handlers import handle_scheduler_job
 from moroz.notifications.lifecycle import LifecycleService
 from moroz.notifications.ports import LocalBookingPort, NotificationOutbox
 from moroz.notifications.repository import SchedulerJobRepository
+from moroz.privacy import customer_lock_subject
 
 
 logging.basicConfig(
@@ -136,28 +137,76 @@ class MessageTaskHandler:
         job = await self._scheduler_repository.get_claimed(job_id)
         if job is None:
             return
-        try:
-            result = await self._scheduler_handler(
-                job,
-                booking_port=self._booking_port,
-                outbox=self._notification_outbox,
-                lifecycle=self._lifecycle,
-            )
-        except Exception as error:
-            await self._scheduler_repository.record_failure(
-                job,
-                error_code=type(error).__name__,
-                terminal=job.attempts >= MAX_RETRIES,
-            )
-            raise
-        await self._scheduler_repository.complete(job, result)
+        customer_id = job.payload.get("customer_id")
+        if (
+            not isinstance(customer_id, str)
+            and job.booking_key is not None
+            and hasattr(self._database, "acquire")
+        ):
+            async with self._database.acquire() as lookup:
+                customer_id = await lookup.fetchval(
+                    "SELECT customer_id FROM bookings WHERE booking_key = $1",
+                    job.booking_key,
+                )
+        if not isinstance(customer_id, str) or not hasattr(
+            self._database, "acquire"
+        ):
+            try:
+                result = await self._scheduler_handler(
+                    job,
+                    booking_port=self._booking_port,
+                    outbox=self._notification_outbox,
+                    lifecycle=self._lifecycle,
+                )
+            except Exception as error:
+                await self._scheduler_repository.record_failure(
+                    job,
+                    error_code=type(error).__name__,
+                    terminal=job.attempts >= MAX_RETRIES,
+                )
+                raise
+            await self._scheduler_repository.complete(job, result)
+            return
+
+        async with self._database.acquire() as privacy_connection:
+            async with privacy_connection.transaction():
+                await privacy_connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(customer_id),
+                )
+                job = await self._scheduler_repository.get_claimed(job_id)
+                if job is None:
+                    return
+                if job.booking_key is not None:
+                    exists = await privacy_connection.fetchval(
+                        "SELECT EXISTS (SELECT 1 FROM bookings "
+                        "WHERE booking_key = $1 AND customer_id = $2)",
+                        job.booking_key,
+                        customer_id,
+                    )
+                    if not exists:
+                        return
+                try:
+                    result = await self._scheduler_handler(
+                        job,
+                        booking_port=self._booking_port,
+                        outbox=self._notification_outbox,
+                        lifecycle=self._lifecycle,
+                    )
+                except Exception as error:
+                    await self._scheduler_repository.record_failure(
+                        job,
+                        error_code=type(error).__name__,
+                        terminal=job.attempts >= MAX_RETRIES,
+                    )
+                    raise
+                await self._scheduler_repository.complete(job, result)
 
     async def _process_message(self, task: QueueTask) -> None:
         chat_id = task.payload.get("chat_id")
         update_ids = task.payload.get("update_ids")
         if (
-            not isinstance(chat_id, str)
-            or not isinstance(update_ids, list)
+            not isinstance(update_ids, list)
             or not update_ids
             or any(not isinstance(value, str) for value in update_ids)
             or len(set(update_ids)) != len(update_ids)
@@ -165,6 +214,24 @@ class MessageTaskHandler:
             raise ValueError("invalid process_message payload")
         if task.idempotency_key != process_message_key(update_ids):
             raise ValueError("process_message idempotency key does not match updates")
+        if chat_id is None:
+            async with self._database.acquire() as lookup:
+                candidates = await lookup.fetch(
+                    """
+                    SELECT DISTINCT chat_id
+                    FROM message_inbox
+                    WHERE channel = 'telegram'
+                      AND external_message_id = ANY($1::text[])
+                    """,
+                    update_ids,
+                )
+            if not candidates:
+                return
+            if len(candidates) != 1:
+                raise ValueError("process_message updates span multiple chats")
+            chat_id = candidates[0]["chat_id"]
+        elif not isinstance(chat_id, str):
+            raise ValueError("invalid process_message payload")
         numeric_chat_id = int(chat_id)
         reply_key = f"reply:{task.idempotency_key}"
 
@@ -172,7 +239,7 @@ class MessageTaskHandler:
             async with connection.transaction():
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                    chat_id,
+                    customer_lock_subject(chat_id),
                 )
                 inbox_rows = await connection.fetch(
                     """
@@ -196,6 +263,14 @@ class MessageTaskHandler:
                     if row["external_message_id"] in update_ids
                 }
                 if len(requested) != len(update_ids):
+                    existing = await connection.fetchval(
+                        "SELECT count(*) FROM message_inbox "
+                        "WHERE channel = 'telegram' "
+                        "AND external_message_id = ANY($1::text[])",
+                        update_ids,
+                    )
+                    if existing == 0:
+                        return
                     raise ValueError("process_message inbox rows are missing")
                 if [
                     row["external_message_id"]

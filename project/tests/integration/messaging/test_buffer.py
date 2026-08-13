@@ -101,7 +101,6 @@ async def test_buffer_joins_fast_messages_after_deadline(
     )
     assert task["kind"] == "process_message"
     assert json.loads(task["payload"]) == {
-        "chat_id": "42",
         "update_ids": ["1", "2"],
     }
     assert task["idempotency_key"] == "process_message:1,2"
@@ -249,7 +248,6 @@ async def test_service_falls_back_to_single_durable_task_when_redis_is_down(
     assert inbox_count == 1
     assert task["kind"] == "process_message"
     assert json.loads(task["payload"]) == {
-        "chat_id": "42",
         "update_ids": ["6"],
     }
     assert task["idempotency_key"] == "process_message:6"

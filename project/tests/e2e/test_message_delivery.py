@@ -500,6 +500,26 @@ async def test_process_message_uses_persisted_text_and_rejects_tampered_identity
     assert llm.calls[0][0] == "Текст из inbox"
 
 
+async def test_process_message_without_inbox_is_acked_after_privacy_delete(
+    database,
+):
+    llm = FakeLLM()
+    repository = MessageRepository(database)
+    handler = MessageTaskHandler(
+        database, llm, TelegramSender(FakeTelegram(), repository)
+    )
+
+    await handler.handle(
+        QueueTask(
+            "process_message",
+            {"update_ids": ["deleted-update"]},
+            "process_message:deleted-update",
+        )
+    )
+
+    assert llm.calls == []
+
+
 async def test_process_message_rejects_update_ids_outside_ingress_order(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming("207", "Раньше"))
@@ -686,7 +706,6 @@ async def test_fresh_pump_recovers_expired_inbox_with_due_redis_orphan(
         "process_message:601"
     ]
     assert queue.tasks[0].payload == {
-        "chat_id": "42",
         "update_ids": ["601"],
     }
     assert await redis_client.zscore("buffer:deadlines", "42") is None

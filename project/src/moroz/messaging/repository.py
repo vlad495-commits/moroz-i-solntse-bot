@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage, OutboundMessage
 from moroz.messaging.outbox import enqueue_process_message
+from moroz.privacy import customer_lock_subject
 
 
 class OutboundDeliveryBlocked(Exception):
@@ -16,6 +17,32 @@ class MessageRepository:
 
     async def accept(self, message: IncomingMessage) -> bool:
         """Persist an update after the caller has verified processing consent."""
+        async with self._database.acquire() as connection:
+            return await self._insert_incoming(connection, message)
+
+    async def accept_if_consented(self, message: IncomingMessage) -> bool:
+        """Serialize privacy-sensitive ingress and recheck durable consent."""
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(message.chat_id),
+                )
+                consented = await connection.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM processing_consents
+                        WHERE channel = $1 AND user_id = $2
+                    )
+                    """,
+                    message.channel,
+                    message.user_id,
+                )
+                if not consented:
+                    return False
+                return await self._insert_incoming(connection, message)
+
+    async def _insert_incoming(self, connection, message: IncomingMessage) -> bool:
         payload = json.dumps(
             {
                 "update_id": message.update_id,
@@ -29,8 +56,7 @@ class MessageRepository:
             },
             ensure_ascii=False,
         )
-        async with self._database.acquire() as connection:
-            row = await connection.fetchrow(
+        row = await connection.fetchrow(
                 """
                 INSERT INTO message_inbox
                     (id, channel, external_message_id, chat_id, payload,
@@ -45,7 +71,7 @@ class MessageRepository:
                 message.chat_id,
                 payload,
                 message.correlation_id,
-            )
+        )
         return row is not None
 
     async def enqueue_outbound(

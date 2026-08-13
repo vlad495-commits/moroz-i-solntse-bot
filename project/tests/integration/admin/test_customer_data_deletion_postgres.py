@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import asyncpg
@@ -9,6 +10,11 @@ import redis.asyncio as redis
 
 from customer_data_deletion import CustomerDataDeletionError, delete_customer_data
 from moroz.common.db import Database
+from moroz.messaging.models import IncomingMessage
+from moroz.messaging.repository import MessageRepository
+from moroz.common.queue import QueueTask
+from moroz.notifications.repository import SchedulerJobRepository
+from worker.main import MessageTaskHandler
 
 
 pytest_plugins = ["tests.integration.conftest"]
@@ -28,6 +34,8 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
     booking_key = uuid4()
     event_id = uuid4()
     outbound_id = uuid4()
+    staff_outbound_id = uuid4()
+    control_staff_outbound_id = uuid4()
     try:
         await conn.execute(
             "INSERT INTO messages (chat_id, user_id, username, role, content) "
@@ -58,18 +66,32 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
             INSERT INTO outbound_messages
                 (id, channel, chat_id, text, idempotency_key)
             VALUES ($1, 'telegram', '42', 'secret reply', 'target-outbound'),
-                   ($2, 'telegram', '84', 'keep reply', 'control-outbound')
+                   ($2, 'telegram', '84', 'keep reply', 'control-outbound'),
+                   ($3, 'telegram', '999', 'external-secret', $4),
+                   ($5, 'telegram', '999', 'keep staff', $6)
             """,
-            outbound_id, uuid4(),
+            outbound_id,
+            uuid4(),
+            staff_outbound_id,
+            f"staff:{booking_key}:test",
+            control_staff_outbound_id,
+            f"staff:{uuid4()}:control",
         )
         await conn.execute(
             """
             INSERT INTO task_outbox (id, kind, payload, idempotency_key)
-            VALUES ($1, 'process_message', '{"chat_id":"42"}'::jsonb, 'target-task'),
+            VALUES ($1, 'process_message',
+                    '{"update_ids":["target-update"]}'::jsonb, 'target-task'),
                    ($2, 'send_outbound', $3::jsonb, 'target-send'),
-                   ($4, 'process_message', '{"chat_id":"84"}'::jsonb, 'control-task')
+                   ($4, 'process_message', '{"chat_id":"84"}'::jsonb, 'control-task'),
+                   ($5, 'send_outbound', $6::jsonb, 'staff-send')
             """,
-            uuid4(), uuid4(), json.dumps({"outbound_id": str(outbound_id)}), uuid4(),
+            uuid4(),
+            uuid4(),
+            json.dumps({"outbound_id": str(outbound_id)}),
+            uuid4(),
+            uuid4(),
+            json.dumps({"outbound_id": str(staff_outbound_id)}),
         )
         await conn.execute(
             """
@@ -130,7 +152,6 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
 
         await cache.rpush("chat:42:messages", "secret")
         await cache.rpush("buffer:42", "secret")
-        await cache.set("lock:buffer:42", "secret")
         await cache.zadd("buffer:deadlines", {"42": 1, "84": 1})
         await cache.set("consent:state:telegram:42:7", "pii")
         await cache.set("bot:paused", "1")
@@ -161,6 +182,17 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
         assert await conn.fetchval("SELECT count(*) FROM booking_events WHERE id = $1", event_id) == 0
         assert await conn.fetchval("SELECT count(*) FROM scheduler_jobs WHERE booking_key = $1", booking_key) == 0
         assert await conn.fetchval("SELECT count(*) FROM task_outbox WHERE idempotency_key LIKE 'target-%'") == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM outbound_messages WHERE id = $1",
+            staff_outbound_id,
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM outbound_messages WHERE id = $1",
+            control_staff_outbound_id,
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM task_outbox WHERE idempotency_key = 'staff-send'"
+        ) == 0
         assert await conn.fetchval("SELECT count(*) FROM messages WHERE chat_id = 84") == 1
         assert await conn.fetchval("SELECT count(*) FROM processing_consents WHERE user_id = '8'") == 1
 
@@ -209,6 +241,9 @@ async def test_redis_cleanup_failure_rolls_back_postgres(migrated_database_url):
         async def set(self, *args, **kwargs):
             return await cache.set(*args, **kwargs)
 
+        def lock(self, *args, **kwargs):
+            return cache.lock(*args, **kwargs)
+
         def pipeline(self, **_kwargs):
             return BrokenPipeline()
 
@@ -253,7 +288,7 @@ async def test_waits_for_existing_telegram_advisory_lock(migrated_database_url):
     await transaction.start()
     await lock_conn.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        "telegram:42",
+        "42",
     )
     task = asyncio.create_task(
         delete_customer_data(
@@ -274,7 +309,8 @@ async def test_waits_for_existing_telegram_advisory_lock(migrated_database_url):
         result = await asyncio.wait_for(task, timeout=3)
 
         assert result.status == "already_absent"
-        assert await cache.get("privacy:deleting:telegram:42") is None
+        assert await cache.get("privacy:deleting:telegram:42") == "1"
+        assert 0 < await cache.ttl("privacy:deleting:telegram:42") <= 5
     finally:
         if not task.done():
             task.cancel()
@@ -284,3 +320,223 @@ async def test_waits_for_existing_telegram_advisory_lock(migrated_database_url):
         await cache.aclose()
         await pool.close()
         await lock_conn.close()
+
+
+async def test_inbox_accept_waits_for_customer_lock_and_rechecks_consent(
+    migrated_database_url,
+):
+    lock_conn = await asyncpg.connect(migrated_database_url)
+    database = Database(migrated_database_url, min_size=1, max_size=2)
+    await database.connect()
+    await lock_conn.execute(
+        "INSERT INTO processing_consents (channel, user_id, consent_version) "
+        "VALUES ('telegram', '7', 'v1')"
+    )
+    transaction = lock_conn.transaction()
+    await transaction.start()
+    await lock_conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        "42",
+    )
+    accepted = asyncio.create_task(
+        MessageRepository(database).accept_if_consented(
+            IncomingMessage(
+                update_id="race-update",
+                message_id="race-message",
+                channel="telegram",
+                chat_id="42",
+                user_id="7",
+                text="race secret",
+                received_at=datetime.now(UTC),
+                correlation_id=uuid4(),
+            )
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert accepted.done() is False
+        await lock_conn.execute(
+            "DELETE FROM processing_consents "
+            "WHERE channel = 'telegram' AND user_id = '7'"
+        )
+        await transaction.commit()
+
+        assert await asyncio.wait_for(accepted, timeout=3) is False
+        assert await lock_conn.fetchval("SELECT count(*) FROM message_inbox") == 0
+    finally:
+        if not accepted.done():
+            accepted.cancel()
+        if lock_conn.is_in_transaction():
+            await transaction.rollback()
+        await database.close()
+        await lock_conn.close()
+
+
+async def test_deletion_waits_for_real_buffer_lock(migrated_database_url):
+    database = Database(migrated_database_url, min_size=1, max_size=2)
+    await database.connect()
+    cache = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    buffer_lock = cache.lock(
+        "lock:buffer:42", timeout=30, blocking_timeout=1
+    )
+    assert await buffer_lock.acquire()
+    deletion = asyncio.create_task(
+        delete_customer_data(
+            pool=database,
+            redis_client=cache,
+            chat_id=42,
+            actor_id=1,
+            ip_address=None,
+            user_agent=None,
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert deletion.done() is False
+        await buffer_lock.release()
+
+        result = await asyncio.wait_for(deletion, timeout=3)
+
+        assert result.status == "already_absent"
+    finally:
+        if not deletion.done():
+            deletion.cancel()
+        try:
+            if await buffer_lock.owned():
+                await buffer_lock.release()
+        except Exception:
+            pass
+        await cache.delete("privacy:deleting:telegram:42")
+        await cache.aclose()
+        await database.close()
+
+
+async def test_parallel_delete_cannot_remove_active_marker(migrated_database_url):
+    lock_conn = await asyncpg.connect(migrated_database_url)
+    database = Database(migrated_database_url, min_size=1, max_size=3)
+    await database.connect()
+    cache = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    transaction = lock_conn.transaction()
+    await transaction.start()
+    await lock_conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "42"
+    )
+    first = asyncio.create_task(
+        delete_customer_data(
+            pool=database,
+            redis_client=cache,
+            chat_id=42,
+            actor_id=1,
+            ip_address=None,
+            user_agent=None,
+        )
+    )
+    try:
+        for _ in range(20):
+            if await cache.get("privacy:deleting:telegram:42") == "1":
+                break
+            await asyncio.sleep(0.02)
+        with pytest.raises(CustomerDataDeletionError):
+            await delete_customer_data(
+                pool=database,
+                redis_client=cache,
+                chat_id=42,
+                actor_id=1,
+                ip_address=None,
+                user_agent=None,
+            )
+        assert await cache.get("privacy:deleting:telegram:42") == "1"
+
+        await transaction.rollback()
+        assert (await asyncio.wait_for(first, timeout=3)).status == "already_absent"
+    finally:
+        if not first.done():
+            first.cancel()
+        if lock_conn.is_in_transaction():
+            await transaction.rollback()
+        await cache.delete("privacy:deleting:telegram:42")
+        await cache.aclose()
+        await database.close()
+        await lock_conn.close()
+
+
+async def test_scheduler_rechecks_job_after_customer_lock_before_provider_call(
+    migrated_database_url,
+):
+    database = Database(migrated_database_url, min_size=1, max_size=4)
+    await database.connect()
+    conn = await asyncpg.connect(migrated_database_url)
+    scenario_id = uuid4()
+    booking_key = uuid4()
+    job_id = uuid4()
+    await conn.execute(
+        "INSERT INTO booking_scenarios "
+        "(id, kind, phase, idempotency_key, customer_id, state) "
+        "VALUES ($1, 'create', 'confirmed', 'race-scenario', '42', '{}')",
+        scenario_id,
+    )
+    await conn.execute(
+        """
+        INSERT INTO bookings
+            (id, last_scenario_id, external_id, customer_id, slot_id,
+             starts_at, status, snapshot, booking_key)
+        VALUES ($1, $2, 'external-race', '42', 'slot', now(),
+                'confirmed', '{}', $3)
+        """,
+        uuid4(), scenario_id, booking_key,
+    )
+    await conn.execute(
+        """
+        INSERT INTO scheduler_jobs
+            (id, kind, run_at, payload, idempotency_key, status,
+             booking_key, booking_starts_at)
+        SELECT $1, 'no_show_check', now(), '{}', $2, 'claimed',
+               booking_key, starts_at
+        FROM bookings WHERE booking_key = $3
+        """,
+        job_id, f"scheduler-race:{job_id}", booking_key,
+    )
+
+    class MustNotCall:
+        def __getattr__(self, name):
+            raise AssertionError(f"provider-side effect attempted: {name}")
+
+    handler = MessageTaskHandler(
+        database,
+        object(),
+        object(),
+        scheduler_repository=SchedulerJobRepository(database),
+        booking_port=MustNotCall(),
+        notification_outbox=MustNotCall(),
+        lifecycle=MustNotCall(),
+    )
+    transaction = conn.transaction()
+    await transaction.start()
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "42"
+    )
+    processing = asyncio.create_task(
+        handler.handle(
+            QueueTask(
+                kind="scheduler_job",
+                payload={"job_id": str(job_id)},
+                idempotency_key=f"scheduler_job:{job_id}",
+            )
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert processing.done() is False
+        await conn.execute("DELETE FROM scheduler_jobs WHERE id = $1", job_id)
+        await conn.execute("DELETE FROM bookings WHERE booking_key = $1", booking_key)
+        await conn.execute("DELETE FROM booking_scenarios WHERE id = $1", scenario_id)
+        await transaction.commit()
+
+        await asyncio.wait_for(processing, timeout=3)
+    finally:
+        if not processing.done():
+            processing.cancel()
+        if conn.is_in_transaction():
+            await transaction.rollback()
+        await database.close()
+        await conn.close()

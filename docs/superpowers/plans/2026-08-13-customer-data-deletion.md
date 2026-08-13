@@ -134,7 +134,6 @@ Use fake pool/connection/Redis objects to assert:
 assert redis.deleted == {
     "chat:42:messages",
     "buffer:42",
-    "lock:buffer:42",
     "consent:state:telegram:42:7",
 }
 assert redis.zremoved == [("buffer:deadlines", "42")]
@@ -186,7 +185,7 @@ try:
         async with conn.transaction():
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                f"telegram:{chat_id}",
+    str(chat_id),
             )
 finally:
     try:
@@ -245,7 +244,6 @@ The integration fixture must create one target customer (`chat_id=42`, `user_id=
 ```python
 await redis_client.rpush("chat:42:messages", '{"role":"user","content":"secret"}')
 await redis_client.rpush("buffer:42", '{"update_id":"1","text":"secret"}')
-await redis_client.set("lock:buffer:42", "token")
 await redis_client.zadd("buffer:deadlines", {"42": 1, "84": 1})
 await redis_client.set("consent:state:telegram:42:7", "pii")
 await redis_client.set("bot:paused", "1")
@@ -387,7 +385,7 @@ git commit -m "feat: добавить удаление данных в адми�
 
 - [ ] **Step 1: Add concurrency and return-flow tests**
 
-Use two PostgreSQL connections. Hold `pg_advisory_xact_lock(hashtextextended('telegram:42', 0))` on the first; start deletion on the second and assert it remains pending. Release the first transaction and assert deletion completes.
+Use two PostgreSQL connections. Hold `pg_advisory_xact_lock(hashtextextended('42', 0))` on the first; start deletion on the second and assert it remains pending. Release the first transaction and assert deletion completes. Separately hold the real Redis `lock:buffer:42` and prove deletion waits instead of deleting another owner's lock.
 
 After deletion, remove/expire the marker and send a new normal message. Assert no `message_inbox` row and one consent prompt outbound row. This proves the user returns as new without restoring deleted history.
 

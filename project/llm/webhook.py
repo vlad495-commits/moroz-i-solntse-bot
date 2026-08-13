@@ -39,6 +39,7 @@ from moroz.messaging.repository import MessageRepository
 from moroz.messaging.service import MessageService
 from moroz.messaging.telegram import deliver_claimed_outbound
 from moroz.privacy import deletion_marker_key
+from moroz.privacy import customer_lock_subject
 from moroz.security.consent import (
     PROCESSING_CONSENT_VERSION,
     ConsentService,
@@ -177,7 +178,9 @@ def create_app(
         except RedisError:
             return False
 
-    async def is_customer_deletion_active(chat_id: int) -> bool:
+    async def is_customer_deletion_active(
+        chat_id: int, *, fail_closed: bool = False
+    ) -> bool:
         try:
             return bool(
                 await webhook_app.state.redis.get(
@@ -189,7 +192,7 @@ def create_app(
                 "privacy_deletion_marker_read_failed error_type=%s",
                 type(error).__name__,
             )
-            return False
+            return fail_closed
 
     async def send_static_reply(
         *,
@@ -293,11 +296,23 @@ def create_app(
                         reply_kind="consent_need_pii",
                     )
                     return Response(status_code=200)
-                await webhook_app.state.consent_service.grant_processing_consent(
-                    "telegram",
-                    str(callback.from_user.id),
-                    PROCESSING_CONSENT_VERSION,
-                )
+                async with webhook_app.state.database.acquire() as connection:
+                    async with connection.transaction():
+                        await connection.execute(
+                            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                            customer_lock_subject(str(callback.message.chat.id)),
+                        )
+                        if await is_customer_deletion_active(
+                            callback.message.chat.id,
+                            fail_closed=True,
+                        ):
+                            return Response(status_code=200)
+                        await webhook_app.state.consent_service.grant_processing_consent(
+                            "telegram",
+                            str(callback.from_user.id),
+                            PROCESSING_CONSENT_VERSION,
+                            connection=connection,
+                        )
                 await webhook_app.state.redis.delete(
                     _consent_state_key(
                         callback.message.chat.id,
@@ -386,7 +401,7 @@ def create_app(
             )
             return Response(status_code=200)
 
-        accepted = await webhook_app.state.message_service.accept(
+        accepted = await webhook_app.state.message_service.accept_consented(
             IncomingMessage(
                 update_id=str(update.update_id),
                 message_id=str(message.message_id),
