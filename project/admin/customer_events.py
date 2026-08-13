@@ -35,6 +35,19 @@ EVENT_TITLES = {
 SAFE_REASON_LABELS = {
     "low_feedback_rating": "Низкая оценка после визита",
 }
+SAFE_HANDOFF_SOURCES = {
+    "feedback": "Обратная связь",
+    "booking": "Запись",
+}
+DEFAULT_HANDOFF_REASON = "Требуется помощь администратора"
+
+
+def safe_handoff_reason(reason_code: object) -> str:
+    return SAFE_REASON_LABELS.get(str(reason_code), DEFAULT_HANDOFF_REASON)
+
+
+def safe_handoff_source(source: object) -> str:
+    return SAFE_HANDOFF_SOURCES.get(str(source), "Система")
 
 
 def _safe_description(source: str, value: object) -> object:

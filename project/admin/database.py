@@ -12,7 +12,11 @@ from typing import Any
 
 from moroz.common.db import Database
 from moroz.common.config import database_url_from_env
-from customer_events import normalize_customer_event
+from customer_events import (
+    normalize_customer_event,
+    safe_handoff_reason,
+    safe_handoff_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +42,38 @@ async def close_db() -> None:
     if _pool:
         await _pool.close()
         _pool = None
+
+
+async def get_open_escalations(limit: int = 100) -> list[dict[str, Any]]:
+    """Return a bounded, safe presentation of open human handoffs."""
+    if not 1 <= limit <= 100:
+        raise ValueError("open escalations limit")
+    if not _pool:
+        return []
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT e.id, e.customer_id, e.source, e.reason_code, e.created_at,
+                   COALESCE(h.enabled, false) AS human_mode_enabled
+            FROM escalations AS e
+            LEFT JOIN human_mode AS h ON h.customer_id = e.customer_id
+            WHERE e.status = 'open'
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return [
+        {
+            "id": row["id"],
+            "customer_id": row["customer_id"],
+            "source": safe_handoff_source(row["source"]),
+            "reason": safe_handoff_reason(row["reason_code"]),
+            "created_at": row["created_at"],
+            "human_mode_enabled": row["human_mode_enabled"],
+        }
+        for row in rows
+    ]
 
 
 async def get_chats_list(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
