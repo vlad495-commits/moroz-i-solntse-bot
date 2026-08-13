@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 auth = importlib.import_module("auth")
 admin_app = importlib.import_module("app")
 bot_control_routes = importlib.import_module("bot_control_routes")
+customer_data_routes = importlib.import_module("customer_data_routes")
 prompt_routes = importlib.import_module("prompt_routes")
 rbac = importlib.import_module("rbac")
 audit_repository = importlib.import_module("audit_repository")
@@ -355,6 +356,127 @@ def test_owner_only_navigation_links_are_hidden_from_admin_role():
     assert "/stats" in base
     assert "/prompt/" in base
     assert "/bot-control/" in base
+
+
+@pytest.mark.asyncio
+async def test_customer_data_delete_rejects_admin_before_redis(monkeypatch):
+    async def current_user(_request):
+        return user(role="admin")
+
+    async def forbidden_redis():
+        raise AssertionError("redis must not be touched before owner RBAC")
+
+    monkeypatch.setattr(customer_data_routes, "get_current_user", current_user)
+    monkeypatch.setattr(customer_data_routes, "_redis_client", forbidden_redis)
+    app = FastAPI()
+    app.include_router(customer_data_routes.router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/customer-data/delete",
+            data={
+                "chat_id": "42",
+                "csrf_token": "known-csrf",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_customer_data_delete_rejects_bad_confirmation_before_redis(
+    monkeypatch,
+):
+    async def current_user(_request):
+        return user()
+
+    async def forbidden_redis():
+        raise AssertionError("redis must not be touched before confirmation")
+
+    monkeypatch.setattr(customer_data_routes, "get_current_user", current_user)
+    monkeypatch.setattr(customer_data_routes, "_redis_client", forbidden_redis)
+    app = FastAPI()
+    app.include_router(customer_data_routes.router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/customer-data/delete",
+            data={
+                "chat_id": "42",
+                "csrf_token": "known-csrf",
+                "confirmation": "нет",
+            },
+        )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_customer_data_delete_owner_redirects_without_identifier(
+    monkeypatch,
+):
+    deleted = {}
+
+    class FakeRedis:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    cache = FakeRedis()
+
+    async def current_user(_request):
+        return user()
+
+    async def redis_client():
+        return cache
+
+    async def delete_customer_data(**kwargs):
+        deleted.update(kwargs)
+        return SimpleNamespace(status="deleted")
+
+    monkeypatch.setattr(customer_data_routes, "get_current_user", current_user)
+    monkeypatch.setattr(customer_data_routes, "_redis_client", redis_client)
+    monkeypatch.setattr(
+        customer_data_routes, "delete_customer_data", delete_customer_data
+    )
+    monkeypatch.setattr(customer_data_routes.database, "_pool", object())
+    app = FastAPI()
+    app.include_router(customer_data_routes.router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/customer-data/delete",
+            data={
+                "chat_id": "42",
+                "csrf_token": "known-csrf",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/?deleted=deleted"
+    assert "42" not in response.headers["location"]
+    assert deleted["chat_id"] == 42
+    assert cache.closed is True
+
+
+def test_customer_data_danger_zone_is_owner_only():
+    template = (
+        admin_app._BASE_DIR / "templates" / "chat_detail.html"
+    ).read_text(encoding="utf-8")
+
+    assert "{% if user.role == 'owner' %}" in template
+    assert "/customer-data/delete" in template
+    assert 'name="csrf_token"' in template
+    assert 'name="confirmation"' in template
 
 
 @pytest.mark.asyncio

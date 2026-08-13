@@ -31,4 +31,18 @@
     </div>
     {% endfor %}
 </div>
+
+{% if user.role == 'owner' %}
+<section class="danger-zone">
+    <h2>Удаление данных</h2>
+    <p>Удалит историю, согласие, локальные записи и временную память. Данные в YCLIENTS не изменятся.</p>
+    <form method="post" action="{{ request.scope.get('root_path', '') }}/customer-data/delete">
+        <input type="hidden" name="chat_id" value="{{ chat.chat_id }}">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+        <label for="delete-confirmation">Для подтверждения введите УДАЛИТЬ</label>
+        <input id="delete-confirmation" name="confirmation" autocomplete="off" required>
+        <button class="danger-button" type="submit">Удалить локальные данные</button>
+    </form>
+</section>
+{% endif %}
 {% endblock %}
