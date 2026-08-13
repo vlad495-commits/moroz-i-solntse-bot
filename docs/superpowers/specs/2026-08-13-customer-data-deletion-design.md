@@ -70,7 +70,7 @@
 6. PostgreSQL удаляется в порядке зависимостей: события и задания, бронирования, сценарии, messaging-данные, согласия и legacy-история.
 7. Перед commit сервис повторно считает связанные строки. Ненулевой остаток считается ошибкой и вызывает rollback.
 8. В той же транзакции создаётся обезличенный audit event.
-9. После commit marker остаётся ещё на 5 секунд, чтобы запросы, начавшиеся до lock, повторно увидели удаление; затем Redis удаляет его по TTL. Privacy и buffer locks освобождаются только своими token.
+9. После commit сервис удаляет marker только по совпадению уникального token. Все durable webhook-ветки повторно проверяют marker под единым PostgreSQL customer lock, поэтому grace-пауза не нужна и следующее новое обращение сразу возвращается в чистый consent-flow. Privacy и buffer locks освобождаются только своими token.
 
 Webhook-вставка inbox берёт тот же PostgreSQL lock и повторно проверяет durable consent. Buffer pump сериализован тем же Redis buffer lock. Scheduler worker держит customer lock вокруг локальных и YCLIENTS side effects и перечитывает job после ожидания lock.
 

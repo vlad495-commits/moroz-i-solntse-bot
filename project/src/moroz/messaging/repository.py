@@ -3,7 +3,10 @@ from uuid import UUID, uuid4
 
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage, OutboundMessage
-from moroz.messaging.outbox import enqueue_process_message
+from moroz.messaging.outbox import (
+    enqueue_process_message,
+    enqueue_process_message_in_transaction,
+)
 from moroz.privacy import customer_lock_subject
 
 
@@ -20,7 +23,12 @@ class MessageRepository:
         async with self._database.acquire() as connection:
             return await self._insert_incoming(connection, message)
 
-    async def accept_if_consented(self, message: IncomingMessage) -> bool:
+    async def accept_if_consented(
+        self,
+        message: IncomingMessage,
+        *,
+        enqueue_directly: bool = False,
+    ) -> bool:
         """Serialize privacy-sensitive ingress and recheck durable consent."""
         async with self._database.acquire() as connection:
             async with connection.transaction():
@@ -40,7 +48,13 @@ class MessageRepository:
                 )
                 if not consented:
                     return False
-                return await self._insert_incoming(connection, message)
+                accepted = await self._insert_incoming(connection, message)
+                if accepted and enqueue_directly:
+                    await enqueue_process_message_in_transaction(
+                        connection,
+                        update_ids=(message.update_id,),
+                    )
+                return accepted
 
     async def _insert_incoming(self, connection, message: IncomingMessage) -> bool:
         payload = json.dumps(

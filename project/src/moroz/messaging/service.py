@@ -35,16 +35,15 @@ class MessageService:
         try:
             lock = self._buffer.lock(message.chat_id)
             if not await lock.acquire():
-                return False
+                return await self._repository.accept_if_consented(
+                    message,
+                    enqueue_directly=True,
+                )
         except RedisError:
-            if not await self._repository.accept_if_consented(message):
-                return False
-            await enqueue_process_message(
-                self._database,
-                chat_id=message.chat_id,
-                update_ids=(message.update_id,),
+            return await self._repository.accept_if_consented(
+                message,
+                enqueue_directly=True,
             )
-            return True
         try:
             if not await self._repository.accept_if_consented(message):
                 return False

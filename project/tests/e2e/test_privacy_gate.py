@@ -332,7 +332,7 @@ async def test_deletion_marker_blocks_consent_callback_mutation(
 
 
 async def test_consent_callback_rechecks_marker_after_customer_lock(
-    client, db, redis_client
+    client, db, redis_client, fake_telegram
 ):
     await redis_client.set("consent:state:telegram:42:7", "pii", ex=3600)
     transaction = db.transaction()
@@ -357,9 +357,75 @@ async def test_consent_callback_rechecks_marker_after_customer_lock(
 
         assert (await asyncio.wait_for(callback, timeout=3)).status_code == 200
         assert await db.fetchval("SELECT count(*) FROM processing_consents") == 0
+        assert await db.fetchval("SELECT count(*) FROM outbound_messages") == 0
+        assert await redis_client.get("consent:state:telegram:42:7") == "pii"
+        assert fake_telegram.sent_messages == []
     finally:
         if not callback.done():
             callback.cancel()
+        if db.is_in_transaction():
+            await transaction.rollback()
+
+
+async def test_consent_checkbox_rechecks_marker_after_customer_lock(
+    client, db, redis_client, fake_telegram
+):
+    transaction = db.transaction()
+    await transaction.start()
+    await db.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "42"
+    )
+    callback = asyncio.create_task(
+        client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=995,
+                data=CONSENT_PII_CALLBACK_DATA,
+            ),
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert callback.done() is False
+        await redis_client.set("privacy:deleting:telegram:42", "owner", ex=300)
+        await transaction.rollback()
+
+        assert (await asyncio.wait_for(callback, timeout=3)).status_code == 200
+        assert await redis_client.get("consent:state:telegram:42:7") is None
+        assert fake_telegram.edited_reply_markups == []
+    finally:
+        if not callback.done():
+            callback.cancel()
+        if db.is_in_transaction():
+            await transaction.rollback()
+
+
+async def test_static_reply_rechecks_marker_after_customer_lock(
+    client, db, redis_client, fake_telegram
+):
+    transaction = db.transaction()
+    await transaction.start()
+    await db.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "42"
+    )
+    request = asyncio.create_task(
+        client.post(
+            "/telegram/webhook",
+            json=telegram_text_update(update_id=994, text="/start"),
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert request.done() is False
+        await redis_client.set("privacy:deleting:telegram:42", "owner", ex=300)
+        await transaction.rollback()
+
+        assert (await asyncio.wait_for(request, timeout=3)).status_code == 200
+        assert await db.fetchval("SELECT count(*) FROM outbound_messages") == 0
+        assert fake_telegram.sent_messages == []
+    finally:
+        if not request.done():
+            request.cancel()
         if db.is_in_transaction():
             await transaction.rollback()
 
@@ -381,7 +447,6 @@ async def test_message_after_deletion_returns_to_consent_flow(
         ip_address=None,
         user_agent=None,
     )
-    await redis_client.delete("privacy:deleting:telegram:42")
     response = await client.post(
         "/telegram/webhook",
         json=telegram_text_update(update_id=992, text="Новое обращение"),
@@ -478,6 +543,30 @@ async def test_checked_policy_done_persists_only_versioned_consent(
     assert tuple(consent.values())[:3] == ("telegram", "7", "v1")
     assert isinstance(consent["granted_at"], datetime)
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert fake_telegram.last_text == CONSENT_THANKS
+
+
+async def test_stale_consent_is_upgraded_by_done_callback(
+    client, db, redis_client, fake_telegram
+):
+    await db.execute(
+        "INSERT INTO processing_consents "
+        "(channel, user_id, consent_version) "
+        "VALUES ('telegram', '7', 'legacy-v0')"
+    )
+    await redis_client.set("consent:state:telegram:42:7", "pii", ex=3600)
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_consent_callback(update_id=996),
+    )
+
+    assert response.status_code == 200
+    assert await db.fetchval(
+        "SELECT count(*) FROM processing_consents "
+        "WHERE channel = 'telegram' AND user_id = '7' "
+        "AND consent_version = 'v1'"
+    ) == 1
     assert fake_telegram.last_text == CONSENT_THANKS
 
 

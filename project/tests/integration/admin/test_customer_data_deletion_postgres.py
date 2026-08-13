@@ -303,14 +303,13 @@ async def test_waits_for_existing_telegram_advisory_lock(migrated_database_url):
     try:
         await asyncio.sleep(0.1)
         assert task.done() is False
-        assert await cache.get("privacy:deleting:telegram:42") == "1"
+        assert await cache.get("privacy:deleting:telegram:42") is not None
 
         await transaction.rollback()
         result = await asyncio.wait_for(task, timeout=3)
 
         assert result.status == "already_absent"
-        assert await cache.get("privacy:deleting:telegram:42") == "1"
-        assert 0 < await cache.ttl("privacy:deleting:telegram:42") <= 5
+        assert await cache.get("privacy:deleting:telegram:42") is None
     finally:
         if not task.done():
             task.cancel()
@@ -349,7 +348,8 @@ async def test_inbox_accept_waits_for_customer_lock_and_rechecks_consent(
                 text="race secret",
                 received_at=datetime.now(UTC),
                 correlation_id=uuid4(),
-            )
+            ),
+            enqueue_directly=True,
         )
     )
     try:
@@ -363,6 +363,7 @@ async def test_inbox_accept_waits_for_customer_lock_and_rechecks_consent(
 
         assert await asyncio.wait_for(accepted, timeout=3) is False
         assert await lock_conn.fetchval("SELECT count(*) FROM message_inbox") == 0
+        assert await lock_conn.fetchval("SELECT count(*) FROM task_outbox") == 0
     finally:
         if not accepted.done():
             accepted.cancel()
@@ -412,30 +413,18 @@ async def test_deletion_waits_for_real_buffer_lock(migrated_database_url):
 
 
 async def test_parallel_delete_cannot_remove_active_marker(migrated_database_url):
-    lock_conn = await asyncpg.connect(migrated_database_url)
-    database = Database(migrated_database_url, min_size=1, max_size=3)
+    database = Database(migrated_database_url, min_size=1, max_size=2)
     await database.connect()
     cache = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
-    transaction = lock_conn.transaction()
-    await transaction.start()
-    await lock_conn.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "42"
+    privacy_lock = cache.lock(
+        "lock:privacy-delete:telegram:42",
+        timeout=300,
+        blocking_timeout=1,
     )
-    first = asyncio.create_task(
-        delete_customer_data(
-            pool=database,
-            redis_client=cache,
-            chat_id=42,
-            actor_id=1,
-            ip_address=None,
-            user_agent=None,
-        )
-    )
+    assert await privacy_lock.acquire()
+    marker_token = "active-owner-token"
+    await cache.set("privacy:deleting:telegram:42", marker_token, ex=300)
     try:
-        for _ in range(20):
-            if await cache.get("privacy:deleting:telegram:42") == "1":
-                break
-            await asyncio.sleep(0.02)
         with pytest.raises(CustomerDataDeletionError):
             await delete_customer_data(
                 pool=database,
@@ -445,19 +434,13 @@ async def test_parallel_delete_cannot_remove_active_marker(migrated_database_url
                 ip_address=None,
                 user_agent=None,
             )
-        assert await cache.get("privacy:deleting:telegram:42") == "1"
-
-        await transaction.rollback()
-        assert (await asyncio.wait_for(first, timeout=3)).status == "already_absent"
+        assert await cache.get("privacy:deleting:telegram:42") == marker_token
     finally:
-        if not first.done():
-            first.cancel()
-        if lock_conn.is_in_transaction():
-            await transaction.rollback()
+        if await privacy_lock.owned():
+            await privacy_lock.release()
         await cache.delete("privacy:deleting:telegram:42")
         await cache.aclose()
         await database.close()
-        await lock_conn.close()
 
 
 async def test_scheduler_rechecks_job_after_customer_lock_before_provider_call(

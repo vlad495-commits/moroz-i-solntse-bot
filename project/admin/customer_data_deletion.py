@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Literal
+from uuid import uuid4
 
 from moroz.privacy import (
     DELETION_MARKER_TTL_SECONDS,
-    POST_DELETE_MARKER_TTL_SECONDS,
+    DELETION_OPERATION_TIMEOUT_SECONDS,
     customer_lock_subject,
     deletion_lock_key,
     deletion_marker_key,
@@ -29,10 +31,24 @@ class DeletionResult:
 
 
 def _delete_count(command_tag: str) -> int:
-    try:
-        return int(command_tag.rsplit(" ", 1)[-1])
-    except (TypeError, ValueError):
+    parts = command_tag.split()
+    if len(parts) != 2 or parts[0] != "DELETE" or not parts[1].isdigit():
         raise CustomerDataDeletionError("customer data deletion failed")
+    return int(parts[1])
+
+
+async def _delete_owned_marker(redis_client, marker: str, token: str) -> None:
+    await redis_client.eval(
+        """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('del', KEYS[1])
+        end
+        return 0
+        """,
+        1,
+        marker,
+        token,
+    )
 
 
 async def _clear_redis(redis_client, chat_id: str, user_ids: set[str]) -> None:
@@ -51,7 +67,7 @@ async def _delete(conn, counts: dict[str, int], name: str, query: str, *args) ->
     counts[name] = _delete_count(await conn.execute(query, *args))
 
 
-async def delete_customer_data(
+async def _delete_customer_data(
     *,
     pool,
     redis_client,
@@ -62,12 +78,12 @@ async def delete_customer_data(
 ) -> DeletionResult:
     chat = str(chat_id)
     marker = deletion_marker_key(DELETION_CHANNEL, chat)
+    marker_token = uuid4().hex
     privacy_lock = None
     buffer_lock = None
     marker_set = False
     privacy_lock_acquired = False
     buffer_lock_acquired = False
-    committed = False
     try:
         privacy_lock = redis_client.lock(
             deletion_lock_key(DELETION_CHANNEL, chat),
@@ -76,7 +92,7 @@ async def delete_customer_data(
         )
         buffer_lock = redis_client.lock(
             f"lock:buffer:{chat}",
-            timeout=30,
+            timeout=DELETION_MARKER_TTL_SECONDS,
             blocking_timeout=2,
         )
         if not await privacy_lock.acquire():
@@ -84,7 +100,7 @@ async def delete_customer_data(
         privacy_lock_acquired = True
         await redis_client.set(
             marker,
-            "1",
+            marker_token,
             ex=DELETION_MARKER_TTL_SECONDS,
         )
         marker_set = True
@@ -94,6 +110,7 @@ async def delete_customer_data(
         async with pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute("SET LOCAL lock_timeout = '10s'")
+                await conn.execute("SET LOCAL statement_timeout = '30s'")
                 await conn.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     customer_lock_subject(chat),
@@ -374,21 +391,19 @@ async def delete_customer_data(
                     ip_address,
                     user_agent,
                 )
-        committed = True
         return DeletionResult(status=status, deleted_counts=counts)
     except CustomerDataDeletionError:
         raise
     except Exception as error:
         raise CustomerDataDeletionError("customer data deletion failed") from error
     finally:
-        if marker_set and committed:
+        if marker_set:
             try:
-                await redis_client.expire(marker, POST_DELETE_MARKER_TTL_SECONDS)
-            except Exception:
-                pass
-        elif marker_set:
-            try:
-                await redis_client.delete(marker)
+                await _delete_owned_marker(
+                    redis_client,
+                    marker,
+                    marker_token,
+                )
             except Exception:
                 pass
         if buffer_lock_acquired and buffer_lock is not None:
@@ -401,3 +416,28 @@ async def delete_customer_data(
                 await privacy_lock.release()
             except Exception:
                 pass
+
+
+async def delete_customer_data(
+    *,
+    pool,
+    redis_client,
+    chat_id: int,
+    actor_id: int,
+    ip_address: str | None,
+    user_agent: str | None,
+) -> DeletionResult:
+    try:
+        async with asyncio.timeout(DELETION_OPERATION_TIMEOUT_SECONDS):
+            return await _delete_customer_data(
+                pool=pool,
+                redis_client=redis_client,
+                chat_id=chat_id,
+                actor_id=actor_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+    except TimeoutError as error:
+        raise CustomerDataDeletionError(
+            "customer data deletion failed"
+        ) from error

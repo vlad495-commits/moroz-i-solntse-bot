@@ -203,13 +203,29 @@ def create_app(
         delivery_options: dict[str, object] | None = None,
     ) -> None:
         repository = webhook_app.state.message_repository
-        outbound_id = await repository.enqueue_outbound(
-            channel="telegram",
-            chat_id=str(chat_id),
-            text=text,
-            idempotency_key=f"telegram:{reply_kind}:{update_id}",
-            delivery_options=delivery_options,
-        )
+        async with webhook_app.state.database.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(str(chat_id)),
+                )
+                if await is_customer_deletion_active(
+                    chat_id,
+                    fail_closed=True,
+                ):
+                    return
+                outbound_id = await repository.enqueue_outbound_in_transaction(
+                    connection,
+                    channel="telegram",
+                    chat_id=str(chat_id),
+                    text=text,
+                    idempotency_key=f"telegram:{reply_kind}:{update_id}",
+                    delivery_options=delivery_options,
+                )
+        await deliver_static_reply(outbound_id)
+
+    async def deliver_static_reply(outbound_id) -> None:
+        repository = webhook_app.state.message_repository
         outbound = await repository.claim_outbound_delivery(outbound_id)
         if outbound is None:
             return
@@ -258,21 +274,32 @@ def create_app(
             target = _CONSENT_CALLBACK_TARGETS.get(callback.data)
             if target is not None:
                 kind, enabled = target
-                checked = await consent_checked(
-                    callback.message.chat.id,
-                    callback.from_user.id,
-                )
-                if (kind in checked) == enabled:
-                    return Response(status_code=200)
-                if enabled:
-                    checked.add(kind)
-                else:
-                    checked.remove(kind)
-                await save_consent_checked(
-                    callback.message.chat.id,
-                    callback.from_user.id,
-                    checked,
-                )
+                async with webhook_app.state.database.acquire() as connection:
+                    async with connection.transaction():
+                        await connection.execute(
+                            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                            customer_lock_subject(str(callback.message.chat.id)),
+                        )
+                        if await is_customer_deletion_active(
+                            callback.message.chat.id,
+                            fail_closed=True,
+                        ):
+                            return Response(status_code=200)
+                        checked = await consent_checked(
+                            callback.message.chat.id,
+                            callback.from_user.id,
+                        )
+                        if (kind in checked) == enabled:
+                            return Response(status_code=200)
+                        if enabled:
+                            checked.add(kind)
+                        else:
+                            checked.remove(kind)
+                        await save_consent_checked(
+                            callback.message.chat.id,
+                            callback.from_user.id,
+                            checked,
+                        )
                 await telegram.edit_message_reply_markup(
                     chat_id=callback.message.chat.id,
                     message_id=callback.message.message_id,
@@ -296,6 +323,7 @@ def create_app(
                         reply_kind="consent_need_pii",
                     )
                     return Response(status_code=200)
+                outbound_id = None
                 async with webhook_app.state.database.acquire() as connection:
                     async with connection.transaction():
                         await connection.execute(
@@ -307,24 +335,38 @@ def create_app(
                             fail_closed=True,
                         ):
                             return Response(status_code=200)
+                        if await connection.fetchval(
+                            "SELECT EXISTS (SELECT 1 FROM processing_consents "
+                            "WHERE channel = 'telegram' AND user_id = $1 "
+                            "AND consent_version = $2)",
+                            str(callback.from_user.id),
+                            PROCESSING_CONSENT_VERSION,
+                        ):
+                            return Response(status_code=200)
                         await webhook_app.state.consent_service.grant_processing_consent(
                             "telegram",
                             str(callback.from_user.id),
                             PROCESSING_CONSENT_VERSION,
                             connection=connection,
                         )
-                await webhook_app.state.redis.delete(
-                    _consent_state_key(
-                        callback.message.chat.id,
-                        callback.from_user.id,
-                    )
-                )
-                await send_static_reply(
-                    update_id=update.update_id,
-                    chat_id=callback.message.chat.id,
-                    text=CONSENT_THANKS,
-                    reply_kind="consent_thanks",
-                )
+                        await webhook_app.state.redis.delete(
+                            _consent_state_key(
+                                callback.message.chat.id,
+                                callback.from_user.id,
+                            )
+                        )
+                        outbound_id = await webhook_app.state.message_repository.enqueue_outbound_in_transaction(
+                            connection,
+                            channel="telegram",
+                            chat_id=str(callback.message.chat.id),
+                            text=CONSENT_THANKS,
+                            idempotency_key=(
+                                f"telegram:consent_thanks:{update.update_id}"
+                            ),
+                            delivery_options=None,
+                        )
+                if outbound_id is not None:
+                    await deliver_static_reply(outbound_id)
             return Response(status_code=200)
 
         message = update.message

@@ -16,6 +16,18 @@ async def enqueue_process_message(
     chat_id: str,
     update_ids: Sequence[str],
 ) -> str:
+    async with database.acquire() as connection:
+        return await enqueue_process_message_in_transaction(
+            connection,
+            update_ids=update_ids,
+        )
+
+
+async def enqueue_process_message_in_transaction(
+    connection,
+    *,
+    update_ids: Sequence[str],
+) -> str:
     idempotency_key = process_message_key(update_ids)
     payload = json.dumps(
         {
@@ -23,17 +35,16 @@ async def enqueue_process_message(
         },
         ensure_ascii=False,
     )
-    async with database.acquire() as connection:
-        await connection.execute(
-            """
-            INSERT INTO task_outbox (id, kind, payload, idempotency_key)
-            VALUES ($1, 'process_message', $2::jsonb, $3)
-            ON CONFLICT (idempotency_key) DO NOTHING
-            """,
-            uuid4(),
-            payload,
-            idempotency_key,
-        )
+    await connection.execute(
+        """
+        INSERT INTO task_outbox (id, kind, payload, idempotency_key)
+        VALUES ($1, 'process_message', $2::jsonb, $3)
+        ON CONFLICT (idempotency_key) DO NOTHING
+        """,
+        uuid4(),
+        payload,
+        idempotency_key,
+    )
     return idempotency_key
 
 

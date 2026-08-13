@@ -1,7 +1,7 @@
 """Shared contracts for active customer-data deletion."""
 
 DELETION_MARKER_TTL_SECONDS = 300
-POST_DELETE_MARKER_TTL_SECONDS = 5
+DELETION_OPERATION_TIMEOUT_SECONDS = 240
 
 
 def deletion_marker_key(channel: str, chat_id: str) -> str:
