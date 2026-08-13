@@ -9,6 +9,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from moroz.common.db import Database
 from moroz.common.config import database_url_from_env
@@ -74,6 +75,88 @@ async def get_open_escalations(limit: int = 100) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+async def resolve_escalation(
+    escalation_id: UUID,
+    *,
+    actor_id: int,
+    ip_address: str | None,
+    user_agent: str | None,
+) -> str:
+    """Resolve one handoff and disable human mode after the customer's last one."""
+    if not _pool:
+        raise RuntimeError("database unavailable")
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT id, customer_id, status
+                FROM escalations
+                WHERE id=$1
+                FOR UPDATE
+                """,
+                escalation_id,
+            )
+            if row is None:
+                return "not_found"
+            if row["status"] == "resolved":
+                return "already_resolved"
+
+            await conn.fetchrow(
+                """
+                SELECT customer_id
+                FROM human_mode
+                WHERE customer_id=$1
+                FOR UPDATE
+                """,
+                row["customer_id"],
+            )
+            await conn.execute(
+                """
+                UPDATE escalations
+                SET status='resolved', resolved_at=now()
+                WHERE id=$1
+                """,
+                escalation_id,
+            )
+            has_open = await conn.fetchval(
+                """
+                SELECT EXISTS(
+                    SELECT 1 FROM escalations
+                    WHERE customer_id=$1 AND status='open'
+                )
+                """,
+                row["customer_id"],
+            )
+            if not has_open:
+                await conn.execute(
+                    """
+                    UPDATE human_mode
+                    SET enabled=false, expires_at=now()
+                    WHERE customer_id=$1
+                    """,
+                    row["customer_id"],
+                )
+            await conn.execute(
+                """
+                INSERT INTO admin_audit_events (
+                    actor_id, action, object_type, object_id,
+                    before, after, ip_address, user_agent
+                )
+                VALUES (
+                    $1, 'escalation.resolve', 'escalation', $2,
+                    '{"status":"open"}'::jsonb,
+                    '{"status":"resolved"}'::jsonb,
+                    $3, $4
+                )
+                """,
+                actor_id,
+                str(escalation_id),
+                ip_address,
+                user_agent,
+            )
+    return "resolved"
 
 
 async def get_chats_list(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
