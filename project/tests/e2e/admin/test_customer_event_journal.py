@@ -93,7 +93,16 @@ async def test_chat_detail_rejects_malformed_event_cursor(monkeypatch):
     async def current_user(_request):
         return _user("owner")
 
+    async def get_detail(_chat_id):
+        return _detail()
+
+    async def reject_cursor(_chat_id, *, limit, cursor):
+        assert (limit, cursor) == (50, "not-a-cursor")
+        raise ValueError("customer events cursor")
+
     monkeypatch.setattr(admin_app, "get_current_user", current_user)
+    monkeypatch.setattr(admin_app.database, "get_chat_detail", get_detail)
+    monkeypatch.setattr(admin_app.database, "get_customer_events", reject_cursor)
     async with AsyncClient(
         transport=ASGITransport(app=admin_app.app),
         base_url="http://test",
