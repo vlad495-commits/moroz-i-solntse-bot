@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Эскалации — Admin{% endblock %}
+{% block content %}
+<h1>Эскалации</h1>
+
+{% if resolved == 'resolved' %}
+<div class="notice success">Обращение закрыто.</div>
+{% elif resolved == 'already_resolved' %}
+<div class="notice">Обращение уже было закрыто.</div>
+{% endif %}
+
+{% if not escalations %}
+<p class="empty-state">Открытых обращений нет.</p>
+{% else %}
+<div class="escalation-list">
+{% for item in escalations %}
+<article class="escalation-card">
+    <div>
+        <a href="{{ request.scope.get('root_path', '') }}/chats/{{ item.customer_id }}">Клиент #{{ item.customer_id }}</a>
+        <p>{{ item.reason }} · {{ item.source }}</p>
+        <small>{{ item.created_at.strftime('%Y-%m-%d %H:%M:%S') }} · {% if item.human_mode_enabled %}ручной режим включён{% else %}ручной режим уже выключен{% endif %}</small>
+    </div>
+    <form method="post" action="{{ request.scope.get('root_path', '') }}/escalations/{{ item.id }}/resolve">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-primary">Закрыть и вернуть бота</button>
+    </form>
+</article>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}
