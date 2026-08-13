@@ -285,6 +285,50 @@ async def test_message_without_consent_is_not_persisted(
     ]
 
 
+async def test_deletion_marker_blocks_new_telegram_ingress(
+    client, db, redis_client, fake_telegram
+):
+    await grant_policy_consent(client)
+    inbox_before = await db.fetchval("SELECT count(*) FROM message_inbox")
+    outbound_before = await db.fetchval("SELECT count(*) FROM outbound_messages")
+    sent_before = len(fake_telegram.sent_messages)
+    await redis_client.set("privacy:deleting:telegram:42", "1", ex=300)
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_text_update(update_id=990, text="Новый секрет"),
+    )
+
+    assert response.status_code == 200
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == inbox_before
+    assert (
+        await db.fetchval("SELECT count(*) FROM outbound_messages")
+        == outbound_before
+    )
+    assert len(fake_telegram.sent_messages) == sent_before
+    assert fake_telegram.chat_actions == []
+
+
+async def test_deletion_marker_blocks_consent_callback_mutation(
+    client, db, redis_client, fake_telegram
+):
+    await redis_client.set("privacy:deleting:telegram:42", "1", ex=300)
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_consent_callback(
+            update_id=991,
+            data=CONSENT_PII_CALLBACK_DATA,
+        ),
+    )
+
+    assert response.status_code == 200
+    assert await redis_client.get("consent:state:telegram:42:7") is None
+    assert await db.fetchval("SELECT count(*) FROM processing_consents") == 0
+    assert await db.fetchval("SELECT count(*) FROM outbound_messages") == 0
+    assert fake_telegram.edited_reply_markups == []
+
+
 async def test_consent_done_without_policy_refuses_and_keeps_gate(
     client, db, fake_telegram
 ):

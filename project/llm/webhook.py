@@ -38,6 +38,7 @@ from moroz.messaging.models import IncomingMessage
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.service import MessageService
 from moroz.messaging.telegram import deliver_claimed_outbound
+from moroz.privacy import deletion_marker_key
 from moroz.security.consent import (
     PROCESSING_CONSENT_VERSION,
     ConsentService,
@@ -176,6 +177,20 @@ def create_app(
         except RedisError:
             return False
 
+    async def is_customer_deletion_active(chat_id: int) -> bool:
+        try:
+            return bool(
+                await webhook_app.state.redis.get(
+                    deletion_marker_key("telegram", str(chat_id))
+                )
+            )
+        except RedisError as error:
+            logger.warning(
+                "privacy_deletion_marker_read_failed error_type=%s",
+                type(error).__name__,
+            )
+            return False
+
     async def send_static_reply(
         *,
         update_id: int,
@@ -234,6 +249,8 @@ def create_app(
                 callback.message is None
                 or callback.message.chat.type != ChatType.PRIVATE
             ):
+                return Response(status_code=200)
+            if await is_customer_deletion_active(callback.message.chat.id):
                 return Response(status_code=200)
             target = _CONSENT_CALLBACK_TARGETS.get(callback.data)
             if target is not None:
@@ -299,6 +316,8 @@ def create_app(
         if not message:
             return Response(status_code=200)
         if message.chat.type != ChatType.PRIVATE:
+            return Response(status_code=200)
+        if await is_customer_deletion_active(message.chat.id):
             return Response(status_code=200)
         if await is_bot_paused():
             await send_static_reply(
