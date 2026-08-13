@@ -40,8 +40,8 @@
     {% endif %}
     {% if events.previous_offset is not none or events.next_offset is not none %}
     <nav class="customer-events-pagination" aria-label="Страницы событий">
-        {% if events.previous_offset is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ chat.chat_id }}?events_offset={{ events.previous_offset }}">← Новее</a>{% endif %}
-        {% if events.next_offset is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ chat.chat_id }}?events_offset={{ events.next_offset }}">Раньше →</a>{% endif %}
+        {% if events.previous_offset is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ chat.chat_id }}?events_offset={{ events.previous_offset }}&amp;events_anchor={{ events.anchor.isoformat()|urlencode }}">← Новее</a>{% endif %}
+        {% if events.next_offset is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ chat.chat_id }}?events_offset={{ events.next_offset }}&amp;events_anchor={{ events.anchor.isoformat()|urlencode }}">Раньше →</a>{% endif %}
     </nav>
     {% endif %}
 </section>

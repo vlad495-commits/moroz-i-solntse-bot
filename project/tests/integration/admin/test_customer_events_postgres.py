@@ -121,10 +121,31 @@ async def test_customer_events_merge_sources_paginate_and_isolate_customer(
             """,
             base + timedelta(minutes=7),
         )
+        await connection.execute(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status,
+                 booking_key, created_at, updated_at)
+            VALUES ($1, 'conflicting-secret', $2,
+                    '{"customer_id":"84"}'::jsonb,
+                    'conflicting-owner-job', 'pending', $3, $2, $2)
+            """,
+            uuid4(),
+            base + timedelta(minutes=8),
+            booking_key,
+        )
 
         first = await admin_database.get_customer_events(42, limit=3)
+        await connection.execute(
+            "INSERT INTO messages (chat_id, user_id, role, content, created_at) "
+            "VALUES (42, 7, 'user', 'new-after-first-page', $1)",
+            base + timedelta(days=2),
+        )
         second = await admin_database.get_customer_events(
-            42, limit=3, offset=first["next_offset"]
+            42,
+            limit=3,
+            offset=first["next_offset"],
+            anchor=first["anchor"],
         )
 
         assert [event["title"] for event in first["items"]] == [
@@ -144,6 +165,8 @@ async def test_customer_events_merge_sources_paginate_and_isolate_customer(
         assert "must-not-leak" not in repr(all_visible)
         assert all("payload" not in event for event in all_visible)
         assert "customer_data.delete" not in repr(all_visible)
+        assert "conflicting-secret" not in repr(first)
+        assert "new-after-first-page" not in repr(second)
     finally:
         admin_database._pool = previous_pool
         await pool.close()

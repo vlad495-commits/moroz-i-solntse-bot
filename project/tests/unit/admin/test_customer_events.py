@@ -92,3 +92,40 @@ def test_maps_handoff_and_admin_categories_without_raw_details():
     assert handoff["title"] == "Передано администратору"
     assert admin["category"] == "admin"
     assert "ip_address" not in admin
+
+
+def test_only_message_text_and_known_reason_labels_are_described():
+    unknown_reason = normalize_customer_event(
+        {
+            "source": "escalation",
+            "source_id": "esc-secret",
+            "occurred_at": NOW,
+            "kind": "handoff.opened",
+            "description": "+79990000000 internal-secret",
+            "status": "open",
+        }
+    )
+    known_reason = normalize_customer_event(
+        {
+            "source": "escalation",
+            "source_id": "esc-safe",
+            "occurred_at": NOW,
+            "kind": "handoff.opened",
+            "description": "low_feedback_rating",
+            "status": "open",
+        }
+    )
+    scheduler = normalize_customer_event(
+        {
+            "source": "scheduler",
+            "source_id": "job-secret",
+            "occurred_at": NOW,
+            "kind": "scheduler.scheduled",
+            "description": "+79990000000 internal-secret",
+            "status": "pending",
+        }
+    )
+
+    assert unknown_reason["description"] is None
+    assert known_reason["description"] == "Низкая оценка после визита"
+    assert scheduler["description"] is None

@@ -3,6 +3,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -195,6 +196,7 @@ async def chat_detail(
     request: Request,
     chat_id: int,
     events_offset: int = Query(0, ge=0),
+    events_anchor: datetime | None = Query(None),
 ):
     user = await get_current_user(request)
     detail = await database.get_chat_detail(chat_id)
@@ -204,6 +206,7 @@ async def chat_detail(
         chat_id,
         limit=50,
         offset=events_offset,
+        anchor=events_anchor,
     )
     await record_audit(
         actor_id=user.id,

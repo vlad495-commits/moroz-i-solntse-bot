@@ -84,7 +84,7 @@ git commit -m "feat: добавить модель событий клиента
 
 **Interfaces:**
 - Consumes: `normalize_customer_event(row)` из Task 1.
-- Produces: `get_customer_events(chat_id: int, limit: int = 50, offset: int = 0) -> dict[str, object]`, где результат содержит `items`, `offset`, `next_offset`, `previous_offset`, `has_more`.
+- Produces: `get_customer_events(chat_id: int, limit: int = 50, offset: int = 0, anchor: datetime | None = None) -> dict[str, object]`, где результат содержит `items`, `offset`, `next_offset`, `previous_offset`, `has_more`, `anchor`.
 
 - [ ] **Step 1: Write the failing PostgreSQL integration tests**
 
@@ -128,7 +128,7 @@ source, source_id, occurred_at, kind, description, status
 - `human_mode`: `handoff.enabled` на `enabled_at`, description = `reason_code`;
 - `admin_audit_events`: только `object_type = 'customer' AND object_id = $1`, kind = `admin.` + `action`, без `before/after`.
 
-Внешний запрос сортирует `occurred_at DESC, source, source_id DESC`, применяет `$2 LIMIT` как `limit + 1` и `$3 OFFSET`. Python отбрасывает лишнюю строку, нормализует остальные и вычисляет offsets.
+Внешний запрос использует один PostgreSQL-time anchor для всех страниц, сортирует `occurred_at DESC, source DESC, source_id DESC`, применяет LIMIT как `limit + 1` и OFFSET. Python отбрасывает лишнюю строку, нормализует остальные и вычисляет offsets.
 
 - [ ] **Step 4: Run GREEN and existing database regressions**
 
@@ -157,7 +157,7 @@ git commit -m "feat: собрать события клиента из PostgreSQ
 - Modify: `project/tests/e2e/admin/test_csrf_rbac_audit.py`
 
 **Interfaces:**
-- Consumes: `database.get_customer_events(chat_id, limit=50, offset=events_offset)`.
+- Consumes: `database.get_customer_events(chat_id, limit=50, offset=events_offset, anchor=events_anchor)`.
 - Produces: HTML block `.customer-events`, safe page links with `events_offset`, and unchanged message/danger-zone UI.
 
 - [ ] **Step 1: Write failing route/template tests**
@@ -244,4 +244,3 @@ Expected: 0 failures.
 git add -- 'Дорожная карта.md' changelog.md
 git commit -m "docs: завершить событийный журнал клиента"
 ```
-

@@ -4,6 +4,7 @@
 
 import logging
 import os
+from datetime import datetime
 from typing import Any
 
 from moroz.common.db import Database
@@ -140,6 +141,7 @@ async def get_customer_events(
     chat_id: int,
     limit: int = 50,
     offset: int = 0,
+    anchor: datetime | None = None,
 ) -> dict[str, Any]:
     """Return one safe, newest-first page of existing customer events."""
     if not 1 <= limit <= 50 or offset < 0:
@@ -155,6 +157,7 @@ async def get_customer_events(
         return empty
     customer_id = str(chat_id)
     async with _pool.acquire() as conn:
+        resolved_anchor = anchor or await conn.fetchval("SELECT now()")
         rows = await conn.fetch(
             """
             WITH customer_events AS (
@@ -185,12 +188,14 @@ async def get_customer_events(
                     'scheduler', job.id::text || ':scheduled', job.created_at,
                     'scheduler.scheduled', job.kind, 'pending'
                 FROM scheduler_jobs AS job
-                WHERE job.payload->>'customer_id' = $2
-                   OR EXISTS (
+                WHERE CASE
+                    WHEN jsonb_typeof(job.payload->'customer_id') = 'string'
+                    THEN job.payload->>'customer_id' = $2
+                    ELSE EXISTS (
                         SELECT 1 FROM bookings AS booking
                         WHERE booking.booking_key = job.booking_key
                           AND booking.customer_id = $2
-                   )
+                    ) END
 
                 UNION ALL
 
@@ -199,14 +204,14 @@ async def get_customer_events(
                     'scheduler.' || job.status, job.kind, job.status
                 FROM scheduler_jobs AS job
                 WHERE job.finished_at IS NOT NULL
-                  AND (
-                    job.payload->>'customer_id' = $2
-                    OR EXISTS (
+                  AND CASE
+                    WHEN jsonb_typeof(job.payload->'customer_id') = 'string'
+                    THEN job.payload->>'customer_id' = $2
+                    ELSE EXISTS (
                         SELECT 1 FROM bookings AS booking
                         WHERE booking.booking_key = job.booking_key
                           AND booking.customer_id = $2
-                    )
-                  )
+                    ) END
 
                 UNION ALL
 
@@ -246,13 +251,15 @@ async def get_customer_events(
             )
             SELECT source, source_id, occurred_at, kind, description, status
             FROM customer_events
-            ORDER BY occurred_at DESC, source, source_id DESC
+            WHERE occurred_at <= $5
+            ORDER BY occurred_at DESC, source DESC, source_id DESC
             LIMIT $3 OFFSET $4
             """,
             chat_id,
             customer_id,
             limit + 1,
             offset,
+            resolved_anchor,
         )
     has_more = len(rows) > limit
     items = [normalize_customer_event(row) for row in rows[:limit]]
@@ -262,6 +269,7 @@ async def get_customer_events(
         "next_offset": offset + limit if has_more else None,
         "previous_offset": max(0, offset - limit) if offset else None,
         "has_more": has_more,
+        "anchor": resolved_anchor,
     }
 
 

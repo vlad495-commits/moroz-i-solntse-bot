@@ -32,6 +32,18 @@ EVENT_TITLES = {
     "admin.customer.note": "Заметка администратора",
 }
 
+SAFE_REASON_LABELS = {
+    "low_feedback_rating": "Низкая оценка после визита",
+}
+
+
+def _safe_description(source: str, value: object) -> object:
+    if source == "message":
+        return value
+    if source in {"escalation", "human_mode"}:
+        return SAFE_REASON_LABELS.get(str(value))
+    return None
+
 
 def normalize_customer_event(row: Mapping[str, object]) -> dict[str, object]:
     source = str(row["source"])
@@ -43,6 +55,6 @@ def normalize_customer_event(row: Mapping[str, object]) -> dict[str, object]:
         "category": SOURCE_CATEGORIES.get(source, "admin"),
         "kind": raw_kind if known else "unknown",
         "title": EVENT_TITLES.get(raw_kind, "Системное событие"),
-        "description": row.get("description"),
+        "description": _safe_description(source, row.get("description")),
         "status": row.get("status"),
     }

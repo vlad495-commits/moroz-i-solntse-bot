@@ -46,6 +46,7 @@ def _events():
         "next_offset": 50,
         "previous_offset": None,
         "has_more": True,
+        "anchor": datetime(2026, 8, 13, 20, 1, tzinfo=UTC),
     }
 
 
@@ -60,8 +61,8 @@ async def test_chat_detail_renders_safe_event_page_for_both_roles(
     async def get_detail(_chat_id):
         return _detail()
 
-    async def get_events(chat_id, *, limit, offset):
-        assert (chat_id, limit, offset) == (42, 50, 0)
+    async def get_events(chat_id, *, limit, offset, anchor):
+        assert (chat_id, limit, offset, anchor) == (42, 50, 0, None)
         return _events()
 
     async def no_audit(**_kwargs):
@@ -82,6 +83,7 @@ async def test_chat_detail_renders_safe_event_page_for_both_roles(
     assert "События клиента" in response.text
     assert "Сообщение клиента" in response.text
     assert "events_offset=50" in response.text
+    assert "events_anchor=" in response.text
     assert "<script>alert('journal')</script>" not in response.text
     assert "&lt;script&gt;alert" in response.text
     if role == "owner":
