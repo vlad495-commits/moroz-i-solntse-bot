@@ -229,7 +229,7 @@ Review exact `9cd5b46..HEAD` against spec for races, outbox order/idempotency, n
 ```powershell
 Set-Location project
 $localEnv = Join-Path (Split-Path -Parent (git rev-parse --git-common-dir)) '.env'
-docker compose --env-file $localEnv run --build --rm test pytest -q
+docker compose --env-file $localEnv run --build --rm --volume "${PWD}/../docs:/docs:ro" test pytest -q
 ```
 
 Expected: exit 0, zero failures.
