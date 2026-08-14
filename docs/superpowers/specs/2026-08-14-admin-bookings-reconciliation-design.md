@@ -132,14 +132,14 @@ PostgreSQL MVCC гарантирует, что admin-запрос видит л�
 
 ## Планирование и идемпотентность
 
-Существующий scheduler один раз на UTC 10-minute bucket обеспечивает pending job:
+Worker уже получает YCLIENTS credentials и `SchedulerJobRepository`, поэтому scheduler-контейнер не получает новую конфигурацию и не меняется. При старте настроенный worker идемпотентно обеспечивает pending job текущего UTC 10-minute bucket. Обработчик каждой sync-job до provider-чтения обеспечивает job следующего bucket, поэтому временная ошибка текущей синхронизации не останавливает последующие циклы:
 
 ```text
 kind = yclients_booking_projection_sync
 idempotency_key = yclients_booking_projection_sync:<bucket-start>
 ```
 
-Дальше используется штатный путь `scheduler_jobs -> RabbitMQ -> worker`. Новая очередь не создаётся. Повтор одного bucket не создаёт вторую job благодаря текущему unique `idempotency_key`; advisory lock защищает от перекрытия соседних bucket.
+Дальше неизменённый scheduler подхватывает due job по штатному пути `scheduler_jobs -> RabbitMQ -> worker`. Новая очередь не создаётся. Повтор startup/retry одного bucket не создаёт вторую job благодаря текущему unique `idempotency_key`; advisory lock защищает от перекрытия соседних bucket. Если worker завершился до обработки, следующий startup снова обеспечивает текущий bucket и восстанавливает цикл.
 
 Успешность и свежесть берутся без отдельной sync-state таблицы. Для непустого снимка authoritative timestamp — единый `MAX(yclients_booking_projection.synced_at)`; для корректного пустого снимка — `finished_at` последней успешной sync-job. Последняя неуспешная job и её allowlisted `last_error_code` берутся из `scheduler_jobs`. Если projection commit прошёл, а terminal update job временно не прошёл, timestamp непустой проекции всё равно честно отражает успешно сохранённый снимок; повтор job остаётся идемпотентным.
 
