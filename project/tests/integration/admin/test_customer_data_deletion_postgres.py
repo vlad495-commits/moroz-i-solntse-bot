@@ -9,6 +9,7 @@ import pytest
 import redis.asyncio as redis
 
 from customer_data_deletion import CustomerDataDeletionError, delete_customer_data
+from bookings_database import list_bookings
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.repository import MessageRepository
@@ -107,10 +108,42 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
             INSERT INTO bookings
                 (id, last_scenario_id, external_id, customer_id, slot_id,
                  starts_at, status, snapshot, booking_key)
-            VALUES ($1, $2, 'external-secret', '42', 'slot', now(),
+            VALUES ($1, $2, '401', '42', 'slot', now(),
                     'confirmed', '{"phone":"secret"}'::jsonb, $3)
             """,
             booking_id, scenario_id, booking_key,
+        )
+        await conn.execute(
+            """
+            INSERT INTO yclients_booking_projection
+                (external_id, booking_key, bot_marker_state, starts_at,
+                 scheduled_end_at, status, deleted, client_name, staff_name,
+                 service_names, synced_at)
+            VALUES ('401', $1, 'valid', now(), NULL, 'confirmed', false,
+                    'Клиент', 'Мастер', ARRAY['Услуга'], now())
+            """,
+            booking_key,
+        )
+        projection_before = await conn.fetchrow(
+            """
+            SELECT external_id, booking_key, bot_marker_state, starts_at,
+                   scheduled_end_at, status, deleted, client_name, staff_name,
+                   service_names, synced_at
+            FROM yclients_booking_projection WHERE external_id = '401'
+            """
+        )
+        await conn.execute(
+            """
+            CREATE FUNCTION reject_deletion_provider_mutation() RETURNS trigger
+            LANGUAGE plpgsql AS $$
+            BEGIN
+                RAISE EXCEPTION 'provider mutation enqueued';
+            END;
+            $$;
+            CREATE TRIGGER reject_deletion_provider_mutation_insert
+            BEFORE INSERT ON task_outbox
+            FOR EACH ROW EXECUTE FUNCTION reject_deletion_provider_mutation();
+            """
         )
         await conn.execute(
             """
@@ -195,6 +228,27 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
         ) == 0
         assert await conn.fetchval("SELECT count(*) FROM messages WHERE chat_id = 84") == 1
         assert await conn.fetchval("SELECT count(*) FROM processing_consents WHERE user_id = '8'") == 1
+
+        projection_after = await conn.fetchrow(
+            """
+            SELECT external_id, booking_key, bot_marker_state, starts_at,
+                   scheduled_end_at, status, deleted, client_name, staff_name,
+                   service_names, synced_at
+            FROM yclients_booking_projection WHERE external_id = '401'
+            """
+        )
+        assert projection_after == projection_before
+        provider_page = await list_bookings(
+            pool,
+            view="attention",
+            status=None,
+            cursor=None,
+            now=datetime.now(UTC),
+        )
+        provider_row = provider_page["items"][0]
+        assert provider_row["reconciliation_state"] == "local_missing"
+        assert provider_row["detail_id"] is None
+        assert provider_row["customer_chat_id"] is None
 
         assert await cache.get("chat:42:messages") is None
         assert await cache.get("buffer:42") is None

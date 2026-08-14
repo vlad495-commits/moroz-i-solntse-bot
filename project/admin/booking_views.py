@@ -9,6 +9,8 @@ from uuid import UUID
 
 
 BOOKING_VIEWS = {"upcoming", "attention", "history"}
+BOOKING_SOURCES = {"all", "bot", "other"}
+BOOKING_RECONCILIATION_FILTERS = {"all", "mismatch"}
 BOOKING_STATUS_LABELS = {
     "confirmed": "Подтверждена",
     "cancelled": "Отменена",
@@ -38,44 +40,75 @@ EVENT_TITLES = {
     "slot_unavailable": "Слот уже недоступен",
     "admin_attention_required": "Требуется помощь администратора",
 }
+BOOKING_SOURCE_LABELS = {
+    "bot": "Создано ботом",
+    "other": "Другой канал",
+    "unknown": "Источник не подтверждён",
+}
+BOOKING_RECONCILIATION_LABELS = {
+    "in_sync": "Синхронизировано",
+    "changed_in_yclients": "Изменено в YCLIENTS",
+    "yclients_only": "Только в YCLIENTS",
+    "local_missing": "Нет локальной записи",
+    "provider_missing": "Нет в YCLIENTS",
+    "identity_conflict": "Требуется сверка",
+    "freshness_unknown": "Синхронизация ещё не выполнялась",
+}
 
 
-def validate_booking_filters(view: str, status: str | None) -> tuple[str, str | None]:
-    if view not in BOOKING_VIEWS:
+def validate_booking_filters(
+    view: str,
+    status: str | None,
+    source: str = "all",
+    reconciliation: str = "all",
+) -> tuple[str, str | None, str, str]:
+    if not isinstance(view, str) or view not in BOOKING_VIEWS:
         raise ValueError("booking view")
-    if status is not None and status not in BOOKING_STATUS_LABELS:
+    if status is not None and (
+        not isinstance(status, str) or status not in BOOKING_STATUS_LABELS
+    ):
         raise ValueError("booking status")
-    return view, status
+    if not isinstance(source, str) or source not in BOOKING_SOURCES:
+        raise ValueError("booking source")
+    if (
+        not isinstance(reconciliation, str)
+        or reconciliation not in BOOKING_RECONCILIATION_FILTERS
+    ):
+        raise ValueError("booking reconciliation")
+    return view, status, source, reconciliation
 
 
-def encode_booking_cursor(sort_at: datetime, booking_id: UUID) -> str:
+def encode_booking_cursor(sort_at: datetime, row_key: str) -> str:
     if not isinstance(sort_at, datetime) or sort_at.tzinfo is None or sort_at.utcoffset() is None:
         raise ValueError("booking cursor")
+    _validate_booking_row_key(row_key)
     value = json.dumps(
-        {"at": sort_at.isoformat(), "id": str(booking_id)},
+        {"v": 2, "at": sort_at.isoformat(), "key": row_key},
         separators=(",", ":"),
     ).encode()
     return base64.urlsafe_b64encode(value).decode()
 
 
-def decode_booking_cursor(value: str | None) -> tuple[datetime, UUID] | None:
+def decode_booking_cursor(value: str | None) -> tuple[datetime, str] | None:
     if value is None:
         return None
     try:
-        if not isinstance(value, str) or not value:
+        if not isinstance(value, str) or not value or len(value) > 256:
             raise ValueError
         padding = "=" * (-len(value) % 4)
         payload = json.loads(
             base64.b64decode(value + padding, altchars=b"-_", validate=True)
         )
-        if not isinstance(payload, dict) or set(payload) != {"at", "id"}:
+        if not isinstance(payload, dict) or set(payload) != {"v", "at", "key"}:
             raise ValueError
-        if not isinstance(payload["at"], str) or not isinstance(payload["id"], str):
+        if payload["v"] != 2 or type(payload["v"]) is not int:
+            raise ValueError
+        if not isinstance(payload["at"], str) or not isinstance(payload["key"], str):
             raise ValueError
         sort_at = datetime.fromisoformat(payload["at"])
         if sort_at.tzinfo is None or sort_at.utcoffset() is None:
             raise ValueError
-        return sort_at, UUID(payload["id"])
+        return sort_at, _validate_booking_row_key(payload["key"])
     except (
         ValueError,
         TypeError,
@@ -86,15 +119,57 @@ def decode_booking_cursor(value: str | None) -> tuple[datetime, UUID] | None:
         raise ValueError("booking cursor") from error
 
 
+def _validate_booking_row_key(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("booking cursor")
+    if value.startswith("y:"):
+        external_id = value[2:]
+        if (
+            not external_id
+            or len(external_id) > 64
+            or not external_id.isascii()
+            or not external_id.isdigit()
+            or external_id[0] == "0"
+        ):
+            raise ValueError("booking cursor")
+        return value
+    if value.startswith("l:"):
+        booking_id = value[2:]
+        try:
+            parsed = UUID(booking_id)
+        except ValueError as error:
+            raise ValueError("booking cursor") from error
+        if booking_id != str(parsed):
+            raise ValueError("booking cursor")
+        return value
+    raise ValueError("booking cursor")
+
+
 def normalize_booking_row(
     row: Mapping[str, object], *, detail: bool = False
 ) -> dict[str, object]:
     status = str(row["status"])
-    kind = str(row["kind"])
-    phase = str(row["phase"])
+    kind = row.get("kind")
+    phase = row.get("phase")
+    source_value = row.get("source", "bot")
+    source = (
+        source_value
+        if isinstance(source_value, str) and source_value in BOOKING_SOURCE_LABELS
+        else "unknown"
+    )
+    reconciliation_value = row.get("reconciliation_state", "in_sync")
+    reconciliation = (
+        reconciliation_value
+        if isinstance(reconciliation_value, str)
+        and reconciliation_value in BOOKING_RECONCILIATION_LABELS
+        else "identity_conflict"
+    )
     customer_chat_id = _canonical_customer_chat_id(row["customer_id"])
+    detail_id = row.get("detail_id", row.get("id"))
     result = {
-        "id": row["id"],
+        "id": detail_id,
+        "detail_id": detail_id,
+        "row_key": row.get("row_key"),
         "customer_chat_id": customer_chat_id,
         "customer_label": (
             f"Клиент #{customer_chat_id}"
@@ -106,13 +181,34 @@ def normalize_booking_row(
         "status": status if status in BOOKING_STATUS_LABELS else "unknown",
         "status_label": BOOKING_STATUS_LABELS.get(status, "Неизвестный статус"),
         "updated_at": row["updated_at"],
-        "scenario_label": SCENARIO_LABELS.get(kind, "Системный сценарий"),
-        "phase_label": PHASE_LABELS.get(phase, "Неизвестное состояние"),
+        "scenario_label": (
+            None if kind is None else SCENARIO_LABELS.get(str(kind), "Системный сценарий")
+        ),
+        "phase_label": (
+            None if phase is None else PHASE_LABELS.get(str(phase), "Неизвестное состояние")
+        ),
         "error_label": None if row.get("error_code") is None else "Требуется проверка",
+        "source": source,
+        "source_label": BOOKING_SOURCE_LABELS[source],
+        "reconciliation_state": reconciliation,
+        "reconciliation_label": BOOKING_RECONCILIATION_LABELS[reconciliation],
+        "client_name": _safe_optional_text(row.get("client_name")),
+        "staff_name": _safe_optional_text(row.get("staff_name")),
+        "service_names": _safe_service_names(row.get("service_names")),
     }
     if detail:
         result["external_id"] = row.get("external_id")
     return result
+
+
+def _safe_optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _safe_service_names(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item for item in value if isinstance(item, str)]
 
 
 def _canonical_customer_chat_id(value: object) -> int | None:

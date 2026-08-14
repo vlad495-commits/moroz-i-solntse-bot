@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
+import booking_views
 
 from booking_views import (
     decode_booking_cursor,
@@ -17,29 +18,47 @@ BOOKING_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 
 def test_filter_allowlist():
-    assert validate_booking_filters("attention", "unknown") == (
+    assert booking_views.BOOKING_SOURCES == {"all", "bot", "other"}
+    assert booking_views.BOOKING_RECONCILIATION_FILTERS == {"all", "mismatch"}
+    assert validate_booking_filters("attention", "unknown", "bot", "mismatch") == (
         "attention",
         "unknown",
+        "bot",
+        "mismatch",
     )
     with pytest.raises(ValueError, match="booking view"):
         validate_booking_filters("private", None)
     with pytest.raises(ValueError, match="booking status"):
         validate_booking_filters("upcoming", "private")
+    with pytest.raises(ValueError, match="booking source"):
+        validate_booking_filters("upcoming", None, "private", "all")
+    with pytest.raises(ValueError, match="booking reconciliation"):
+        validate_booking_filters("upcoming", None, "all", "private")
+    with pytest.raises(ValueError, match="booking source"):
+        validate_booking_filters("upcoming", None, [], "all")
 
 
 def test_cursor_round_trip_and_rejects_malformed_values():
-    encoded = encode_booking_cursor(NOW, BOOKING_ID)
-    assert decode_booking_cursor(encoded) == (NOW, BOOKING_ID)
-    for value in ("", "not-base64", "e30="):
+    encoded = encode_booking_cursor(NOW, "y:123")
+    assert decode_booking_cursor(encoded) == (NOW, "y:123")
+    local = encode_booking_cursor(NOW, f"l:{BOOKING_ID}")
+    assert decode_booking_cursor(local) == (NOW, f"l:{BOOKING_ID}")
+    for value in ("", "not-base64", "e30=", "A" * 257):
         with pytest.raises(ValueError, match="booking cursor"):
             decode_booking_cursor(value)
+    for key in ("x:123", "y:", "y:0", "y:01", "l:not-a-uuid", "y:" + "1" * 65):
+        with pytest.raises(ValueError, match="booking cursor"):
+            encode_booking_cursor(NOW, key)
 
 
 def test_cursor_requires_aware_datetime_and_exact_payload_shape():
     with pytest.raises(ValueError, match="booking cursor"):
-        encode_booking_cursor(NOW.replace(tzinfo=None), BOOKING_ID)
+        encode_booking_cursor(NOW.replace(tzinfo=None), "y:123")
     with pytest.raises(ValueError, match="booking cursor"):
         decode_booking_cursor("eyJhdCI6ICIyMDI2LTA4LTE0VDEyOjAwOjAwKzAwOjAwIiwgImlkIjogImFhYWFhYWFhLWFhYWEtYWFhYS1hYWFhLWFhYWFhYWFhYWFhYWEiLCAiZXh0cmEiOiB0cnVlfQ==")
+    legacy = "eyJhdCI6IjIwMjYtMDgtMTRUMTI6MDA6MDArMDA6MDAiLCJpZCI6ImFhYWFhYWFhLWFhYWEtYWFhYS1hYWFhLWFhYWFhYWFhYWFhYWEifQ=="
+    with pytest.raises(ValueError, match="booking cursor"):
+        decode_booking_cursor(legacy)
     assert decode_booking_cursor(None) is None
 
 
@@ -56,6 +75,8 @@ def test_booking_and_event_normalization_hide_unknown_raw_values():
             "phase": "private-phase",
             "error_code": "private-error",
             "external_id": "provider-secret",
+            "source": "private-source",
+            "reconciliation_state": "private-reconciliation",
         }
     )
     event = normalize_booking_event(
@@ -69,7 +90,13 @@ def test_booking_and_event_normalization_hide_unknown_raw_values():
     assert booking["scenario_label"] == "Системный сценарий"
     assert booking["phase_label"] == "Неизвестное состояние"
     assert booking["error_label"] == "Требуется проверка"
+    assert booking["source"] == "unknown"
+    assert booking["source_label"] == "Источник не подтверждён"
+    assert booking["reconciliation_state"] == "identity_conflict"
+    assert booking["reconciliation_label"] == "Требуется сверка"
     assert "provider-secret" not in repr(booking)
+    assert "private-source" not in repr(booking)
+    assert "private-reconciliation" not in repr(booking)
     assert event["title"] == "Системное событие"
     assert "private-event" not in repr(event)
 
