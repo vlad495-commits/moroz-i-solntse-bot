@@ -54,6 +54,19 @@ BOOKING_RECONCILIATION_LABELS = {
     "identity_conflict": "Требуется сверка",
     "freshness_unknown": "Синхронизация ещё не выполнялась",
 }
+PROJECTION_FAILURE_LABELS = {
+    "yclients_transport": "Сервис сверки временно недоступен",
+    "yclients_http_status": "Сервис сверки вернул ошибку",
+    "yclients_response_shape": "Ответ сервиса сверки не удалось обработать",
+    "yclients_page_bound": "Сверка превысила безопасный объём данных",
+    "yclients_projection_write": "Результат сверки не удалось сохранить",
+}
+
+
+def projection_failure_label(code: object) -> str:
+    if not isinstance(code, str):
+        return "Сверку не удалось выполнить"
+    return PROJECTION_FAILURE_LABELS.get(code, "Сверку не удалось выполнить")
 
 
 def validate_booking_filters(

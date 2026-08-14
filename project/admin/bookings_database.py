@@ -8,6 +8,7 @@ from booking_views import (
     encode_booking_cursor,
     normalize_booking_event,
     normalize_booking_row,
+    projection_failure_label,
     validate_booking_filters,
 )
 from moroz.common.db import Database
@@ -212,7 +213,19 @@ _FRESHNESS_SQL = """
          WHERE kind = 'yclients_booking_projection_sync'
            AND status = 'finished'
            AND finished_at IS NOT NULL)
-            AS empty_snapshot_at
+            AS empty_snapshot_at,
+        failure.last_error_code,
+        failure.updated_at AS last_failure_at
+    FROM (SELECT 1) AS singleton
+    LEFT JOIN LATERAL (
+        SELECT last_error_code, updated_at
+        FROM scheduler_jobs
+        WHERE kind = $1::text
+          AND status = ANY($2::text[])
+          AND last_error_code IS NOT NULL
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+    ) AS failure ON TRUE
 """
 
 _DETAIL_SQL = """
@@ -269,7 +282,11 @@ async def list_bookings(
     sort_column = "attention_at" if view == "attention" else "starts_at"
     async with database.acquire() as connection:
         async with connection.transaction(isolation="repeatable_read", readonly=True):
-            freshness_row = await connection.fetchrow(_FRESHNESS_SQL)
+            freshness_row = await connection.fetchrow(
+                _FRESHNESS_SQL,
+                "yclients_booking_projection_sync",
+                ["pending", "claimed", "failed"],
+            )
             last_success_at = (
                 freshness_row["projection_synced_at"]
                 or freshness_row["empty_snapshot_at"]
@@ -293,6 +310,20 @@ async def list_bookings(
 
     has_more = len(rows) > limit
     visible_rows = rows[:limit]
+    freshness = {
+        "last_success_at": last_success_at,
+        "stale": (
+            last_success_at is not None
+            and current_time - last_success_at > timedelta(minutes=20)
+        ),
+    }
+    if freshness_row["last_error_code"] is not None:
+        freshness.update(
+            last_failure_at=freshness_row["last_failure_at"],
+            last_failure_label=projection_failure_label(
+                freshness_row["last_error_code"]
+            ),
+        )
     return {
         "items": [normalize_booking_row(row) for row in visible_rows],
         "next_cursor": (
@@ -303,13 +334,7 @@ async def list_bookings(
             else None
         ),
         "has_more": has_more,
-        "freshness": {
-            "last_success_at": last_success_at,
-            "stale": (
-                last_success_at is not None
-                and current_time - last_success_at > timedelta(minutes=20)
-            ),
-        },
+        "freshness": freshness,
     }
 
 

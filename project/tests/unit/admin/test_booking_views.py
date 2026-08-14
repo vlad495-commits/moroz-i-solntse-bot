@@ -38,6 +38,31 @@ def test_filter_allowlist():
         validate_booking_filters("upcoming", None, [], "all")
 
 
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("yclients_transport", "Сервис сверки временно недоступен"),
+        ("yclients_http_status", "Сервис сверки вернул ошибку"),
+        ("yclients_response_shape", "Ответ сервиса сверки не удалось обработать"),
+        ("yclients_page_bound", "Сверка превысила безопасный объём данных"),
+        ("yclients_projection_write", "Результат сверки не удалось сохранить"),
+        ("private-provider-body", "Сверку не удалось выполнить"),
+    ],
+)
+def test_projection_failure_label_uses_only_local_allowlist(code, expected):
+    label = booking_views.projection_failure_label(code)
+
+    assert set(booking_views.PROJECTION_FAILURE_LABELS) == {
+        "yclients_transport",
+        "yclients_http_status",
+        "yclients_response_shape",
+        "yclients_page_bound",
+        "yclients_projection_write",
+    }
+    assert label == expected
+    assert code not in label
+
+
 def test_cursor_round_trip_and_rejects_malformed_values():
     encoded = encode_booking_cursor(NOW, "y:123")
     assert decode_booking_cursor(encoded) == (NOW, "y:123")

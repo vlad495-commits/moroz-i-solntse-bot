@@ -142,6 +142,8 @@ async def test_staff_can_read_safe_booking_list_and_detail(monkeypatch, role):
     assert "snapshot" not in detail.text
     assert "state" not in detail.text
     assert "payload" not in detail.text
+    assert "Обновлено:" in page.text
+    assert "Обновлено локально" not in page.text
     assert calls[0][0] == "database"
     assert calls[0][1] == {
         "view": "upcoming",
@@ -307,6 +309,35 @@ async def test_stale_projection_freshness_is_visible(monkeypatch):
 
     assert response.status_code == 200
     assert "Данные YCLIENTS могут быть устаревшими" in response.text
+
+
+@pytest.mark.asyncio
+async def test_projection_failure_banner_uses_safe_label_without_raw_code(monkeypatch):
+    async def current_user(_request):
+        return _user()
+
+    async def list_projection(_database, **_kwargs):
+        page = _page()
+        page["has_more"] = False
+        page["freshness"] = {
+            **page["freshness"],
+            "last_failure_at": datetime(2026, 8, 14, 9, 30, tzinfo=UTC),
+            "last_failure_label": "Сервис сверки временно недоступен",
+            "last_error_code": "private-provider-body",
+        }
+        return page
+
+    monkeypatch.setattr(booking_routes, "get_current_user", current_user)
+    monkeypatch.setattr(booking_routes.database, "get_database", lambda: "database")
+    monkeypatch.setattr(booking_routes, "list_bookings", list_projection)
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+        response = await client.get("/bookings/")
+
+    assert response.status_code == 200
+    assert "Последняя ошибка сверки:" in response.text
+    assert "Сервис сверки временно недоступен" in response.text
+    assert "2026-08-14 09:30:00+00:00" in response.text
+    assert "private-provider-body" not in response.text
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,7 @@
         <strong>Последняя синхронизация:</strong>
         {% if freshness.get("last_success_at") %}{{ freshness["last_success_at"] }}{% else %}ещё не выполнялась{% endif %}
         {% if freshness.get("stale") %}<p>Данные YCLIENTS могут быть устаревшими</p>{% endif %}
+        {% if freshness.get("last_failure_label") and freshness.get("last_failure_at") %}<p class="failed"><strong>Последняя ошибка сверки:</strong> {{ freshness["last_failure_label"] }} · {{ freshness["last_failure_at"] }}</p>{% endif %}
     </aside>
 
     <form class="logs-filters" method="get">
@@ -57,7 +58,7 @@
             <div class="row-between">
                 <div>
                     <strong>{% if booking.detail_id is not none %}<a href="{{ request.scope.get('root_path', '') }}/bookings/{{ booking.detail_id }}">{{ booking.starts_at }}</a>{% else %}{{ booking.starts_at }}{% endif %}</strong>
-                    <p class="muted">Обновлено локально: {{ booking.updated_at }}</p>
+                    <p class="muted">Обновлено: {{ booking.updated_at }}</p>
                 </div>
                 <div class="booking-badges">
                     <span class="chip">{{ booking.status_label }}</span>

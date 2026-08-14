@@ -136,6 +136,31 @@ async def _seed_successful_sync(connection, finished_at: datetime) -> None:
     )
 
 
+async def _seed_unsuccessful_sync(
+    connection,
+    *,
+    status: str,
+    error_code: str,
+    updated_at: datetime,
+) -> None:
+    await connection.execute(
+        """
+        INSERT INTO scheduler_jobs
+            (id, kind, run_at, payload, idempotency_key, status, attempts,
+             finished_at, last_error_code, created_at, updated_at)
+        VALUES ($1, 'yclients_booking_projection_sync', $2::timestamptz, '{}'::jsonb,
+                $3::text, $4::text, 1,
+                CASE WHEN $4::text = 'failed' THEN $2::timestamptz END,
+                $5::text, $2::timestamptz, $2::timestamptz)
+        """,
+        uuid4(),
+        updated_at,
+        f"projection-failed:{uuid4()}",
+        status,
+        error_code,
+    )
+
+
 async def test_list_bookings_projects_views_filters_and_keyset_pages(
     database,
     migrated_database_url,
@@ -607,6 +632,53 @@ async def test_local_only_freshness_and_empty_snapshot_staleness(
         await connection.close()
 
 
+@pytest.mark.parametrize(
+    ("status", "error_code", "expected_label"),
+    [
+        ("pending", "yclients_transport", "Сервис сверки временно недоступен"),
+        ("failed", "yclients_projection_write", "Результат сверки не удалось сохранить"),
+        ("failed", "private-provider-body", "Сверку не удалось выполнить"),
+    ],
+)
+async def test_unsuccessful_projection_freshness_is_safe_and_restart_stable(
+    database,
+    migrated_database_url,
+    status,
+    error_code,
+    expected_label,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    failure_at = NOW - timedelta(minutes=3)
+    try:
+        await _seed_unsuccessful_sync(
+            connection,
+            status="failed",
+            error_code="older-private-code",
+            updated_at=failure_at - timedelta(minutes=1),
+        )
+        await _seed_unsuccessful_sync(
+            connection,
+            status=status,
+            error_code=error_code,
+            updated_at=failure_at,
+        )
+
+        page = await list_bookings(
+            database, view="upcoming", status=None, cursor=None, now=NOW
+        )
+
+        assert page["freshness"] == {
+            "last_success_at": None,
+            "stale": False,
+            "last_failure_at": failure_at,
+            "last_failure_label": expected_label,
+        }
+        assert error_code not in repr(page["freshness"])
+        assert "older-private-code" not in repr(page["freshness"])
+    finally:
+        await connection.close()
+
+
 async def test_deleted_provider_only_row_is_safe_history(
     database,
     migrated_database_url,
@@ -769,7 +841,12 @@ async def test_valid_filters_are_bound_as_query_parameters():
 
         async def fetchrow(self, query, *args):
             self.calls.append((query, args))
-            return {"projection_synced_at": None, "empty_snapshot_at": None}
+            return {
+                "projection_synced_at": None,
+                "empty_snapshot_at": None,
+                "last_error_code": None,
+                "last_failure_at": None,
+            }
 
         async def fetch(self, query, *args):
             self.calls.append((query, args))

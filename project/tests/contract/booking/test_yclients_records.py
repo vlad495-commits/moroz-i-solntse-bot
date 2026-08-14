@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+import moroz.booking.yclients_records as yclients_records
 from moroz.booking.yclients_http import HttpResponse, YclientsConfig, YclientsTransportError
 from moroz.booking.yclients_records import YclientsProjectionError, YclientsRecordsReader
 
@@ -160,6 +161,46 @@ async def test_removes_display_controls_and_bounds_display_text() -> None:
     assert record.client_name == "x" * 200
     assert record.staff_name == "Ada"
     assert record.service_names == ("Ice",)
+
+
+@pytest.mark.asyncio
+async def test_accepts_service_less_records_when_services_are_missing_or_null() -> None:
+    missing = _record()
+    missing.pop("services")
+
+    for record in (missing, _record(services=None)):
+        snapshot = await YclientsRecordsReader(
+            _config(), http=FakeHttp([_page([record])])
+        ).read_window(NOW)
+
+        assert snapshot.records[0].service_names == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("services", [False, 0, "service", {}])
+async def test_rejects_non_list_services(services: object) -> None:
+    fake = FakeHttp([_page([_record(services=services)])])
+
+    with pytest.raises(YclientsProjectionError) as raised:
+        await YclientsRecordsReader(_config(), http=fake).read_window(NOW)
+
+    assert raised.value.code == "yclients_response_shape"
+
+
+@pytest.mark.asyncio
+async def test_rejects_provider_id_longer_than_cursor_contract_before_projection(
+    monkeypatch,
+) -> None:
+    def forbidden_projection_record(**_values):
+        raise AssertionError("invalid provider id reached ProjectionRecord")
+
+    monkeypatch.setattr(yclients_records, "ProjectionRecord", forbidden_projection_record)
+    fake = FakeHttp([_page([_record(int("1" * 65))])])
+
+    with pytest.raises(YclientsProjectionError) as raised:
+        await YclientsRecordsReader(_config(), http=fake).read_window(NOW)
+
+    assert raised.value.code == "yclients_response_shape"
 
 
 @pytest.mark.asyncio

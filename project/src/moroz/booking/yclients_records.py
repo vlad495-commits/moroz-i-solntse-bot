@@ -136,6 +136,8 @@ def _projection_record(value: object, timezone: ZoneInfo) -> ProjectionRecord:
     if not isinstance(value, Mapping):
         raise ValueError("record must be an object")
     external_id = str(_positive_int(value.get("id")))
+    if len(external_id) > 64:
+        raise ValueError("provider id is too long")
     starts_at = _datetime(value.get("datetime"), timezone)
     duration = value.get("seance_length")
     scheduled_end_at = (
@@ -145,7 +147,9 @@ def _projection_record(value: object, timezone: ZoneInfo) -> ProjectionRecord:
     client_name = _nested_display(value.get("client"), "name")
     staff_name = _nested_display(value.get("staff"), "name")
     services = value.get("services")
-    if not isinstance(services, list) or len(services) > _MAX_SERVICES:
+    if services is None:
+        services = []
+    elif not isinstance(services, list) or len(services) > _MAX_SERVICES:
         raise ValueError("services are malformed")
     service_names = tuple(
         name
