@@ -70,12 +70,13 @@ def _detail(booking_id):
 
 
 @pytest.mark.asyncio
-async def test_staff_can_read_safe_booking_list_and_detail(monkeypatch):
+@pytest.mark.parametrize("role", ["owner", "admin"])
+async def test_staff_can_read_safe_booking_list_and_detail(monkeypatch, role):
     booking_id = uuid4()
     calls = []
 
     async def current_user(_request):
-        return _user("admin")
+        return _user(role)
 
     async def list_projection(database, **kwargs):
         calls.append((database, kwargs))
@@ -112,6 +113,38 @@ async def test_staff_can_read_safe_booking_list_and_detail(monkeypatch):
     assert calls[0][0] == "database"
     assert calls[1][0:2] == ("database", booking_id)
     assert calls[1][2]["actor_id"] == 7
+
+
+@pytest.mark.asyncio
+async def test_empty_status_means_no_status_filter(monkeypatch):
+    captured = {}
+
+    async def current_user(_request):
+        return _user()
+
+    async def list_projection(database, **kwargs):
+        captured.update({"database": database, **kwargs})
+        return {"items": [], "has_more": False, "next_cursor": None}
+
+    monkeypatch.setattr(booking_routes, "get_current_user", current_user)
+    monkeypatch.setattr(booking_routes.database, "get_database", lambda: "database")
+    monkeypatch.setattr(booking_routes, "list_bookings", list_projection)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(), root_path="/admin"),
+        base_url="http://test/admin",
+    ) as client:
+        response = await client.get("/bookings/?status=")
+
+    assert response.status_code == 200
+    assert captured == {
+        "database": "database",
+        "view": "upcoming",
+        "status": None,
+        "cursor": None,
+    }
+    assert 'name="status"' in response.text
+    assert '<option value="">Все статусы</option>' in response.text
+    assert "?view=upcoming&amp;status=" not in response.text
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,7 @@ async def booking_list(
 ):
     user = await get_current_user(request)
     require_role(user, STAFF_ROLES)
+    status = status or None
     try:
         validate_booking_filters(view, status)
         decode_booking_cursor(cursor)
