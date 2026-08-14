@@ -140,12 +140,12 @@ async def enqueue_escalation_reply(
                 """
                 SELECT id
                 FROM outbound_messages
-                WHERE idempotency_key LIKE $1
+                WHERE left(idempotency_key, length($1)) = $1
                   AND status IN ('pending', 'sending')
                 ORDER BY created_at, id
                 LIMIT 1
                 """,
-                f"{ADMIN_REPLY_PREFIX}:{escalation_id}:%",
+                f"{ADMIN_REPLY_PREFIX}:{escalation_id}:",
             )
             if pending_id is not None:
                 return "already_queued", pending_id

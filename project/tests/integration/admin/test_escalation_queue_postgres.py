@@ -269,6 +269,39 @@ async def test_exact_reply_retry_is_idempotent_after_delivery(
         await connection.close()
 
 
+async def test_pending_reply_namespace_match_is_literal(migrated_database_url):
+    connection = await asyncpg.connect(migrated_database_url)
+    pool, previous_pool = await _open_admin_pool(migrated_database_url)
+    escalation_id = uuid4()
+    try:
+        await _seed_open_handoff(connection, escalation_id)
+        await connection.execute(
+            """
+            INSERT INTO outbound_messages
+                (id, channel, chat_id, text, idempotency_key)
+            VALUES ($1, 'telegram', '42', 'Unrelated', $2)
+            """,
+            uuid4(),
+            f"adminXhandoffXreply:{escalation_id}:{uuid4()}",
+        )
+
+        result = await admin_database.enqueue_escalation_reply(
+            escalation_id,
+            reply_token=uuid4(),
+            text="Настоящий ответ",
+            actor_id=7,
+            ip_address=None,
+            user_agent=None,
+        )
+
+        assert result[0] == "queued"
+        assert await connection.fetchval("SELECT count(*) FROM outbound_messages") == 2
+    finally:
+        admin_database._pool = previous_pool
+        await pool.close()
+        await connection.close()
+
+
 async def test_enqueue_reply_rejects_missing_or_inactive_handoff(
     migrated_database_url,
 ):
