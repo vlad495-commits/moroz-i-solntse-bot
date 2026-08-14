@@ -3,10 +3,10 @@
 {% block content %}
 <h1>Эскалации</h1>
 
-{% if resolved == 'resolved' %}
-<div class="notice success">Обращение закрыто.</div>
-{% elif resolved == 'already_resolved' %}
-<div class="notice">Обращение уже было закрыто.</div>
+{% if reply == 'queued' %}
+<div class="notice success">Ответ поставлен в очередь доставки.</div>
+{% elif reply == 'already_queued' %}
+<div class="notice">Этот ответ уже находится в очереди.</div>
 {% endif %}
 
 {% if not escalations %}
@@ -20,9 +20,12 @@
         <p>{{ item.reason }} · {{ item.source }}</p>
         <small>{{ item.created_at.strftime('%Y-%m-%d %H:%M:%S') }} · {% if item.human_mode_enabled %}ручной режим включён{% else %}ручной режим уже выключен{% endif %}</small>
     </div>
-    <form method="post" action="{{ request.scope.get('root_path', '') }}/escalations/{{ item.id }}/resolve">
+    <form method="post" action="{{ request.scope.get('root_path', '') }}/escalations/{{ item.id }}/reply">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn btn-primary">Закрыть и вернуть бота</button>
+        <input type="hidden" name="reply_token" value="{{ item.reply_token }}">
+        <label for="reply-{{ item.id }}">Ответ клиенту</label>
+        <textarea id="reply-{{ item.id }}" name="reply_text" maxlength="4096" required></textarea>
+        <button type="submit" class="btn btn-primary">Ответить клиенту</button>
     </form>
 </article>
 {% endfor %}

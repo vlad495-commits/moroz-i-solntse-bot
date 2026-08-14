@@ -59,43 +59,58 @@ async def test_escalation_queue_is_safe_and_available_to_staff(monkeypatch, role
     assert response.status_code == 200
     assert "Эскалации" in response.text
     assert "/chats/42" in response.text
-    assert f"/escalations/{escalation_id}/resolve" in response.text
+    assert f"/escalations/{escalation_id}/reply" in response.text
     assert 'name="csrf_token" value="known-csrf"' in response.text
+    assert 'name="reply_token"' in response.text
+    assert 'name="reply_text"' in response.text
+    assert 'maxlength="4096"' in response.text
+    assert "Закрыть и вернуть бота" not in response.text
     assert "<script>небезопасно</script>" not in response.text
     assert "&lt;script&gt;" in response.text
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["owner", "admin"])
-async def test_staff_can_resolve_escalation(monkeypatch, role):
+async def test_staff_can_queue_reply(monkeypatch, role):
     escalation_id = uuid4()
+    reply_token = uuid4()
     captured = {}
 
     async def current_user(_request):
         return _user(role)
 
-    async def resolve(value, **kwargs):
+    async def enqueue(value, **kwargs):
         captured.update({"id": value, **kwargs})
-        return "resolved"
+        return "queued", uuid4()
 
     monkeypatch.setattr(escalation_routes, "get_current_user", current_user)
-    monkeypatch.setattr(escalation_routes.database, "resolve_escalation", resolve)
+    monkeypatch.setattr(
+        escalation_routes.database,
+        "enqueue_escalation_reply",
+        enqueue,
+    )
     async with AsyncClient(
         transport=ASGITransport(app=_app()), base_url="http://test"
     ) as client:
         response = await client.post(
-            f"/escalations/{escalation_id}/resolve",
-            data={"csrf_token": "known-csrf"},
+            f"/escalations/{escalation_id}/reply",
+            data={
+                "csrf_token": "known-csrf",
+                "reply_token": str(reply_token),
+                "reply_text": "  Ответ клиенту  ",
+            },
         )
 
     assert response.status_code == 302
-    assert response.headers["location"] == "/escalations/?resolved=resolved"
+    assert response.headers["location"] == "/escalations/?reply=queued"
     assert captured["id"] == escalation_id
     assert captured["actor_id"] == 7
+    assert captured["reply_token"] == reply_token
+    assert captured["text"] == "Ответ клиенту"
 
 
 @pytest.mark.asyncio
-async def test_resolve_rejects_bad_csrf_before_database(monkeypatch):
+async def test_reply_rejects_bad_csrf_before_database(monkeypatch):
     async def current_user(_request):
         return _user("admin")
 
@@ -104,35 +119,115 @@ async def test_resolve_rejects_bad_csrf_before_database(monkeypatch):
 
     monkeypatch.setattr(escalation_routes, "get_current_user", current_user)
     monkeypatch.setattr(
-        escalation_routes.database, "resolve_escalation", forbidden_database
+        escalation_routes.database, "enqueue_escalation_reply", forbidden_database
     )
     async with AsyncClient(
         transport=ASGITransport(app=_app()), base_url="http://test"
     ) as client:
-        response = await client.post(f"/escalations/{uuid4()}/resolve", data={})
+        response = await client.post(
+            f"/escalations/{uuid4()}/reply",
+            data={
+                "reply_token": str(uuid4()),
+                "reply_text": "Ответ",
+            },
+        )
 
     assert response.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_resolve_unknown_escalation_returns_404(monkeypatch):
+async def test_reply_unknown_escalation_returns_404(monkeypatch):
     async def current_user(_request):
         return _user()
 
     async def not_found(*_args, **_kwargs):
-        return "not_found"
+        return "not_found", None
 
     monkeypatch.setattr(escalation_routes, "get_current_user", current_user)
-    monkeypatch.setattr(escalation_routes.database, "resolve_escalation", not_found)
+    monkeypatch.setattr(
+        escalation_routes.database,
+        "enqueue_escalation_reply",
+        not_found,
+    )
     async with AsyncClient(
         transport=ASGITransport(app=_app()), base_url="http://test"
     ) as client:
         response = await client.post(
-            f"/escalations/{uuid4()}/resolve",
-            data={"csrf_token": "known-csrf"},
+            f"/escalations/{uuid4()}/reply",
+            data={
+                "csrf_token": "known-csrf",
+                "reply_token": str(uuid4()),
+                "reply_text": "Ответ",
+            },
         )
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reply_inactive_escalation_returns_409(monkeypatch):
+    async def current_user(_request):
+        return _user("admin")
+
+    async def inactive(*_args, **_kwargs):
+        return "inactive", None
+
+    monkeypatch.setattr(escalation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(
+        escalation_routes.database,
+        "enqueue_escalation_reply",
+        inactive,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/escalations/{uuid4()}/reply",
+            data={
+                "csrf_token": "known-csrf",
+                "reply_token": str(uuid4()),
+                "reply_text": "Ответ",
+            },
+        )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply_text", "expected_status"),
+    [("   ", 422), ("x" * 4097, 422)],
+)
+async def test_reply_validates_text_before_database(
+    monkeypatch,
+    reply_text,
+    expected_status,
+):
+    async def current_user(_request):
+        return _user("admin")
+
+    async def forbidden_database(*_args, **_kwargs):
+        raise AssertionError("invalid reply must not reach database")
+
+    monkeypatch.setattr(escalation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(
+        escalation_routes.database,
+        "enqueue_escalation_reply",
+        forbidden_database,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/escalations/{uuid4()}/reply",
+            data={
+                "csrf_token": "known-csrf",
+                "reply_token": str(uuid4()),
+                "reply_text": reply_text,
+            },
+        )
+
+    assert response.status_code == expected_status
 
 
 @pytest.mark.asyncio
@@ -170,12 +265,16 @@ async def test_queue_links_and_redirect_respect_root_path(monkeypatch):
             "human_mode_enabled": True,
         }]
 
-    async def resolve(*_args, **_kwargs):
-        return "resolved"
+    async def enqueue(*_args, **_kwargs):
+        return "queued", uuid4()
 
     monkeypatch.setattr(escalation_routes, "get_current_user", current_user)
     monkeypatch.setattr(escalation_routes.database, "get_open_escalations", get_open)
-    monkeypatch.setattr(escalation_routes.database, "resolve_escalation", resolve)
+    monkeypatch.setattr(
+        escalation_routes.database,
+        "enqueue_escalation_reply",
+        enqueue,
+    )
     app = _app()
     async with AsyncClient(
         transport=ASGITransport(app=app, root_path="/admin"),
@@ -183,10 +282,14 @@ async def test_queue_links_and_redirect_respect_root_path(monkeypatch):
     ) as client:
         page = await client.get("/escalations/")
         response = await client.post(
-            f"/escalations/{escalation_id}/resolve",
-            data={"csrf_token": "known-csrf"},
+            f"/escalations/{escalation_id}/reply",
+            data={
+                "csrf_token": "known-csrf",
+                "reply_token": str(uuid4()),
+                "reply_text": "Ответ",
+            },
         )
 
     assert '/admin/chats/42' in page.text
-    assert f'/admin/escalations/{escalation_id}/resolve' in page.text
-    assert response.headers["location"] == "/admin/escalations/?resolved=resolved"
+    assert f'/admin/escalations/{escalation_id}/reply' in page.text
+    assert response.headers["location"] == "/admin/escalations/?reply=queued"

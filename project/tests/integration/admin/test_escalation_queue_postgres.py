@@ -14,14 +14,19 @@ pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
 
 
+async def _open_admin_pool(database_url):
+    pool = Database(database_url, min_size=1, max_size=3)
+    await pool.connect()
+    previous = admin_database._pool
+    admin_database._pool = pool
+    return pool, previous
+
+
 async def test_open_escalations_are_bounded_safe_and_newest_first(
     migrated_database_url,
 ):
     connection = await asyncpg.connect(migrated_database_url)
-    pool = Database(migrated_database_url, min_size=1, max_size=2)
-    await pool.connect()
-    previous_pool = admin_database._pool
-    admin_database._pool = pool
+    pool, previous_pool = await _open_admin_pool(migrated_database_url)
     base = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
     try:
         await connection.executemany(
@@ -52,8 +57,7 @@ async def test_open_escalations_are_bounded_safe_and_newest_first(
         result = await admin_database.get_open_escalations(limit=100)
 
         assert [row["customer_id"] for row in result] == ["42", "84"]
-        assert all("payload" not in row for row in result)
-        assert all("reason_code" not in row for row in result)
+        assert all("payload" not in row and "reason_code" not in row for row in result)
         assert result[0]["reason"] == "Требуется помощь администратора"
         assert result[0]["source"] == "Система"
         assert result[0]["human_mode_enabled"] is True
@@ -70,162 +74,136 @@ async def test_open_escalations_reject_invalid_limit(limit):
         await admin_database.get_open_escalations(limit=limit)
 
 
-async def test_resolve_escalation_is_atomic_idempotent_and_keeps_other_handoff(
+async def _seed_open_handoff(connection, escalation_id, customer_id="42"):
+    await connection.execute(
+        """
+        INSERT INTO escalations
+            (id, source, customer_id, status, reason_code, payload)
+        VALUES ($1, 'feedback', $2, 'open', 'private', '{}')
+        """,
+        escalation_id,
+        customer_id,
+    )
+    await connection.execute(
+        """
+        INSERT INTO human_mode
+            (customer_id, enabled, reason_code, escalation_id, enabled_at)
+        VALUES ($1, true, 'private', $2, now())
+        """,
+        customer_id,
+        escalation_id,
+    )
+
+
+async def test_enqueue_reply_is_atomic_idempotent_and_audited(
     migrated_database_url,
 ):
     connection = await asyncpg.connect(migrated_database_url)
-    pool = Database(migrated_database_url, min_size=1, max_size=2)
-    await pool.connect()
-    previous_pool = admin_database._pool
-    admin_database._pool = pool
-    first_id = uuid4()
-    second_id = uuid4()
-    missing_id = uuid4()
+    pool, previous_pool = await _open_admin_pool(migrated_database_url)
+    escalation_id = uuid4()
+    reply_token = uuid4()
     try:
-        await connection.executemany(
-            """
-            INSERT INTO escalations
-                (id, source, customer_id, status, reason_code, payload)
-            VALUES ($1, 'feedback', '42', 'open', $2, $3::jsonb)
-            """,
-            [
-                (first_id, "low_feedback_rating", '{"secret":"first"}'),
-                (second_id, "private-reason", '{"secret":"second"}'),
-            ],
-        )
-        await connection.execute(
-            """
-            INSERT INTO human_mode
-                (customer_id, enabled, reason_code, escalation_id, enabled_at)
-            VALUES ('42', true, 'private-reason', $1, now())
-            """,
-            second_id,
-        )
+        await _seed_open_handoff(connection, escalation_id)
 
-        first = await admin_database.resolve_escalation(
-            first_id,
+        first_status, first_id = await admin_database.enqueue_escalation_reply(
+            escalation_id,
+            reply_token=reply_token,
+            text="Ответ администратора",
             actor_id=7,
             ip_address="127.0.0.1",
-            user_agent="test",
+            user_agent="test-agent",
         )
-        assert first == "resolved"
-        assert await connection.fetchval(
-            "SELECT status FROM escalations WHERE id=$1", first_id
-        ) == "resolved"
-        assert await connection.fetchval(
-            "SELECT enabled FROM human_mode WHERE customer_id='42'"
-        ) is True
-
-        second = await admin_database.resolve_escalation(
-            second_id,
+        second_status, second_id = await admin_database.enqueue_escalation_reply(
+            escalation_id,
+            reply_token=reply_token,
+            text="Ответ администратора",
             actor_id=7,
-            ip_address=None,
-            user_agent=None,
+            ip_address="127.0.0.1",
+            user_agent="test-agent",
         )
-        assert second == "resolved"
-        assert await connection.fetchval(
-            "SELECT enabled FROM human_mode WHERE customer_id='42'"
-        ) is False
-        assert await admin_database.resolve_escalation(
-            second_id,
-            actor_id=7,
-            ip_address=None,
-            user_agent=None,
-        ) == "already_resolved"
-        assert await admin_database.resolve_escalation(
-            missing_id,
-            actor_id=7,
-            ip_address=None,
-            user_agent=None,
-        ) == "not_found"
 
-        audit = await connection.fetch(
+        outbound = await connection.fetchrow(
+            "SELECT channel, chat_id, text, idempotency_key, status "
+            "FROM outbound_messages"
+        )
+        task = await connection.fetchrow("SELECT kind, payload, status FROM task_outbox")
+        audit = await connection.fetchrow(
             """
-            SELECT action, object_type, object_id, before, after
+            SELECT actor_id, action, object_type, object_id, before, after,
+                   ip_address, user_agent
             FROM admin_audit_events
-            WHERE action='escalation.resolve'
-            ORDER BY id
             """
         )
-        assert len(audit) == 2
-        assert [row["object_id"] for row in audit] == [str(first_id), str(second_id)]
-        assert all(row["object_type"] == "escalation" for row in audit)
-        assert all(json.loads(row["before"]) == {"status": "open"} for row in audit)
-        assert all(
-            json.loads(row["after"]) == {"status": "resolved"} for row in audit
+
+        assert (first_status, second_status) == ("queued", "already_queued")
+        assert first_id == second_id
+        assert tuple(outbound.values()) == (
+            "telegram", "42", "Ответ администратора",
+            f"admin_handoff_reply:{escalation_id}:{reply_token}", "pending",
         )
+        assert task["kind"] == "send_outbound"
+        assert json.loads(task["payload"]) == {"outbound_id": str(first_id)}
+        assert task["status"] == "pending"
+        assert tuple(audit.values())[:5] == (
+            7, "escalation.reply_queued", "escalation", str(escalation_id), None,
+        )
+        assert json.loads(audit["after"]) == {
+            "outbound_id": str(first_id), "status": "queued",
+        }
+        assert tuple(audit.values())[6:] == ("127.0.0.1", "test-agent")
+        assert "Ответ администратора" not in repr(audit)
         assert "customer_id" not in repr(audit)
-        assert "secret" not in repr(audit)
     finally:
         admin_database._pool = previous_pool
         await pool.close()
         await connection.close()
 
 
-async def test_parallel_resolve_creates_one_audit(migrated_database_url):
-    connection = await asyncpg.connect(migrated_database_url)
-    first_pool = Database(migrated_database_url, min_size=1, max_size=1)
-    second_pool = Database(migrated_database_url, min_size=1, max_size=1)
-    await first_pool.connect()
-    await second_pool.connect()
-    escalation_id = uuid4()
-    previous_pool = admin_database._pool
-    try:
-        await connection.execute(
-            """
-            INSERT INTO escalations
-                (id, source, customer_id, status, reason_code, payload)
-            VALUES ($1, 'feedback', 'parallel-customer', 'open', 'private', '{}')
-            """,
-            escalation_id,
-        )
-        await connection.execute(
-            """
-            INSERT INTO human_mode
-                (customer_id, enabled, reason_code, escalation_id, enabled_at)
-            VALUES ('parallel-customer', true, 'private', $1, now())
-            """,
-            escalation_id,
-        )
-
-        async def resolve(pool):
-            admin_database._pool = pool
-            return await admin_database.resolve_escalation(
-                escalation_id, actor_id=7, ip_address=None, user_agent=None
-            )
-
-        results = await asyncio.gather(resolve(first_pool), resolve(second_pool))
-
-        assert sorted(results) == ["already_resolved", "resolved"]
-        assert await connection.fetchval(
-            "SELECT count(*) FROM admin_audit_events WHERE action='escalation.resolve'"
-        ) == 1
-        assert await connection.fetchval(
-            "SELECT enabled FROM human_mode WHERE customer_id='parallel-customer'"
-        ) is False
-    finally:
-        admin_database._pool = previous_pool
-        await first_pool.close()
-        await second_pool.close()
-        await connection.close()
-
-
-async def test_audit_failure_rolls_back_resolve_and_human_mode(
+async def test_concurrent_duplicate_reply_creates_one_outbound_and_audit(
     migrated_database_url,
 ):
     connection = await asyncpg.connect(migrated_database_url)
-    pool = Database(migrated_database_url, min_size=1, max_size=1)
-    await pool.connect()
-    previous_pool = admin_database._pool
-    admin_database._pool = pool
+    pool, previous_pool = await _open_admin_pool(migrated_database_url)
+    escalation_id = uuid4()
+    reply_token = uuid4()
+    try:
+        await _seed_open_handoff(connection, escalation_id)
+
+        async def enqueue():
+            return await admin_database.enqueue_escalation_reply(
+                escalation_id,
+                reply_token=reply_token,
+                text="Один ответ",
+                actor_id=7,
+                ip_address=None,
+                user_agent=None,
+            )
+
+        results = await asyncio.gather(enqueue(), enqueue())
+
+        assert sorted(status for status, _ in results) == ["already_queued", "queued"]
+        assert len({outbound_id for _, outbound_id in results}) == 1
+        assert await connection.fetchval("SELECT count(*) FROM outbound_messages") == 1
+        assert await connection.fetchval("SELECT count(*) FROM task_outbox") == 1
+        assert await connection.fetchval("SELECT count(*) FROM admin_audit_events") == 1
+    finally:
+        admin_database._pool = previous_pool
+        await pool.close()
+        await connection.close()
+
+
+async def test_enqueue_reply_rejects_missing_or_inactive_handoff(
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    pool, previous_pool = await _open_admin_pool(migrated_database_url)
     escalation_id = uuid4()
     try:
         await connection.execute(
             """
             INSERT INTO escalations
                 (id, source, customer_id, status, reason_code, payload)
-            VALUES ($1, 'raw-source', 'customer-sentinel', 'open',
-                    'raw-reason', '{"raw":"payload-sentinel"}')
+            VALUES ($1, 'feedback', '42', 'resolved', 'private', '{}')
             """,
             escalation_id,
         )
@@ -233,40 +211,63 @@ async def test_audit_failure_rolls_back_resolve_and_human_mode(
             """
             INSERT INTO human_mode
                 (customer_id, enabled, reason_code, escalation_id, enabled_at)
-            VALUES ('customer-sentinel', true, 'raw-reason', $1, now())
+            VALUES ('42', false, 'private', $1, now())
             """,
             escalation_id,
         )
+
+        inactive = await admin_database.enqueue_escalation_reply(
+            escalation_id, reply_token=uuid4(), text="Не отправлять",
+            actor_id=7, ip_address=None, user_agent=None,
+        )
+        missing = await admin_database.enqueue_escalation_reply(
+            uuid4(), reply_token=uuid4(), text="Не отправлять",
+            actor_id=7, ip_address=None, user_agent=None,
+        )
+
+        assert inactive == ("inactive", None)
+        assert missing == ("not_found", None)
+        assert await connection.fetchval("SELECT count(*) FROM outbound_messages") == 0
+        assert await connection.fetchval("SELECT count(*) FROM task_outbox") == 0
+        assert await connection.fetchval("SELECT count(*) FROM admin_audit_events") == 0
+    finally:
+        admin_database._pool = previous_pool
+        await pool.close()
+        await connection.close()
+
+
+async def test_reply_queue_audit_failure_rolls_back_outbound_and_task(
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    pool, previous_pool = await _open_admin_pool(migrated_database_url)
+    escalation_id = uuid4()
+    try:
+        await _seed_open_handoff(connection, escalation_id)
         await connection.execute(
             """
-            CREATE FUNCTION reject_escalation_audit() RETURNS trigger AS $$
+            CREATE FUNCTION reject_reply_queue_audit() RETURNS trigger AS $$
             BEGIN
-                IF NEW.action = 'escalation.resolve' THEN
-                    RAISE EXCEPTION 'forced audit failure';
+                IF NEW.action = 'escalation.reply_queued' THEN
+                    RAISE EXCEPTION 'forced reply audit failure';
                 END IF;
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
-            CREATE TRIGGER reject_escalation_audit
+            CREATE TRIGGER reject_reply_queue_audit
             BEFORE INSERT ON admin_audit_events
-            FOR EACH ROW EXECUTE FUNCTION reject_escalation_audit();
+            FOR EACH ROW EXECUTE FUNCTION reject_reply_queue_audit();
             """
         )
 
-        with pytest.raises(Exception, match="forced audit failure"):
-            await admin_database.resolve_escalation(
-                escalation_id, actor_id=7, ip_address=None, user_agent=None
+        with pytest.raises(Exception, match="forced reply audit failure"):
+            await admin_database.enqueue_escalation_reply(
+                escalation_id, reply_token=uuid4(), text="Откатить",
+                actor_id=7, ip_address=None, user_agent=None,
             )
 
-        assert await connection.fetchval(
-            "SELECT status FROM escalations WHERE id=$1", escalation_id
-        ) == "open"
-        assert await connection.fetchval(
-            "SELECT enabled FROM human_mode WHERE customer_id='customer-sentinel'"
-        ) is True
-        assert await connection.fetchval(
-            "SELECT count(*) FROM admin_audit_events WHERE action='escalation.resolve'"
-        ) == 0
+        assert await connection.fetchval("SELECT count(*) FROM outbound_messages") == 0
+        assert await connection.fetchval("SELECT count(*) FROM task_outbox") == 0
     finally:
         admin_database._pool = previous_pool
         await pool.close()

@@ -13,6 +13,9 @@ from uuid import UUID
 
 from moroz.common.db import Database
 from moroz.common.config import database_url_from_env
+from moroz.escalation.service import admin_reply_key
+from moroz.messaging.repository import MessageRepository
+from moroz.privacy import customer_lock_subject
 from customer_events import (
     normalize_customer_event,
     safe_handoff_reason,
@@ -77,67 +80,69 @@ async def get_open_escalations(limit: int = 100) -> list[dict[str, Any]]:
     ]
 
 
-async def resolve_escalation(
+async def enqueue_escalation_reply(
     escalation_id: UUID,
     *,
+    reply_token: UUID,
+    text: str,
     actor_id: int,
     ip_address: str | None,
     user_agent: str | None,
-) -> str:
-    """Resolve one handoff and disable human mode after the customer's last one."""
+) -> tuple[str, UUID | None]:
+    """Atomically queue one staff reply without calling its transport."""
+    if not text or len(text) > 4096:
+        raise ValueError("escalation reply text")
     if not _pool:
         raise RuntimeError("database unavailable")
+    key = admin_reply_key(escalation_id, reply_token)
+    repository = MessageRepository(_pool)
     async with _pool.acquire() as conn:
         async with conn.transaction():
-            row = await conn.fetchrow(
-                """
-                SELECT id, customer_id, status
-                FROM escalations
-                WHERE id=$1
-                FOR UPDATE
-                """,
+            customer_id = await conn.fetchval(
+                "SELECT customer_id FROM escalations WHERE id = $1",
                 escalation_id,
             )
-            if row is None:
-                return "not_found"
-            if row["status"] == "resolved":
-                return "already_resolved"
-
-            await conn.fetchrow(
-                """
-                SELECT customer_id
-                FROM human_mode
-                WHERE customer_id=$1
-                FOR UPDATE
-                """,
-                row["customer_id"],
-            )
+            if customer_id is None:
+                return "not_found", None
             await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                customer_lock_subject(customer_id),
+            )
+            escalation = await conn.fetchrow(
                 """
-                UPDATE escalations
-                SET status='resolved', resolved_at=now()
-                WHERE id=$1
+                SELECT customer_id, status
+                FROM escalations
+                WHERE id = $1
+                FOR UPDATE
                 """,
                 escalation_id,
             )
-            has_open = await conn.fetchval(
+            if escalation is None:
+                return "not_found", None
+            mode = await conn.fetchrow(
                 """
-                SELECT EXISTS(
-                    SELECT 1 FROM escalations
-                    WHERE customer_id=$1 AND status='open'
-                )
+                SELECT enabled
+                FROM human_mode
+                WHERE customer_id = $1
+                FOR UPDATE
                 """,
-                row["customer_id"],
+                customer_id,
             )
-            if not has_open:
-                await conn.execute(
-                    """
-                    UPDATE human_mode
-                    SET enabled=false, expires_at=now()
-                    WHERE customer_id=$1
-                    """,
-                    row["customer_id"],
-                )
+            if escalation["status"] != "open" or mode is None or not mode["enabled"]:
+                return "inactive", None
+            existing_id = await conn.fetchval(
+                "SELECT id FROM outbound_messages WHERE idempotency_key = $1",
+                key,
+            )
+            if existing_id is not None:
+                return "already_queued", existing_id
+            outbound_id = await repository.enqueue_outbound_in_transaction(
+                conn,
+                channel="telegram",
+                chat_id=customer_id,
+                text=text,
+                idempotency_key=key,
+            )
             await conn.execute(
                 """
                 INSERT INTO admin_audit_events (
@@ -145,18 +150,20 @@ async def resolve_escalation(
                     before, after, ip_address, user_agent
                 )
                 VALUES (
-                    $1, 'escalation.resolve', 'escalation', $2,
-                    '{"status":"open"}'::jsonb,
-                    '{"status":"resolved"}'::jsonb,
-                    $3, $4
+                    $1, 'escalation.reply_queued', 'escalation', $2,
+                    NULL, $3::jsonb, $4, $5
                 )
                 """,
                 actor_id,
                 str(escalation_id),
+                json.dumps(
+                    {"outbound_id": str(outbound_id), "status": "queued"},
+                    ensure_ascii=False,
+                ),
                 ip_address,
                 user_agent,
             )
-    return "resolved"
+    return "queued", outbound_id
 
 
 async def get_chats_list(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:

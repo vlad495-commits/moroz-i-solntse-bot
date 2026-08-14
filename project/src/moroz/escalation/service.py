@@ -5,6 +5,23 @@ from moroz.common.db import Database
 from moroz.privacy import customer_lock_subject
 
 
+ADMIN_REPLY_PREFIX = "admin_handoff_reply"
+
+
+def admin_reply_key(escalation_id: UUID, reply_token: UUID) -> str:
+    return f"{ADMIN_REPLY_PREFIX}:{escalation_id}:{reply_token}"
+
+
+def parse_admin_reply_key(value: str) -> tuple[UUID, UUID] | None:
+    parts = value.split(":")
+    if len(parts) != 3 or parts[0] != ADMIN_REPLY_PREFIX:
+        return None
+    try:
+        return UUID(parts[1]), UUID(parts[2])
+    except ValueError:
+        return None
+
+
 class EscalationService:
     def __init__(self, database: Database):
         self._database = database
