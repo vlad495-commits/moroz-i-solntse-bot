@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -155,6 +156,117 @@ async def test_resolve_escalation_is_atomic_idempotent_and_keeps_other_handoff(
         )
         assert "customer_id" not in repr(audit)
         assert "secret" not in repr(audit)
+    finally:
+        admin_database._pool = previous_pool
+        await pool.close()
+        await connection.close()
+
+
+async def test_parallel_resolve_creates_one_audit(migrated_database_url):
+    connection = await asyncpg.connect(migrated_database_url)
+    first_pool = Database(migrated_database_url, min_size=1, max_size=1)
+    second_pool = Database(migrated_database_url, min_size=1, max_size=1)
+    await first_pool.connect()
+    await second_pool.connect()
+    escalation_id = uuid4()
+    previous_pool = admin_database._pool
+    try:
+        await connection.execute(
+            """
+            INSERT INTO escalations
+                (id, source, customer_id, status, reason_code, payload)
+            VALUES ($1, 'feedback', 'parallel-customer', 'open', 'private', '{}')
+            """,
+            escalation_id,
+        )
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id, enabled_at)
+            VALUES ('parallel-customer', true, 'private', $1, now())
+            """,
+            escalation_id,
+        )
+
+        async def resolve(pool):
+            admin_database._pool = pool
+            return await admin_database.resolve_escalation(
+                escalation_id, actor_id=7, ip_address=None, user_agent=None
+            )
+
+        results = await asyncio.gather(resolve(first_pool), resolve(second_pool))
+
+        assert sorted(results) == ["already_resolved", "resolved"]
+        assert await connection.fetchval(
+            "SELECT count(*) FROM admin_audit_events WHERE action='escalation.resolve'"
+        ) == 1
+        assert await connection.fetchval(
+            "SELECT enabled FROM human_mode WHERE customer_id='parallel-customer'"
+        ) is False
+    finally:
+        admin_database._pool = previous_pool
+        await first_pool.close()
+        await second_pool.close()
+        await connection.close()
+
+
+async def test_audit_failure_rolls_back_resolve_and_human_mode(
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    pool = Database(migrated_database_url, min_size=1, max_size=1)
+    await pool.connect()
+    previous_pool = admin_database._pool
+    admin_database._pool = pool
+    escalation_id = uuid4()
+    try:
+        await connection.execute(
+            """
+            INSERT INTO escalations
+                (id, source, customer_id, status, reason_code, payload)
+            VALUES ($1, 'raw-source', 'customer-sentinel', 'open',
+                    'raw-reason', '{"raw":"payload-sentinel"}')
+            """,
+            escalation_id,
+        )
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id, enabled_at)
+            VALUES ('customer-sentinel', true, 'raw-reason', $1, now())
+            """,
+            escalation_id,
+        )
+        await connection.execute(
+            """
+            CREATE FUNCTION reject_escalation_audit() RETURNS trigger AS $$
+            BEGIN
+                IF NEW.action = 'escalation.resolve' THEN
+                    RAISE EXCEPTION 'forced audit failure';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            CREATE TRIGGER reject_escalation_audit
+            BEFORE INSERT ON admin_audit_events
+            FOR EACH ROW EXECUTE FUNCTION reject_escalation_audit();
+            """
+        )
+
+        with pytest.raises(Exception, match="forced audit failure"):
+            await admin_database.resolve_escalation(
+                escalation_id, actor_id=7, ip_address=None, user_agent=None
+            )
+
+        assert await connection.fetchval(
+            "SELECT status FROM escalations WHERE id=$1", escalation_id
+        ) == "open"
+        assert await connection.fetchval(
+            "SELECT enabled FROM human_mode WHERE customer_id='customer-sentinel'"
+        ) is True
+        assert await connection.fetchval(
+            "SELECT count(*) FROM admin_audit_events WHERE action='escalation.resolve'"
+        ) == 0
     finally:
         admin_database._pool = previous_pool
         await pool.close()

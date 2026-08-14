@@ -235,7 +235,7 @@ git commit -m "feat: атомарно закрывать эскалации"
 - Modify: `project/admin/app.py`
 - Modify: `project/admin/templates/base.html`
 - Modify: `project/admin/static/styles.css`
-- Create: `project/tests/e2e/admin/test_escalation_queue.py`
+- Create: `project/tests/e2e/admin/test_admin_escalation_queue.py`
 
 **Interfaces:**
 - Consumes: `database.get_open_escalations(limit=100)`, `database.resolve_escalation(...)`, `get_current_user`, `require_role`, `validate_csrf`, `admin_url`, request audit metadata helpers.
@@ -295,12 +295,12 @@ Add one sidebar link visible to both authenticated roles and minimal CSS using e
 
 - [ ] **Step 5: Run admin GREEN and regression**
 
-Run the new E2E file plus existing admin auth/CSRF, chat detail, customer deletion and event journal tests. Expected: all PASS.
+Run `tests/e2e/admin/test_admin_escalation_queue.py` plus existing admin auth/CSRF, chat detail, customer deletion and event journal tests. Expected: all PASS.
 
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add project/admin/escalation_routes.py project/admin/templates/escalations.html project/admin/app.py project/admin/templates/base.html project/admin/static/styles.css project/tests/e2e/admin/test_escalation_queue.py changelog.md
+git add project/admin/escalation_routes.py project/admin/templates/escalations.html project/admin/app.py project/admin/templates/base.html project/admin/static/styles.css project/tests/e2e/admin/test_admin_escalation_queue.py changelog.md
 git commit -m "feat: добавить экран эскалаций"
 ```
 
