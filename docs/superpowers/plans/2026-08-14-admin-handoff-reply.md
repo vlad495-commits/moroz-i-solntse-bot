@@ -40,8 +40,7 @@
 
 ```powershell
 Set-Location project
-$localEnv = Join-Path (Split-Path -Parent (git rev-parse --git-common-dir)) '.env'
-docker compose --env-file $localEnv run --build --rm test pytest -q tests/e2e/test_message_delivery.py -k human_mode
+docker compose --env-file ../.env run --build --rm test pytest -q tests/e2e/test_message_delivery.py -k human_mode
 ```
 
 Expected: FAIL, потому что текущий worker вызывает LLM и создаёт outbound.
@@ -228,8 +227,7 @@ Review exact `9cd5b46..HEAD` against spec for races, outbox order/idempotency, n
 
 ```powershell
 Set-Location project
-$localEnv = Join-Path (Split-Path -Parent (git rev-parse --git-common-dir)) '.env'
-docker compose --env-file $localEnv run --build --rm --volume "${PWD}/../docs:/docs:ro" test pytest -q
+docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/docs:ro" test pytest -q
 ```
 
 Expected: exit 0, zero failures.
@@ -238,8 +236,7 @@ Expected: exit 0, zero failures.
 
 ```powershell
 git diff --check
-$localEnv = Join-Path (Split-Path -Parent (git rev-parse --git-common-dir)) '.env'
-docker compose --env-file $localEnv run --build --rm test python -m compileall -q admin src worker
+docker compose --env-file ../.env run --build --rm test python -m compileall -q admin src worker
 git status --short --branch
 ```
 
