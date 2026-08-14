@@ -39,7 +39,7 @@
 - Consumes: Alembic head `0009_production_admin`.
 - Produces: table `yclients_booking_projection` with the exact columns, checks and indexes from the design.
 
-- [ ] **Step 1: Write migration contract RED**
+- [x] **Step 1: Write migration contract RED**
 
 Create `test_migration_0010.py` using the existing importlib/source contract pattern:
 
@@ -65,7 +65,7 @@ def test_projection_migration_contract():
 
 Extend `test_migrations.py` to upgrade a fresh namespace and assert exact column names, `external_id` primary key, marker/status checks and both indexes. Assert no column name contains `phone`, `email`, `comment`, `payload`, `snapshot`, `raw` or `json`.
 
-- [ ] **Step 2: Run Docker RED**
+- [x] **Step 2: Run Docker RED**
 
 ```powershell
 Set-Location project
@@ -74,7 +74,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/adm
 
 Expected: collection fails because migration `0010_yclients_booking_projection.py` does not exist.
 
-- [ ] **Step 3: Implement the minimal migration**
+- [x] **Step 3: Implement the minimal migration**
 
 Create one table with these columns:
 
@@ -116,11 +116,11 @@ op.create_index(
 
 Downgrade drops the booking-key index, starts index and table in that order.
 
-- [ ] **Step 4: Run GREEN and Alembic head proof**
+- [x] **Step 4: Run GREEN and Alembic head proof**
 
 Run the Step 2 command. Expected: all selected tests pass and integration current revision is `0010_yclients_projection` (use the exact `revision` string declared by the migration).
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```powershell
 git add project/migrations/versions/0010_yclients_booking_projection.py project/tests/unit/admin/test_migration_0010.py project/tests/integration/test_migrations.py changelog.md
@@ -142,7 +142,7 @@ git commit -m "feat: добавить проекцию записей YCLIENTS"
 - Produces: `ProjectionRecord`, `ProjectionSnapshot`, `YclientsProjectionError`, `YclientsRecordsReader.read_window(now: datetime) -> ProjectionSnapshot`.
 - Produces: `normalize_visit_status(record: Mapping[str, object]) -> BookingStatus` reused by `YclientsAdapter`.
 
-- [ ] **Step 1: Write parser and pagination RED**
+- [x] **Step 1: Write parser and pagination RED**
 
 Cover:
 
@@ -180,7 +180,7 @@ Fixtures include `client.name`, `staff.name`, `services[].title`, `datetime`, `s
 
 Assert display controls are removed, text is trimmed/capped at 200, and more than 50 services fails closed.
 
-- [ ] **Step 2: Run Docker RED**
+- [x] **Step 2: Run Docker RED**
 
 ```powershell
 Set-Location project
@@ -189,7 +189,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/contract
 
 Expected: collection fails because `moroz.booking.yclients_records` does not exist.
 
-- [ ] **Step 3: Implement the bounded data types and safe exception**
+- [x] **Step 3: Implement the bounded data types and safe exception**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -218,15 +218,15 @@ class YclientsProjectionError(RuntimeError):
 
 Implement `_safe_display`, strict envelope/item parsing, timezone-aware datetime/end calculation and `normalize_visit_status`. Modify `yclients.py::_external_booking` to call the shared status normalizer; preserve all adapter behavior.
 
-- [ ] **Step 4: Implement exact bounded pagination**
+- [x] **Step 4: Implement exact bounded pagination**
 
 Use `_PAGE_SIZE = 100`, `_MAX_PAGES = 100`, `YclientsConfig.timezone_name` and `YclientsHttpClient.request(..., user_auth=True)`. Reject duplicates. Stop only when `len(data) < 100`; a full page 100 raises `yclients_page_bound`.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 Run Step 2. Expected: all selected tests pass; no provider call leaves the fake transport.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```powershell
 git add project/src/moroz/booking/yclients_records.py project/src/moroz/booking/yclients.py project/tests/contract/booking/test_yclients_records.py project/tests/contract/booking/test_yclients_adapter.py changelog.md
@@ -248,7 +248,7 @@ git commit -m "feat: читать безопасный снимок записе
 - Consumes: Task 1 table; Task 2 `ProjectionSnapshot` and reader.
 - Produces: `ProjectionRepository.serialized()`, `ProjectionRepository.replace(connection, snapshot)`, `ProjectionSyncCoordinator.ensure_current(now)`, `ProjectionSyncCoordinator.run(job)` and `PROJECTION_SYNC_KIND`.
 
-- [ ] **Step 1: Write PostgreSQL RED for atomic replacement**
+- [x] **Step 1: Write PostgreSQL RED for atomic replacement**
 
 Assert:
 
@@ -268,7 +268,7 @@ assert await projection_rows(conn) == expected_first
 
 Also assert a second repository cannot enter `serialized()` while the first holds the session advisory lock, and can enter after release. Check DB rows contain no source fixture phone/comment/raw JSON.
 
-- [ ] **Step 2: Write coordinator RED**
+- [x] **Step 2: Write coordinator RED**
 
 ```python
 current = projection_job(NOW)
@@ -284,7 +284,7 @@ assert next_job.idempotency_key in scheduled_keys
 
 The fake repository yields `None` from `serialized()` to assert overlapping run returns `JobResult.skipped("projection_busy")` without reader call. Reader failure still schedules the next bucket before propagating the safe exception.
 
-- [ ] **Step 3: Run Docker RED**
+- [x] **Step 3: Run Docker RED**
 
 ```powershell
 Set-Location project
@@ -293,7 +293,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/integrat
 
 Expected: collection fails because `moroz.booking.projection` does not exist.
 
-- [ ] **Step 4: Implement repository and session lock**
+- [x] **Step 4: Implement repository and session lock**
 
 ```python
 PROJECTION_LOCK = "yclients_booking_projection:v1"
@@ -317,7 +317,7 @@ async def serialized(self):
 
 `replace(connection, snapshot)` uses one `connection.transaction()`, `DELETE FROM yclients_booking_projection`, then `executemany` of explicit columns. Wrap DB failures as `YclientsProjectionError("yclients_projection_write")` without preserving provider/PII text in `str(error)`.
 
-- [ ] **Step 5: Implement job bucketing and coordinator**
+- [x] **Step 5: Implement job bucketing and coordinator**
 
 Change `PlannedSchedulerJob.booking_key` and `.booking_starts_at` to optional types; DB columns are already nullable.
 
@@ -339,7 +339,7 @@ def projection_job(now: datetime) -> PlannedSchedulerJob:
 
 `ProjectionSyncCoordinator` receives an injectable aware-UTC clock. `ensure_current` calls existing `SchedulerJobRepository.schedule`. `run(job)` schedules `projection_job(job.run_at + 10 minutes)` before trying the lock/reader, calls `reader.read_window(clock())`, then atomically replaces the snapshot if lock was acquired.
 
-- [ ] **Step 6: Run GREEN and booking repository regressions**
+- [x] **Step 6: Run GREEN and booking repository regressions**
 
 ```powershell
 docker compose --env-file ../.env run --build --rm test pytest -q tests/integration/booking/test_yclients_projection.py tests/unit/booking/test_projection_sync.py tests/integration/booking/test_booking_repository.py tests/integration/notifications/test_jobs.py
@@ -347,7 +347,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/integrat
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 ```powershell
 git add project/src/moroz/booking/projection.py project/src/moroz/notifications/models.py project/tests/integration/booking/test_yclients_projection.py project/tests/unit/booking/test_projection_sync.py changelog.md
@@ -369,7 +369,7 @@ git commit -m "feat: атомарно обновлять проекцию YCLIEN
 - Consumes: Task 3 `ProjectionSyncCoordinator` and `PROJECTION_SYNC_KIND`.
 - Produces: optional worker runtime coordinator when YCLIENTS config is complete; scheduler container remains unchanged.
 
-- [ ] **Step 1: Write worker RED**
+- [x] **Step 1: Write worker RED**
 
 Add tests that a projection `SchedulerJob`:
 
@@ -384,7 +384,7 @@ Also assert `MessageTaskHandler` requires `SchedulerJobRepository` before loadin
 
 Assert scheduler unit tests and scheduler Compose environment are unchanged.
 
-- [ ] **Step 2: Run Docker RED**
+- [x] **Step 2: Run Docker RED**
 
 ```powershell
 Set-Location project
@@ -393,7 +393,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: new projection-job assertions fail because worker has no coordinator wiring.
 
-- [ ] **Step 3: Add the handler branch**
+- [x] **Step 3: Add the handler branch**
 
 At the top of `handle_scheduler_job`:
 
@@ -406,7 +406,7 @@ if job.kind == PROJECTION_SYNC_KIND:
 
 Pass `projection_sync` through `MessageTaskHandler`; existing reminder/lifecycle behavior remains unchanged. Map a `YclientsProjectionError` to its allowlisted `.code` before `record_failure`; all other errors retain the existing type-only code.
 
-- [ ] **Step 4: Build one runtime graph**
+- [x] **Step 4: Build one runtime graph**
 
 Replace the lifecycle-only builder with this exact runtime seam so the same `YclientsConfig` is parsed once:
 
@@ -451,7 +451,7 @@ projection_sync = ProjectionSyncCoordinator(
 
 After DB connect and before queue consume, call `await projection_sync.ensure_current(datetime.now(UTC))` when configured. Do not pass YCLIENTS variables to scheduler, do not edit Compose, and do not add a service/queue.
 
-- [ ] **Step 5: Run GREEN and architecture assertions**
+- [x] **Step 5: Run GREEN and architecture assertions**
 
 Run Step 2 plus:
 
@@ -461,7 +461,7 @@ docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/doc
 
 Use the canonical read-only docs mount/path override required by `test_architecture_visual.py`. Expected: all selected tests pass and Compose service count is unchanged.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```powershell
 git add project/src/moroz/notifications/handlers.py project/worker/main.py project/tests/unit/test_worker.py project/tests/e2e/notifications/test_reminders.py changelog.md
@@ -484,7 +484,7 @@ git commit -m "feat: запускать сверку через существу
 - Consumes: Task 1 table and Task 3 job kind.
 - Produces: `validate_booking_filters(view, status, source="all", reconciliation="all")`, unified `list_bookings(..., source="all", reconciliation="all")`, versioned text-key cursor and `page["freshness"]`.
 
-- [ ] **Step 1: Write unit RED for filters, source labels and cursor**
+- [x] **Step 1: Write unit RED for filters, source labels and cursor**
 
 Require only:
 
@@ -501,7 +501,7 @@ for key in ("x:123", "y:", "l:not-a-uuid", "y:" + "1" * 65):
 
 Legacy unversioned UUID cursor and unknown source/reconciliation return `ValueError` before DB access. Safe labels never expose invalid marker/raw statuses.
 
-- [ ] **Step 2: Write PostgreSQL RED for the reconciliation matrix**
+- [x] **Step 2: Write PostgreSQL RED for the reconciliation matrix**
 
 Seed:
 
@@ -519,7 +519,7 @@ Assert keyset insertion-before-cursor stability for `y:` and `l:` row keys in up
 
 Extend customer deletion integration: deleting local customer-owned data must leave the provider projection row unchanged, remove every chat/detail link, and make a valid bot marker without local ownership appear as `local_missing`. No provider mutation is enqueued.
 
-- [ ] **Step 3: Run Docker RED**
+- [x] **Step 3: Run Docker RED**
 
 ```powershell
 Set-Location project
@@ -528,7 +528,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/adm
 
 Expected: failures on new filter/cursor signatures and missing unified rows.
 
-- [ ] **Step 4: Implement versioned bounded cursor**
+- [x] **Step 4: Implement versioned bounded cursor**
 
 Use compact URL-safe base64 JSON:
 
@@ -538,7 +538,7 @@ Use compact URL-safe base64 JSON:
 
 Accept exact keys only. `y:` requires canonical positive integer text of at most 64 digits; `l:` requires canonical UUID. Aware datetime is mandatory.
 
-- [ ] **Step 5: Implement one fixed unified SQL CTE per view**
+- [x] **Step 5: Implement one fixed unified SQL CTE per view**
 
 Build `provider_rows` from projection with `LEFT JOIN bookings` on external ID, then `UNION ALL` local rows in the same -30/+90 window with `NOT EXISTS` projection external ID. Compute `row_key`, `source`, `reconciliation_state`, `attention_at`, safe display columns and local detail UUID with SQL `CASE`; never select booking `snapshot`, scenario `state`, event `payload` or provider fields not in the projection.
 
@@ -564,7 +564,7 @@ NOT (upcoming predicate) AND NOT (attention predicate)
 
 `yclients_only` by itself is expected for another channel and is not a mismatch/attention condition. A deleted provider row normalizes to `cancelled` and therefore enters history unless a bot-owned identity/status discrepancy makes it attention.
 
-- [ ] **Step 6: Run GREEN and ownership regressions**
+- [x] **Step 6: Run GREEN and ownership regressions**
 
 ```powershell
 docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/admin/test_booking_views.py tests/integration/admin/test_admin_bookings_postgres.py tests/integration/booking/test_booking_repository.py tests/integration/admin/test_customer_data_deletion_postgres.py tests/integration/admin/test_customer_events_postgres.py
@@ -572,7 +572,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/adm
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit Task 5**
+- [x] **Step 7: Commit Task 5**
 
 ```powershell
 git add project/admin/booking_views.py project/admin/bookings_database.py project/tests/unit/admin/test_booking_views.py project/tests/integration/admin/test_admin_bookings_postgres.py project/tests/integration/admin/test_customer_data_deletion_postgres.py changelog.md
@@ -594,7 +594,7 @@ git commit -m "feat: объединить локальные записи с YCL
 - Consumes: Task 5 unified `list_bookings` page.
 - Produces: existing GET `/bookings/` with `source` and `reconciliation` query filters; local detail route remains unchanged.
 
-- [ ] **Step 1: Write HTTP RED**
+- [x] **Step 1: Write HTTP RED**
 
 Cover owner/admin 200, anonymous redirect, non-staff 403 before DB, malformed `source/reconciliation/cursor` 422 before DB, DB unavailable 503 and `root_path=/admin` preservation.
 
@@ -614,7 +614,7 @@ assert raw_custom_field not in html
 
 Assert pagination preserves view/status/source/reconciliation/root path. Unknown provider text is escaped and never rendered as HTML or an internal error/status code.
 
-- [ ] **Step 2: Run Docker RED**
+- [x] **Step 2: Run Docker RED**
 
 ```powershell
 Set-Location project
@@ -623,15 +623,15 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/e2e/admi
 
 Expected: new filter/freshness/source assertions fail.
 
-- [ ] **Step 3: Extend GET route only**
+- [x] **Step 3: Extend GET route only**
 
 Add query arguments with defaults `source="all"`, `reconciliation="all"`; pass them to Task 5. Preserve auth/RBAC before validation/DB and existing safe 422/503 handling. Do not import YCLIENTS modules into `booking_routes.py`.
 
-- [ ] **Step 4: Extend the existing template and CSS**
+- [x] **Step 4: Extend the existing template and CSS**
 
 Add two native `<select>` filters, source/reconciliation badges, client/staff/services cells and freshness banner. Links exist only when `detail_id` or `customer_chat_id` is non-null. No JavaScript, POST form, refresh button or frontend dependency.
 
-- [ ] **Step 5: Run GREEN and admin security regressions**
+- [x] **Step 5: Run GREEN and admin security regressions**
 
 ```powershell
 docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/docs:ro" -e ARCHITECTURE_HTML_PATH=/docs/production-v1-architecture.html test pytest -q tests/e2e/admin/test_admin_bookings.py tests/e2e/admin/test_csrf_rbac_audit.py tests/e2e/admin/test_admin_escalation_queue.py tests/unit/test_architecture_visual.py
@@ -639,7 +639,7 @@ docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/doc
 
 Mount root `docs/` read-only and set `ARCHITECTURE_HTML_PATH` for the selected visual test. Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit Task 6**
+- [x] **Step 6: Commit Task 6**
 
 ```powershell
 git add project/admin/booking_routes.py project/admin/templates/bookings.html project/admin/static/styles.css project/tests/e2e/admin/test_admin_bookings.py changelog.md
@@ -659,7 +659,7 @@ git commit -m "feat: показать происхождение записей 
 - Consumes: complete Tasks 1–6.
 - Produces: clean local merge-ready branch with exact evidence; no push/deploy/provider call.
 
-- [ ] **Step 1: Run affected Docker gate**
+- [x] **Step 1: Run affected Docker gate**
 
 ```powershell
 Set-Location project
@@ -668,22 +668,22 @@ docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/doc
 
 Expected: exit 0, zero failures.
 
-- [ ] **Step 2: Prove migration head**
+- [x] **Step 2: Prove migration head**
 
 Use an isolated test namespace and run:
 
 ```powershell
-docker compose --env-file ../.env run --build --rm migrate upgrade head
-docker compose --env-file ../.env run --rm migrate current
+docker compose --env-file ../.env run --build --rm migrate
+docker compose --env-file ../.env run --rm migrate alembic -c /app/alembic.ini current
 ```
 
 Expected current output contains the exact Task 1 revision with `(head)`. Drop only the verified isolated test namespace after evidence.
 
-- [ ] **Step 3: Request independent review**
+- [x] **Step 3: Request independent review**
 
 Review exact range `5f19dac..HEAD` against the approved spec. Require separate findings for Critical/Important/Minor and Ready Yes/No, focusing on PII/raw data, source misattribution, partial snapshots, job loss/overlap, cursor stability, RBAC order, provider calls from admin and accidental mutations. Fix every Critical/Important with a reproducing RED test and request re-review; evaluate Minor findings technically and close those that improve correctness without expanding scope.
 
-- [ ] **Step 4: Run fresh full Docker gate**
+- [x] **Step 4: Run fresh full Docker gate**
 
 ```powershell
 Set-Location project
@@ -692,7 +692,7 @@ docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/doc
 
 Expected: exit 0, zero failures.
 
-- [ ] **Step 5: Run static and document gates**
+- [x] **Step 5: Run static and document gates**
 
 ```powershell
 git diff --check
@@ -702,11 +702,11 @@ docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/doc
 
 Expected: all commands exit 0.
 
-- [ ] **Step 6: Close roadmap and changelog**
+- [x] **Step 6: Close roadmap and changelog**
 
 Mark only phase 2 read-only reconciliation complete. Record exact affected/full counts, migration head, review verdict, final HEAD, no push/deploy/provider calls, and defer granular source attribution, manual refresh and every YCLIENTS mutation.
 
-- [ ] **Step 7: Commit closure and verify branch**
+- [x] **Step 7: Commit closure and verify branch**
 
 ```powershell
 git add "Дорожная карта.md" changelog.md docs/superpowers/plans/2026-08-14-admin-bookings-reconciliation.md
@@ -718,3 +718,5 @@ git branch -r --contains HEAD
 ```
 
 Expected: clean `codex/admin-bookings-reconciliation`, ancestry exit 0, and no remote branch contains final HEAD.
+
+**Completion evidence (2026-08-15):** exact affected gate `178 passed`; isolated migration proof `0010_yclients_projection (head)`; fresh full Docker suite on implementation HEAD `ca74221` — `1150 passed in 569.79s`; Docker compileall, document gate and `git diff --check` exited `0`; final whole-branch review — `0 Critical / 0 Important / 0 Minor`, Ready Yes. No push, deploy, provider, staging or production calls were made. Granular source attribution, manual refresh, real sandbox permissions/preflight and every YCLIENTS mutation remain deferred.
