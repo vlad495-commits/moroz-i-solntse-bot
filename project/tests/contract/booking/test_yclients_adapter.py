@@ -25,9 +25,25 @@ from moroz.booking.models import (
 )
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_http import YclientsConfig
+from moroz.booking.yclients_records import normalize_visit_status
 
 
 BOOKING_KEY = UUID("3b53e155-7fd7-4dd0-9ff3-871e0db59577")
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        ({"deleted": True, "attendance": 0}, "cancelled"),
+        ({"deleted": False, "attendance": -1}, "no_show"),
+        ({"deleted": False, "attendance": 1}, "completed"),
+        ({"deleted": False, "attendance": 99}, "unknown"),
+    ],
+)
+def test_shared_visit_status_normalizer_preserves_adapter_lifecycle(
+    record: dict[str, object], expected: str,
+) -> None:
+    assert normalize_visit_status(record) == expected
 
 
 class ScriptedServer(ThreadingHTTPServer):
