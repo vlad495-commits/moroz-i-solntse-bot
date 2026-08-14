@@ -2226,3 +2226,6 @@
 [2026-08-14 22:24] Task 2 YCLIENTS reconciliation: self-review found that duplicate provider IDs within one full page were not yet rejected; added a focused RED regression before the minimal fix.
 [2026-08-14 22:25] Task 2 YCLIENTS reconciliation: focused Docker RED reproduced the within-page duplicate gap (`1 failed`); reader now rejects duplicate IDs both within and across pages.
 [2026-08-14 22:25] Task 2 YCLIENTS reconciliation: final Docker contract GREEN passed (`120 passed in 55.12s`) for the records reader and adapter; only fake YCLIENTS transport was used.
+[2026-08-14 22:30] Task 2 YCLIENTS reconciliation review: added focused RED contract for a provider page of 101 records, which must fail closed before item parsing to preserve the 10,000-record hard bound.
+[2026-08-14 22:30] Task 2 YCLIENTS reconciliation review: focused Docker RED reproduced oversized-page acceptance (`1 failed, 18 deselected`); reader now rejects `len(data) > 100` before item parsing.
+[2026-08-14 22:31] Task 2 YCLIENTS reconciliation review: focused Docker GREEN passed (`1 passed, 18 deselected`) and full Task 2 contract gate passed (`121 passed in 55.35s`); oversized provider pages now fail closed with `yclients_response_shape`.

@@ -200,6 +200,16 @@ async def test_rejects_a_full_hundredth_page() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rejects_provider_page_larger_than_hard_bound() -> None:
+    fake = FakeHttp([_page([_record(index) for index in range(1, 102)]), _page([])])
+
+    with pytest.raises(YclientsProjectionError) as raised:
+        await YclientsRecordsReader(_config(), http=fake).read_window(NOW)
+
+    assert raised.value.code == "yclients_response_shape"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "response",
     [

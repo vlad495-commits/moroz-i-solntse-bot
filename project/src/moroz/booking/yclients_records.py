@@ -84,6 +84,8 @@ class YclientsRecordsReader:
             if response.status != 200:
                 raise YclientsProjectionError("yclients_http_status")
             data = _page_data(response)
+            if len(data) > _PAGE_SIZE:
+                raise YclientsProjectionError("yclients_response_shape")
             try:
                 page_records = tuple(_projection_record(item, self._timezone) for item in data)
             except (TypeError, ValueError, OverflowError) as error:
