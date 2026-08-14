@@ -14,7 +14,7 @@
 - Новых таблиц, миграций, зависимостей, фоновых процессов и JavaScript нет.
 - Raw `payload`, неизвестные `reason_code`/`source`, customer ID и текст диалога не попадают в новый audit event.
 - Закрытие одной из нескольких открытых эскалаций не выключает human mode.
-- Все тесты запускаются только через `docker compose`.
+- Все тесты запускаются только через Docker Compose.
 - Telegram, YCLIENTS, staging и production не вызываются и не изменяются.
 
 ---
@@ -49,7 +49,8 @@ def test_handoff_labels_allow_only_known_values():
 Run:
 
 ```powershell
-docker compose -f project/docker-compose.yml --env-file .env run --build --rm test pytest -q tests/unit/admin/test_escalation_queue.py
+Set-Location project
+docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/admin/test_escalation_queue.py
 ```
 
 Expected: collection/import failure because the two public helpers do not exist.
@@ -327,7 +328,8 @@ Review transaction races, tenant isolation, RBAC/CSRF, audit content, HTML escap
 - [ ] **Step 3: Run full Docker suite**
 
 ```powershell
-docker compose -f project/docker-compose.yml --env-file .env run --build --rm test pytest -q
+Set-Location project
+docker compose --env-file ../.env run --build --rm test pytest -q
 ```
 
 Expected: exit 0 and no failed tests.
