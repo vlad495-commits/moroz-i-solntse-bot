@@ -297,11 +297,11 @@ async def test_booking_database_is_required():
         (
             "upcoming",
             "confirmed",
-            NOW + timedelta(days=1),
+            NOW + timedelta(days=2),
             "confirmed",
             NOW,
             "confirmed",
-            NOW + timedelta(days=2),
+            NOW + timedelta(days=1),
             "confirmed",
             NOW + timedelta(minutes=1),
         ),
@@ -310,26 +310,26 @@ async def test_booking_database_is_required():
             "unknown",
             NOW + timedelta(days=1),
             "confirmed",
-            NOW + timedelta(minutes=3),
+            NOW + timedelta(minutes=2),
             "unknown",
             NOW + timedelta(days=2),
             "confirmed",
-            NOW + timedelta(minutes=2),
+            NOW + timedelta(minutes=3),
         ),
         (
             "history",
             "cancelled",
-            NOW - timedelta(days=1),
+            NOW - timedelta(days=2),
             "confirmed",
             NOW + timedelta(minutes=3),
             "cancelled",
-            NOW - timedelta(days=2),
+            NOW - timedelta(days=1),
             "confirmed",
             NOW + timedelta(minutes=2),
         ),
     ],
 )
-async def test_keyset_page_does_not_repeat_viewed_booking_after_insertion(
+async def test_keyset_page_skips_insertion_before_cursor_without_repeating_viewed_booking(
     database,
     migrated_database_url,
     view,
@@ -355,7 +355,7 @@ async def test_keyset_page_does_not_repeat_viewed_booking_after_insertion(
             error_code=None,
             updated_at=first_updated_at,
         )
-        await _seed_booking(
+        next_id = await _seed_booking(
             connection,
             status=insert_status,
             starts_at=(
@@ -389,7 +389,8 @@ async def test_keyset_page_does_not_repeat_viewed_booking_after_insertion(
 
         assert [item["id"] for item in first_page["items"]] == [first_id]
         assert first_page["next_cursor"]
-        assert [item["id"] for item in second_page["items"]] == [inserted_id]
+        assert [item["id"] for item in second_page["items"]] == [next_id]
+        assert inserted_id not in {item["id"] for item in second_page["items"]}
         assert {item["id"] for item in first_page["items"]}.isdisjoint(
             item["id"] for item in second_page["items"]
         )

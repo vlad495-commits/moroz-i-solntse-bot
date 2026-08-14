@@ -30,3 +30,16 @@ ascending upcoming uses `>` and descending attention/history use `<` on the
 sort tuple plus UUID. The new insertion regressions pass without changing
 production SQL. No migration, dependency, provider/YCLIENTS call, deployment,
 or push was performed.
+
+## Final review correction
+
+The insertion regression was corrected to distinguish keyset from offset
+pagination. Each view now seeds `first` and a pre-existing `next`, fetches the
+cursor, and only then inserts a row before that cursor in display order. The
+resulting order is `inserted, first, next`: offset page two would repeat
+`first`, while the production keyset query returns `next`. The test also
+excludes the newly inserted row from page two.
+
+- Focused PostgreSQL integration: `6 passed in 13.11s`.
+- Affected booking/admin/architecture Docker gate: `79 passed in 74.62s`.
+- Test-only correction; production SQL remains unchanged.
