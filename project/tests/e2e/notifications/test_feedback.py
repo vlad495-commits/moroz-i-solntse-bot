@@ -125,3 +125,69 @@ async def test_low_rating_creates_escalation_and_human_mode(database, service):
         )
     assert tuple(escalation.values()) == ("open", "low_feedback_rating", booking_key)
     assert tuple(human_mode.values()) == (True, "low_feedback_rating", escalation_id)
+
+
+async def test_recent_handoff_cooldown_suppresses_repeat_escalation(
+    database,
+    service,
+):
+    previous_id = uuid4()
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id,
+                 enabled_at, expires_at)
+            VALUES (
+                'customer-7', false, 'low_feedback_rating', $1,
+                now() - interval '1 minute', now() + interval '5 minutes'
+            )
+            """,
+            previous_id,
+        )
+
+    result = await service.record_rating(
+        customer_id="customer-7",
+        booking_key=uuid4(),
+        rating=2,
+    )
+
+    async with database.acquire() as connection:
+        count = await connection.fetchval("SELECT count(*) FROM escalations")
+        mode = await connection.fetchrow(
+            "SELECT enabled, escalation_id FROM human_mode "
+            "WHERE customer_id='customer-7'"
+        )
+    assert result is None
+    assert count == 0
+    assert tuple(mode.values()) == (False, previous_id)
+
+
+async def test_expired_handoff_cooldown_allows_escalation(database, service):
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id,
+                 enabled_at, expires_at)
+            VALUES (
+                'customer-7', false, 'low_feedback_rating', $1,
+                now() - interval '10 minutes', now() - interval '5 minutes'
+            )
+            """,
+            uuid4(),
+        )
+
+    escalation_id = await service.record_rating(
+        customer_id="customer-7",
+        booking_key=uuid4(),
+        rating=2,
+    )
+
+    async with database.acquire() as connection:
+        mode = await connection.fetchrow(
+            "SELECT enabled, escalation_id, expires_at FROM human_mode "
+            "WHERE customer_id='customer-7'"
+        )
+    assert escalation_id is not None
+    assert tuple(mode.values()) == (True, escalation_id, None)

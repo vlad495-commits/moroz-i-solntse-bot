@@ -400,6 +400,55 @@ async def test_process_message_materializes_reply_and_history_once(database):
     assert [tuple(row.values()) for row in tasks] == [("send_outbound", "pending")]
 
 
+async def test_human_mode_materializes_user_history_without_llm_or_reply(database):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming())
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id, enabled_at)
+            VALUES ('42', true, 'low_feedback_rating', $1, now())
+            """,
+            uuid4(),
+        )
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+    )
+    task = QueueTask(
+        kind="process_message",
+        payload={"chat_id": "42", "update_ids": ["100"]},
+        idempotency_key="process_message:100",
+    )
+
+    await handler.handle(task)
+    await handler.handle(task)
+
+    async with database.acquire() as connection:
+        messages = await connection.fetch(
+            "SELECT role, content FROM messages ORDER BY id"
+        )
+        inbox_status = await connection.fetchval(
+            "SELECT status FROM message_inbox WHERE external_message_id='100'"
+        )
+        counts = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT count(*) FROM token_usage) AS usage,
+                (SELECT count(*) FROM outbound_messages) AS outbound,
+                (SELECT count(*) FROM task_outbox) AS tasks
+            """
+        )
+
+    assert [tuple(row.values()) for row in messages] == [("user", "Новый вопрос")]
+    assert inbox_status == "processed"
+    assert tuple(counts.values()) == (0, 0, 0)
+    assert llm.calls == []
+
+
 async def test_later_task_retries_until_earlier_accepted_update_is_processed(
     database,
 ):

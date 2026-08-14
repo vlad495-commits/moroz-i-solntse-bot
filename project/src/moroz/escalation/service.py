@@ -2,6 +2,7 @@ import json
 from uuid import UUID, uuid4
 
 from moroz.common.db import Database
+from moroz.privacy import customer_lock_subject
 
 
 class EscalationService:
@@ -14,11 +15,29 @@ class EscalationService:
         customer_id: str,
         booking_key: UUID,
         rating: int,
-    ) -> UUID:
+    ) -> UUID | None:
         escalation_id = uuid4()
         payload = json.dumps({"rating": rating}, ensure_ascii=False)
         async with self._database.acquire() as connection:
             async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(customer_id),
+                )
+                cooldown_active = await connection.fetchval(
+                    """
+                    SELECT COALESCE(
+                        enabled = false AND expires_at > now(),
+                        false
+                    )
+                    FROM human_mode
+                    WHERE customer_id = $1
+                    FOR UPDATE
+                    """,
+                    customer_id,
+                )
+                if cooldown_active:
+                    return None
                 await connection.execute(
                     """
                     INSERT INTO escalations

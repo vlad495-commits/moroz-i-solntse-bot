@@ -324,6 +324,32 @@ class MessageTaskHandler:
                     raise ValueError("process_message spans multiple users")
                 user_id = int(user_ids.pop())
                 persisted_text = "\n".join(payload["text"] for payload in payloads)
+                accepted_ids = [row["external_message_id"] for row in accepted]
+
+                human_mode = await connection.fetchval(
+                    "SELECT enabled FROM human_mode WHERE customer_id = $1",
+                    chat_id,
+                )
+                if human_mode:
+                    await connection.execute(
+                        """
+                        INSERT INTO messages (chat_id, user_id, role, content)
+                        VALUES ($1, $2, 'user', $3)
+                        """,
+                        numeric_chat_id,
+                        user_id,
+                        persisted_text,
+                    )
+                    await connection.execute(
+                        """
+                        UPDATE message_inbox
+                        SET status = 'processed'
+                        WHERE channel = 'telegram'
+                          AND external_message_id = ANY($1::text[])
+                        """,
+                        accepted_ids,
+                    )
+                    return
 
                 rows = await connection.fetch(
                     """
@@ -396,7 +422,7 @@ class MessageTaskHandler:
                     WHERE channel = 'telegram'
                       AND external_message_id = ANY($1::text[])
                     """,
-                    [row["external_message_id"] for row in accepted],
+                    accepted_ids,
                 )
 
 
