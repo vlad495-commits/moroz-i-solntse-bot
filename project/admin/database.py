@@ -29,6 +29,10 @@ DATABASE_URL = database_url_from_env(os.environ, required=False)
 _pool: Database | None = None
 
 
+def get_database() -> Database | None:
+    return _pool
+
+
 async def init_db() -> None:
     global _pool
     if not DATABASE_URL:
