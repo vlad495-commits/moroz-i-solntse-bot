@@ -348,7 +348,7 @@ async def test_unified_booking_reconciliation_matrix_and_filters(
         assert rows["yclients_only"]["scenario_label"] is None
         assert rows["local_missing"]["source"] == "bot"
         assert rows["provider_missing"]["source"] == "bot"
-        assert rows["identity_conflict"]["source"] in {"bot", "unknown"}
+        assert rows["identity_conflict"]["source"] == "bot"
         for private_value in (
             "booking-snapshot", "scenario-state", "event-payload", "phone", "custom_fields"
         ):
@@ -378,6 +378,187 @@ async def test_unified_booking_reconciliation_matrix_and_filters(
             "changed_in_yclients", "local_missing", "provider_missing", "identity_conflict"
         }
         assert [item["status"] for item in cancelled["items"]] == ["cancelled"]
+    finally:
+        await connection.close()
+
+
+async def test_valid_marker_matches_local_by_key_without_duplicate_local_row(
+    database,
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    booking_key = uuid4()
+    provider_starts_at = NOW + timedelta(days=2)
+    provider_end_at = provider_starts_at + timedelta(hours=1)
+    try:
+        booking_id = await _seed_booking(
+            connection,
+            status="confirmed",
+            starts_at=NOW + timedelta(days=1),
+            phase="confirmed",
+            error_code=None,
+            updated_at=NOW,
+            external_id="200",
+            booking_key=booking_key,
+            customer_id="42",
+        )
+        await _seed_projection(
+            connection,
+            external_id="201",
+            booking_key=booking_key,
+            marker_state="valid",
+            starts_at=provider_starts_at,
+            scheduled_end_at=provider_end_at,
+            status="cancelled",
+        )
+
+        page = await list_bookings(
+            database,
+            view="attention",
+            status=None,
+            source="bot",
+            reconciliation="mismatch",
+            cursor=None,
+            now=NOW,
+        )
+
+        assert len(page["items"]) == 1
+        item = page["items"][0]
+        assert item["row_key"] == "y:201"
+        assert item["source"] == "bot"
+        assert item["reconciliation_state"] == "identity_conflict"
+        assert item["starts_at"] == provider_starts_at
+        assert item["scheduled_end_at"] == provider_end_at
+        assert item["status"] == "cancelled"
+        assert item["detail_id"] == booking_id
+        assert item["customer_chat_id"] == 42
+        assert all(not row["row_key"].startswith("l:") for row in page["items"])
+    finally:
+        await connection.close()
+
+
+async def test_duplicate_valid_markers_fail_closed_without_arbitrary_local_match(
+    database,
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    booking_key = uuid4()
+    try:
+        booking_id = await _seed_booking(
+            connection,
+            status="confirmed",
+            starts_at=NOW + timedelta(days=1),
+            phase="confirmed",
+            error_code=None,
+            updated_at=NOW,
+            external_id="300",
+            booking_key=booking_key,
+            customer_id="42",
+        )
+        for external_id in ("300", "301"):
+            await _seed_projection(
+                connection,
+                external_id=external_id,
+                booking_key=booking_key,
+                marker_state="valid",
+                starts_at=NOW + timedelta(days=1),
+            )
+
+        first = await list_bookings(
+            database,
+            view="attention",
+            status=None,
+            source="bot",
+            reconciliation="mismatch",
+            cursor=None,
+            limit=1,
+            now=NOW,
+        )
+        second = await list_bookings(
+            database,
+            view="attention",
+            status=None,
+            source="bot",
+            reconciliation="mismatch",
+            cursor=first["next_cursor"],
+            limit=1,
+            now=NOW,
+        )
+        items = first["items"] + second["items"]
+
+        assert [item["row_key"] for item in items] == ["y:301", "y:300"]
+        assert all(item["source"] == "bot" for item in items)
+        assert all(item["reconciliation_state"] == "identity_conflict" for item in items)
+        assert all(item["detail_id"] == booking_id for item in items)
+        assert all(item["customer_chat_id"] == 42 for item in items)
+        assert all(not item["row_key"].startswith("l:") for item in items)
+        assert first["has_more"] is True and second["has_more"] is False
+    finally:
+        await connection.close()
+
+
+@pytest.mark.parametrize("marker_state", ["absent", "invalid", "different"])
+async def test_known_external_id_with_bad_marker_is_bot_identity_conflict(
+    database,
+    migrated_database_url,
+    marker_state,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    booking_key = uuid4()
+    try:
+        booking_id = await _seed_booking(
+            connection,
+            status="confirmed",
+            starts_at=NOW + timedelta(days=1),
+            phase="confirmed",
+            error_code=None,
+            updated_at=NOW,
+            external_id="400",
+            booking_key=booking_key,
+        )
+        await _seed_projection(
+            connection,
+            external_id="400",
+            booking_key=uuid4() if marker_state == "different" else None,
+            marker_state="valid" if marker_state == "different" else marker_state,
+            starts_at=NOW + timedelta(days=1),
+        )
+
+        page = await list_bookings(
+            database, view="attention", status=None, cursor=None, now=NOW
+        )
+        item = page["items"][0]
+
+        assert item["source"] == "bot"
+        assert item["reconciliation_state"] == "identity_conflict"
+        assert item["detail_id"] == booking_id
+    finally:
+        await connection.close()
+
+
+async def test_invalid_marker_without_local_identity_is_unknown_conflict(
+    database,
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        await _seed_projection(
+            connection,
+            external_id="500",
+            booking_key=None,
+            marker_state="invalid",
+            starts_at=NOW + timedelta(days=1),
+        )
+
+        page = await list_bookings(
+            database, view="attention", status=None, cursor=None, now=NOW
+        )
+        item = page["items"][0]
+
+        assert item["source"] == "unknown"
+        assert item["reconciliation_state"] == "identity_conflict"
+        assert item["detail_id"] is None
+        assert item["customer_chat_id"] is None
     finally:
         await connection.close()
 

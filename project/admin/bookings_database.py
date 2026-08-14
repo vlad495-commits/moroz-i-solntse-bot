@@ -18,7 +18,24 @@ class BookingDatabaseUnavailable(RuntimeError):
 
 
 _UNIFIED_CTES = """
-    WITH provider_rows AS (
+    WITH projection_identities AS (
+        SELECT projection.external_id, projection.booking_key,
+               projection.bot_marker_state, projection.starts_at,
+               projection.scheduled_end_at, projection.status,
+               projection.deleted, projection.client_name,
+               projection.staff_name, projection.service_names,
+               projection.synced_at,
+               CASE
+                   WHEN projection.bot_marker_state = 'valid'
+                    AND projection.booking_key IS NOT NULL
+                   THEN COUNT(*) FILTER (
+                       WHERE projection.bot_marker_state = 'valid'
+                   ) OVER (PARTITION BY projection.booking_key)
+                   ELSE 0
+               END AS booking_key_count
+        FROM yclients_booking_projection AS projection
+    ),
+    provider_rows AS (
         SELECT
             'y:' || projection.external_id AS row_key,
             CASE WHEN booking.id IS NOT NULL THEN booking.id END AS detail_id,
@@ -39,35 +56,52 @@ _UNIFIED_CTES = """
             END AS source,
             CASE
                 WHEN booking.id IS NOT NULL
+                 AND projection.booking_key_count = 1
                  AND projection.bot_marker_state = 'valid'
-                 AND projection.booking_key = booking.booking_key
+                 AND external_identity.id IS NOT NULL
+                 AND marker_identity.id = external_identity.id
                 THEN CASE WHEN
                     projection.starts_at IS DISTINCT FROM booking.starts_at
                     OR projection.scheduled_end_at IS DISTINCT FROM booking.scheduled_end_at
                     OR (CASE WHEN projection.deleted THEN 'cancelled' ELSE projection.status END)
                        IS DISTINCT FROM booking.status
                     THEN 'changed_in_yclients' ELSE 'in_sync' END
-                WHEN booking.id IS NOT NULL THEN 'identity_conflict'
+                WHEN booking.id IS NOT NULL
+                  OR (
+                     projection.bot_marker_state = 'valid'
+                     AND (
+                         projection.booking_key IS NULL
+                         OR projection.booking_key_count > 1
+                     )
+                  )
+                THEN 'identity_conflict'
                 WHEN projection.bot_marker_state = 'valid' THEN 'local_missing'
                 WHEN projection.bot_marker_state = 'absent' THEN 'yclients_only'
                 ELSE 'identity_conflict'
             END AS reconciliation_state,
             CASE
-                WHEN booking.id IS NULL
-                  OR projection.bot_marker_state <> 'valid'
-                  OR projection.booking_key IS DISTINCT FROM booking.booking_key
-                  OR projection.starts_at IS DISTINCT FROM booking.starts_at
-                  OR projection.scheduled_end_at IS DISTINCT FROM booking.scheduled_end_at
-                  OR (CASE WHEN projection.deleted THEN 'cancelled' ELSE projection.status END)
-                     IS DISTINCT FROM booking.status
-                THEN projection.synced_at
-                ELSE booking.updated_at
+                WHEN projection.booking_key_count = 1
+                 AND projection.bot_marker_state = 'valid'
+                 AND external_identity.id IS NOT NULL
+                 AND marker_identity.id = external_identity.id
+                 AND projection.starts_at IS NOT DISTINCT FROM booking.starts_at
+                 AND projection.scheduled_end_at IS NOT DISTINCT FROM booking.scheduled_end_at
+                 AND (CASE WHEN projection.deleted THEN 'cancelled' ELSE projection.status END)
+                     IS NOT DISTINCT FROM booking.status
+                THEN booking.updated_at
+                ELSE projection.synced_at
             END AS attention_at,
             projection.client_name,
             projection.staff_name,
             projection.service_names
-        FROM yclients_booking_projection AS projection
-        LEFT JOIN bookings AS booking ON booking.external_id = projection.external_id
+        FROM projection_identities AS projection
+        LEFT JOIN bookings AS external_identity
+               ON external_identity.external_id = projection.external_id
+        LEFT JOIN bookings AS marker_identity
+               ON projection.bot_marker_state = 'valid'
+              AND marker_identity.booking_key = projection.booking_key
+        LEFT JOIN bookings AS booking
+               ON booking.id = COALESCE(external_identity.id, marker_identity.id)
         LEFT JOIN booking_scenarios AS scenario ON scenario.id = booking.last_scenario_id
         WHERE projection.starts_at >= $6::timestamptz - interval '30 days'
           AND projection.starts_at <= $6::timestamptz + interval '90 days'
@@ -100,6 +134,10 @@ _UNIFIED_CTES = """
           AND NOT EXISTS (
               SELECT 1 FROM yclients_booking_projection AS projection
               WHERE projection.external_id = booking.external_id
+                 OR (
+                     projection.bot_marker_state = 'valid'
+                     AND projection.booking_key = booking.booking_key
+                 )
           )
     ),
     unified AS (
