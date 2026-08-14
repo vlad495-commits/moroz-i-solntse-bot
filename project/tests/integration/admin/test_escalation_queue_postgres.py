@@ -192,6 +192,83 @@ async def test_concurrent_duplicate_reply_creates_one_outbound_and_audit(
         await connection.close()
 
 
+async def test_concurrent_distinct_reply_tokens_create_one_pending_reply(
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    pool, previous_pool = await _open_admin_pool(migrated_database_url)
+    escalation_id = uuid4()
+    try:
+        await _seed_open_handoff(connection, escalation_id)
+
+        async def enqueue(reply_token):
+            return await admin_database.enqueue_escalation_reply(
+                escalation_id,
+                reply_token=reply_token,
+                text="Один ответ",
+                actor_id=7,
+                ip_address=None,
+                user_agent=None,
+            )
+
+        results = await asyncio.gather(enqueue(uuid4()), enqueue(uuid4()))
+
+        assert sorted(status for status, _ in results) == ["already_queued", "queued"]
+        assert len({outbound_id for _, outbound_id in results}) == 1
+        assert await connection.fetchval("SELECT count(*) FROM outbound_messages") == 1
+        assert await connection.fetchval("SELECT count(*) FROM task_outbox") == 1
+        assert await connection.fetchval("SELECT count(*) FROM admin_audit_events") == 1
+    finally:
+        admin_database._pool = previous_pool
+        await pool.close()
+        await connection.close()
+
+
+async def test_exact_reply_retry_is_idempotent_after_delivery(
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    pool, previous_pool = await _open_admin_pool(migrated_database_url)
+    escalation_id = uuid4()
+    reply_token = uuid4()
+    try:
+        await _seed_open_handoff(connection, escalation_id)
+        first = await admin_database.enqueue_escalation_reply(
+            escalation_id,
+            reply_token=reply_token,
+            text="Ответ",
+            actor_id=7,
+            ip_address=None,
+            user_agent=None,
+        )
+        await connection.execute("UPDATE outbound_messages SET status='sent'")
+        await connection.execute(
+            "UPDATE escalations SET status='resolved', resolved_at=now() WHERE id=$1",
+            escalation_id,
+        )
+        await connection.execute(
+            "UPDATE human_mode SET enabled=false WHERE customer_id='42'"
+        )
+
+        retry = await admin_database.enqueue_escalation_reply(
+            escalation_id,
+            reply_token=reply_token,
+            text="Ответ",
+            actor_id=7,
+            ip_address=None,
+            user_agent=None,
+        )
+
+        assert first[0] == "queued"
+        assert retry == ("already_queued", first[1])
+        assert await connection.fetchval("SELECT count(*) FROM outbound_messages") == 1
+        assert await connection.fetchval("SELECT count(*) FROM admin_audit_events") == 1
+    finally:
+        admin_database._pool = previous_pool
+        await pool.close()
+        await connection.close()
+
+
 async def test_enqueue_reply_rejects_missing_or_inactive_handoff(
     migrated_database_url,
 ):

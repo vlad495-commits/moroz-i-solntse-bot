@@ -13,7 +13,7 @@ from uuid import UUID
 
 from moroz.common.db import Database
 from moroz.common.config import database_url_from_env
-from moroz.escalation.service import admin_reply_key
+from moroz.escalation.service import ADMIN_REPLY_PREFIX, admin_reply_key
 from moroz.messaging.repository import MessageRepository
 from moroz.privacy import customer_lock_subject
 from customer_events import (
@@ -119,6 +119,12 @@ async def enqueue_escalation_reply(
             )
             if escalation is None:
                 return "not_found", None
+            existing_id = await conn.fetchval(
+                "SELECT id FROM outbound_messages WHERE idempotency_key = $1",
+                key,
+            )
+            if existing_id is not None:
+                return "already_queued", existing_id
             mode = await conn.fetchrow(
                 """
                 SELECT enabled
@@ -130,12 +136,19 @@ async def enqueue_escalation_reply(
             )
             if escalation["status"] != "open" or mode is None or not mode["enabled"]:
                 return "inactive", None
-            existing_id = await conn.fetchval(
-                "SELECT id FROM outbound_messages WHERE idempotency_key = $1",
-                key,
+            pending_id = await conn.fetchval(
+                """
+                SELECT id
+                FROM outbound_messages
+                WHERE idempotency_key LIKE $1
+                  AND status IN ('pending', 'sending')
+                ORDER BY created_at, id
+                LIMIT 1
+                """,
+                f"{ADMIN_REPLY_PREFIX}:{escalation_id}:%",
             )
-            if existing_id is not None:
-                return "already_queued", existing_id
+            if pending_id is not None:
+                return "already_queued", pending_id
             outbound_id = await repository.enqueue_outbound_in_transaction(
                 conn,
                 channel="telegram",

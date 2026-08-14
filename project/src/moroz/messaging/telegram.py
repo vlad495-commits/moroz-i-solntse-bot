@@ -19,6 +19,22 @@ class DeliveryResult(StrEnum):
     DELIVERY_UNKNOWN = "delivery_unknown"
 
 
+async def _mark_post_send_unknown(repository, outbound_id, error) -> None:
+    try:
+        await asyncio.shield(repository.mark_outbound_delivery_unknown(outbound_id))
+    except BaseException as mark_error:
+        logger.error(
+            "post_send_delivery_unknown_mark_failed outbound_id=%s error_type=%s",
+            outbound_id,
+            type(mark_error).__name__,
+        )
+    logger.error(
+        "post_send_completion_failed outbound_id=%s error_type=%s",
+        outbound_id,
+        type(error).__name__,
+    )
+
+
 async def deliver_claimed_outbound(
     telegram,
     repository: MessageRepository,
@@ -58,10 +74,17 @@ async def deliver_claimed_outbound(
     except Exception:
         await repository.release_outbound_delivery(outbound.id)
         raise
-    context_chat_id = await repository.mark_outbound_sent(
-        outbound.id,
-        str(sent_message.message_id),
-    )
+    try:
+        context_chat_id = await repository.mark_outbound_sent(
+            outbound.id,
+            str(sent_message.message_id),
+        )
+    except asyncio.CancelledError as error:
+        await _mark_post_send_unknown(repository, outbound.id, error)
+        raise
+    except Exception as error:
+        await _mark_post_send_unknown(repository, outbound.id, error)
+        return DeliveryResult.DELIVERY_UNKNOWN
     if context_chat_id is not None and context_cache is not None:
         try:
             await context_cache.delete(f"chat:{context_chat_id}:messages")

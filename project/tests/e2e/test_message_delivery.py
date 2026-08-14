@@ -1217,3 +1217,92 @@ async def test_admin_reply_completion_rejects_mismatched_contract(
             escalation_id,
         )
     assert tuple(state.values()) == ("sending", "open", True, 0)
+
+
+async def test_malformed_admin_reply_key_fails_closed(database):
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Не отправлять как обычное сообщение",
+        idempotency_key="admin_handoff_reply:not-a-uuid:also-broken",
+    )
+    assert await repository.claim_outbound_delivery(outbound_id) is not None
+
+    with pytest.raises(ValueError, match="admin reply key"):
+        await repository.mark_outbound_sent(outbound_id, "701")
+
+    async with database.acquire() as connection:
+        status = await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id=$1",
+            outbound_id,
+        )
+    assert status == "sending"
+
+
+async def test_post_send_completion_failure_becomes_delivery_unknown(database):
+    repository, escalation_id, outbound_id = await _seed_admin_handoff_reply(database)
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            CREATE FUNCTION reject_reply_delivered_audit() RETURNS trigger AS $$
+            BEGIN
+                IF NEW.action = 'escalation.reply_delivered' THEN
+                    RAISE EXCEPTION 'forced delivered audit failure';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            CREATE TRIGGER reject_reply_delivered_audit
+            BEFORE INSERT ON admin_audit_events
+            FOR EACH ROW EXECUTE FUNCTION reject_reply_delivered_audit();
+            """
+        )
+
+    result = await TelegramSender(FakeTelegram(), repository).send(outbound_id)
+
+    async with database.acquire() as connection:
+        state = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT status FROM outbound_messages WHERE id=$1) AS outbound,
+                (SELECT status FROM escalations WHERE id=$2) AS escalation,
+                (SELECT enabled FROM human_mode WHERE customer_id='42') AS human,
+                (SELECT count(*) FROM messages WHERE role='assistant') AS replies,
+                (SELECT count(*) FROM admin_audit_events
+                 WHERE action='escalation.reply_delivered') AS delivered_audits
+            """,
+            outbound_id,
+            escalation_id,
+        )
+    assert result == DeliveryResult.DELIVERY_UNKNOWN
+    assert tuple(state.values()) == ("delivery_unknown", "open", True, 0, 0)
+
+
+async def test_post_send_cancellation_becomes_delivery_unknown(
+    database,
+    monkeypatch,
+):
+    repository, escalation_id, outbound_id = await _seed_admin_handoff_reply(database)
+
+    async def cancel_completion(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(repository, "mark_outbound_sent", cancel_completion)
+
+    with pytest.raises(asyncio.CancelledError):
+        await TelegramSender(FakeTelegram(), repository).send(outbound_id)
+
+    async with database.acquire() as connection:
+        state = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT status FROM outbound_messages WHERE id=$1) AS outbound,
+                (SELECT status FROM escalations WHERE id=$2) AS escalation,
+                (SELECT enabled FROM human_mode WHERE customer_id='42') AS human,
+                (SELECT count(*) FROM messages WHERE role='assistant') AS replies
+            """,
+            outbound_id,
+            escalation_id,
+        )
+    assert tuple(state.values()) == ("delivery_unknown", "open", True, 0)

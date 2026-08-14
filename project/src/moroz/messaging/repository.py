@@ -8,6 +8,7 @@ from moroz.messaging.outbox import (
     enqueue_process_message_in_transaction,
 )
 from moroz.escalation.service import (
+    ADMIN_REPLY_PREFIX,
     complete_admin_reply_delivery,
     parse_admin_reply_key,
 )
@@ -242,6 +243,10 @@ class MessageRepository:
                     return None
                 parsed = parse_admin_reply_key(row["idempotency_key"])
                 if parsed is None:
+                    if row["idempotency_key"].startswith(
+                        f"{ADMIN_REPLY_PREFIX}:"
+                    ):
+                        raise ValueError("malformed admin reply key")
                     return None
                 escalation_id, _ = parsed
                 if row["channel"] != "telegram":
