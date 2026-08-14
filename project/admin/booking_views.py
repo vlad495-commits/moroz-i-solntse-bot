@@ -92,9 +92,15 @@ def normalize_booking_row(
     status = str(row["status"])
     kind = str(row["kind"])
     phase = str(row["phase"])
+    customer_chat_id = _canonical_customer_chat_id(row["customer_id"])
     result = {
         "id": row["id"],
-        "customer_id": row["customer_id"],
+        "customer_chat_id": customer_chat_id,
+        "customer_label": (
+            f"Клиент #{customer_chat_id}"
+            if customer_chat_id is not None
+            else "Клиент"
+        ),
         "starts_at": row["starts_at"],
         "scheduled_end_at": row.get("scheduled_end_at"),
         "status": status if status in BOOKING_STATUS_LABELS else "unknown",
@@ -107,6 +113,17 @@ def normalize_booking_row(
     if detail:
         result["external_id"] = row.get("external_id")
     return result
+
+
+def _canonical_customer_chat_id(value: object) -> int | None:
+    """Return an ID only when it is the canonical value accepted by /chats/{int}."""
+    if not isinstance(value, str):
+        return None
+    try:
+        chat_id = int(value)
+    except ValueError:
+        return None
+    return chat_id if str(chat_id) == value else None
 
 
 def normalize_booking_event(row: Mapping[str, object]) -> dict[str, object]:

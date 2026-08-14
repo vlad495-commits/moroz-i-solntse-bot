@@ -289,3 +289,109 @@ async def test_booking_database_is_required():
             ip_address=None,
             user_agent=None,
         )
+
+
+@pytest.mark.parametrize(
+    ("view", "first_status", "first_starts_at", "first_phase", "first_updated_at", "insert_status", "insert_starts_at", "insert_phase", "insert_updated_at"),
+    [
+        (
+            "upcoming",
+            "confirmed",
+            NOW + timedelta(days=1),
+            "confirmed",
+            NOW,
+            "confirmed",
+            NOW + timedelta(days=2),
+            "confirmed",
+            NOW + timedelta(minutes=1),
+        ),
+        (
+            "attention",
+            "unknown",
+            NOW + timedelta(days=1),
+            "confirmed",
+            NOW + timedelta(minutes=3),
+            "unknown",
+            NOW + timedelta(days=2),
+            "confirmed",
+            NOW + timedelta(minutes=2),
+        ),
+        (
+            "history",
+            "cancelled",
+            NOW - timedelta(days=1),
+            "confirmed",
+            NOW + timedelta(minutes=3),
+            "cancelled",
+            NOW - timedelta(days=2),
+            "confirmed",
+            NOW + timedelta(minutes=2),
+        ),
+    ],
+)
+async def test_keyset_page_does_not_repeat_viewed_booking_after_insertion(
+    database,
+    migrated_database_url,
+    view,
+    first_status,
+    first_starts_at,
+    first_phase,
+    first_updated_at,
+    insert_status,
+    insert_starts_at,
+    insert_phase,
+    insert_updated_at,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        await connection.execute(
+            "TRUNCATE booking_events, bookings, booking_scenarios CASCADE"
+        )
+        first_id = await _seed_booking(
+            connection,
+            status=first_status,
+            starts_at=first_starts_at,
+            phase=first_phase,
+            error_code=None,
+            updated_at=first_updated_at,
+        )
+        await _seed_booking(
+            connection,
+            status=insert_status,
+            starts_at=(
+                NOW + timedelta(days=3)
+                if view in {"upcoming", "attention"}
+                else NOW - timedelta(days=3)
+            ),
+            phase=insert_phase,
+            error_code=None,
+            updated_at=NOW + timedelta(minutes=1),
+        )
+        first_page = await list_bookings(
+            database, view=view, status=None, cursor=None, limit=1, now=NOW
+        )
+        inserted_id = await _seed_booking(
+            connection,
+            status=insert_status,
+            starts_at=insert_starts_at,
+            phase=insert_phase,
+            error_code=None,
+            updated_at=insert_updated_at,
+        )
+        second_page = await list_bookings(
+            database,
+            view=view,
+            status=None,
+            cursor=first_page["next_cursor"],
+            limit=1,
+            now=NOW,
+        )
+
+        assert [item["id"] for item in first_page["items"]] == [first_id]
+        assert first_page["next_cursor"]
+        assert [item["id"] for item in second_page["items"]] == [inserted_id]
+        assert {item["id"] for item in first_page["items"]}.isdisjoint(
+            item["id"] for item in second_page["items"]
+        )
+    finally:
+        await connection.close()

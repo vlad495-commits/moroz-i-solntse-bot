@@ -95,3 +95,32 @@ def test_booking_detail_can_include_external_id():
     assert booking["phase_label"] == "Подтверждено"
     assert booking["error_label"] is None
     assert booking["external_id"] == "provider-42"
+
+
+def test_booking_normalization_exposes_only_canonical_telegram_chat_ids():
+    base_row = {
+        "id": BOOKING_ID,
+        "starts_at": NOW,
+        "scheduled_end_at": None,
+        "status": "confirmed",
+        "updated_at": NOW,
+        "kind": "create",
+        "phase": "confirmed",
+        "error_code": None,
+    }
+
+    numeric = normalize_booking_row({**base_row, "customer_id": "42"})
+    incompatible = normalize_booking_row(
+        {**base_row, "customer_id": "external:alice@example.test"}
+    )
+
+    assert numeric["customer_chat_id"] == 42
+    assert numeric["customer_label"] == "Клиент #42"
+    assert incompatible["customer_chat_id"] is None
+    assert incompatible["customer_label"] == "Клиент"
+    assert "customer_id" not in incompatible
+    assert "external:alice@example.test" not in repr(incompatible)
+
+    for unsafe_value in (" 42", "+42", "042", "42.0", "external:42"):
+        booking = normalize_booking_row({**base_row, "customer_id": unsafe_value})
+        assert booking["customer_chat_id"] is None

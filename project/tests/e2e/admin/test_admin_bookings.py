@@ -34,7 +34,8 @@ def _page(booking_id=None):
         "items": [
             {
                 "id": booking_id,
-                "customer_id": "42",
+                "customer_chat_id": 42,
+                "customer_label": "Клиент #42",
                 "starts_at": datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
                 "scheduled_end_at": None,
                 "status": "confirmed",
@@ -145,6 +146,52 @@ async def test_empty_status_means_no_status_filter(monkeypatch):
     assert 'name="status"' in response.text
     assert '<option value="">Все статусы</option>' in response.text
     assert "?view=upcoming&amp;status=" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_incompatible_customer_id_is_a_safe_non_link_label(monkeypatch):
+    booking_id = uuid4()
+
+    async def current_user(_request):
+        return _user()
+
+    async def list_projection(_database, **_kwargs):
+        return {
+            "items": [
+                {
+                    **_page(booking_id)["items"][0],
+                    "customer_chat_id": None,
+                    "customer_label": "Клиент",
+                }
+            ],
+            "has_more": False,
+            "next_cursor": None,
+        }
+
+    async def detail_projection(_database, value, **_kwargs):
+        return {
+            **_detail(value),
+            "customer_chat_id": None,
+            "customer_label": "Клиент",
+        }
+
+    monkeypatch.setattr(booking_routes, "get_current_user", current_user)
+    monkeypatch.setattr(booking_routes.database, "get_database", lambda: "database")
+    monkeypatch.setattr(booking_routes, "list_bookings", list_projection)
+    monkeypatch.setattr(booking_routes, "get_booking_detail", detail_projection)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(), root_path="/admin"),
+        base_url="http://test/admin",
+    ) as client:
+        page = await client.get("/bookings/")
+        detail = await client.get(f"/bookings/{booking_id}")
+
+    assert page.status_code == 200
+    assert detail.status_code == 200
+    assert "/admin/chats/" not in page.text
+    assert "/admin/chats/" not in detail.text
+    assert "Клиент" in page.text
+    assert "Клиент" in detail.text
 
 
 @pytest.mark.asyncio

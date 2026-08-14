@@ -41,7 +41,7 @@
                 <span class="chip">{{ booking.status_label }}</span>
             </div>
             <p>{{ booking.scenario_label }} · {{ booking.phase_label }}</p>
-            {% if booking.customer_id is not none %}<a class="back" href="{{ request.scope.get('root_path', '') }}/chats/{{ booking.customer_id|urlencode }}">Открыть диалог клиента</a>{% endif %}
+            {% if booking.customer_chat_id is not none %}<a class="back" href="{{ request.scope.get('root_path', '') }}/chats/{{ booking.customer_chat_id }}">Открыть диалог клиента</a>{% else %}<span class="muted">{{ booking.customer_label }}</span>{% endif %}
             {% if booking.error_label %}<p class="failed">{{ booking.error_label }}</p>{% endif %}
         </article>
         {% endfor %}
