@@ -437,6 +437,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
             "human_mode",
             "notification_feedback_requests",
             "scheduler_jobs",
+            "yclients_booking_projection",
         }
 
         run_alembic(
@@ -458,7 +459,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0009_production_admin"
+            "0010_yclients_projection"
         )
     finally:
         await conn.close()
@@ -597,7 +598,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0009_production_admin"
+        assert current_revision == "0010_yclients_projection"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -760,7 +761,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0009_production_admin"
+        assert current_revision == "0010_yclients_projection"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -857,7 +858,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0009_production_admin"
+        assert current_revision == "0010_yclients_projection"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
@@ -884,6 +885,98 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
             await conn.close()
     finally:
         run_alembic(disposable_database_url, "upgrade", "head")
+
+
+async def test_yclients_booking_projection_migration_creates_bounded_schema(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        current_revision = await conn.fetchval(
+            "SELECT version_num FROM alembic_version"
+        )
+        columns = [
+            row["column_name"]
+            for row in await conn.fetch(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'yclients_booking_projection'
+                ORDER BY ordinal_position
+                """
+            )
+        ]
+        constraints = {
+            row["conname"]: row["definition"]
+            for row in await conn.fetch(
+                """
+                SELECT conname, pg_get_constraintdef(oid, true) AS definition
+                FROM pg_constraint
+                WHERE conrelid = 'yclients_booking_projection'::regclass
+                """
+            )
+        }
+        indexes = {
+            row["indexname"]: row["indexdef"]
+            for row in await conn.fetch(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'yclients_booking_projection'
+                """
+            )
+        }
+    finally:
+        await conn.close()
+
+    assert current_revision == "0010_yclients_projection"
+    assert columns == [
+        "external_id",
+        "booking_key",
+        "bot_marker_state",
+        "starts_at",
+        "scheduled_end_at",
+        "status",
+        "deleted",
+        "client_name",
+        "staff_name",
+        "service_names",
+        "synced_at",
+    ]
+    assert constraints["yclients_booking_projection_pkey"] == "PRIMARY KEY (external_id)"
+    assert all(
+        value in constraints["ck_yclients_projection_marker"]
+        for value in ("absent", "valid", "invalid")
+    )
+    assert all(
+        value in constraints["ck_yclients_projection_status"]
+        for value in ("confirmed", "cancelled", "completed", "no_show", "unknown")
+    )
+    assert indexes["ix_yclients_projection_starts_external"] == (
+        "CREATE INDEX ix_yclients_projection_starts_external ON public."
+        "yclients_booking_projection USING btree (starts_at, external_id)"
+    )
+    assert indexes["ix_yclients_projection_booking_key"] == (
+        "CREATE INDEX ix_yclients_projection_booking_key ON public."
+        "yclients_booking_projection USING btree (booking_key) "
+        "WHERE (booking_key IS NOT NULL)"
+    )
+    forbidden_fragments = (
+        "phone",
+        "email",
+        "comment",
+        "payload",
+        "snapshot",
+        "raw",
+        "json",
+    )
+    assert not any(
+        fragment in column_name
+        for column_name in columns
+        for fragment in forbidden_fragments
+    )
 
 
 async def test_cutover_audits_and_stamps_exact_unversioned_schema(
