@@ -36,6 +36,11 @@
             <a href="{{ request.scope.get('root_path', '') }}/escalations/" class="{% if path.startswith('/escalations') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg></span>Эскалации
             </a>
+            {% if user.role in ['owner', 'admin'] %}
+            <a href="{{ request.scope.get('root_path', '') }}/bookings/" class="{% if path.startswith('/bookings') %}active{% endif %}">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7h14v12H5z"/><path d="M8 4v6M16 4v6M5 11h14"/></svg></span>Записи
+            </a>
+            {% endif %}
             <a href="{{ request.scope.get('root_path', '') }}/review/evals" class="{% if path.startswith('/review') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4Z"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="m15 17 2 2 4-4"/></svg></span>Review кейсов
             </a>

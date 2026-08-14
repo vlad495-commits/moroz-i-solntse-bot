@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Записи — Admin{% endblock %}
+{% block content %}
+<section class="bookings-page">
+    <div class="row-between">
+        <div>
+            <p class="page-eyebrow">Только просмотр</p>
+            <h1>Записи</h1>
+            <p class="page-note">Локальная проекция: данные могут отставать от YCLIENTS. Изменения записей здесь недоступны.</p>
+        </div>
+    </div>
+
+    <nav class="review-tabs" aria-label="Представление записей">
+        {% for key, label in [('upcoming', 'Ближайшие'), ('attention', 'Требуют внимания'), ('history', 'История')] %}
+        <a class="review-tab {% if view == key %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/bookings/?view={{ key }}{% if status %}&amp;status={{ status }}{% endif %}">{{ label }}</a>
+        {% endfor %}
+    </nav>
+
+    <form class="logs-filters" method="get">
+        <input type="hidden" name="view" value="{{ view }}">
+        <label>Статус
+            <select name="status">
+                <option value="">Все статусы</option>
+                {% for key, label in [('confirmed', 'Подтверждена'), ('cancelled', 'Отменена'), ('completed', 'Завершена'), ('no_show', 'Клиент не пришёл'), ('unknown', 'Статус неизвестен')] %}
+                <option value="{{ key }}" {% if status == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <div class="form-actions"><button type="submit">Показать</button></div>
+    </form>
+
+    {% if page["items"] %}
+    <div class="bookings-list">
+        {% for booking in page["items"] %}
+        <article class="booking-card">
+            <div class="row-between">
+                <div>
+                    <strong><a href="{{ request.scope.get('root_path', '') }}/bookings/{{ booking.id }}">{{ booking.starts_at }}</a></strong>
+                    <p class="muted">Обновлено локально: {{ booking.updated_at }}</p>
+                </div>
+                <span class="chip">{{ booking.status_label }}</span>
+            </div>
+            <p>{{ booking.scenario_label }} · {{ booking.phase_label }}</p>
+            {% if booking.customer_id is not none %}<a class="back" href="{{ request.scope.get('root_path', '') }}/chats/{{ booking.customer_id|urlencode }}">Открыть диалог клиента</a>{% endif %}
+            {% if booking.error_label %}<p class="failed">{{ booking.error_label }}</p>{% endif %}
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty">В локальной проекции нет записей по этому фильтру</p>
+    {% endif %}
+
+    {% if page["has_more"] and page["next_cursor"] %}
+    <p class="bookings-pagination"><a class="btn" href="{{ request.scope.get('root_path', '') }}/bookings/?view={{ view }}{% if status %}&amp;status={{ status }}{% endif %}&amp;cursor={{ page['next_cursor']|urlencode }}">Дальше</a></p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -668,8 +668,27 @@ select:focus {
 }
 .escalation-card p { margin: 6px 0; }
 .escalation-card small { color: var(--muted); }
+.bookings-page { max-width: 960px; }
+.bookings-list { display: grid; gap: 12px; }
+.booking-card {
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.84);
+    box-shadow: var(--shadow);
+}
+.booking-card p { margin: 8px 0; }
+.booking-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.booking-meta div { padding: 10px; border-radius: 14px; background: var(--ice); }
+.booking-meta dt { color: var(--muted); font-size: 12px; font-weight: 750; }
+.booking-meta dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.booking-events { display: grid; gap: 10px; padding: 0; background: none; box-shadow: none; }
+.booking-events li { display: flex; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255, 255, 255, 0.8); }
+.booking-events span { color: var(--muted); }
+.bookings-pagination { margin-top: 18px; }
 @media (max-width: 700px) {
     .escalation-card { align-items: stretch; flex-direction: column; }
+    .booking-events li { align-items: flex-start; flex-direction: column; }
 }
 .customer-event-category-notification { border-left-color: #d99000; }
 .customer-event-category-handoff { border-left-color: #c15fbb; }
