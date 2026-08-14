@@ -129,3 +129,30 @@ def test_only_message_text_and_known_reason_labels_are_described():
     assert unknown_reason["description"] is None
     assert known_reason["description"] == "Низкая оценка после визита"
     assert scheduler["description"] is None
+
+
+def test_admin_reply_audit_events_have_safe_known_titles():
+    queued = normalize_customer_event(
+        {
+            "source": "admin",
+            "source_id": "10",
+            "occurred_at": NOW,
+            "kind": "admin.escalation.reply_queued",
+            "description": None,
+            "status": "queued",
+        }
+    )
+    delivered = normalize_customer_event(
+        {
+            "source": "admin",
+            "source_id": "11",
+            "occurred_at": NOW,
+            "kind": "admin.escalation.reply_delivered",
+            "description": None,
+            "status": "delivered",
+        }
+    )
+
+    assert queued["title"] == "Ответ администратора поставлен в очередь"
+    assert delivered["title"] == "Ответ администратора доставлен"
+    assert queued["description"] is delivered["description"] is None

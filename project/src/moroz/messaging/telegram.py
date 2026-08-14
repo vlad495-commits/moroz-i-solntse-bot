@@ -23,6 +23,8 @@ async def deliver_claimed_outbound(
     telegram,
     repository: MessageRepository,
     outbound: OutboundMessage,
+    *,
+    context_cache=None,
 ) -> DeliveryResult:
     try:
         send_arguments = {
@@ -56,14 +58,32 @@ async def deliver_claimed_outbound(
     except Exception:
         await repository.release_outbound_delivery(outbound.id)
         raise
-    await repository.mark_outbound_sent(outbound.id, str(sent_message.message_id))
+    context_chat_id = await repository.mark_outbound_sent(
+        outbound.id,
+        str(sent_message.message_id),
+    )
+    if context_chat_id is not None and context_cache is not None:
+        try:
+            await context_cache.delete(f"chat:{context_chat_id}:messages")
+        except Exception as error:
+            logger.warning(
+                "context_cache_invalidation_failed error_type=%s",
+                type(error).__name__,
+            )
     return DeliveryResult.SENT
 
 
 class TelegramSender:
-    def __init__(self, telegram, repository: MessageRepository):
+    def __init__(
+        self,
+        telegram,
+        repository: MessageRepository,
+        *,
+        context_cache=None,
+    ):
         self._telegram = telegram
         self._repository = repository
+        self._context_cache = context_cache
 
     async def send(self, outbound_id: UUID) -> DeliveryResult:
         outbound = await self._repository.claim_outbound_delivery(outbound_id)
@@ -73,4 +93,5 @@ class TelegramSender:
             self._telegram,
             self._repository,
             outbound,
+            context_cache=self._context_cache,
         )

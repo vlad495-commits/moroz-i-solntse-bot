@@ -22,6 +22,124 @@ def parse_admin_reply_key(value: str) -> tuple[UUID, UUID] | None:
         return None
 
 
+async def complete_admin_reply_delivery(
+    connection,
+    *,
+    outbound_id: UUID,
+    escalation_id: UUID,
+    chat_id: str,
+    text: str,
+) -> None:
+    """Materialize a confirmed staff reply inside the delivery transaction."""
+    escalation = await connection.fetchrow(
+        """
+        SELECT customer_id, status
+        FROM escalations
+        WHERE id = $1
+        FOR UPDATE
+        """,
+        escalation_id,
+    )
+    if (
+        escalation is None
+        or escalation["status"] != "open"
+        or escalation["customer_id"] != chat_id
+    ):
+        raise ValueError("admin reply escalation mismatch")
+    mode = await connection.fetchrow(
+        """
+        SELECT enabled
+        FROM human_mode
+        WHERE customer_id = $1
+        FOR UPDATE
+        """,
+        chat_id,
+    )
+    if mode is None or not mode["enabled"]:
+        raise ValueError("admin reply human mode is inactive")
+    queued_audit = await connection.fetchrow(
+        """
+        SELECT actor_id, ip_address, user_agent
+        FROM admin_audit_events
+        WHERE action = 'escalation.reply_queued'
+          AND object_type = 'escalation'
+          AND object_id = $1
+          AND after->>'outbound_id' = $2
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        str(escalation_id),
+        str(outbound_id),
+    )
+    if queued_audit is None:
+        raise ValueError("admin reply queued audit is missing")
+    numeric_chat_id = int(chat_id)
+    identity = await connection.fetchrow(
+        """
+        SELECT user_id, username
+        FROM messages
+        WHERE chat_id = $1::bigint AND user_id IS NOT NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        numeric_chat_id,
+    )
+    await connection.execute(
+        """
+        INSERT INTO messages (chat_id, user_id, username, role, content)
+        VALUES ($1::bigint, $2, $3, 'assistant', $4)
+        """,
+        numeric_chat_id,
+        identity["user_id"] if identity else None,
+        identity["username"] if identity else None,
+        text,
+    )
+    await connection.execute(
+        """
+        UPDATE escalations
+        SET status = 'resolved', resolved_at = now()
+        WHERE id = $1
+        """,
+        escalation_id,
+    )
+    has_open = await connection.fetchval(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM escalations
+            WHERE customer_id = $1 AND status = 'open'
+        )
+        """,
+        chat_id,
+    )
+    if not has_open:
+        await connection.execute(
+            """
+            UPDATE human_mode
+            SET enabled = false, expires_at = now() + interval '5 minutes'
+            WHERE customer_id = $1
+            """,
+            chat_id,
+        )
+    await connection.execute(
+        """
+        INSERT INTO admin_audit_events (
+            actor_id, action, object_type, object_id,
+            before, after, ip_address, user_agent
+        )
+        VALUES (
+            $1, 'escalation.reply_delivered', 'escalation', $2,
+            '{"status":"queued"}'::jsonb,
+            '{"status":"delivered"}'::jsonb,
+            $3, $4
+        )
+        """,
+        queued_audit["actor_id"],
+        str(escalation_id),
+        queued_audit["ip_address"],
+        queued_audit["user_agent"],
+    )
+
+
 class EscalationService:
     def __init__(self, database: Database):
         self._database = database

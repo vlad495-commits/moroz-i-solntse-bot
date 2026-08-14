@@ -30,6 +30,8 @@ EVENT_TITLES = {
     "handoff.resolved": "Обращение администратора закрыто",
     "handoff.enabled": "Включён ручной режим",
     "admin.customer.note": "Заметка администратора",
+    "admin.escalation.reply_queued": "Ответ администратора поставлен в очередь",
+    "admin.escalation.reply_delivered": "Ответ администратора доставлен",
 }
 
 SAFE_REASON_LABELS = {

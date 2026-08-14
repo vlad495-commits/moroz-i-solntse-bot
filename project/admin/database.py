@@ -374,6 +374,25 @@ async def get_customer_events(
                 FROM admin_audit_events AS audit
                 WHERE audit.object_type = 'customer'
                   AND audit.object_id = $2
+
+                UNION ALL
+
+                SELECT
+                    'admin', audit.id::text, audit.created_at,
+                    'admin.' || audit.action, NULL::text,
+                    CASE audit.action
+                        WHEN 'escalation.reply_queued' THEN 'queued'
+                        WHEN 'escalation.reply_delivered' THEN 'delivered'
+                    END
+                FROM admin_audit_events AS audit
+                JOIN escalations AS escalation
+                  ON audit.object_type = 'escalation'
+                 AND audit.object_id = escalation.id::text
+                WHERE escalation.customer_id = $2
+                  AND audit.action IN (
+                      'escalation.reply_queued',
+                      'escalation.reply_delivered'
+                  )
             )
             SELECT source, source_id, occurred_at, kind, description, status
             FROM customer_events

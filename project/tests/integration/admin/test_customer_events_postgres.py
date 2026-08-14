@@ -181,3 +181,60 @@ async def test_customer_events_reject_invalid_page_bounds(limit):
 async def test_customer_events_reject_malformed_cursor():
     with pytest.raises(ValueError, match="customer events cursor"):
         await admin_database.get_customer_events(42, cursor="not-a-cursor")
+
+
+async def test_customer_events_link_safe_reply_audit_through_escalation(
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    pool = Database(migrated_database_url, min_size=1, max_size=1)
+    await pool.connect()
+    previous_pool = admin_database._pool
+    admin_database._pool = pool
+    escalation_id = uuid4()
+    try:
+        await connection.execute(
+            """
+            INSERT INTO messages (chat_id, user_id, role, content)
+            VALUES (42, 7, 'user', 'Контроль')
+            """
+        )
+        await connection.execute(
+            """
+            INSERT INTO escalations
+                (id, source, customer_id, status, reason_code, payload)
+            VALUES ($1, 'feedback', '42', 'open', 'private', '{}')
+            """,
+            escalation_id,
+        )
+        await connection.execute(
+            """
+            INSERT INTO admin_audit_events
+                (action, object_type, object_id, after)
+            VALUES
+                ('escalation.reply_queued', 'escalation', $1,
+                 '{"secret":"must-not-leak"}'),
+                ('escalation.reply_delivered', 'escalation', $1,
+                 '{"secret":"must-not-leak"}'),
+                ('escalation.reply_delivered', 'escalation', $2, '{}')
+            """,
+            str(escalation_id),
+            str(uuid4()),
+        )
+
+        result = await admin_database.get_customer_events(42, limit=10)
+
+        reply_events = [
+            event for event in result["items"]
+            if event["kind"].startswith("admin.escalation.reply_")
+        ]
+        assert {event["title"] for event in reply_events} == {
+            "Ответ администратора поставлен в очередь",
+            "Ответ администратора доставлен",
+        }
+        assert all(event["description"] is None for event in reply_events)
+        assert "must-not-leak" not in repr(reply_events)
+    finally:
+        admin_database._pool = previous_pool
+        await pool.close()
+        await connection.close()

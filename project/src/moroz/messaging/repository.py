@@ -7,6 +7,10 @@ from moroz.messaging.outbox import (
     enqueue_process_message,
     enqueue_process_message_in_transaction,
 )
+from moroz.escalation.service import (
+    complete_admin_reply_delivery,
+    parse_admin_reply_key,
+)
 from moroz.privacy import customer_lock_subject
 
 
@@ -221,17 +225,35 @@ class MessageRepository:
         self,
         outbound_id: UUID,
         external_message_id: str,
-    ) -> None:
+    ) -> str | None:
         async with self._database.acquire() as connection:
-            await connection.execute(
-                """
-                UPDATE outbound_messages
-                SET status = 'sent', external_message_id = $2
-                WHERE id = $1 AND status = 'sending'
-                """,
-                outbound_id,
-                external_message_id,
-            )
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    """
+                    UPDATE outbound_messages
+                    SET status = 'sent', external_message_id = $2
+                    WHERE id = $1 AND status = 'sending'
+                    RETURNING channel, chat_id, text, idempotency_key
+                    """,
+                    outbound_id,
+                    external_message_id,
+                )
+                if row is None:
+                    return None
+                parsed = parse_admin_reply_key(row["idempotency_key"])
+                if parsed is None:
+                    return None
+                escalation_id, _ = parsed
+                if row["channel"] != "telegram":
+                    raise ValueError("admin reply channel mismatch")
+                await complete_admin_reply_delivery(
+                    connection,
+                    outbound_id=outbound_id,
+                    escalation_id=escalation_id,
+                    chat_id=row["chat_id"],
+                    text=row["text"],
+                )
+                return row["chat_id"]
 
     async def mark_outbound_delivery_unknown(
         self,

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from aiogram.exceptions import (
 
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask
+from moroz.escalation.service import admin_reply_key
 from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.outbox import OutboxRelay, enqueue_process_message
@@ -962,3 +964,256 @@ async def test_duplicate_consented_webhook_update_crosses_pipeline_once(
     assert inbox_count == outbound_count == 1
     assert len(llm.calls) == 1
     assert len(telegram.sent_messages) == 1
+
+
+async def _seed_admin_handoff_reply(database, *, second_open=False):
+    repository = MessageRepository(database)
+    escalation_id = uuid4()
+    reply_token = uuid4()
+    async with database.acquire() as connection:
+        await connection.execute(
+            "INSERT INTO messages (chat_id, user_id, username, role, content) "
+            "VALUES (42, 7, 'client', 'user', 'Нужна помощь')"
+        )
+        await connection.execute(
+            """
+            INSERT INTO escalations
+                (id, source, customer_id, status, reason_code, payload)
+            VALUES ($1, 'feedback', '42', 'open', 'private', '{}')
+            """,
+            escalation_id,
+        )
+        if second_open:
+            await connection.execute(
+                """
+                INSERT INTO escalations
+                    (id, source, customer_id, status, reason_code, payload)
+                VALUES ($1, 'feedback', '42', 'open', 'other', '{}')
+                """,
+                uuid4(),
+            )
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id, enabled_at)
+            VALUES ('42', true, 'private', $1, now())
+            """,
+            escalation_id,
+        )
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Ответ администратора",
+        idempotency_key=admin_reply_key(escalation_id, reply_token),
+    )
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO admin_audit_events
+                (actor_id, action, object_type, object_id, after,
+                 ip_address, user_agent)
+            VALUES (
+                7, 'escalation.reply_queued', 'escalation', $1,
+                jsonb_build_object('outbound_id', $2::text, 'status', 'queued'),
+                '127.0.0.1', 'test-agent'
+            )
+            """,
+            str(escalation_id),
+            str(outbound_id),
+        )
+    return repository, escalation_id, outbound_id
+
+
+async def test_confirmed_admin_reply_materializes_history_and_resumes_bot(database):
+    repository, escalation_id, outbound_id = await _seed_admin_handoff_reply(database)
+
+    class Cache:
+        def __init__(self):
+            self.deleted = []
+
+        async def delete(self, key):
+            self.deleted.append(key)
+
+    cache = Cache()
+    sender = TelegramSender(FakeTelegram(), repository, context_cache=cache)
+
+    assert await sender.send(outbound_id) == DeliveryResult.SENT
+    assert await sender.send(outbound_id) == DeliveryResult.SKIPPED
+
+    async with database.acquire() as connection:
+        outbound = await connection.fetchrow(
+            "SELECT status, external_message_id FROM outbound_messages WHERE id=$1",
+            outbound_id,
+        )
+        messages = await connection.fetch(
+            "SELECT user_id, username, role, content FROM messages ORDER BY id"
+        )
+        escalation = await connection.fetchrow(
+            "SELECT status, resolved_at FROM escalations WHERE id=$1",
+            escalation_id,
+        )
+        mode = await connection.fetchrow(
+            """
+            SELECT enabled,
+                   expires_at > now() + interval '4 minutes' AS cooldown_started,
+                   expires_at < now() + interval '6 minutes' AS cooldown_bounded
+            FROM human_mode WHERE customer_id='42'
+            """
+        )
+        audits = await connection.fetch(
+            "SELECT action, object_type, object_id, before, after "
+            "FROM admin_audit_events ORDER BY id"
+        )
+
+    assert tuple(outbound.values()) == ("sent", "701")
+    assert [tuple(row.values()) for row in messages] == [
+        (7, "client", "user", "Нужна помощь"),
+        (7, "client", "assistant", "Ответ администратора"),
+    ]
+    assert escalation["status"] == "resolved"
+    assert escalation["resolved_at"] is not None
+    assert tuple(mode.values()) == (False, True, True)
+    assert [row["action"] for row in audits] == [
+        "escalation.reply_queued",
+        "escalation.reply_delivered",
+    ]
+    assert all(row["object_type"] == "escalation" for row in audits)
+    assert all(row["object_id"] == str(escalation_id) for row in audits)
+    assert json.loads(audits[1]["before"]) == {"status": "queued"}
+    assert json.loads(audits[1]["after"]) == {"status": "delivered"}
+    assert "Ответ администратора" not in repr(audits)
+    assert "customer_id" not in repr(audits)
+    assert cache.deleted == ["chat:42:messages"]
+
+
+async def test_confirmed_admin_reply_keeps_human_mode_for_other_open_handoff(
+    database,
+):
+    repository, escalation_id, outbound_id = await _seed_admin_handoff_reply(
+        database,
+        second_open=True,
+    )
+
+    assert await TelegramSender(FakeTelegram(), repository).send(
+        outbound_id
+    ) == DeliveryResult.SENT
+
+    async with database.acquire() as connection:
+        mode = await connection.fetchrow(
+            "SELECT enabled, expires_at FROM human_mode WHERE customer_id='42'"
+        )
+        open_count = await connection.fetchval(
+            "SELECT count(*) FROM escalations WHERE customer_id='42' AND status='open'"
+        )
+        status = await connection.fetchval(
+            "SELECT status FROM escalations WHERE id=$1",
+            escalation_id,
+        )
+    assert tuple(mode.values()) == (True, None)
+    assert open_count == 1
+    assert status == "resolved"
+
+
+async def test_unknown_admin_reply_delivery_keeps_handoff_open(database):
+    repository, escalation_id, outbound_id = await _seed_admin_handoff_reply(database)
+    telegram = FakeTelegram(
+        TelegramNetworkError(SimpleNamespace(), "private network detail")
+    )
+
+    assert await TelegramSender(telegram, repository).send(
+        outbound_id
+    ) == DeliveryResult.DELIVERY_UNKNOWN
+
+    async with database.acquire() as connection:
+        state = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT status FROM outbound_messages WHERE id=$1) AS outbound,
+                (SELECT status FROM escalations WHERE id=$2) AS escalation,
+                (SELECT enabled FROM human_mode WHERE customer_id='42') AS human,
+                (SELECT count(*) FROM messages WHERE role='assistant') AS replies,
+                (SELECT count(*) FROM admin_audit_events
+                 WHERE action='escalation.reply_delivered') AS delivered_audits
+            """,
+            outbound_id,
+            escalation_id,
+        )
+    assert tuple(state.values()) == ("delivery_unknown", "open", True, 0, 0)
+
+
+async def test_admin_reply_completion_failure_rolls_back_all_side_effects(database):
+    repository, escalation_id, outbound_id = await _seed_admin_handoff_reply(database)
+    claimed = await repository.claim_outbound_delivery(outbound_id)
+    assert claimed is not None
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            CREATE FUNCTION reject_reply_delivered_audit() RETURNS trigger AS $$
+            BEGIN
+                IF NEW.action = 'escalation.reply_delivered' THEN
+                    RAISE EXCEPTION 'forced delivered audit failure';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            CREATE TRIGGER reject_reply_delivered_audit
+            BEFORE INSERT ON admin_audit_events
+            FOR EACH ROW EXECUTE FUNCTION reject_reply_delivered_audit();
+            """
+        )
+
+    with pytest.raises(Exception, match="forced delivered audit failure"):
+        await repository.mark_outbound_sent(outbound_id, "701")
+
+    async with database.acquire() as connection:
+        state = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT status FROM outbound_messages WHERE id=$1) AS outbound,
+                (SELECT status FROM escalations WHERE id=$2) AS escalation,
+                (SELECT enabled FROM human_mode WHERE customer_id='42') AS human,
+                (SELECT count(*) FROM messages WHERE role='assistant') AS replies,
+                (SELECT count(*) FROM admin_audit_events
+                 WHERE action='escalation.reply_delivered') AS delivered_audits
+            """,
+            outbound_id,
+            escalation_id,
+        )
+    assert tuple(state.values()) == ("sending", "open", True, 0, 0)
+
+
+@pytest.mark.parametrize("broken_contract", ["chat_id", "queued_audit"])
+async def test_admin_reply_completion_rejects_mismatched_contract(
+    database,
+    broken_contract,
+):
+    repository, escalation_id, outbound_id = await _seed_admin_handoff_reply(database)
+    async with database.acquire() as connection:
+        if broken_contract == "chat_id":
+            await connection.execute(
+                "UPDATE outbound_messages SET chat_id='43' WHERE id=$1",
+                outbound_id,
+            )
+        else:
+            await connection.execute(
+                "DELETE FROM admin_audit_events WHERE object_id=$1",
+                str(escalation_id),
+            )
+    assert await repository.claim_outbound_delivery(outbound_id) is not None
+
+    with pytest.raises(ValueError, match="admin reply"):
+        await repository.mark_outbound_sent(outbound_id, "701")
+
+    async with database.acquire() as connection:
+        state = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT status FROM outbound_messages WHERE id=$1) AS outbound,
+                (SELECT status FROM escalations WHERE id=$2) AS escalation,
+                (SELECT enabled FROM human_mode WHERE customer_id='42') AS human,
+                (SELECT count(*) FROM messages WHERE role='assistant') AS replies
+            """,
+            outbound_id,
+            escalation_id,
+        )
+    assert tuple(state.values()) == ("sending", "open", True, 0)

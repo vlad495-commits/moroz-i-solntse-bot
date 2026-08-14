@@ -727,7 +727,7 @@ async def run() -> None:
         task_handler = MessageTaskHandler(
             database,
             generate_response,
-            TelegramSender(telegram, repository),
+            TelegramSender(telegram, repository, context_cache=redis_client),
             scheduler_repository=SchedulerJobRepository(database),
             booking_port=LocalBookingPort(database),
             notification_outbox=NotificationOutbox(
