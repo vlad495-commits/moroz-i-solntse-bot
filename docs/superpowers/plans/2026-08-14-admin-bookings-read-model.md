@@ -432,20 +432,20 @@ git commit -m "feat: показать записи в админке"
 - Consumes the complete Task 1–3 feature.
 - Produces a merge-ready local branch with exact evidence.
 
-- [ ] **Step 1: Run affected Docker gate**
+- [x] **Step 1: Run affected Docker gate**
 
 ```powershell
 Set-Location project
-docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/admin/test_booking_views.py tests/integration/admin/test_admin_bookings_postgres.py tests/e2e/admin/test_admin_bookings.py tests/integration/booking/test_booking_repository.py tests/integration/admin/test_customer_data_deletion_postgres.py tests/unit/admin/test_customer_events.py tests/integration/admin/test_customer_events_postgres.py tests/e2e/admin/test_csrf_rbac_audit.py tests/unit/test_architecture_visual.py
+docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/docs:ro" -e ARCHITECTURE_HTML_PATH=/docs/production-v1-architecture.html test pytest -q tests/unit/admin/test_booking_views.py tests/integration/admin/test_admin_bookings_postgres.py tests/e2e/admin/test_admin_bookings.py tests/integration/booking/test_booking_repository.py tests/integration/admin/test_customer_data_deletion_postgres.py tests/unit/admin/test_customer_events.py tests/integration/admin/test_customer_events_postgres.py tests/e2e/admin/test_csrf_rbac_audit.py tests/unit/test_architecture_visual.py
 ```
 
 Expected: exit 0, zero failures.
 
-- [ ] **Step 2: Request independent review**
+- [x] **Step 2: Request independent review**
 
 Review exact range `e7c41e7..HEAD` for Critical/Important findings, focusing on PII exposure, RBAC order, audit fail-closed behavior, cursor stability, SQL projection overlap, raw JSON leakage and accidental YCLIENTS/provider calls. Fix every Critical/Important with a reproducing RED test and request re-review.
 
-- [ ] **Step 3: Run full fresh Docker gate**
+- [x] **Step 3: Run full fresh Docker gate**
 
 ```powershell
 Set-Location project
@@ -454,7 +454,7 @@ docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/doc
 
 Expected: exit 0, zero failures.
 
-- [ ] **Step 4: Run static and document gates**
+- [x] **Step 4: Run static and document gates**
 
 ```powershell
 git diff --check
@@ -464,11 +464,11 @@ docker compose --env-file ../.env run --build --rm --volume "${PWD}/../docs:/doc
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Close roadmap and changelog**
+- [x] **Step 5: Close roadmap and changelog**
 
 Mark only the phase-1 read-model item complete. Record exact focused/full counts, review verdict, final HEAD, no push/deploy/provider calls and explicit deferral of YCLIENTS reconciliation/mutations.
 
-- [ ] **Step 6: Commit closure and verify branch**
+- [x] **Step 6: Commit closure and verify branch**
 
 ```powershell
 git add "Дорожная карта.md" changelog.md docs/superpowers/plans/2026-08-14-admin-bookings-read-model.md
