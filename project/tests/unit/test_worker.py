@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -6,6 +7,8 @@ from uuid import uuid4
 
 import pytest
 
+from moroz.booking.projection import PROJECTION_SYNC_KIND
+from moroz.booking.yclients_records import YclientsProjectionError
 from moroz.common.queue import MAX_RETRIES, QueueTask
 from moroz.notifications.models import JobResult, SchedulerJob
 from worker import main as worker_main
@@ -241,10 +244,147 @@ async def test_message_task_handler_processes_scheduler_job():
         "booking_port": "booking-port",
         "outbox": "outbox",
         "lifecycle": lifecycle,
+        "projection_sync": None,
     }
 
 
-def test_lifecycle_service_is_disabled_when_required_config_is_empty(
+@pytest.mark.asyncio
+async def test_projection_scheduler_job_needs_only_repository_and_coordinator():
+    job_id = uuid4()
+    completed = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, requested):
+            assert requested == job_id
+            return SchedulerJob(
+                id=job_id, kind=PROJECTION_SYNC_KIND, run_at=None, payload={},
+                idempotency_key="projection:current", attempts=0,
+                booking_key=None, booking_starts_at=None,
+            )
+
+        async def complete(self, job, result):
+            completed.append((job.id, result))
+
+    class ProjectionSync:
+        def __init__(self):
+            self.jobs = []
+
+        async def run(self, job):
+            self.jobs.append(job)
+            return JobResult.skipped("projection_busy")
+
+    projection_sync = ProjectionSync()
+    handler = worker_main.MessageTaskHandler(
+        object(), object(), object(),
+        scheduler_repository=SchedulerRepository(), projection_sync=projection_sync,
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="scheduler_job", payload={"job_id": str(job_id)},
+            idempotency_key=f"scheduler_job:{job_id}",
+        )
+    )
+
+    assert projection_sync.jobs[0].id == job_id
+    assert completed == [(job_id, JobResult.skipped("projection_busy"))]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attempts", "terminal", "code", "persisted_code"),
+    [
+        (0, False, "yclients_http_status", "yclients_http_status"),
+        (MAX_RETRIES, True, "yclients_http_status", "yclients_http_status"),
+        (0, False, "private provider details", "YclientsProjectionError"),
+    ],
+)
+async def test_projection_failure_records_only_allowlisted_code(
+    attempts, terminal, code, persisted_code
+):
+    job_id = uuid4()
+    failures = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, _requested):
+            return SchedulerJob(
+                id=job_id, kind=PROJECTION_SYNC_KIND, run_at=None, payload={},
+                idempotency_key="projection:current", attempts=attempts,
+                booking_key=None, booking_starts_at=None,
+            )
+
+        async def record_failure(self, job, *, error_code, terminal):
+            failures.append((job.id, error_code, terminal))
+
+    class ProjectionSync:
+        async def run(self, _job):
+            raise YclientsProjectionError(code)
+
+    handler = worker_main.MessageTaskHandler(
+        object(), object(), object(),
+        scheduler_repository=SchedulerRepository(), projection_sync=ProjectionSync(),
+    )
+
+    with pytest.raises(YclientsProjectionError):
+        await handler.handle(
+            QueueTask(
+                kind="scheduler_job", payload={"job_id": str(job_id)},
+                idempotency_key=f"scheduler_job:{job_id}",
+            )
+        )
+
+    assert failures == [(job_id, persisted_code, terminal)]
+
+
+@pytest.mark.asyncio
+async def test_projection_scheduler_job_without_coordinator_fails_closed():
+    job_id = uuid4()
+    loaded = []
+    failures = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, requested):
+            loaded.append(requested)
+            return SchedulerJob(
+                id=job_id, kind=PROJECTION_SYNC_KIND, run_at=None, payload={},
+                idempotency_key="projection:current", attempts=0,
+                booking_key=None, booking_starts_at=None,
+            )
+
+        async def record_failure(self, job, *, error_code, terminal):
+            failures.append((job.id, error_code, terminal))
+
+    handler = worker_main.MessageTaskHandler(
+        object(), object(), object(), scheduler_repository=SchedulerRepository()
+    )
+
+    with pytest.raises(RuntimeError, match="projection sync is not configured"):
+        await handler.handle(
+            QueueTask(
+                kind="scheduler_job", payload={"job_id": str(job_id)},
+                idempotency_key=f"scheduler_job:{job_id}",
+            )
+        )
+
+    assert loaded == [job_id]
+    assert failures == [(job_id, "RuntimeError", False)]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_repository_is_checked_before_loading_a_job():
+    handler = worker_main.MessageTaskHandler(object(), object(), object())
+    job_id = uuid4()
+
+    with pytest.raises(RuntimeError, match="scheduler job dependencies are not configured"):
+        await handler.handle(
+            QueueTask(
+                kind="scheduler_job", payload={"job_id": str(job_id)},
+                idempotency_key=f"scheduler_job:{job_id}",
+            )
+        )
+
+
+def test_yclients_services_are_disabled_when_required_config_is_empty(
     monkeypatch,
 ):
     for name in (
@@ -254,7 +394,7 @@ def test_lifecycle_service_is_disabled_when_required_config_is_empty(
     ):
         monkeypatch.setenv(name, "")
 
-    assert worker_main._build_lifecycle_service(object()) is None
+    assert worker_main._build_yclients_services(object()) == (None, None)
 
 
 @pytest.mark.parametrize(
@@ -269,7 +409,7 @@ def test_lifecycle_service_is_disabled_when_required_config_is_empty(
         },
     ],
 )
-def test_lifecycle_service_rejects_partial_required_config(
+def test_yclients_services_reject_partial_required_config(
     monkeypatch,
     configured,
 ):
@@ -284,12 +424,19 @@ def test_lifecycle_service_rejects_partial_required_config(
         ValueError,
         match="YCLIENTS lifecycle configuration is incomplete",
     ):
-        worker_main._build_lifecycle_service(object())
+        worker_main._build_yclients_services(object())
 
 
-def test_lifecycle_service_builds_one_real_adapter_graph(monkeypatch):
+def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     database = object()
     built = []
+    config = object()
+
+    class Config:
+        @classmethod
+        def from_env(cls, _env):
+            built.append(("config",))
+            return config
 
     class Adapter:
         def __init__(self, config):
@@ -305,17 +452,108 @@ def test_lifecycle_service_builds_one_real_adapter_graph(monkeypatch):
             assert received_database is database
             built.append(("lifecycle", adapter, feedback))
 
+    class RecordsReader:
+        def __init__(self, received_config):
+            assert received_config is config
+            built.append(("reader", received_config))
+
+    class ProjectionRepository:
+        def __init__(self, received_database):
+            assert received_database is database
+            built.append(("projection_repository", received_database))
+
+    class SchedulerRepository:
+        def __init__(self, received_database):
+            assert received_database is database
+            built.append(("scheduler_repository", received_database))
+
+    class ProjectionSync:
+        def __init__(self, repository, reader, scheduler, *, clock):
+            assert callable(clock)
+            built.append(("projection_sync", repository, reader, scheduler))
+
     monkeypatch.setenv("YCLIENTS_PARTNER_TOKEN", "partner")
     monkeypatch.setenv("YCLIENTS_USER_TOKEN", "user")
     monkeypatch.setenv("YCLIENTS_COMPANY_ID", "17")
     monkeypatch.setattr(worker_main, "YclientsAdapter", Adapter)
+    monkeypatch.setattr(worker_main, "YclientsConfig", Config)
     monkeypatch.setattr(worker_main, "FeedbackService", Feedback)
     monkeypatch.setattr(worker_main, "LifecycleService", Lifecycle)
+    monkeypatch.setattr(worker_main, "YclientsRecordsReader", RecordsReader)
+    monkeypatch.setattr(worker_main, "ProjectionRepository", ProjectionRepository)
+    monkeypatch.setattr(worker_main, "SchedulerJobRepository", SchedulerRepository)
+    monkeypatch.setattr(worker_main, "ProjectionSyncCoordinator", ProjectionSync)
 
-    service = worker_main._build_lifecycle_service(database)
+    lifecycle, projection_sync = worker_main._build_yclients_services(database)
 
-    assert isinstance(service, Lifecycle)
-    assert [entry[0] for entry in built] == ["adapter", "feedback", "lifecycle"]
+    assert isinstance(lifecycle, Lifecycle)
+    assert isinstance(projection_sync, ProjectionSync)
+    assert [entry[0] for entry in built] == [
+        "config", "adapter", "feedback", "lifecycle", "reader",
+        "projection_repository", "scheduler_repository", "projection_sync",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_configured_worker_ensures_current_projection_before_queue_consume(
+    monkeypatch,
+):
+    events = []
+
+    class RuntimeDatabase:
+        async def connect(self):
+            events.append("database_connect")
+
+        async def close(self):
+            events.append("database_close")
+
+    class RuntimeRedis:
+        async def aclose(self):
+            events.append("redis_close")
+
+    class RuntimeQueue:
+        async def connect(self):
+            events.append("queue_connect")
+
+        async def close(self):
+            events.append("queue_close")
+
+    class RuntimeSession:
+        async def close(self):
+            events.append("telegram_close")
+
+    class RuntimeRepository:
+        async def reconcile_stale_outbound_deliveries(self):
+            return 0
+
+    class ProjectionSync:
+        async def ensure_current(self, now):
+            assert isinstance(now, datetime)
+            assert now.tzinfo is UTC
+            events.append("ensure_current")
+
+    async def supervise(*_args, **_kwargs):
+        events.append("supervise")
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("REDIS_URL", "redis://unused")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:test-token")
+    monkeypatch.setenv("RABBITMQ_URL", "amqp://unused")
+    monkeypatch.setattr(worker_main, "Database", lambda *args, **kwargs: RuntimeDatabase())
+    monkeypatch.setattr(worker_main.redis, "from_url", lambda *args, **kwargs: RuntimeRedis())
+    monkeypatch.setattr(worker_main, "RabbitQueue", lambda *args, **kwargs: RuntimeQueue())
+    monkeypatch.setattr(worker_main, "Bot", lambda *args, **kwargs: SimpleNamespace(session=RuntimeSession()))
+    monkeypatch.setattr(worker_main, "MessageRepository", lambda *args, **kwargs: RuntimeRepository())
+    monkeypatch.setattr(worker_main, "_acquire_worker_lock", lambda _database: _fake_lock())
+    monkeypatch.setattr(worker_main, "_release_worker_lock", lambda _lock: _fake_close())
+    monkeypatch.setattr(worker_main, "_build_yclients_services", lambda _database: (None, ProjectionSync()))
+    monkeypatch.setattr(worker_main, "init_llm", lambda: None)
+    monkeypatch.setattr(worker_main, "_supervise", supervise)
+
+    await worker_main.run()
+
+    assert events.count("ensure_current") == 1
+    assert events.index("database_connect") < events.index("ensure_current") < events.index("queue_connect")
 
 
 @pytest.mark.asyncio

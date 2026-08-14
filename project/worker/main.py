@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -12,8 +13,14 @@ from redis.exceptions import RedisError
 
 from config import CONTEXT_MESSAGES_LIMIT
 from llm import generate_response, init_llm, prompt_reload_listener
+from moroz.booking.projection import (
+    PROJECTION_SYNC_KIND,
+    ProjectionRepository,
+    ProjectionSyncCoordinator,
+)
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_http import YclientsConfig
+from moroz.booking.yclients_records import YclientsProjectionError, YclientsRecordsReader
 from moroz.common.alerts import AlertRouter
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
@@ -40,6 +47,15 @@ PUMP_INTERVAL_SECONDS = 0.5
 REDIS_RETRY_INTERVAL_SECONDS = 5.0
 SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS = 24.0
 WORKER_LOCK_NAME = "moroz:worker:singleton"
+YCLIENTS_PROJECTION_ERROR_CODES = frozenset(
+    {
+        "yclients_transport",
+        "yclients_http_status",
+        "yclients_response_shape",
+        "yclients_page_bound",
+        "yclients_projection_write",
+    }
+)
 
 
 async def handle(task: QueueTask) -> None:
@@ -93,6 +109,7 @@ class MessageTaskHandler:
         booking_port=None,
         notification_outbox=None,
         lifecycle=None,
+        projection_sync=None,
         scheduler_handler=handle_scheduler_job,
     ):
         self._database = database
@@ -103,6 +120,7 @@ class MessageTaskHandler:
         self._booking_port = booking_port
         self._notification_outbox = notification_outbox
         self._lifecycle = lifecycle
+        self._projection_sync = projection_sync
         self._scheduler_handler = scheduler_handler
 
     async def handle(self, task: QueueTask) -> None:
@@ -128,15 +146,31 @@ class MessageTaskHandler:
         job_id = UUID(raw_job_id)
         if task.idempotency_key != f"scheduler_job:{job_id}":
             raise ValueError("scheduler_job idempotency key does not match job_id")
-        if (
-            self._scheduler_repository is None
-            or self._booking_port is None
-            or self._notification_outbox is None
-        ):
+        if self._scheduler_repository is None:
             raise RuntimeError("scheduler job dependencies are not configured")
         job = await self._scheduler_repository.get_claimed(job_id)
         if job is None:
             return
+        if job.kind == PROJECTION_SYNC_KIND:
+            try:
+                result = await self._scheduler_handler(
+                    job,
+                    booking_port=self._booking_port,
+                    outbox=self._notification_outbox,
+                    lifecycle=self._lifecycle,
+                    projection_sync=self._projection_sync,
+                )
+            except Exception as error:
+                await self._scheduler_repository.record_failure(
+                    job,
+                    error_code=_scheduler_error_code(error),
+                    terminal=job.attempts >= MAX_RETRIES,
+                )
+                raise
+            await self._scheduler_repository.complete(job, result)
+            return
+        if self._booking_port is None or self._notification_outbox is None:
+            raise RuntimeError("scheduler job dependencies are not configured")
         customer_id = job.payload.get("customer_id")
         if (
             not isinstance(customer_id, str)
@@ -157,11 +191,12 @@ class MessageTaskHandler:
                     booking_port=self._booking_port,
                     outbox=self._notification_outbox,
                     lifecycle=self._lifecycle,
+                    projection_sync=self._projection_sync,
                 )
             except Exception as error:
                 await self._scheduler_repository.record_failure(
                     job,
-                    error_code=type(error).__name__,
+                    error_code=_scheduler_error_code(error),
                     terminal=job.attempts >= MAX_RETRIES,
                 )
                 raise
@@ -192,11 +227,12 @@ class MessageTaskHandler:
                         booking_port=self._booking_port,
                         outbox=self._notification_outbox,
                         lifecycle=self._lifecycle,
+                        projection_sync=self._projection_sync,
                     )
                 except Exception as error:
                     await self._scheduler_repository.record_failure(
                         job,
-                        error_code=type(error).__name__,
+                        error_code=_scheduler_error_code(error),
                         terminal=job.attempts >= MAX_RETRIES,
                     )
                     raise
@@ -674,7 +710,18 @@ async def _supervise(
         _raise_after_cleanup(primary_error, cleanup_results)
 
 
-def _build_lifecycle_service(database: Database):
+def _scheduler_error_code(error: Exception) -> str:
+    if (
+        isinstance(error, YclientsProjectionError)
+        and error.code in YCLIENTS_PROJECTION_ERROR_CODES
+    ):
+        return error.code
+    return type(error).__name__
+
+
+def _build_yclients_services(
+    database: Database,
+) -> tuple[LifecycleService | None, ProjectionSyncCoordinator | None]:
     required = (
         "YCLIENTS_PARTNER_TOKEN",
         "YCLIENTS_USER_TOKEN",
@@ -682,15 +729,23 @@ def _build_lifecycle_service(database: Database):
     )
     present = tuple(bool(os.environ.get(name, "").strip()) for name in required)
     if not any(present):
-        return None
+        return None, None
     if not all(present):
         raise ValueError("YCLIENTS lifecycle configuration is incomplete")
     config = YclientsConfig.from_env(os.environ)
-    return LifecycleService(
+    lifecycle = LifecycleService(
         database,
         YclientsAdapter(config),
         FeedbackService(database),
     )
+    reader = YclientsRecordsReader(config)
+    coordinator = ProjectionSyncCoordinator(
+        ProjectionRepository(database),
+        reader,
+        SchedulerJobRepository(database),
+        clock=lambda: datetime.now(UTC),
+    )
+    return lifecycle, coordinator
 
 
 async def run() -> None:
@@ -715,7 +770,9 @@ async def run() -> None:
     try:
         await database.connect()
         worker_lock = await _acquire_worker_lock(database)
-        lifecycle = _build_lifecycle_service(database)
+        lifecycle, projection_sync = _build_yclients_services(database)
+        if projection_sync is not None:
+            await projection_sync.ensure_current(datetime.now(UTC))
         repository = MessageRepository(database)
         reconciled = await repository.reconcile_stale_outbound_deliveries()
         if reconciled:
@@ -735,6 +792,7 @@ async def run() -> None:
                 staff_chat_id=os.environ.get("STAFF_TELEGRAM_CHAT_ID", ""),
             ),
             lifecycle=lifecycle,
+            projection_sync=projection_sync,
         )
         alert_router = _build_alert_router(redis_client, telegram)
 

@@ -1,3 +1,4 @@
+from moroz.booking.projection import PROJECTION_SYNC_KIND
 from moroz.notifications.models import JobResult, SchedulerJob
 
 
@@ -17,7 +18,12 @@ async def handle_scheduler_job(
     booking_port,
     outbox,
     lifecycle=None,
+    projection_sync=None,
 ) -> JobResult:
+    if job.kind == PROJECTION_SYNC_KIND:
+        if projection_sync is None:
+            raise RuntimeError("projection sync is not configured")
+        return await projection_sync.run(job)
     if job.kind == "feedback_request":
         customer_id = job.payload.get("customer_id")
         if not isinstance(customer_id, str) or job.booking_key is None:

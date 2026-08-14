@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from moroz.booking.projection import PROJECTION_SYNC_KIND
 from moroz.notifications.handlers import handle_scheduler_job
 from moroz.notifications.models import JobResult, SchedulerJob
 
@@ -92,6 +93,40 @@ def scheduler_job(kind, booking, *, index=None):
         booking_key=booking.booking_key,
         booking_starts_at=booking.starts_at,
     )
+
+
+async def test_projection_job_runs_before_booking_lookup():
+    booking = Booking()
+    calls = []
+
+    class ProjectionSync:
+        async def run(self, job):
+            calls.append(job)
+            return JobResult.sent()
+
+    class BookingPort:
+        async def get_booking(self, _booking_key):
+            raise AssertionError("projection jobs must not load bookings")
+
+    job = scheduler_job(PROJECTION_SYNC_KIND, booking)
+    result = await handle_scheduler_job(
+        job,
+        booking_port=BookingPort(),
+        outbox=None,
+        projection_sync=ProjectionSync(),
+    )
+
+    assert result == JobResult.sent()
+    assert calls == [job]
+
+
+async def test_projection_job_without_coordinator_fails_closed():
+    with pytest.raises(RuntimeError, match="projection sync is not configured"):
+        await handle_scheduler_job(
+            scheduler_job(PROJECTION_SYNC_KIND, Booking()),
+            booking_port=None,
+            outbox=None,
+        )
 
 
 async def test_normal_reminder_sends_one_customer_message():
