@@ -83,11 +83,27 @@ async def test_replace_is_atomic_and_persists_only_allowlisted_projection(databa
     repository = ProjectionRepository(database)
     first = snapshot(suffix="first")
     second = snapshot(suffix="second", offset=1)
+    first_record = first.records[0]
+    expected_first = [
+        (
+            first_record.external_id,
+            first_record.booking_key,
+            first_record.bot_marker_state,
+            first_record.starts_at,
+            first_record.scheduled_end_at,
+            first_record.status,
+            first_record.deleted,
+            first_record.client_name,
+            first_record.staff_name,
+            list(first_record.service_names),
+            first.synced_at,
+        )
+    ]
 
     async with repository.serialized() as connection:
         assert connection is not None
         await repository.replace(connection, first)
-    expected_first = await projection_rows(database)
+    assert await projection_rows(database) == expected_first
 
     await install_rejecting_trigger(database)
     with pytest.raises(YclientsProjectionError, match="^yclients_projection_write$"):
@@ -114,6 +130,19 @@ async def test_serialized_uses_a_session_advisory_lock(database):
         assert locked_connection is not None
         async with second.serialized() as blocked_connection:
             assert blocked_connection is None
+
+    async with second.serialized() as released_connection:
+        assert released_connection is not None
+
+
+async def test_serialized_releases_lock_when_body_raises(database):
+    first = ProjectionRepository(database)
+    second = ProjectionRepository(database)
+
+    with pytest.raises(RuntimeError, match="^sentinel$"):
+        async with first.serialized() as locked_connection:
+            assert locked_connection is not None
+            raise RuntimeError("sentinel")
 
     async with second.serialized() as released_connection:
         assert released_connection is not None
