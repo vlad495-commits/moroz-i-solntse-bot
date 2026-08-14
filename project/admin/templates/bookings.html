@@ -12,12 +12,33 @@
 
     <nav class="review-tabs" aria-label="Представление записей">
         {% for key, label in [('upcoming', 'Ближайшие'), ('attention', 'Требуют внимания'), ('history', 'История')] %}
-        <a class="review-tab {% if view == key %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/bookings/?view={{ key }}{% if status %}&amp;status={{ status }}{% endif %}">{{ label }}</a>
+        <a class="review-tab {% if view == key %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/bookings/?view={{ key }}{% if status %}&amp;status={{ status }}{% endif %}&amp;source={{ source }}&amp;reconciliation={{ reconciliation }}">{{ label }}</a>
         {% endfor %}
     </nav>
 
+    {% set freshness = page.get("freshness", {}) %}
+    <aside class="booking-freshness {% if freshness.get('stale') %}booking-freshness-stale{% endif %}">
+        <strong>Последняя синхронизация:</strong>
+        {% if freshness.get("last_success_at") %}{{ freshness["last_success_at"] }}{% else %}ещё не выполнялась{% endif %}
+        {% if freshness.get("stale") %}<p>Данные YCLIENTS могут быть устаревшими</p>{% endif %}
+    </aside>
+
     <form class="logs-filters" method="get">
         <input type="hidden" name="view" value="{{ view }}">
+        <label>Источник
+            <select name="source">
+                {% for key, label in [('all', 'Все источники'), ('bot', 'Создано ботом'), ('other', 'Другой канал')] %}
+                <option value="{{ key }}" {% if source == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Сверка
+            <select name="reconciliation">
+                {% for key, label in [('all', 'Все записи'), ('mismatch', 'Есть расхождение')] %}
+                <option value="{{ key }}" {% if reconciliation == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
         <label>Статус
             <select name="status">
                 <option value="">Все статусы</option>
@@ -35,12 +56,21 @@
         <article class="booking-card">
             <div class="row-between">
                 <div>
-                    <strong><a href="{{ request.scope.get('root_path', '') }}/bookings/{{ booking.id }}">{{ booking.starts_at }}</a></strong>
+                    <strong>{% if booking.detail_id is not none %}<a href="{{ request.scope.get('root_path', '') }}/bookings/{{ booking.detail_id }}">{{ booking.starts_at }}</a>{% else %}{{ booking.starts_at }}{% endif %}</strong>
                     <p class="muted">Обновлено локально: {{ booking.updated_at }}</p>
                 </div>
-                <span class="chip">{{ booking.status_label }}</span>
+                <div class="booking-badges">
+                    <span class="chip">{{ booking.status_label }}</span>
+                    <span class="booking-badge booking-badge-source">{{ booking.source_label }}</span>
+                    <span class="booking-badge {% if booking.reconciliation_state != 'in_sync' %}booking-badge-mismatch{% endif %}">{{ booking.reconciliation_label }}</span>
+                </div>
             </div>
-            <p>{{ booking.scenario_label }} · {{ booking.phase_label }}</p>
+            {% if booking.scenario_label or booking.phase_label %}<p>{{ booking.scenario_label or "—" }} · {{ booking.phase_label or "—" }}</p>{% endif %}
+            <dl class="booking-details">
+                <div><dt>Клиент</dt><dd>{% if booking.customer_chat_id is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ booking.customer_chat_id }}">{{ booking.client_name or booking.customer_label }}</a>{% else %}{{ booking.client_name or booking.customer_label }}{% endif %}</dd></div>
+                <div><dt>Сотрудник</dt><dd>{{ booking.staff_name or "—" }}</dd></div>
+                <div><dt>Услуги</dt><dd>{% if booking.service_names %}{{ booking.service_names|join(", ") }}{% else %}—{% endif %}</dd></div>
+            </dl>
             {% if booking.customer_chat_id is not none %}<a class="back" href="{{ request.scope.get('root_path', '') }}/chats/{{ booking.customer_chat_id }}">Открыть диалог клиента</a>{% else %}<span class="muted">{{ booking.customer_label }}</span>{% endif %}
             {% if booking.error_label %}<p class="failed">{{ booking.error_label }}</p>{% endif %}
         </article>
@@ -51,7 +81,7 @@
     {% endif %}
 
     {% if page["has_more"] and page["next_cursor"] %}
-    <p class="bookings-pagination"><a class="btn" href="{{ request.scope.get('root_path', '') }}/bookings/?view={{ view }}{% if status %}&amp;status={{ status }}{% endif %}&amp;cursor={{ page['next_cursor']|urlencode }}">Дальше</a></p>
+    <p class="bookings-pagination"><a class="btn" href="{{ request.scope.get('root_path', '') }}/bookings/?view={{ view }}{% if status %}&amp;status={{ status }}{% endif %}&amp;source={{ source }}&amp;reconciliation={{ reconciliation }}&amp;cursor={{ page['next_cursor']|urlencode }}">Дальше</a></p>
     {% endif %}
 </section>
 {% endblock %}

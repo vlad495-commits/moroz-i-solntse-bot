@@ -27,16 +27,23 @@ async def booking_list(
     request: Request,
     view: str = "upcoming",
     status: str | None = None,
+    source: str = "all",
+    reconciliation: str = "all",
     cursor: str | None = None,
 ):
     user = await get_current_user(request)
     require_role(user, STAFF_ROLES)
     status = status or None
     try:
-        validate_booking_filters(view, status)
+        validate_booking_filters(view, status, source, reconciliation)
         decode_booking_cursor(cursor)
         page = await list_bookings(
-            database.get_database(), view=view, status=status, cursor=cursor
+            database.get_database(),
+            view=view,
+            status=status,
+            source=source,
+            reconciliation=reconciliation,
+            cursor=cursor,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -46,7 +53,14 @@ async def booking_list(
     return templates.TemplateResponse(
         request,
         "bookings.html",
-        {"user": user, "page": page, "view": view, "status": status},
+        {
+            "user": user,
+            "page": page,
+            "view": view,
+            "status": status,
+            "source": source,
+            "reconciliation": reconciliation,
+        },
     )
 
 
