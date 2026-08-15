@@ -8,6 +8,8 @@ from uuid import uuid4
 import pytest
 
 from moroz.booking.projection import PROJECTION_SYNC_KIND
+from moroz.booking.catalog import CATALOG_SYNC_KIND
+from moroz.booking.yclients_catalog import YclientsCatalogError
 from moroz.booking.yclients_records import YclientsProjectionError
 from moroz.common.queue import MAX_RETRIES, QueueTask
 from moroz.notifications.models import JobResult, SchedulerJob
@@ -245,6 +247,7 @@ async def test_message_task_handler_processes_scheduler_job():
         "outbox": "outbox",
         "lifecycle": lifecycle,
         "projection_sync": None,
+        "catalog_sync": None,
     }
 
 
@@ -394,7 +397,9 @@ def test_yclients_services_are_disabled_when_required_config_is_empty(
     ):
         monkeypatch.setenv(name, "")
 
-    assert worker_main._build_yclients_services(object()) == (None, None)
+    assert worker_main._build_yclients_services(object()) == (
+        None, None, None, None,
+    )
 
 
 @pytest.mark.parametrize(
@@ -472,6 +477,21 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
             assert callable(clock)
             built.append(("projection_sync", repository, reader, scheduler))
 
+    class CatalogReader:
+        def __init__(self, received_config):
+            assert received_config is config
+            built.append(("catalog_reader", received_config))
+
+    class CatalogRepository:
+        def __init__(self, received_database):
+            assert received_database is database
+            built.append(("catalog_repository", received_database))
+
+    class CatalogSync:
+        def __init__(self, repository, reader, scheduler, *, clock):
+            assert callable(clock)
+            built.append(("catalog_sync", repository, reader, scheduler))
+
     monkeypatch.setenv("YCLIENTS_PARTNER_TOKEN", "partner")
     monkeypatch.setenv("YCLIENTS_USER_TOKEN", "user")
     monkeypatch.setenv("YCLIENTS_COMPANY_ID", "17")
@@ -483,14 +503,23 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     monkeypatch.setattr(worker_main, "ProjectionRepository", ProjectionRepository)
     monkeypatch.setattr(worker_main, "SchedulerJobRepository", SchedulerRepository)
     monkeypatch.setattr(worker_main, "ProjectionSyncCoordinator", ProjectionSync)
+    monkeypatch.setattr(worker_main, "YclientsCatalogReader", CatalogReader)
+    monkeypatch.setattr(worker_main, "CatalogRepository", CatalogRepository)
+    monkeypatch.setattr(worker_main, "CatalogSyncCoordinator", CatalogSync)
 
-    lifecycle, projection_sync = worker_main._build_yclients_services(database)
+    lifecycle, projection_sync, catalog_sync, catalog_repository = (
+        worker_main._build_yclients_services(database)
+    )
 
     assert isinstance(lifecycle, Lifecycle)
     assert isinstance(projection_sync, ProjectionSync)
+    assert isinstance(catalog_sync, CatalogSync)
+    assert isinstance(catalog_repository, CatalogRepository)
     assert [entry[0] for entry in built] == [
         "config", "adapter", "feedback", "lifecycle", "reader",
         "projection_repository", "scheduler_repository", "projection_sync",
+        "catalog_reader", "catalog_repository", "scheduler_repository",
+        "catalog_sync",
     ]
 
 
@@ -532,6 +561,12 @@ async def test_configured_worker_ensures_current_projection_before_queue_consume
             assert now.tzinfo is UTC
             events.append("ensure_current")
 
+    class CatalogSync:
+        async def ensure_current(self, now):
+            assert isinstance(now, datetime)
+            assert now.tzinfo is UTC
+            events.append("catalog_ensure_current")
+
     async def supervise(*_args, **_kwargs):
         events.append("supervise")
 
@@ -546,14 +581,53 @@ async def test_configured_worker_ensures_current_projection_before_queue_consume
     monkeypatch.setattr(worker_main, "MessageRepository", lambda *args, **kwargs: RuntimeRepository())
     monkeypatch.setattr(worker_main, "_acquire_worker_lock", lambda _database: _fake_lock())
     monkeypatch.setattr(worker_main, "_release_worker_lock", lambda _lock: _fake_close())
-    monkeypatch.setattr(worker_main, "_build_yclients_services", lambda _database: (None, ProjectionSync()))
+    monkeypatch.setattr(
+        worker_main,
+        "_build_yclients_services",
+        lambda _database: (None, ProjectionSync(), CatalogSync(), object()),
+    )
     monkeypatch.setattr(worker_main, "init_llm", lambda: None)
     monkeypatch.setattr(worker_main, "_supervise", supervise)
 
     await worker_main.run()
 
     assert events.count("ensure_current") == 1
+    assert events.count("catalog_ensure_current") == 1
     assert events.index("database_connect") < events.index("ensure_current") < events.index("queue_connect")
+
+
+@pytest.mark.asyncio
+async def test_catalog_scheduler_failure_records_only_allowlisted_code():
+    job_id = uuid4()
+    failures = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, _requested):
+            return SchedulerJob(
+                id=job_id, kind=CATALOG_SYNC_KIND, run_at=None, payload={},
+                idempotency_key="catalog:current", attempts=0,
+                booking_key=None, booking_starts_at=None,
+            )
+
+        async def record_failure(self, job, *, error_code, terminal):
+            failures.append((job.id, error_code, terminal))
+
+    class CatalogSync:
+        async def run(self, _job):
+            raise YclientsCatalogError("private provider body")
+
+    handler = worker_main.MessageTaskHandler(
+        object(), object(), object(),
+        scheduler_repository=SchedulerRepository(), catalog_sync=CatalogSync(),
+    )
+
+    with pytest.raises(YclientsCatalogError):
+        await handler.handle(QueueTask(
+            kind="scheduler_job", payload={"job_id": str(job_id)},
+            idempotency_key=f"scheduler_job:{job_id}",
+        ))
+
+    assert failures == [(job_id, "YclientsCatalogError", False)]
 
 
 @pytest.mark.asyncio

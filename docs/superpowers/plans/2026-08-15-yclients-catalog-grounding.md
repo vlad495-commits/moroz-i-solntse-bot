@@ -326,11 +326,11 @@ Commit message: `feat: отвечать по каталогу с проверк�
 - `_build_yclients_services` returns lifecycle, booking projection sync and catalog sync/repository graph without new credentials.
 - `MessageTaskHandler` receives `catalog_repository`; `_process_message` calls `ground(connection, persisted_text, datetime.now(UTC))` and passes result as keyword-only `catalog` to the existing LLM callable.
 
-- [ ] **Step 1: Write worker wiring RED tests**
+- [x] **Step 1: Write worker wiring RED tests**
 
 Prove complete/empty/partial YCLIENTS config behavior, one shared `YclientsConfig`, catalog `ensure_current` at startup, catalog scheduler dispatch/failure allowlist and no new Compose environment/service/queue.
 
-- [ ] **Step 2: Write message-flow RED tests**
+- [x] **Step 2: Write message-flow RED tests**
 
 Using real PostgreSQL message transaction and fake LLM/sender, prove:
 
@@ -341,25 +341,25 @@ Using real PostgreSQL message transaction and fake LLM/sender, prove:
 - forced outbox/history failure rolls back all message effects;
 - stale catalog prevents old prompt/history price from being emitted.
 
-- [ ] **Step 3: Write prompt cutover RED test**
+- [x] **Step 3: Write prompt cutover RED test**
 
 Assert the authoritative prompt section contains no currency amount pattern (`руб`, `₽`, numeric price phrases) and includes the rule to use only catalog data for price/duration/staff. Update eval fixtures to expect safe clarification/fallback when no catalog is supplied instead of legacy numeric prices.
 
-- [ ] **Step 4: Run Docker RED**
+- [x] **Step 4: Run Docker RED**
 
 Expected: missing worker graph/grounding argument and legacy prompt prices.
 
-- [ ] **Step 5: Implement minimal runtime wiring**
+- [x] **Step 5: Implement minimal runtime wiring**
 
 Build catalog reader/repository/coordinator beside existing booking projection using the same config and scheduler repository. Extend only the `CATALOG_SYNC_KIND` scheduler branch and error allowlist. Keep other booking/lifecycle paths unchanged.
 
 Remove numeric pricing/course/deposit examples from the system prompt, preserving non-price service explanations and explicitly routing unsupported financial entities to administrator clarification.
 
-- [ ] **Step 6: Run focused Docker GREEN**
+- [x] **Step 6: Run focused Docker GREEN**
 
 Run worker, notifications, message delivery, catalog flow, prompt/admin prompt tests, eval schema tests, security, booking projection and migration selections.
 
-- [ ] **Step 7: Changelog, diff-check and commit**
+- [x] **Step 7: Changelog, diff-check and commit**
 
 Commit message: `feat: подключить каталог к сообщениям бота`.
 
