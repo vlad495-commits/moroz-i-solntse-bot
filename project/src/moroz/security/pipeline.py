@@ -11,7 +11,12 @@ from moroz.security.llm_gateway import (
     NonRetryableLLMError,
 )
 from moroz.security.pii import PiiSession, UnknownPlaceholder
-from moroz.security.validator import StructuredFacts, validate_output
+from moroz.security.validator import (
+    StructuredFacts,
+    extract_structured_facts,
+    merge_structured_facts,
+    validate_output,
+)
 
 
 INPUT_BLOCK_REPLY = "Не могу обработать этот запрос. Переформулируйте, пожалуйста."
@@ -66,6 +71,7 @@ class SecurityPipeline:
         context: list[dict[str, str]],
         *,
         recent_message_count: int = 1,
+        catalog=None,
     ) -> LLMResponse:
         decision = check_input(
             user_message,
@@ -122,8 +128,37 @@ class SecurityPipeline:
             f"ROUTE intents={','.join(route.intents)}; "
             f"requires_clarification={int(route.requires_clarification)}"
         )
+        active_facts = self.facts
+        catalog_block = ""
+        if catalog is not None and "faq" in route.intents:
+            catalog_block = catalog.data_block()
+            extracted = extract_structured_facts(catalog_block)
+            catalog_facts = StructuredFacts(
+                prices=extracted.prices,
+                public_contacts=frozenset(),
+                slots=frozenset(),
+                public_pii=catalog.public_display_values(),
+            )
+            active_facts = merge_structured_facts(self.facts, catalog_facts)
+            direct_reply = (
+                catalog.direct_reply if route.intents == ("faq",) else None
+            )
+            if direct_reply is not None:
+                verdict = validate_output(
+                    direct_reply,
+                    active_facts,
+                    masked_current.placeholders,
+                    forbidden_raw=forbidden_raw,
+                )
+                return _aggregate(
+                    accumulated,
+                    direct_reply if verdict.ok else SAFE_OUTPUT_FALLBACK,
+                    "catalog-local" if verdict.ok else "security-fallback",
+                )
         owned_system = "\n\n".join(
-            part for part in (self.system_prompt, route_metadata) if part
+            part
+            for part in (self.system_prompt, route_metadata, catalog_block)
+            if part
         )
         base_messages = (
             {"role": "system", "content": owned_system},
@@ -158,7 +193,7 @@ class SecurityPipeline:
             accumulated.append(answer)
             verdict = validate_output(
                 answer.text,
-                self.facts,
+                active_facts,
                 masked_current.placeholders,
                 forbidden_raw=forbidden_raw,
             )

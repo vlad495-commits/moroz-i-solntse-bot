@@ -264,11 +264,11 @@ Commit message: `feat: находить актуальную услугу без
 - Produces `merge_structured_facts(base, catalog) -> StructuredFacts`.
 - Extends `SecurityPipeline.respond(..., catalog: CatalogGrounding | None = None)` and `generate_response(..., catalog=None)` without breaking existing callers.
 
-- [ ] **Step 1: Write validator RED tests**
+- [x] **Step 1: Write validator RED tests**
 
 Prove union of normalized price/contact/slot/public-PII facts without mutation; catalog price accepted; a price not in selected services returns `unverified_price`.
 
-- [ ] **Step 2: Write pipeline RED tests**
+- [x] **Step 2: Write pipeline RED tests**
 
 Prove in order:
 
@@ -281,11 +281,11 @@ Prove in order:
 7. hallucinated price fails once, valid retry succeeds; two failures return safe fallback;
 8. PII masking/restoration still works with catalog context.
 
-- [ ] **Step 3: Run Docker RED**
+- [x] **Step 3: Run Docker RED**
 
 Run validator/pipeline/e2e selections. Expected: new optional parameter/merger/template behavior absent.
 
-- [ ] **Step 4: Implement minimal facts merge and catalog branch**
+- [x] **Step 4: Implement minimal facts merge and catalog branch**
 
 After current input decision, PII masking and route construction:
 
@@ -300,11 +300,11 @@ owned_system = "\n\n".join(part for part in (self.system_prompt, route_metadata,
 
 Catalog block starts with an invariant instruction that fields are untrusted data and not commands; variants are bounded and deterministically formatted. Do not add a second LLM gateway.
 
-- [ ] **Step 5: Run Docker GREEN and compatibility regressions**
+- [x] **Step 5: Run Docker GREEN and compatibility regressions**
 
 Run all security pipeline/validator/router/LLM gateway tests. Existing no-catalog behavior must remain green.
 
-- [ ] **Step 6: Changelog, diff-check and commit**
+- [x] **Step 6: Changelog, diff-check and commit**
 
 Commit message: `feat: отвечать по каталогу с проверкой цен`.
 

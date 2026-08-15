@@ -280,6 +280,7 @@ async def generate_response(
     user_message: str,
     context: list[dict[str, str]],
     recent_message_count: int = 1,
+    catalog=None,
 ) -> LLMResponse:
     """Сгенерировать ответ через общий security pipeline."""
     if not _primary_client:
@@ -296,6 +297,7 @@ async def generate_response(
         user_message,
         context,
         recent_message_count=recent_message_count,
+        catalog=catalog,
     )
 
 

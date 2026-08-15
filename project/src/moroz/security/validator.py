@@ -14,9 +14,10 @@ _PLACEHOLDER_RESIDUAL_RE = re.compile(
     r"<\s*PII(?:[_\s-][^\s<>]*)?",
     re.IGNORECASE,
 )
+_PRICE_VALUE_PATTERN = r"\d+(?:[ \u00a0]\d{3})*(?:[.,]\d{1,2})?"
 _PRICE_RE = re.compile(
-    r"(?<!\d)(?P<values>\d+(?:[ \u00a0]\d{3})*"
-    r"(?:\s*/\s*\d+(?:[ \u00a0]\d{3})*)*)"
+    rf"(?<!\d)(?P<values>{_PRICE_VALUE_PATTERN}"
+    rf"(?:\s*/\s*{_PRICE_VALUE_PATTERN})*)"
     r"\s*(?:руб(?:\.|лей?)?|₽)",
     re.IGNORECASE,
 )
@@ -206,15 +207,20 @@ _MEDICAL_GUARANTEE_RULES = (
 
 
 def _normalize_price(value: str) -> str:
-    match = re.search(r"\d+(?:[ \u00a0]\d{3})*", value)
-    return "" if match is None else re.sub(r"\D", "", match.group(0))
+    match = re.search(_PRICE_VALUE_PATTERN, value)
+    if match is None:
+        return ""
+    normalized = re.sub(r"[ \u00a0]", "", match.group(0)).replace(",", ".")
+    whole, separator, fraction = normalized.partition(".")
+    fraction = fraction.rstrip("0")
+    return whole if not separator or not fraction else f"{whole}.{fraction}"
 
 
 def _prices(text: str) -> frozenset[str]:
     return frozenset(
-        re.sub(r"\D", "", value)
+        _normalize_price(value)
         for match in _PRICE_RE.finditer(text)
-        for value in re.findall(r"\d+(?:[ \u00a0]\d{3})*", match["values"])
+        for value in re.findall(_PRICE_VALUE_PATTERN, match["values"])
     )
 
 
@@ -340,6 +346,18 @@ class StructuredFacts:
                 if value.strip()
             ),
         )
+
+
+def merge_structured_facts(
+    base: StructuredFacts,
+    extra: StructuredFacts,
+) -> StructuredFacts:
+    return StructuredFacts(
+        prices=base.prices | extra.prices,
+        public_contacts=base.public_contacts | extra.public_contacts,
+        slots=base.slots | extra.slots,
+        public_pii=base.public_pii | extra.public_pii,
+    )
 
 
 @dataclass(frozen=True, slots=True)
