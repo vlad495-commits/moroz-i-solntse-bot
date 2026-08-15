@@ -258,4 +258,4 @@ TDD должен доказать:
 - output validator не пропускает цену вне выбранного каталога;
 - сбой синхронизации не разрушает предыдущий снимок;
 - нет provider/staging/production вызовов, push или deploy;
-- roadmap, changelog, migration proof, свежий полный Docker gate и независимый review закрыты до merge.
+- roadmap, changelog, migration proof, свежий полный Docker gate и отдельный correctness/security review закрыты до merge.
