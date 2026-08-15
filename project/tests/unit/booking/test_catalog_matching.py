@@ -89,3 +89,13 @@ def test_unrelated_or_only_generic_catalog_word_returns_no_candidates():
 
     assert match_catalog(records, "Как до вас добраться?").services == ()
     assert match_catalog(records, "Какие услуги есть?").services == ()
+
+
+def test_exact_short_service_name_is_not_lost_by_token_filter():
+    result = match_catalog(
+        (record("20", "RF"),),
+        "Сколько стоит RF?",
+    )
+
+    assert result.simple_kind == "price"
+    assert [item.service_id for item in result.services] == ["20"]

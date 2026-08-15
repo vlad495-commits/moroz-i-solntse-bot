@@ -292,7 +292,12 @@ def match_catalog(records, text: str) -> CatalogGrounding:
         name_tokens = _tokens(service.service_name)
         normalized_name = _normalized_text(service.service_name)
         overlap = len(query_tokens & name_tokens)
-        phrase = int(bool(normalized_name and normalized_name in normalized_query))
+        phrase = int(
+            bool(
+                normalized_name
+                and f" {normalized_name} " in f" {normalized_query} "
+            )
+        )
         if not phrase and not overlap:
             continue
         scored.append(((phrase, overlap, len(name_tokens)), service))
@@ -399,7 +404,7 @@ def _normalize(text: str) -> str:
 
 def _normalized_text(text: str) -> str:
     return " ".join(
-        token for token in _TOKEN_RE.findall(_normalize(text)) if len(token) >= 3
+        _TOKEN_RE.findall(_normalize(text))
     )
 
 
