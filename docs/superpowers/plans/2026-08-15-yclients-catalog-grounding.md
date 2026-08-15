@@ -20,7 +20,7 @@
 - Message history, token usage, outbox и inbox completion остаются в существующей транзакции и idempotency order.
 - После каждого логического шага обновлять `changelog.md`, после завершения — `Дорожная карта.md`.
 - Каждый production change следует доказанному RED → минимальному GREEN.
-- Внешний test env: `D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env`; его содержимое не читать, не копировать и не выводить.
+- Test env передаётся стандартно через внешний `../.env`; его содержимое не читать, не копировать и не выводить.
 
 ---
 
@@ -67,7 +67,7 @@ Parameterize malformed IDs, bool/nan/infinite/negative/oversized prices, reverse
 
 ```powershell
 Set-Location project
-docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' -p yclients-catalog-task1 run --build --rm test pytest -q tests/unit/admin/test_migration_0011.py tests/contract/booking/test_yclients_catalog.py tests/integration/test_migrations.py
+docker compose --env-file ../.env -p yclients-catalog-task1 run --build --rm test pytest -q tests/unit/admin/test_migration_0011.py tests/contract/booking/test_yclients_catalog.py tests/integration/test_migrations.py
 ```
 
 Expected: FAIL because revision/module do not exist and head remains `0010`.
@@ -106,8 +106,8 @@ Use `Decimal(str(value))`, `is_finite()`, exact two-decimal quantization, shared
 Run the Task 1 selection, then:
 
 ```powershell
-docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' -p yclients-catalog-task1 run --rm migrate
-docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' -p yclients-catalog-task1 run --rm --entrypoint alembic migrate -c /app/alembic.ini current
+docker compose --env-file ../.env -p yclients-catalog-task1 run --rm migrate
+docker compose --env-file ../.env -p yclients-catalog-task1 run --rm --entrypoint alembic migrate -c /app/alembic.ini current
 ```
 
 Expected: all selected tests pass and `0011_yclients_service_catalog (head)`.
@@ -377,38 +377,38 @@ Commit message: `feat: подключить каталог к сообщения
 - Consumes the complete implementation.
 - Produces merge-ready local branch evidence; no merge/push/deploy.
 
-- [ ] **Step 1: Review exact branch diff against spec**
+- [x] **Step 1: Review exact branch diff against spec**
 
 Check all changed files and grep for forbidden additions: provider calls in message/admin paths, new Compose service/queue/dependency, raw provider logging, prices left in prompt, unbounded lists, direct deterministic reply before guard, live credentials in tests.
 
-- [ ] **Step 2: Run canonical affected Docker gate**
+- [x] **Step 2: Run canonical affected Docker gate**
 
 Include all new tests plus migrations, booking projection/reconciliation, scheduler/notifications, worker, message delivery, router, security pipeline/validator, prompt admin/reload, architecture/Compose and privacy/deletion suites. Record exact count/time/exit.
 
-- [ ] **Step 3: Run migration and static proofs**
+- [x] **Step 3: Run migration and static proofs**
 
 ```powershell
-docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' -p yclients-catalog-final run --rm migrate
-docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' -p yclients-catalog-final run --rm --entrypoint alembic migrate -c /app/alembic.ini current
-docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' -p yclients-catalog-final run --rm test python -m compileall -q src llm worker admin
+docker compose --env-file ../.env -p yclients-catalog-final run --rm migrate
+docker compose --env-file ../.env -p yclients-catalog-final run --rm --entrypoint alembic migrate -c /app/alembic.ini current
+docker compose --env-file ../.env -p yclients-catalog-final run --rm test python -m compileall -q src llm worker admin
 git diff --check
 ```
 
 Expected: `0011_yclients_service_catalog (head)`, compile exit 0, diff-check empty.
 
-- [ ] **Step 4: Run fresh full Docker suite**
+- [x] **Step 4: Run fresh full Docker suite**
 
 ```powershell
-docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' -p yclients-catalog-final run --build --rm test pytest -q
+docker compose --env-file ../.env -p yclients-catalog-final run --build --rm test pytest -q
 ```
 
 Capture complete stdout/stderr and exit code under ignored root `tmp/`.
 
-- [ ] **Step 5: Perform fresh correctness/security and Ponytail review passes**
+- [x] **Step 5: Perform fresh correctness/security and Ponytail review passes**
 
 The correctness pass must report Critical/Important/Minor findings and Ready status against spec/plan. The separate Ponytail pass checks deletable abstractions/dependencies/flexibility. Fix every Critical/Important and justified Minor via fresh RED/GREEN before proceeding.
 
-- [ ] **Step 6: Close docs and commit**
+- [x] **Step 6: Close docs and commit**
 
 Mark roadmap complete only after fresh gates/review. Append exact commands/counts/head/cleanup and no-provider/no-push statement to changelog/report. Mark plan checkboxes complete and commit:
 
@@ -417,6 +417,6 @@ git add 'Дорожная карта.md' changelog.md docs/superpowers/plans/202
 git commit -m "docs: завершить grounding по каталогу YCLIENTS"
 ```
 
-- [ ] **Step 7: Verify cleanup and final HEAD**
+- [x] **Step 7: Verify cleanup and final HEAD**
 
 Resolve the exact Compose project resources by label before `down -v`; remove only `yclients-catalog-*` namespaces after validating their paths/names. Confirm `0` matching containers/volumes/networks, clean tracked worktree, ancestry from `2b294aa`, no remote branch contains HEAD, and report the exact final SHA. Do not merge until the user asks.
