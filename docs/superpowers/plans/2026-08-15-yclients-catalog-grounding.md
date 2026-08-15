@@ -199,7 +199,7 @@ Commit message: `feat: обновлять каталог YCLIENTS каждый �
 - Produces immutable `CatalogVariant`, `CatalogService`, `CatalogGrounding` and `CatalogRepository.ground(connection, text, now)`.
 - `CatalogGrounding` fields: `status: Literal['fresh','stale','missing']`, `services: tuple[CatalogService, ...]`, `simple_kind: Literal['price','duration','staff'] | None`, `ambiguous: bool`; bounded methods/properties: `direct_reply`, `fact_text()` and `data_block()`.
 
-- [ ] **Step 1: Write matcher RED tests**
+- [x] **Step 1: Write matcher RED tests**
 
 Fixtures must prove `ё→е`, casefold, punctuation, deterministic order, exact phrase priority, unique token overlap, service grouping, per-staff price/duration ranges, max five services, and fail-closed ties. Include unrelated text and adversarial display strings; no provider ID may appear in rendered public data.
 
@@ -214,7 +214,7 @@ COMPARISON_WORDS = {"сравни", "разница", "отличается", "�
 
 Any comparison cue disables deterministic simple response.
 
-- [ ] **Step 2: Write PostgreSQL freshness RED tests**
+- [x] **Step 2: Write PostgreSQL freshness RED tests**
 
 Seed catalog rows and scheduler jobs. Prove:
 
@@ -225,11 +225,11 @@ Seed catalog rows and scheduler jobs. Prove:
 - stale/missing returns no services even if old rows exist;
 - fixed SQL binds kind/status values and selects only allowlisted columns.
 
-- [ ] **Step 3: Run Docker RED**
+- [x] **Step 3: Run Docker RED**
 
 Expected: missing grounding/query/matcher behavior.
 
-- [ ] **Step 4: Implement minimal query and matcher**
+- [x] **Step 4: Implement minimal query and matcher**
 
 One bounded SELECT loads the snapshot; freshness query uses `scheduler_jobs`. Build grouped services in Python. No SQL string interpolation, fuzzy library or extra table.
 
@@ -243,7 +243,7 @@ return match_catalog(rows, text, kind)
 
 Return clarification when top confidence ties; never choose based only on a common generic token such as `массаж`, `процедура`, `услуга`.
 
-- [ ] **Step 5: Run Docker GREEN, changelog and commit**
+- [x] **Step 5: Run Docker GREEN, changelog and commit**
 
 Commit message: `feat: находить актуальную услугу без LLM`.
 

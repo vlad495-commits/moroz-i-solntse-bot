@@ -189,3 +189,15 @@ async def test_rejects_service_and_total_pair_bounds():
     fake = FakeHttp([response([staff()]), response({"services": too_many})])
     with pytest.raises(YclientsCatalogError, match="^yclients_catalog_bound$"):
         await YclientsCatalogReader(config(), http=fake).read(NOW)
+
+
+@pytest.mark.asyncio
+async def test_rejects_inconsistent_service_identity_between_staff():
+    fake = FakeHttp([
+        response([staff(10), staff(11, name="Мария")]),
+        response({"services": [service(20, title="Криотерапия")]}),
+        response({"services": [service(20, title="Другое название")]}),
+    ])
+
+    with pytest.raises(YclientsCatalogError, match="^yclients_catalog_response_shape$"):
+        await YclientsCatalogReader(config(), http=fake).read(NOW)

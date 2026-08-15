@@ -77,6 +77,7 @@ class YclientsCatalogReader:
 
         records: list[CatalogRecord] = []
         keys: set[tuple[str, str]] = set()
+        identities: dict[str, tuple[str, str | None]] = {}
         for staff_id, staff_name in sorted(staff):
             data = await self._get(
                 f"/api/v1/book_services/{self._config.company_id}",
@@ -99,6 +100,13 @@ class YclientsCatalogReader:
                 key = (record.service_id, record.staff_id)
                 if key in keys:
                     raise YclientsCatalogError("yclients_catalog_response_shape")
+                identity = (record.service_name, record.category_name)
+                if (
+                    record.service_id in identities
+                    and identities[record.service_id] != identity
+                ):
+                    raise YclientsCatalogError("yclients_catalog_response_shape")
+                identities[record.service_id] = identity
                 keys.add(key)
                 records.append(record)
                 if len(records) > _MAX_PAIRS:
