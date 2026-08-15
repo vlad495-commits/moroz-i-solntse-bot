@@ -438,6 +438,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
             "notification_feedback_requests",
             "scheduler_jobs",
             "yclients_booking_projection",
+            "yclients_service_catalog",
         }
 
         run_alembic(
@@ -459,7 +460,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0010_yclients_projection"
+            "0011_yclients_service_catalog"
         )
     finally:
         await conn.close()
@@ -598,7 +599,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0010_yclients_projection"
+        assert current_revision == "0011_yclients_service_catalog"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -761,7 +762,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0010_yclients_projection"
+        assert current_revision == "0011_yclients_service_catalog"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -858,7 +859,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0010_yclients_projection"
+        assert current_revision == "0011_yclients_service_catalog"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
@@ -931,7 +932,7 @@ async def test_yclients_booking_projection_migration_creates_bounded_schema(
     finally:
         await conn.close()
 
-    assert current_revision == "0010_yclients_projection"
+    assert current_revision == "0011_yclients_service_catalog"
     assert columns == [
         "external_id",
         "booking_key",
@@ -1153,3 +1154,57 @@ async def test_cutover_fails_closed_without_stamping(
         assert await conn.fetchval("SELECT to_regclass('public.alembic_version')") is None
     finally:
         await conn.close()
+
+
+async def test_yclients_service_catalog_migration_creates_only_bounded_columns(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        current_revision = await conn.fetchval(
+            "SELECT version_num FROM alembic_version"
+        )
+        columns = [
+            row["column_name"]
+            for row in await conn.fetch(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'yclients_service_catalog'
+                ORDER BY ordinal_position
+                """
+            )
+        ]
+        constraints = {
+            row["conname"]: row["definition"]
+            for row in await conn.fetch(
+                """
+                SELECT conname, pg_get_constraintdef(oid, true) AS definition
+                FROM pg_constraint
+                WHERE conrelid = 'yclients_service_catalog'::regclass
+                """
+            )
+        }
+    finally:
+        await conn.close()
+
+    assert current_revision == "0011_yclients_service_catalog"
+    assert columns == [
+        "service_id",
+        "staff_id",
+        "service_name",
+        "category_name",
+        "staff_name",
+        "price_min",
+        "price_max",
+        "duration_minutes",
+        "synced_at",
+    ]
+    assert constraints["yclients_service_catalog_pkey"] == (
+        "PRIMARY KEY (service_id, staff_id)"
+    )
+    assert "price_min" in constraints["ck_yclients_catalog_price"]
+    assert "price_max" in constraints["ck_yclients_catalog_price"]
+    assert "duration_minutes" in constraints["ck_yclients_catalog_duration"]
+    assert not {"description", "raw", "payload", "phone", "email"} & set(columns)

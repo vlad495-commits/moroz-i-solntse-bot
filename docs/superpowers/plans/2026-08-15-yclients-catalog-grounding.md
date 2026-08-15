@@ -39,11 +39,11 @@
 - `CatalogRecord` fields: `service_id: str`, `staff_id: str`, `service_name: str`, `category_name: str | None`, `staff_name: str`, `price_min: Decimal`, `price_max: Decimal`, `duration_minutes: int`.
 - `CatalogSnapshot` fields: `records: tuple[CatalogRecord, ...]`, `synced_at: datetime`.
 
-- [ ] **Step 1: Write migration RED contracts**
+- [x] **Step 1: Write migration RED contracts**
 
 Add assertions that migration head is `0011_yclients_service_catalog`, the new table has exactly the nine allowlisted columns from the spec, composite PK `(service_id, staff_id)`, numeric/duration CHECKs, and no table besides the expected schema set.
 
-- [ ] **Step 2: Write reader RED contracts**
+- [x] **Step 2: Write reader RED contracts**
 
 Use a `FakeHttp` and exact response fixtures:
 
@@ -63,7 +63,7 @@ Assert exact GET order, `user_auth=False`, `without_seances=1`, one `book_servic
 
 Parameterize malformed IDs, bool/nan/infinite/negative/oversized prices, reversed range, non-minute or >24h duration, malformed category/text/envelope, >100 staff, >200 services/staff and >5 000 pairs. Each must raise only an allowlisted `YclientsCatalogError.code` without raw data.
 
-- [ ] **Step 3: Run Docker RED**
+- [x] **Step 3: Run Docker RED**
 
 ```powershell
 Set-Location project
@@ -72,7 +72,7 @@ docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.e
 
 Expected: FAIL because revision/module do not exist and head remains `0010`.
 
-- [ ] **Step 4: Implement migration and reader minimally**
+- [x] **Step 4: Implement migration and reader minimally**
 
 Migration columns:
 
@@ -101,7 +101,7 @@ return CatalogSnapshot(tuple(sorted(records, key=_record_key)), now)
 
 Use `Decimal(str(value))`, `is_finite()`, exact two-decimal quantization, shared local safe-display helpers (no generic framework) and `YclientsTransportError` mapping. Never include response/body in exceptions.
 
-- [ ] **Step 5: Run Docker GREEN and migration proof**
+- [x] **Step 5: Run Docker GREEN and migration proof**
 
 Run the Task 1 selection, then:
 
@@ -112,7 +112,7 @@ docker compose --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.e
 
 Expected: all selected tests pass and `0011_yclients_service_catalog (head)`.
 
-- [ ] **Step 6: Update changelog, diff-check and commit**
+- [x] **Step 6: Update changelog, diff-check and commit**
 
 Commit only Task 1 files:
 
