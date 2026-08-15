@@ -138,7 +138,7 @@ git commit -m "feat: читать каталог услуг YCLIENTS"
 - Produces: `CATALOG_SYNC_KIND`, `CatalogRepository.serialized()`, `CatalogRepository.replace(connection, snapshot)`, `catalog_job(now)`, `CatalogSyncCoordinator.ensure_current(now)`, `CatalogSyncCoordinator.run(job)`.
 - Consumes Task 1 `CatalogSnapshot` and `YclientsCatalogError`.
 
-- [ ] **Step 1: Write sync/repository RED tests**
+- [x] **Step 1: Write sync/repository RED tests**
 
 Prove UTC hour bucket:
 
@@ -149,15 +149,15 @@ assert catalog_job(now).idempotency_key == f"{CATALOG_SYNC_KIND}:2026-08-15T12:0
 
 Prove next-hour scheduling happens before reader error, busy lock skips without provider read, exact lock is released on body exception, atomic replace preserves the first literal snapshot after a trigger rejects the second insert, and stored JSON contains no raw fixture metadata.
 
-- [ ] **Step 2: Write scheduler dispatch RED test**
+- [x] **Step 2: Write scheduler dispatch RED test**
 
 Add `catalog_sync` argument to `handle_scheduler_job`; assert only `CATALOG_SYNC_KIND` dispatches to it and missing coordinator fails closed before booking lookup.
 
-- [ ] **Step 3: Run Docker RED**
+- [x] **Step 3: Run Docker RED**
 
 Run new unit/integration files plus `tests/e2e/notifications/test_reminders.py`; expect missing catalog sync symbols/dispatch.
 
-- [ ] **Step 4: Implement minimal repository/coordinator**
+- [x] **Step 4: Implement minimal repository/coordinator**
 
 Follow the existing booking projection structure, with separate lock and hourly delta:
 
@@ -177,11 +177,11 @@ async def run(self, job):
 
 Use one `DELETE` + bounded `executemany` transaction and map asyncpg errors to `yclients_catalog_write`.
 
-- [ ] **Step 5: Run Docker GREEN**
+- [x] **Step 5: Run Docker GREEN**
 
 Expected: new sync/repository/handler selection passes; existing projection sync tests stay green.
 
-- [ ] **Step 6: Changelog, diff-check and commit**
+- [x] **Step 6: Changelog, diff-check and commit**
 
 Commit message: `feat: обновлять каталог YCLIENTS каждый час`.
 

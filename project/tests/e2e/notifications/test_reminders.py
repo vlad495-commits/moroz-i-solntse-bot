@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from moroz.booking.projection import PROJECTION_SYNC_KIND
+from moroz.booking.catalog import CATALOG_SYNC_KIND
 from moroz.notifications.handlers import handle_scheduler_job
 from moroz.notifications.models import JobResult, SchedulerJob
 
@@ -124,6 +125,40 @@ async def test_projection_job_without_coordinator_fails_closed():
     with pytest.raises(RuntimeError, match="projection sync is not configured"):
         await handle_scheduler_job(
             scheduler_job(PROJECTION_SYNC_KIND, Booking()),
+            booking_port=None,
+            outbox=None,
+        )
+
+
+async def test_catalog_job_runs_before_booking_lookup():
+    booking = Booking()
+    calls = []
+
+    class CatalogSync:
+        async def run(self, job):
+            calls.append(job)
+            return JobResult.sent()
+
+    class NoBookingLookup:
+        async def get_booking(self, _booking_key):
+            raise AssertionError("catalog jobs must not load bookings")
+
+    job = scheduler_job(CATALOG_SYNC_KIND, booking)
+    result = await handle_scheduler_job(
+        job,
+        booking_port=NoBookingLookup(),
+        outbox=None,
+        catalog_sync=CatalogSync(),
+    )
+
+    assert result == JobResult.sent()
+    assert calls == [job]
+
+
+async def test_catalog_job_without_coordinator_fails_closed():
+    with pytest.raises(RuntimeError, match="catalog sync is not configured"):
+        await handle_scheduler_job(
+            scheduler_job(CATALOG_SYNC_KIND, Booking()),
             booking_port=None,
             outbox=None,
         )

@@ -1,4 +1,5 @@
 from moroz.booking.projection import PROJECTION_SYNC_KIND
+from moroz.booking.catalog import CATALOG_SYNC_KIND
 from moroz.notifications.models import JobResult, SchedulerJob
 
 
@@ -19,7 +20,12 @@ async def handle_scheduler_job(
     outbox,
     lifecycle=None,
     projection_sync=None,
+    catalog_sync=None,
 ) -> JobResult:
+    if job.kind == CATALOG_SYNC_KIND:
+        if catalog_sync is None:
+            raise RuntimeError("catalog sync is not configured")
+        return await catalog_sync.run(job)
     if job.kind == PROJECTION_SYNC_KIND:
         if projection_sync is None:
             raise RuntimeError("projection sync is not configured")
