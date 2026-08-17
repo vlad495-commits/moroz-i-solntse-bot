@@ -33,12 +33,12 @@
 - `_generate_bot_response(question, system_prompt, catalog=None) -> str`.
 - `run_case(case, run_id, *, catalog=None) -> dict`.
 
-- [ ] Добавить RED, доказывающий передачу `CatalogGrounding` в pipeline и отсутствие primary/judge calls для structural cases.
-- [ ] Запустить Docker RED и подтвердить ожидаемые failures.
-- [ ] Вынести существующую structural-логику в общий модуль и добавить optional catalog arguments без новой абстракции.
-- [ ] Добавить шесть synthetic cases отдельным JSON-массивом, сохранив существующие datasets.
-- [ ] Запустить focused GREEN и расширенные eval/security regressions.
-- [ ] Сделать локальный логический коммит.
+- [x] Добавить RED, доказывающий передачу `CatalogGrounding` в pipeline и отсутствие primary/judge calls для structural cases.
+- [x] Запустить Docker RED и подтвердить ожидаемые failures.
+- [x] Вынести существующую structural-логику в общий модуль и добавить optional catalog arguments без новой абстракции.
+- [x] Добавить шесть synthetic cases отдельным JSON-массивом, сохранив существующие datasets.
+- [x] Запустить focused GREEN и расширенные eval/security regressions.
+- [x] Сделать локальный логический коммит.
 
 ### Task 2: Universal adversarial guard
 

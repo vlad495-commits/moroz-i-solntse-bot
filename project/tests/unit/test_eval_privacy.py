@@ -799,8 +799,10 @@ async def test_eval_cli_all_structural_categories_are_local_and_executable(
 
 @pytest.mark.asyncio
 async def test_structural_consent_is_mutation_sensitive(monkeypatch):
+    from moroz.security import eval_structural
+
     monkeypatch.setattr(
-        run_evals,
+        eval_structural,
         "decide_ingress",
         lambda **_kwargs: SimpleNamespace(action="accept", code=None),
     )
@@ -814,6 +816,8 @@ async def test_structural_consent_is_mutation_sensitive(monkeypatch):
 async def test_structural_provider_policy_requires_real_gateway_call_counts(
     monkeypatch,
 ):
+    from moroz.security import eval_structural
+
     class BypassGateway:
         def __init__(self, _primary, _reserve):
             pass
@@ -822,7 +826,7 @@ async def test_structural_provider_policy_requires_real_gateway_call_counts(
             return LLMResponse("Безопасный ответ", 0, 0, 0, 0, "bypass")
 
     monkeypatch.setattr(
-        run_evals,
+        eval_structural,
         "PrimaryReserveGateway",
         BypassGateway,
     )
@@ -1176,6 +1180,7 @@ def test_admin_client_factory_disables_sdk_retries(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     captured = {}
+    catalog = object()
 
     class Provider:
         def __init__(self, client, kind, model, temperature, max_tokens):
@@ -1189,8 +1194,20 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
         def __init__(self, gateway, system_prompt, facts):
             captured["pipeline"] = (gateway, system_prompt, facts)
 
-        async def respond(self, question, context, *, recent_message_count):
-            captured["request"] = (question, context, recent_message_count)
+        async def respond(
+            self,
+            question,
+            context,
+            *,
+            recent_message_count,
+            catalog,
+        ):
+            captured["request"] = (
+                question,
+                context,
+                recent_message_count,
+                catalog,
+            )
             return LLMResponse("safe", 1, 1, 0, 2, "fake")
 
     primary = object()
@@ -1203,7 +1220,11 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     monkeypatch.setattr(eval_runner, "PrimaryReserveGateway", Gateway)
     monkeypatch.setattr(eval_runner, "SecurityPipeline", Pipeline)
 
-    assert await eval_runner._generate_bot_response("Вопрос", "Цена 2400 руб.") == "safe"
+    assert await eval_runner._generate_bot_response(
+        "Вопрос",
+        "Цена 2400 руб.",
+        catalog=catalog,
+    ) == "safe"
     primary_provider, reserve_provider = captured["providers"]
     assert primary_provider.values[:3] == (
         primary,
@@ -1218,7 +1239,53 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     _, source_prompt, facts = captured["pipeline"]
     assert source_prompt == "Цена 2400 руб."
     assert "2400" in facts.prices
-    assert captured["request"] == ("Вопрос", [], 1)
+    assert captured["request"] == ("Вопрос", [], 1, catalog)
+
+
+@pytest.mark.asyncio
+async def test_admin_structural_case_skips_primary_and_judge(monkeypatch):
+    saved = []
+
+    async def evaluate(case):
+        assert case["category"] == "consent"
+        return True
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("structural case must stay local")
+
+    async def save_result(**kwargs):
+        saved.append(kwargs)
+        return 901
+
+    monkeypatch.setattr(
+        eval_runner,
+        "evaluate_structural_case",
+        evaluate,
+        raising=False,
+    )
+    monkeypatch.setattr(eval_runner, "_generate_bot_response", forbidden)
+    monkeypatch.setattr(eval_runner, "llm_judge", forbidden)
+    monkeypatch.setattr(eval_runner.evdb, "save_result", save_result)
+
+    result = await eval_runner.run_case(
+        {
+            "id": 54,
+            "category": "consent",
+            "question": "synthetic consent",
+            "expected_answer": "consent required",
+        },
+        77,
+    )
+
+    assert result == {
+        "id": 901,
+        "case_id": 54,
+        "verdict": "pass",
+        "check_layer": "structural",
+        "score": None,
+    }
+    assert saved[0]["actual_answer"] == ""
+    assert saved[0]["judge_reasoning"] == "Structural policy passed"
 
 
 def test_external_sdk_calls_are_limited_to_provider_and_masked_judge_adapter():
