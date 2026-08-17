@@ -315,6 +315,12 @@ def test_all_python_services_pin_same_native_anthropic_runtime():
     assert "anthropic==0.116.0" in admin.splitlines()
 
 
+def test_admin_image_installs_queue_dependency_used_by_database_module():
+    requirements = (ROOT / "admin/requirements.txt").read_text(encoding="utf-8")
+
+    assert "aio-pika==9.6.2" in requirements.splitlines()
+
+
 def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
     services = compose_services()
     worker_health = " ".join(services["worker"]["healthcheck"]["test"])
