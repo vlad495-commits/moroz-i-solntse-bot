@@ -160,4 +160,4 @@ git commit -m "fix: walk-in включён в technical eval gate"
 - [x] Technical adversarial regression завершается local FAIL без primary LLM вызова.
 - [x] Пустой обязательный technical batch делает общий gate FAIL.
 - [x] Structural dataset load-error является critical FAIL.
-- [ ] Выполнить Docker RED/GREEN, полный suite, re-review и exact cleanup.
+- [x] Выполнить Docker RED/GREEN, полный suite, re-review и exact cleanup.

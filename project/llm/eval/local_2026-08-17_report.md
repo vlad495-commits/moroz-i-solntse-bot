@@ -17,6 +17,8 @@ LLM-судью. Старые наборы не изменялись и их ис
 - judge calls: `0`;
 - judge cost: `$0`;
 - affected Docker pytest after review fixes: `198 passed in 8.30s`.
+- full Docker pytest on review-approved code: `1232 passed in 576.09s`.
+- final Compose cleanup: `containers=0, volumes=0, networks=0, images=0`.
 
 Дополнительно исправлен реальный validator defect из кейса 42: фраза об
 услугах, доступных без записи или ежедневно, больше не превращает часы работы в
@@ -37,6 +39,12 @@ Initial gate дал PASS, после чего независимый review на
 строже: `доступн*` рядом с любым временем требует slot facts; общий график
 формулируется как `центр работает`. Affected gate остаётся `198 passed`. До
 следующего review техническая готовность ещё не заявляется.
+
+Финальный independent review после упрощения: `0 Critical / 0 Important /
+0 Minor`, Ready Yes. Следующий полный Docker suite сначала честно нашёл один
+документный FAIL в порядке Compose arguments (`1231 passed / 1 failed`); после
+исправления focused document gate дал `6/6`, а повторный полный suite завершился
+`1232/1232 PASS`. На этом локальный technical eval layer готов к интеграции.
 Полный business-quality judge-run остаётся отдельным неблокирующим набором и
 не переименован в PASS.
 
