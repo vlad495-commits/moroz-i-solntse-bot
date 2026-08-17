@@ -276,6 +276,22 @@ def test_source_owned_address_can_be_returned_without_source_prefix() -> None:
     ).code == "raw_pii"
 
 
+def test_source_owned_address_stops_before_public_contact_sentence() -> None:
+    facts = extract_structured_facts(
+        "Адрес: Тульская область, Новомосковск, ул. Трудовые резервы, 33Б, "
+        "ТРЦ Первый, цокольный этаж. Ориентир — вывеска Мороз и Солнце.\n"
+        "Телефон +7 (902) 906-61-66, Telegram https://t.me/krio_71"
+    )
+
+    assert validate_output(
+        "Адрес: ул. Трудовые резервы, 33Б, ТРЦ Первый, цокольный этаж. "
+        "Ориентир — вывеска Мороз и Солнце. Для записи позвоните "
+        "+7 (902) 906-61-66 или напишите в Telegram https://t.me/krio_71.",
+        facts,
+        frozenset(),
+    ).ok is True
+
+
 def test_source_owned_public_contact_remains_allowed_when_seen_in_invocation() -> None:
     public_phone = "+7 902 906-61-66"
     facts = extract_structured_facts(f"Телефон центра: {public_phone}")

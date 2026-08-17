@@ -57,10 +57,11 @@ _QUESTION_TRANSITION = (
 )
 _SENSITIVE_VALUE_END = (
     rf"(?=;|\n|[,.]\s+{_QUESTION_TRANSITION}\b[^.;\n?]*\?|"
-    r"[!?](?=\s+[А-ЯЁ]|$)|$)"
+    r"[!?](?=\s+[А-ЯЁ]|$)|"
+    r"\.(?=\s+(?:Для|Телефон|Связаться|Написать)\b)|$)"
 )
 _ADDRESS_RE = re.compile(
-    r"(?P<prefix>\b(?:адрес|место\s+жительства|улица|ул\.)"
+    r"(?P<prefix>\b(?:адрес\b|место\s+жительства\b|улица\b|ул\.)"
     r"\s*(?::|—|-)?\s*)(?P<value>[^;\n]+?)"
     + _SENSITIVE_VALUE_END,
     re.IGNORECASE,
