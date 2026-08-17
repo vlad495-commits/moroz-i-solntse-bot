@@ -14,6 +14,12 @@ HTML_PATH = Path(
         REPOSITORY_ROOT / "docs" / "moroz-i-solntse-full-architecture.html",
     )
 )
+ROOT_HTML_PATH = Path(
+    os.environ.get(
+        "ROOT_ARCHITECTURE_HTML_PATH",
+        REPOSITORY_ROOT / "moroz-i-solntse-full-architecture.html",
+    )
+)
 
 REQUIRED_SECTIONS = {
     "comparison",
@@ -247,6 +253,10 @@ def test_visual_contains_required_sections_and_status_markers() -> None:
             else:
                 assert "future" not in classes
                 assert "future-boundary" not in element.ancestor_ids
+
+
+def test_root_copy_matches_canonical_visual() -> None:
+    assert ROOT_HTML_PATH.read_bytes() == HTML_PATH.read_bytes()
 
 
 def test_visual_contains_status_labels_and_comparison_facts() -> None:
