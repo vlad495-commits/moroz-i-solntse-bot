@@ -11,7 +11,16 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 HTML_PATH = Path(
     os.environ.get(
         "FULL_ARCHITECTURE_HTML_PATH",
-        REPOSITORY_ROOT / "docs" / "moroz-i-solntse-full-architecture.html",
+        REPOSITORY_ROOT
+        / "docs"
+        / "architecture"
+        / "moroz-i-solntse-full-architecture.html",
+    )
+)
+ROOT_HTML_PATH = Path(
+    os.environ.get(
+        "ROOT_ARCHITECTURE_HTML_PATH",
+        REPOSITORY_ROOT / "moroz-i-solntse-full-architecture.html",
     )
 )
 ROOT_HTML_PATH = Path(
@@ -395,3 +404,7 @@ def test_visual_has_required_css_contract() -> None:
         "@media (max-width: 760px)",
     ):
         assert token in html
+
+
+def test_root_copy_matches_canonical_visual() -> None:
+    assert ROOT_HTML_PATH.read_bytes() == HTML_PATH.read_bytes()

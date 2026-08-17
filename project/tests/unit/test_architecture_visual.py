@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 HTML_PATH = Path(
     os.environ.get(
         "ARCHITECTURE_HTML_PATH",
-        REPO_ROOT / "docs" / "production-v1-architecture.html",
+        REPO_ROOT / "docs" / "architecture" / "production-v1-architecture.html",
     )
 )
 

@@ -20,7 +20,7 @@
 ### Task 1: Сделать focused gate исполняемым
 
 **Files:**
-- Modify: `docs/guardrails-pii-provider-side-task.md`
+- Modify: `docs/audits/guardrails-pii-provider-side-task.md`
 - Test: `project/tests/unit/security/test_pipeline.py`
 
 **Interfaces:**
@@ -93,7 +93,7 @@ Run:
 
 ```powershell
 git diff --check
-git diff -- docs/guardrails-pii-provider-side-task.md 'Дорожная карта.md' changelog.md
+git diff -- docs/audits/guardrails-pii-provider-side-task.md 'Дорожная карта.md' changelog.md
 ```
 
 Expected: `git diff --check` produces no output; the diff contains only the documented gate correction and completion evidence.
@@ -101,6 +101,6 @@ Expected: `git diff --check` produces no output; the diff contains only the docu
 - [x] **Step 4: Commit**
 
 ```powershell
-git add docs/guardrails-pii-provider-side-task.md docs/superpowers/plans/2026-08-01-provider-side-pii-masking-gate.md 'Дорожная карта.md' changelog.md
+git add docs/audits/guardrails-pii-provider-side-task.md docs/superpowers/plans/2026-08-01-provider-side-pii-masking-gate.md 'Дорожная карта.md' changelog.md
 git commit -m "fix: закрыт provider-side pii masking gate"
 ```

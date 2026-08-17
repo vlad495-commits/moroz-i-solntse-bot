@@ -27,7 +27,7 @@
 - Modify: `AGENTS.md`
 - Modify: `changelog.md`
 - Modify: `Дорожная карта.md`
-- Preserve: `Ручное тестирование человеком 2.md`
+- Preserve: `docs/qa/manual/Ручное тестирование человеком 2.md`
 
 **Interfaces:**
 - Consumes: `ce81786`, `codex/work3-integration=0df3ba9`.

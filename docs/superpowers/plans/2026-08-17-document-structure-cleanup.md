@@ -29,13 +29,13 @@
 - Consumes: переменные `MESSAGE_PATH_HTML_PATH`, `ARCHITECTURE_HTML_PATH`, `FULL_ARCHITECTURE_HTML_PATH`.
 - Produces: defaults в `docs/architecture/` для всех трёх visual contracts.
 
-- [ ] **Step 1: Изменить expected paths в тестах на `docs/architecture/`.**
+- [x] **Step 1: Изменить expected paths в тестах на `docs/architecture/`.**
 
 ```python
 REPO_ROOT / "docs" / "architecture" / "production-v1-architecture.html"
 ```
 
-- [ ] **Step 2: Запустить RED с новыми путями до переноса файлов.**
+- [x] **Step 2: Запустить RED с новыми путями до переноса файлов.**
 
 Run: `docker compose --env-file ../.env -p moroz-doc-cleanup-red --profile test run --rm ... pytest tests/unit/test_message_path_visual.py tests/unit/test_architecture_visual.py tests/unit/test_full_project_architecture_visual.py -q`
 
@@ -55,7 +55,7 @@ Expected: FAIL с `FileNotFoundError` для ещё не созданных пу
 - Consumes: RED-контракт Task 1.
 - Produces: `docs/architecture/`, `docs/qa/manual/`, `docs/audits/` без loose пользовательских файлов в `docs/`; корневая HTML-копия остаётся байт-в-байт равной канонической.
 
-- [ ] **Step 1: Перенести файлы командой `git mv` без изменения их содержимого.**
+- [x] **Step 1: Перенести файлы командой `git mv` без изменения их содержимого.**
 
 ```text
 docs/message-processing-path.html → docs/architecture/message-processing-path.html
@@ -63,9 +63,9 @@ docs/moroz-i-solntse-full-architecture.html → docs/architecture/moroz-i-solnts
 docs/production-v1-architecture.html → docs/architecture/production-v1-architecture.html
 ```
 
-- [ ] **Step 2: Обновить только актуальные прямые ссылки на перенесённые документы.**
+- [x] **Step 2: Обновить только актуальные прямые ссылки на перенесённые документы.**
 
-- [ ] **Step 3: Выполнить Docker GREEN и проверить, что корневая копия полной схемы совпадает с канонической.**
+- [x] **Step 3: Выполнить Docker GREEN и проверить, что корневая копия полной схемы совпадает с канонической.**
 
 Expected: все visual/document tests PASS.
 
@@ -79,15 +79,15 @@ Expected: все visual/document tests PASS.
 - Consumes: результат Docker GREEN.
 - Produces: зафиксированный перенос, чистый diff и локальный коммит.
 
-- [ ] **Step 1: Отметить задачу в дорожной карте и внести факт переноса/проверки в changelog.**
+- [x] **Step 1: Отметить задачу в дорожной карте и внести факт переноса/проверки в changelog.**
 
-- [ ] **Step 2: Выполнить финальные проверки.**
+- [x] **Step 2: Выполнить финальные проверки.**
 
 Run: `git diff --check` и полный scoped Docker pytest visual/document gate.
 
 Expected: exit code `0` и `0` failed.
 
-- [ ] **Step 3: Закоммитить логический шаг.**
+- [x] **Step 3: Закоммитить логический шаг.**
 
 ```bash
 git add -A

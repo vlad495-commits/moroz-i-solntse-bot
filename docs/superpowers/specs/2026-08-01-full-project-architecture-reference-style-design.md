@@ -5,7 +5,7 @@
 **Референс:** `D:\Downloads\Telegram Desktop\архитектура-проекта-полная.html`
 
 **Результат:** новый самостоятельный файл
-`docs/moroz-i-solntse-full-architecture.html`
+`docs/architecture/moroz-i-solntse-full-architecture.html`
 
 ## 1. Цель
 
@@ -14,7 +14,7 @@ Lucky Hair Studio. Страница должна одновременно пок
 реализованный runtime, функции с кодом без полного live-подтверждения и
 согласованный backlog целевой архитектуры.
 
-Существующий `docs/production-v1-architecture.html` остаётся неизменным: это
+Существующий `docs/architecture/production-v1-architecture.html` остаётся неизменным: это
 проверяемая техническая схема конкретного Telegram V1-релиза, а новый файл
 показывает весь проект и его дальнейшую границу.
 
@@ -95,7 +95,7 @@ post-launch возможности, если аудит кода не докаж
 Статусы и связи сверяются в следующем порядке:
 
 1. `project/` — фактический код, Compose, миграции и тесты;
-2. `docs/production-v1-architecture.html` и его статические тесты — текущая
+2. `docs/architecture/production-v1-architecture.html` и его статические тесты — текущая
    проверяемая карта реализованного Telegram V1;
 3. `ТЗ и архитектура.md` — целевой состав и архитектурные решения;
 4. `План реализации.md` и связанные фазовые планы — граница Production V1;
@@ -161,7 +161,7 @@ post-launch возможности, если аудит кода не докаж
 ## 8. Ограничения
 
 - Не изменять runtime-код и существующий
-  `docs/production-v1-architecture.html`.
+  `docs/architecture/production-v1-architecture.html`.
 - Не показывать токены, пароли, реальные телефоны, адрес сервера, `.env` и
   другие секреты.
 - Не заявлять production-ready без доказательства.
