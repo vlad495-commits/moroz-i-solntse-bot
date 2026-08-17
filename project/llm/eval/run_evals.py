@@ -137,6 +137,31 @@ async def _run_dataset() -> tuple[SecurityEvalResult, ...]:
     return results
 
 
+async def _run_structural() -> tuple[SecurityEvalResult, ...]:
+    """Прогнать только локальные policy-кейсы без bot/judge calls."""
+    try:
+        cases = _load_dataset("dataset")
+    except Exception:
+        results = (SecurityEvalResult(False, "dataset_error", False),)
+        _print_batch("structural", results, status="error")
+        return results
+
+    collected = []
+    for case in cases:
+        try:
+            passed = await _evaluate_structural_case(case)
+        except Exception:
+            passed = False
+        if passed is not None:
+            collected.append(
+                _case_result(case, passed, default_category="structural")
+            )
+
+    results = tuple(collected)
+    _print_batch("structural", results)
+    return results
+
+
 async def _run_adversarial() -> tuple[SecurityEvalResult, ...]:
     """Прогнать jailbreak-атаки: проверяем что guardrails ловит."""
     try:
@@ -228,7 +253,7 @@ async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--only",
-        choices=("dataset", "adversarial", "catalog"),
+        choices=("dataset", "adversarial", "catalog", "technical"),
         default=None,
         help="Прогнать только один из датасетов",
     )
@@ -236,13 +261,16 @@ async def main() -> int:
 
     results: list[SecurityEvalResult] = []
 
-    if args.only in (None, "adversarial"):
+    if args.only in (None, "adversarial", "technical"):
         results.extend(await _run_adversarial())
+
+    if args.only == "technical":
+        results.extend(await _run_structural())
 
     if args.only in (None, "dataset"):
         results.extend(await _run_dataset())
 
-    if args.only in (None, "catalog"):
+    if args.only in (None, "catalog", "technical"):
         results.extend(await _run_catalog())
 
     gate = security_gate(results)

@@ -944,6 +944,68 @@ async def test_eval_cli_main_uses_shared_security_gate(
     )
 
 
+@pytest.mark.asyncio
+async def test_technical_cli_runs_only_local_technical_batches(monkeypatch):
+    called = []
+
+    def batch(name, category):
+        async def run():
+            called.append(name)
+            return (SecurityEvalResult(True, category, True),)
+
+        return run
+
+    async def forbidden_dataset():
+        raise AssertionError("technical gate must not run business dataset")
+
+    monkeypatch.setattr(
+        run_evals,
+        "_run_adversarial",
+        batch("adversarial", "jailbreak"),
+    )
+    monkeypatch.setattr(
+        run_evals,
+        "_run_structural",
+        batch("structural", "consent"),
+    )
+    monkeypatch.setattr(
+        run_evals,
+        "_run_catalog",
+        batch("catalog", "catalog_invented_price"),
+    )
+    monkeypatch.setattr(run_evals, "_run_dataset", forbidden_dataset)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_evals", "--only", "technical"],
+    )
+
+    assert await run_evals.main() == 0
+    assert called == ["adversarial", "structural", "catalog"]
+
+
+@pytest.mark.asyncio
+async def test_structural_batch_uses_only_local_policy_cases(monkeypatch, capsys):
+    cases = [
+        {"id": 1, "category": "consent", "critical": True},
+        {"id": 2, "category": "faq", "critical": False},
+    ]
+
+    async def evaluate(case):
+        return True if case["id"] == 1 else None
+
+    monkeypatch.setattr(run_evals, "_load_dataset", lambda name: cases)
+    monkeypatch.setattr(run_evals, "_evaluate_structural_case", evaluate)
+
+    assert await run_evals._run_structural() == (
+        SecurityEvalResult(True, "consent", True),
+    )
+    assert (
+        "[structural] total=1 passed=1 failed=0 status=passed"
+        in capsys.readouterr().out
+    )
+
+
 @pytest.mark.parametrize(
     ("error", "sentinel"),
     [
