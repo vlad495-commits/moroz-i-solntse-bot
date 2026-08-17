@@ -258,6 +258,24 @@ def test_invocation_raw_values_are_rejected_but_source_owned_facts_pass() -> Non
     assert public_source not in repr(facts)
 
 
+def test_source_owned_address_can_be_returned_without_source_prefix() -> None:
+    facts = extract_structured_facts(
+        "Адрес: Тульская область, Новомосковск, "
+        "ул. Трудовые резервы, 33Б, ТРЦ Первый, цокольный этаж"
+    )
+
+    assert validate_output(
+        "Адрес: ул. Трудовые резервы, 33Б, ТРЦ Первый, цокольный этаж",
+        facts,
+        frozenset(),
+    ).ok is True
+    assert validate_output(
+        "Адрес: ул. Ленина, 10",
+        facts,
+        frozenset(),
+    ).code == "raw_pii"
+
+
 def test_source_owned_public_contact_remains_allowed_when_seen_in_invocation() -> None:
     public_phone = "+7 902 906-61-66"
     facts = extract_structured_facts(f"Телефон центра: {public_phone}")

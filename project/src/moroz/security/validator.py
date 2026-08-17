@@ -431,11 +431,19 @@ def validate_output(
     output_pii.mask(text)
     if output_pii.raw_values(frozenset({"payment"})):
         return ValidationVerdict(False, "raw_pii")
+    output_addresses = output_pii.raw_values(frozenset({"address"}))
+    if any(
+        (normalized := _normalize_public_pii(value)) not in facts.public_pii
+        and not any(
+            len(normalized) >= 12 and normalized in public_value
+            for public_value in facts.public_pii
+        )
+        for value in output_addresses
+    ):
+        return ValidationVerdict(False, "raw_pii")
     if any(
         _normalize_public_pii(value) not in facts.public_pii
-        for value in output_pii.raw_values(
-            frozenset({"name", "address", "medical"})
-        )
+        for value in output_pii.raw_values(frozenset({"name", "medical"}))
     ):
         return ValidationVerdict(False, "raw_pii")
     if _contacts(text) - facts.public_contacts:

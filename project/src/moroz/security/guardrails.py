@@ -90,6 +90,11 @@ _MEDICAL_RISK_RULES = (
         r"diagnose\s+me|prescribe\s+treatment)\b",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"\b(?:гарантир\w*|обеща\w*)\b.{0,40}\b"
+        r"(?:вылеч\w*|лечени\w*|медицинск\w*\s+результат\w*)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
 )
 _REVIEW_RULES = (
     re.compile(

@@ -202,6 +202,13 @@ def test_ordinary_preparation_rules_question_is_allowed() -> None:
     ).action == "allow"
 
 
+def test_medical_cure_guarantee_question_escalates_locally() -> None:
+    assert check_input(
+        "Гарантируете, что процедура вылечит?",
+        recent_message_count=1,
+    ) == GuardDecision("escalate", "medical_risk")
+
+
 @pytest.mark.parametrize(
     "text",
     [
