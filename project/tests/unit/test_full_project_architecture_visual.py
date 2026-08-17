@@ -20,14 +20,17 @@ REQUIRED_SECTIONS = {
     "comparison",
     "channels",
     "ingress",
+    "customer-identity",
     "queue-worker",
     "routing",
     "llm-security",
     "booking",
     "delivery",
     "background",
+    "campaigns-reactivation",
     "admin-evals",
     "data",
+    "traceability",
     "infrastructure",
     "models-integrations",
     "privacy-security",
@@ -63,11 +66,18 @@ STATUS_NODES = {
         "whatsapp-channel",
         "instagram-channel",
         "vk-channel",
-        "site-channel",
-        "voice-speechkit",
+        "customer-profile",
+        "channel-identity-map",
+        "identity-verification-audit",
+        "campaign-builder",
+        "marketing-consent-audience",
+        "reactivation-selector",
+        "campaign-scheduler",
+        "campaign-outbox-delivery",
+        "campaign-stop-feedback",
+        "campaign-analytics",
+        "technical-trace-journal",
         "yookassa-payments",
-        "mass-mailings",
-        "reactivation",
         "knowledge-base-editor",
         "extended-business-analytics",
     },
@@ -246,7 +256,16 @@ def test_visual_contains_required_sections_and_status_markers() -> None:
             assert "node" in classes
             if status == "planned":
                 assert "future" in classes
-                assert "future-boundary" in element.ancestor_ids
+                assert any(
+                    section in element.ancestor_ids
+                    for section in {
+                        "channels",
+                        "customer-identity",
+                        "campaigns-reactivation",
+                        "traceability",
+                        "future-boundary",
+                    }
+                )
             else:
                 assert "future" not in classes
                 assert "future-boundary" not in element.ancestor_ids
@@ -260,7 +279,7 @@ def test_visual_contains_status_labels_and_comparison_facts() -> None:
         "Lucky Hair Studio",
         "Что расходится",
         "Что можно перенять",
-        "0009_production_admin",
+        "0011_yclients_service_catalog",
         "worker",
         "scheduler",
         "RabbitMQ",
@@ -277,19 +296,27 @@ def test_visual_contains_current_audit_evidence_and_open_gates() -> None:
     html, parser = load_visual()
     assert "audit-status" in parser.elements_by_id
     for token in (
-        "Срез 04.08.2026",
-        "git <code>6cd6463</code>",
-        "569 unit + 87 integration + 111 contract + 172 e2e = 939 passed",
-        "53 eval-кейса · 3 прогона · 90 результатов",
-        "Local-ready · staging-tested · production launch blocked",
-        "YCLIENTS live mutation smoke",
-        "staging smoke/load/failure",
+        "Срез 17.08.2026",
+        "staging git <code>833db15</code>",
+        "0011_yclients_service_catalog",
+        "Technical eval: 31/31 PASS",
+        "Full Docker suite: 1232 passed",
+        "7/7 healthy",
+        "Staging-ready · production launch blocked",
+        "booking projection sync",
+        "yclients_http_status",
         "изолированный restore drill",
         "внешний uptime и реальная доставка alert",
-        "prompt save + hot-reload",
-        "повторный прогон всех 53 eval-кейсов",
     ):
         assert token in html
+
+
+def test_visual_excludes_voice_and_site_channels() -> None:
+    html, parser = load_visual()
+    assert "voice-speechkit" not in parser.elements_by_id
+    assert "site-channel" not in parser.elements_by_id
+    assert "SpeechKit" not in html
+    assert "Голосовые" not in html
 
 
 def test_visual_is_static_and_does_not_expose_secrets() -> None:

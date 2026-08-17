@@ -28,11 +28,11 @@
 - Consumes: существующие `REQUIRED_SECTIONS`, `STATUS_NODES` и HTML parser.
 - Produces: проверяемые IDs `customer-profile`, `channel-identity-map`, `technical-trace-journal`, `campaign-builder`, `marketing-consent-audience`, `reactivation-selector`, `campaign-scheduler`, `campaign-outbox-delivery`, `campaign-stop-feedback`, `campaign-analytics`.
 
-- [ ] **Step 1: Добавить ожидания новых секций и planned-узлов**
+- [x] **Step 1: Добавить ожидания новых секций и planned-узлов**
 
 Добавить `customer-identity`, `campaigns-reactivation`, `traceability` в `REQUIRED_SECTIONS`; добавить перечисленные IDs в `STATUS_NODES["planned"]`; убрать `site-channel` и `voice-speechkit`.
 
-- [ ] **Step 2: Добавить отдельный negative contract**
+- [x] **Step 2: Добавить отдельный negative contract**
 
 ```python
 def test_visual_excludes_voice_and_site_channels() -> None:
@@ -43,7 +43,7 @@ def test_visual_excludes_voice_and_site_channels() -> None:
     assert "Голосовые" not in html
 ```
 
-- [ ] **Step 3: Проверить RED через Docker**
+- [x] **Step 3: Проверить RED через Docker**
 
 Run: `docker compose -p moroz-architecture-html-red --env-file ../.env --profile test run --rm -e FULL_ARCHITECTURE_HTML_PATH=/workspace/docs/moroz-i-solntse-full-architecture.html -v ../docs:/workspace/docs:ro test pytest project/tests/unit/test_full_project_architecture_visual.py -q`
 
@@ -61,22 +61,22 @@ Expected: FAIL на отсутствующих новых секциях/узл�
 - Consumes: статусный контракт Task 1 и факты staging/roadmap на 17.08.2026.
 - Produces: автономный целевой HTML с актуальной легендой и встроенными planned-потоками.
 
-- [ ] **Step 1: Актуализировать audit header и evidence**
+- [x] **Step 1: Актуализировать audit header и evidence**
 
 Отразить staging runtime `833db15`, Alembic `0011_yclients_service_catalog`, технический eval `31/31 PASS`, full Docker `1232 passed`, `7/7 healthy` и fail-closed booking projection без раскрытия внешних данных.
 
-- [ ] **Step 2: Встроить новые целевые секции**
+- [x] **Step 2: Встроить новые целевые секции**
 
 Добавить customer identity после ingress, campaigns/reactivation рядом с scheduler/outbox и traceability рядом с данными/эксплуатацией. Planned-карточки получают серый пунктир, `data-status="planned"` и маркер `ПЛАН`.
 
-- [ ] **Step 3: Удалить voice/site и обновить comparison/future boundary**
+- [x] **Step 3: Удалить voice/site и обновить comparison/future boundary**
 
 Оставить четыре канала: Telegram работает; VK, Instagram и WhatsApp запланированы. Убрать SpeechKit и сайт из текста, IDs и backlog-карточек.
 
-- [ ] **Step 4: Проверить GREEN и регрессию через Docker**
+- [x] **Step 4: Проверить GREEN и регрессию через Docker**
 
 Run focused contract с Compose project `moroz-architecture-html-green`, затем весь `project/tests/unit/test_full_project_architecture_visual.py`; Expected: все tests PASS и cleanup `0`.
 
-- [ ] **Step 5: Выполнить browser QA и завершить документы**
+- [x] **Step 5: Выполнить browser QA и завершить документы**
 
 Через отдельный точный Docker-preview проверить wide и 390px viewports: `scrollWidth == clientWidth`, новые секции видимы, статусная легенда сохранена. Отметить roadmap, записать результат в changelog и сделать логический локальный commit без push.
