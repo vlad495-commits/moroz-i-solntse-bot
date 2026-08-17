@@ -156,7 +156,7 @@ git commit -m "fix: walk-in включён в technical eval gate"
 - Test: `project/tests/unit/security/test_validator.py`
 - Test: `project/tests/unit/test_eval_privacy.py`
 
-- [x] Конкретный date+time или time-only остаётся `invented_slot`, даже если рядом сказано «доступна без записи»; общий диапазон часов разрешён.
+- [x] Конкретный date+time с датой до/после диапазона или time-only остаётся `invented_slot`, даже если рядом сказано «доступна без записи»; разрешён только чистый ежедневный общий диапазон часов.
 - [x] Technical adversarial regression завершается local FAIL без primary LLM вызова.
 - [x] Пустой обязательный technical batch делает общий gate FAIL.
 - [x] Structural dataset load-error является critical FAIL.
