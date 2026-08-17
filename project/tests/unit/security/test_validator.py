@@ -520,6 +520,11 @@ def test_walk_in_policy_with_hours_is_not_an_invented_slot() -> None:
         facts,
         frozenset(),
     ).code == "invented_slot"
+    assert validate_output(
+        "Эта услуга доступна без записи завтра в 15:00.",
+        facts,
+        frozenset(),
+    ).code == "invented_slot"
 
 
 @pytest.mark.parametrize(

@@ -147,3 +147,16 @@ Run `git diff --check`, confirm datasets unchanged relative to
 git add project/src/moroz/security/validator.py project/tests/unit/security/test_validator.py project/tests/unit/security/test_pipeline.py project/llm/eval/local_2026-08-17_report.md 'Дорожная карта.md' changelog.md
 git commit -m "fix: walk-in включён в technical eval gate"
 ```
+
+### Task 3: Review fail-closed fixes
+
+**Files:**
+- Modify: `project/src/moroz/security/validator.py`
+- Modify: `project/llm/eval/run_evals.py`
+- Test: `project/tests/unit/security/test_validator.py`
+- Test: `project/tests/unit/test_eval_privacy.py`
+
+- [x] Конкретный date+time остаётся `invented_slot`, даже если рядом сказано «доступна без записи».
+- [x] Technical adversarial regression завершается local FAIL без primary LLM вызова.
+- [x] Пустой обязательный technical batch делает общий gate FAIL.
+- [ ] Выполнить Docker RED/GREEN, полный suite, re-review и exact cleanup.

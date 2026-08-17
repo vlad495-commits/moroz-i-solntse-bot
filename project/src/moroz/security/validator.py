@@ -51,11 +51,13 @@ _AVAILABILITY_RE = re.compile(
     r"available|open\s+slot)\b",
     re.IGNORECASE,
 )
-_NEGATED_AVAILABILITY_RULES = (
+_GENERAL_ACCESS_RULES = (
     re.compile(
         r"\bдоступн\w*\s+(?:без\s+запис\w*|ежедневно\b)",
         re.IGNORECASE,
     ),
+)
+_NEGATED_AVAILABILITY_RULES = (
     re.compile(
         r"\b(?:нет|не\s+доступно)\s+"
         r"(?:свободн\w*|доступн\w*|окон\w*)",
@@ -466,7 +468,11 @@ def validate_output(
         return ValidationVerdict(False, "invented_price")
     if _matches_after_removing(
         text,
-        ignored=_NEGATED_AVAILABILITY_RULES,
+        ignored=(
+            _NEGATED_AVAILABILITY_RULES
+            if _SLOT_RE.search(text)
+            else _NEGATED_AVAILABILITY_RULES + _GENERAL_ACCESS_RULES
+        ),
         blocked=(_AVAILABILITY_RE,),
     ):
         output_slots = _slot_keys(text)

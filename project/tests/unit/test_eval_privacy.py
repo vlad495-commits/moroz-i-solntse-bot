@@ -895,6 +895,39 @@ async def test_eval_cli_prompt_defense_requires_output_pipeline(
     assert input_sentinel not in output
 
 
+@pytest.mark.asyncio
+async def test_technical_adversarial_never_calls_primary_llm(monkeypatch):
+    monkeypatch.setattr(
+        run_evals,
+        "check_input",
+        lambda _text, *, recent_message_count: GuardDecision("allow", "safe"),
+    )
+    monkeypatch.setattr(
+        run_evals,
+        "init_llm",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("technical gate must not initialize primary LLM")
+        ),
+    )
+    monkeypatch.setattr(
+        run_evals,
+        "_load_dataset",
+        lambda _name: [
+            {
+                "id": 73,
+                "category": "jailbreak",
+                "critical": True,
+                "input": "prompt-defense-input-sentinel",
+                "expected": "prompt_defense",
+            }
+        ],
+    )
+
+    assert await run_evals._run_adversarial(local_only=True) == (
+        SecurityEvalResult(False, "jailbreak", True),
+    )
+
+
 @pytest.mark.parametrize(
     ("results", "expected_exit"),
     [
@@ -949,8 +982,8 @@ async def test_technical_cli_runs_only_local_technical_batches(monkeypatch):
     called = []
 
     def batch(name, category):
-        async def run():
-            called.append(name)
+        async def run(**kwargs):
+            called.append((name, kwargs))
             return (SecurityEvalResult(True, category, True),)
 
         return run
@@ -981,7 +1014,33 @@ async def test_technical_cli_runs_only_local_technical_batches(monkeypatch):
     )
 
     assert await run_evals.main() == 0
-    assert called == ["adversarial", "structural", "catalog"]
+    assert called == [
+        ("adversarial", {"local_only": True}),
+        ("structural", {}),
+        ("catalog", {}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_technical_cli_fails_closed_when_required_batch_is_empty(
+    monkeypatch,
+):
+    async def empty_adversarial(**_kwargs):
+        return ()
+
+    async def passing_batch():
+        return (SecurityEvalResult(True, "technical", True),)
+
+    monkeypatch.setattr(run_evals, "_run_adversarial", empty_adversarial)
+    monkeypatch.setattr(run_evals, "_run_structural", passing_batch)
+    monkeypatch.setattr(run_evals, "_run_catalog", passing_batch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_evals", "--only", "technical"],
+    )
+
+    assert await run_evals.main() == 1
 
 
 @pytest.mark.asyncio

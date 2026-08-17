@@ -162,7 +162,10 @@ async def _run_structural() -> tuple[SecurityEvalResult, ...]:
     return results
 
 
-async def _run_adversarial() -> tuple[SecurityEvalResult, ...]:
+async def _run_adversarial(
+    *,
+    local_only: bool = False,
+) -> tuple[SecurityEvalResult, ...]:
     """Прогнать jailbreak-атаки: проверяем что guardrails ловит."""
     try:
         cases = _load_dataset("adversarial_dataset")
@@ -190,6 +193,8 @@ async def _run_adversarial() -> tuple[SecurityEvalResult, ...]:
                 passed = blocked
             elif expected == "prompt_defense" and blocked:
                 passed = True
+            elif expected == "prompt_defense" and local_only:
+                passed = False
             elif expected == "prompt_defense":
                 if llm_ready is None:
                     try:
@@ -261,17 +266,26 @@ async def main() -> int:
 
     results: list[SecurityEvalResult] = []
 
-    if args.only in (None, "adversarial", "technical"):
-        results.extend(await _run_adversarial())
-
     if args.only == "technical":
-        results.extend(await _run_structural())
+        batches = (
+            ("adversarial", await _run_adversarial(local_only=True)),
+            ("structural", await _run_structural()),
+            ("catalog", await _run_catalog()),
+        )
+        for name, batch in batches:
+            results.extend(
+                batch
+                or (SecurityEvalResult(False, f"{name}_missing", True),)
+            )
+    else:
+        if args.only in (None, "adversarial"):
+            results.extend(await _run_adversarial())
 
-    if args.only in (None, "dataset"):
-        results.extend(await _run_dataset())
+        if args.only in (None, "dataset"):
+            results.extend(await _run_dataset())
 
-    if args.only in (None, "catalog", "technical"):
-        results.extend(await _run_catalog())
+        if args.only in (None, "catalog"):
+            results.extend(await _run_catalog())
 
     gate = security_gate(results)
     status = "passed" if gate.ok else "failed"

@@ -16,15 +16,22 @@ LLM-судью. Старые наборы не изменялись и их ис
 - critical: `27/27 PASS`;
 - judge calls: `0`;
 - judge cost: `$0`;
-- affected Docker pytest: `195 passed in 6.88s`.
+- affected Docker pytest after review fixes: `197 passed in 10.59s`.
 
 Дополнительно исправлен реальный validator defect из кейса 42: фраза об
 услугах, доступных без записи или ежедневно, больше не превращает часы работы в
 выдуманный slot. Положительное утверждение `Свободно сегодня в 15:00` без
 разрешённого slot по-прежнему блокируется.
 
-Это означает техническую готовность локального security/eval слоя при
-отсутствии live-каталога. Полный business-quality judge-run остаётся отдельным
+Initial gate дал PASS, после чего независимый review нашёл три fail-closed
+пробела. Они закрыты отдельным Docker RED/GREEN циклом:
+
+- specific date+time рядом с walk-in формулировкой снова блокируется;
+- adversarial regression в technical mode даёт локальный FAIL до primary LLM;
+- пустой обязательный batch добавляет critical FAIL в общий gate.
+
+Повторный technical gate сохранил `31/31 PASS`, а соответствующие negative
+контракты проходят. Полный business-quality judge-run остаётся отдельным
 неблокирующим набором и не переименован в PASS.
 
 ## Итог простыми словами
