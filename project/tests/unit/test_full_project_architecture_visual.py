@@ -5,7 +5,6 @@ from html.parser import HTMLParser
 import os
 from pathlib import Path
 import re
-from urllib.parse import urlsplit
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -219,28 +218,6 @@ def load_visual() -> tuple[str, FullArchitectureParser]:
     return html, parser
 
 
-def is_external_target(target: str) -> bool:
-    target = target.strip()
-    if not target or target.startswith("#"):
-        return False
-    if target.startswith(("//", "\\\\")):
-        return True
-    parsed = urlsplit(target)
-    return bool(parsed.scheme or parsed.netloc)
-
-
-def iter_attribute_targets(attribute: str, value: str) -> list[str]:
-    if attribute in {"imagesrcset", "srcset"}:
-        return [
-            candidate.strip().split()[0]
-            for candidate in value.split(",")
-            if candidate.strip()
-        ]
-    if attribute == "ping":
-        return value.split()
-    return [value]
-
-
 def test_visual_contains_required_sections_and_status_markers() -> None:
     _, parser = load_visual()
     assert not parser.duplicate_ids, sorted(parser.duplicate_ids)
@@ -341,14 +318,12 @@ def test_visual_is_static_and_does_not_expose_secrets() -> None:
     )
     assert not re.search(r"@import\b", html, re.IGNORECASE)
     for match in CSS_URL_PATTERN.finditer(html):
-        target = match.group("target").strip()
-        assert not is_external_target(target), target
+        raise AssertionError(match.group("target").strip())
     for element in parser.tags:
         inline_style = element.attrs.get("style") or ""
         assert not re.search(r"@import\b", inline_style, re.IGNORECASE)
         for match in CSS_URL_PATTERN.finditer(inline_style):
-            target = match.group("target").strip()
-            assert not is_external_target(target), target
+            raise AssertionError(match.group("target").strip())
     decoded_content = "\n".join(
         [
             html,
