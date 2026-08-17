@@ -45,7 +45,14 @@ def test_visual_excludes_voice_and_site_channels() -> None:
 
 - [x] **Step 3: Проверить RED через Docker**
 
-Run: `docker compose -p moroz-architecture-html-red --env-file ../.env --profile test run --rm -e FULL_ARCHITECTURE_HTML_PATH=/workspace/docs/moroz-i-solntse-full-architecture.html -v ../docs:/workspace/docs:ro test pytest project/tests/unit/test_full_project_architecture_visual.py -q`
+Run из `project/` в PowerShell:
+
+```powershell
+$repoRoot = Split-Path -Parent (git rev-parse --git-common-dir)
+$envFile = Join-Path $repoRoot '.env'
+$docs = (Resolve-Path ../docs).Path
+docker compose -p moroz-architecture-html-red --env-file $envFile --profile test run --rm -e FULL_ARCHITECTURE_HTML_PATH=/repo/docs/moroz-i-solntse-full-architecture.html -v "${docs}:/repo/docs:ro" test pytest tests/unit/test_full_project_architecture_visual.py -q
+```
 
 Expected: FAIL на отсутствующих новых секциях/узлах и ещё присутствующих voice/site nodes.
 

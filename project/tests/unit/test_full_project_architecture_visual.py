@@ -60,7 +60,6 @@ STATUS_NODES = {
     "evidence-pending": {
         "yclients-live",
         "production-backup",
-        "external-uptime",
     },
     "planned": {
         "whatsapp-channel",
@@ -77,6 +76,7 @@ STATUS_NODES = {
         "campaign-stop-feedback",
         "campaign-analytics",
         "technical-trace-journal",
+        "external-uptime",
         "yookassa-payments",
         "knowledge-base-editor",
         "extended-business-analytics",
@@ -263,6 +263,7 @@ def test_visual_contains_required_sections_and_status_markers() -> None:
                         "customer-identity",
                         "campaigns-reactivation",
                         "traceability",
+                        "infrastructure",
                         "future-boundary",
                     }
                 )
@@ -302,11 +303,15 @@ def test_visual_contains_current_audit_evidence_and_open_gates() -> None:
         "Technical eval: 31/31 PASS",
         "Full Docker suite: 1232 passed",
         "7/7 healthy",
+        "Caddy",
+        "scheduler disabled in staging",
         "Staging-ready · production launch blocked",
         "booking projection sync",
         "yclients_http_status",
         "изолированный restore drill",
         "внешний uptime и реальная доставка alert",
+        "Эскалации: очередь и ответ клиенту",
+        "Записи: read-only центр",
     ):
         assert token in html
 
@@ -328,6 +333,12 @@ def test_visual_is_static_and_does_not_expose_secrets() -> None:
         "websocket(",
     ):
         assert forbidden not in normalized_html
+    assert not any(element.tag == "script" for element in parser.tags)
+    assert not any(
+        attribute.casefold().startswith("on")
+        for element in parser.tags
+        for attribute in element.attrs
+    )
     assert not re.search(r"@import\b", html, re.IGNORECASE)
     for match in CSS_URL_PATTERN.finditer(html):
         target = match.group("target").strip()
@@ -372,8 +383,7 @@ def test_visual_has_only_local_assets() -> None:
             source = element.attrs.get(attribute)
             if not source:
                 continue
-            for target in iter_attribute_targets(attribute, source):
-                assert not is_external_target(target), (element.tag, attribute, target)
+            raise AssertionError((element.tag, attribute, source))
         if element.attrs.get("srcdoc"):
             raise AssertionError((element.tag, "srcdoc"))
         if (
@@ -396,6 +406,7 @@ def test_visual_has_required_css_contract() -> None:
         "border-style: dashed",
         "repeat(auto-fit,minmax(205px,1fr))",
         "max-width: 1085px",
+        ".branches, .branches.five, .branches.three { grid-template-columns: repeat(2,minmax(230px,1fr)); }",
         "@media (max-width: 760px)",
     ):
         assert token in html

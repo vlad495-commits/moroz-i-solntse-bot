@@ -105,7 +105,7 @@
     table.grid th { background: #eef3f7; color: #2b3b4a; font-size: 11px; letter-spacing: .25px; }
     code { padding: 1px 5px; border-radius: 4px; background: #eef1f4; font-size: 11px; overflow-wrap: anywhere; }
     .tiny { max-width: 1100px; margin: 34px auto 0; color: #87929c; text-align: center; font-size: 10.5px; line-height: 1.55; }
-    @media (max-width: 1100px) { .branches, .branches.five { grid-template-columns: repeat(2,minmax(230px,1fr)); } }
+    @media (max-width: 1100px) { .branches, .branches.five, .branches.three { grid-template-columns: repeat(2,minmax(230px,1fr)); } }
     @media (max-width: 760px) {
       body { padding: 22px 10px 48px; } h1 { font-size: 18px; } h2.sect { margin-top: 34px; }
       .row { display: flex; flex-direction: column; gap: 7px; } .center, .side-l, .side-r { width: 100%; text-align: center; }
@@ -120,7 +120,7 @@
   <header>
     <h1>МОРОЗ И СОЛНЦЕ — ПОЛНАЯ АРХИТЕКТУРА ПРОЕКТА</h1>
     <p class="sub">Один файл: фактический staging-контур, код с незакрытым внешним evidence и полная согласованная целевая архитектура.</p>
-    <p class="sub"><b>Срез 17.08.2026</b> · staging git <code>833db15</code> · Alembic <code>0011_yclients_service_catalog</code> · runtime: <code>worker</code>, <code>scheduler</code>, <code>bot</code>, <code>admin</code>, <code>redis</code>, <code>postgres</code>, <code>rabbitmq</code></p>
+    <p class="sub"><b>Срез 17.08.2026</b> · staging git <code>833db15</code> · Alembic <code>0011_yclients_service_catalog</code> · staging runtime: <code>bot</code>, <code>worker</code>, <code>admin</code>, <code>Caddy</code>, <code>redis</code>, <code>postgres</code>, <code>rabbitmq</code> · scheduler disabled in staging</p>
     <p class="sub"><b>Цветное:</b> РАБОТАЕТ · <b style="color:#7b6014">Жёлтая плашка:</b> КОД ЕСТЬ · НУЖНА ПРОВЕРКА · <b style="color:#818c96">Серое пунктирное:</b> ПЛАН</p>
   </header>
 
@@ -137,7 +137,7 @@
     <h2 class="sect wide">0 · Аудит состояния на 17.08.2026</h2>
     <div class="aside wide">
       <div class="card done"><h3>Автоматические проверки</h3><p><b>Technical eval: 31/31 PASS</b> без live-цен. Связанный набор: <b>198 passed</b>. <b>Full Docker suite: 1232 passed</b>; независимый review не нашёл Critical, Important или Minor замечаний.</p></div>
-      <div class="card done"><h3>Staging</h3><p>Release candidate <code>833db15</code> развёрнут: <b>7/7 healthy</b>. Telegram, worker, scheduler, admin, PostgreSQL, Redis и RabbitMQ работают в едином immutable-контуре.</p></div>
+      <div class="card done"><h3>Staging</h3><p>Release candidate <code>833db15</code> развёрнут: <b>7/7 healthy</b>. Bot, worker, admin, Caddy, PostgreSQL, Redis и RabbitMQ работают в едином immutable-контуре; постоянный scheduler намеренно выключен.</p></div>
       <div class="card warn"><h3>Релизный статус</h3><p><b>Staging-ready · production launch blocked</b>. Ядро технически собрано, но production rollout, restore drill, внешний uptime и часть внешнего YCLIENTS evidence ещё не закрыты.</p></div>
     </div>
     <div class="tblwrap wide" style="margin-top:13px"><table class="grid">
@@ -167,7 +167,7 @@
         <tr><td>LLM security</td><td>Guardrails, PII и проверка выхода</td><td>PII masking, guardrails, primary/reserve gateway, output validator уже в коде</td><td>У нас строгая durable-граница до и после внешнего вызова</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Masked context и демаскировка только после validation.</td></tr>
         <tr><td>Запись</td><td>Локальный booking flow</td><td>YCLIENTS ownership, exact key, reconciliation и защищённые мутации</td><td>Live provider-доступ и production smoke ещё не подтверждены</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Явное подтверждение и базовый lifecycle; <span class="ph">СЛЕДУЮЩИЙ ШАГ</span> — расширение после live evidence.</td></tr>
         <tr><td>Маркетинг и деньги</td><td>Шире автоматизация маркетинга</td><td>Кампании, реактивация и ЮKassa не построены</td><td>Отложено после надёжного Telegram/YCLIENTS V1</td><td><span class="ph">СЛЕДУЮЩИЙ ШАГ</span><br>Добавить consent-гейты, управляемые кампании и повторно использовать durable outbox.</td></tr>
-        <tr><td>Админка и качество</td><td>Широкий операционный UI и эвалы</td><td>FastAPI/Jinja, RBAC, CSRF, TOTP, audit, prompt versions и eval runs</td><td>Нет полноценного UI записей, платежей, рассылок и knowledge editor</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Единая карта ролей, моделей, eval-контуров и статусный язык.</td></tr>
+        <tr><td>Админка и качество</td><td>Широкий операционный UI и эвалы</td><td>FastAPI/Jinja, RBAC, CSRF, TOTP, audit, prompt/eval, эскалации и read-only записи</td><td>Mutations записей, платежи, кампании и knowledge editor ещё не построены</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Единая карта ролей, моделей, eval-контуров и статусный язык.</td></tr>
         <tr><td>152-ФЗ</td><td>Локальная PII-граница</td><td>Privacy gate, раздельные consent semantics, masking и safe logging</td><td>Юридические сроки и правила остаются production acceptance</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Отдельная карта Redis keys, данных и secret boundary.</td></tr>
       </tbody>
     </table></div>
@@ -227,7 +227,7 @@
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#2e7d5b">Консультация</span><div class="node llm"><b>FAQ / consultation</b><small>контекст → security → primary/reserve LLM</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#7d4fa8">Запись</span><div class="node proc"><b>booking / change / cancel</b><small>детерминированная state machine с явным подтверждением</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#b97018">Уведомления</span><div class="node proc"><b>notification / lifecycle</b><small>реализованы в подтверждённой code/test boundary</small><span class="status done">РАБОТАЕТ</span></div></div>
-      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#a3473d">Человек</span><div class="node term"><b>Эскалация</b><small>durable запись и human mode; полного операторского UI нет</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#a3473d">Человек</span><div class="node term"><b>Эскалация</b><small>durable запись, human mode, admin queue и идемпотентный ответ клиенту через outbox</small><span class="status done">РАБОТАЕТ</span></div></div>
     </div><p class="bnote" style="text-align:center;margin-top:12px">Мультинтент, несколько услуг, оплата, массовые рассылки и полноценная реактивация не включены в этот рабочий веер.</p></div>
   </section>
 
@@ -295,7 +295,7 @@
       <div class="bcol"><div id="eval-system" class="node llm" data-status="implemented"><b>Eval system</b><small>CRUD cases, runs/results, review, judge role и production gate</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div id="knowledge-editor-reference" class="node future"><b>Knowledge base editor</b><small>целевая функция вынесена в единый future-контур</small><span class="ph">СМ. РАЗДЕЛ 14</span></div></div>
     </div></div>
-    <div class="aside"><div class="card blue"><h3>Граница UI</h3><p>Диалоги, промпт, эвалы, управление ботом, логи и базовые метрики реализованы. Полноценные рабочие экраны эскалаций, записей, платежей и рассылок готовыми не считаются.</p></div></div>
+    <div class="aside"><div class="card blue"><h3>Граница UI</h3><p><b>Эскалации: очередь и ответ клиенту</b> работают через ordered outbox. <b>Записи: read-only центр</b> показывает локальную YCLIENTS-проекцию, provenance и расхождения. Mutations записей, платежи, кампании и knowledge editor остаются планом.</p></div></div>
   </section>
 
   <section id="data">
@@ -329,8 +329,9 @@
       <tbody>
         <tr><td><code>bot</code></td><td>Telegram webhook ingress и outbound delivery</td><td>bounded shutdown, PostgreSQL/Redis dependencies</td><td>РАБОТАЕТ</td></tr>
         <tr><td><code>worker</code></td><td>message, booking, notification tasks</td><td>heartbeat, manual ACK, retry/DLQ</td><td>РАБОТАЕТ</td></tr>
-        <tr><td><code>scheduler</code></td><td>due jobs → RabbitMQ</td><td>heartbeat, PostgreSQL claim</td><td>РАБОТАЕТ в code/test boundary</td></tr>
+        <tr><td><code>scheduler</code></td><td>due jobs → RabbitMQ</td><td>heartbeat, PostgreSQL claim</td><td>КОД/ТЕСТЫ ГОТОВЫ · STAGING DISABLED</td></tr>
         <tr><td><code>admin</code></td><td>FastAPI/Jinja control plane</td><td><code>/healthz</code>, owner metrics, audit</td><td>РАБОТАЕТ</td></tr>
+        <tr><td><code>Caddy</code></td><td>HTTPS ingress для webhook и admin</td><td>TLS, security headers, reverse proxy</td><td>РАБОТАЕТ НА STAGING</td></tr>
         <tr><td><code>postgres</code> · <code>redis</code> · <code>rabbitmq</code></td><td>state, cache/coordination, task broker</td><td>named volumes не считаются app-сервисами</td><td>РАБОТАЕТ</td></tr>
         <tr><td><code>migrate</code></td><td>разовый профиль Alembic</td><td>head <code>0011_yclients_service_catalog</code>, runtime DDL запрещён</td><td>РАБОТАЕТ</td></tr>
       </tbody>
@@ -338,7 +339,7 @@
     <div class="aside wide">
       <div class="card done"><h3>Release mechanics</h3><p>Docker Compose base/test/staging/production overlays, env validation, safe logging, healthz, owner-only metrics, staging/deploy gates и immutable app-only rollback реализованы в коде и runbooks.</p></div>
       <div id="production-backup" class="node store" data-status="evidence-pending"><b>Production backup / restore</b><small>скрипты шифрования, verify и restore есть; внешний backup и production restore drill не закрыты evidence</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div>
-      <div id="external-uptime" class="node proc" data-status="evidence-pending"><b>External uptime</b><small>public health contract есть; независимый внешний монитор и алерт ещё не подтверждены</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div>
+      <div id="external-uptime" class="node future" data-status="planned"><b>External uptime</b><small>public health endpoint есть, но независимый внешний монитор и реальная доставка alert ещё не подключены</small><span class="ph">ПЛАН</span></div>
     </div>
   </section>
 
