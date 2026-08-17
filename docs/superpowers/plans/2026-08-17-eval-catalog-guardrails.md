@@ -85,9 +85,9 @@
 **Interfaces:**
 - Отчёт отдельно показывает judge, catalog, structural и adversarial results.
 
-- [ ] Поднять точный временный Compose namespace и применить migrations.
-- [ ] Выполнить admin judge-run на существующих 69 cases.
-- [ ] Выполнить dedicated synthetic catalog eval и adversarial CLI.
-- [ ] Запустить релевантный Docker pytest gate и `git diff --check`.
-- [ ] Обновить отчёт, roadmap и changelog реальными результатами без маскировки FAIL.
-- [ ] Проверить секреты, сделать локальный коммит и удалить только exact temporary namespace.
+- [x] Поднять точный временный Compose namespace и применить migrations.
+- [x] Выполнить admin judge-run на существующих 69 cases.
+- [x] Выполнить dedicated synthetic catalog eval и adversarial CLI.
+- [x] Запустить релевантный Docker pytest gate и `git diff --check`.
+- [x] Обновить отчёт, roadmap и changelog реальными результатами без маскировки FAIL.
+- [x] Проверить секреты, сделать локальный коммит и удалить только exact temporary namespace.
