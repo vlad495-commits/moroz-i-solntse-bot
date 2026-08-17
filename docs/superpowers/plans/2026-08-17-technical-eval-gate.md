@@ -53,7 +53,7 @@ async def test_technical_cli_runs_only_local_technical_batches(monkeypatch):
 Run:
 
 ```powershell
-docker compose -p moroz-technical-eval-20260817-1668 --env-file <external-env> run --build --rm -T test sh -lc "cd /app && pytest -q tests/unit/test_eval_privacy.py -k technical_cli"
+docker compose --env-file ../.env -p moroz-technical-eval-20260817-1668 run --build --rm -T test sh -lc "cd /app && pytest -q tests/unit/test_eval_privacy.py -k technical_cli"
 ```
 
 Expected: FAIL because `technical` is not an argparse choice and `_run_structural` does not exist.
@@ -109,7 +109,7 @@ Keep an adjacent assertion that `Свободно сегодня в 15:00` remai
 Run:
 
 ```powershell
-docker compose -p moroz-technical-eval-20260817-1668 --env-file <external-env> run --rm -T test sh -lc "cd /app && pytest -q tests/unit/security/test_validator.py -k walk_in"
+docker compose --env-file ../.env -p moroz-technical-eval-20260817-1668 run --rm -T test sh -lc "cd /app && pytest -q tests/unit/security/test_validator.py -k walk_in"
 ```
 
 Expected: FAIL with `invented_slot` for the walk-in answer.
@@ -126,8 +126,8 @@ hours. Do not weaken date+time assertions containing `свободно`, `окн
 Run:
 
 ```powershell
-docker compose -p moroz-technical-eval-20260817-1668 --env-file <external-env> run --build --rm -T test sh -lc "cd /app && pytest -q tests/unit/security/test_validator.py tests/unit/security/test_pipeline.py tests/unit/test_eval_privacy.py tests/unit/security/test_eval_catalog.py tests/unit/security/test_guardrails.py"
-docker compose -p moroz-technical-eval-20260817-1668 --env-file <external-env> run --rm -T test sh -lc "cd /app/llm && python -m eval.run_evals --only technical"
+docker compose --env-file ../.env -p moroz-technical-eval-20260817-1668 run --build --rm -T test sh -lc "cd /app && pytest -q tests/unit/security/test_validator.py tests/unit/security/test_pipeline.py tests/unit/test_eval_privacy.py tests/unit/security/test_eval_catalog.py tests/unit/security/test_guardrails.py"
+docker compose --env-file ../.env -p moroz-technical-eval-20260817-1668 run --rm -T test sh -lc "cd /app/llm && python -m eval.run_evals --only technical"
 ```
 
 Expected: pytest PASS; technical gate PASS with 20 adversarial + 5 structural + 6 catalog cases, zero judge calls.
