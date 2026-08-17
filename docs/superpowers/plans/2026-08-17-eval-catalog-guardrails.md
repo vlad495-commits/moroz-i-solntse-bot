@@ -69,11 +69,11 @@
 - Prompt-leak и medical replies объясняют границу и дают безопасный следующий шаг.
 - Неподтверждённый slot не объявляется свободным и направляет к проверке доступности.
 
-- [ ] Добавить RED для постоянных prompt facts и трёх safe replies.
-- [ ] Запустить Docker RED и подтвердить конкретные отсутствующие факты/формулировки.
-- [ ] Внести минимальные prompt/constants изменения без hardcoded catalog prices.
-- [ ] Запустить focused GREEN и связанные prompt/pipeline regressions.
-- [ ] Сделать локальный логический коммит.
+- [x] Добавить RED для постоянных prompt facts и трёх safe replies.
+- [x] Запустить Docker RED и подтвердить конкретные отсутствующие факты/формулировки.
+- [x] Внести минимальные prompt/constants изменения без hardcoded catalog prices.
+- [x] Запустить focused GREEN и связанные prompt/pipeline regressions.
+- [x] Сделать локальный логический коммит.
 
 ### Task 4: Fresh eval и закрытие отчёта
 
