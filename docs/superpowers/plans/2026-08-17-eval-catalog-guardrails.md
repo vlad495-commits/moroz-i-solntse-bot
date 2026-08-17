@@ -49,12 +49,12 @@
 **Interfaces:**
 - `check_input(text, recent_message_count=1)` возвращает `GuardDecision("block", "prompt_injection")` для всех 20 universal attacks.
 
-- [ ] Добавить RED, загружающий неизменённый `adversarial_dataset.json` и требующий local block для каждого кейса.
-- [ ] Добавить negative RED/compatibility cases для обычных вопросов о правилах, адресе и услугах.
-- [ ] Запустить Docker RED и подтвердить 18 ожидаемых bypass.
-- [ ] Добавить минимальные privilege-context и protected-target patterns.
-- [ ] Запустить focused GREEN, pipeline и adversarial CLI.
-- [ ] Сделать локальный логический коммит.
+- [x] Добавить RED, загружающий неизменённый `adversarial_dataset.json` и требующий local block для каждого кейса.
+- [x] Добавить negative RED/compatibility cases для обычных вопросов о правилах, адресе и услугах.
+- [x] Запустить Docker RED и подтвердить 20 local bypass (прежние 2 PASS обеспечивались внешним prompt-defense, а не локальным guard).
+- [x] Добавить минимальные privilege-context и protected-target patterns.
+- [x] Запустить focused GREEN, pipeline и adversarial CLI.
+- [x] Сделать локальный логический коммит.
 
 ### Task 3: Постоянные факты и полезные safe replies
 

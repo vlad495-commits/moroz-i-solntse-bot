@@ -54,6 +54,30 @@ _PROMPT_ATTACK_RULES = (
         re.IGNORECASE | re.DOTALL,
     ),
 )
+_PRIVILEGED_CONTEXT_RULES = (
+    re.compile(
+        r"(?:\b(?:authority|hq)\s+override\b|<\s*system\b|"
+        r"\bdebug\b|\bsystem[_ -](?:debug[_ -]log|update|block)\b|"
+        r"\badditional\s+instructions?\b|\bsafety[-_ ]module\b|"
+        r"\badmin_override\b|\brequired_dump\b|"
+        r"\berror\s*\d+\b|\bкалибровк\w*\b|"
+        r"\bмодул\w*\s+безопасност\w*\s+упал\w*\b|"
+        r"\bвымышленн\w*\s+симуляц\w*\b|"
+        r"\bс\s+этого\s+момента\b|\bобнови\s+свою\s+память\b|"
+        r"\bдиагностическ\w*\s+модул\w*\b|"
+        r"\bбезобидн\w*\s+проверк\w*\b)",
+        re.IGNORECASE,
+    ),
+)
+_PROTECTED_TARGET_RULES = (
+    re.compile(
+        r"(?:\b(?:system[_ ]prompt|instructions?|internal[_ ]variables|"
+        r"unrestricted|confidential_access|required_dump)\b|"
+        r"\b(?:промпт|инструкц|правил|ограничен|"
+        r"внутренн\w*\s+переменн)\w*\b)",
+        re.IGNORECASE,
+    ),
+)
 _MEDICAL_RISK_RULES = (
     re.compile(
         r"\b(?:сильн\w*\s+боль|резк\w*\s+ухудш\w*|обморок\w*|"
@@ -113,6 +137,11 @@ def check_input(
     if _matches(_STOP_RULES, text):
         return GuardDecision("stop", "user_stop")
     if _matches(_PROMPT_ATTACK_RULES, text):
+        return GuardDecision("block", "prompt_injection")
+    if _matches(_PRIVILEGED_CONTEXT_RULES, text) and _matches(
+        _PROTECTED_TARGET_RULES,
+        text,
+    ):
         return GuardDecision("block", "prompt_injection")
     if _matches(_MEDICAL_RISK_RULES, text):
         return GuardDecision("escalate", "medical_risk")
