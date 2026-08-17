@@ -90,7 +90,7 @@ git commit -m "feat: добавлен technical eval без цен"
 - `validate_output(text, facts, allowed_placeholders)` accepts general walk-in policy with opening hours and no slot facts.
 - The same function still returns `invented_slot` for positive availability tied to an unapproved date/time.
 
-- [ ] **Step 1: Write the failing walk-in regression**
+- [x] **Step 1: Write the failing walk-in regression**
 
 ```python
 def test_walk_in_policy_with_hours_is_not_an_invented_slot() -> None:
@@ -104,7 +104,7 @@ def test_walk_in_policy_with_hours_is_not_an_invented_slot() -> None:
 Keep an adjacent assertion that `Свободно сегодня в 15:00` remains
 `invented_slot`.
 
-- [ ] **Step 2: Run Docker RED**
+- [x] **Step 2: Run Docker RED**
 
 Run:
 
@@ -114,14 +114,14 @@ docker compose -p moroz-technical-eval-20260817-1668 --env-file <external-env> r
 
 Expected: FAIL with `invented_slot` for the walk-in answer.
 
-- [ ] **Step 3: Apply the narrow validator fix**
+- [x] **Step 3: Apply the narrow validator fix**
 
 Teach availability detection to ignore the general service-access meaning in
 the same way it already ignores negated availability and general opening
 hours. Do not weaken date+time assertions containing `свободно`, `окно` or
 `можно записаться`.
 
-- [ ] **Step 4: Run GREEN and complete technical eval**
+- [x] **Step 4: Run GREEN and complete technical eval**
 
 Run:
 
@@ -132,13 +132,13 @@ docker compose -p moroz-technical-eval-20260817-1668 --env-file <external-env> r
 
 Expected: pytest PASS; technical gate PASS with 20 adversarial + 5 structural + 6 catalog cases, zero judge calls.
 
-- [ ] **Step 5: Update evidence and clean exact Docker namespace**
+- [x] **Step 5: Update evidence and clean exact Docker namespace**
 
 Record exact results in report, roadmap and changelog. Inspect resources with
 the exact Compose label, then remove only `moroz-technical-eval-20260817-1668`
 and confirm its containers, volumes, networks and named images are zero.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run `git diff --check`, confirm datasets unchanged relative to
 `f356c2c372dc67e8ebd1c2e6e433e5946a10e782`, then commit:

@@ -53,6 +53,10 @@ _AVAILABILITY_RE = re.compile(
 )
 _NEGATED_AVAILABILITY_RULES = (
     re.compile(
+        r"\bдоступн\w*\s+(?:без\s+запис\w*|ежедневно\b)",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"\b(?:нет|не\s+доступно)\s+"
         r"(?:свободн\w*|доступн\w*|окон\w*)",
         re.IGNORECASE,
