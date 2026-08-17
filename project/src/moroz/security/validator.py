@@ -293,7 +293,10 @@ def _contacts(text: str) -> frozenset[str]:
 
 
 def _normalize_public_pii(value: str) -> str:
-    return " ".join(value.strip().split()).casefold()
+    punctuation_normalized = value.translate(
+        str.maketrans({"—": "-", "–": "-", "«": '"', "»": '"'})
+    )
+    return " ".join(punctuation_normalized.strip().split()).casefold()
 
 
 def _matches_after_removing(
