@@ -511,10 +511,15 @@ def test_walk_in_policy_with_hours_is_not_an_invented_slot() -> None:
     facts = _facts(slots=frozenset())
     answer = (
         "На солярий, коллариум и коллагенарий можно прийти без записи. "
-        "Эти услуги доступны ежедневно с 10:00 до 21:00."
+        "Центр работает ежедневно с 10:00 до 21:00."
     )
 
     assert validate_output(answer, facts, frozenset()).ok is True
+    assert validate_output(
+        "Эти услуги доступны ежедневно с 10:00 до 21:00.",
+        facts,
+        frozenset(),
+    ).code == "invented_slot"
     assert validate_output(
         "Свободно сегодня в 15:00",
         facts,

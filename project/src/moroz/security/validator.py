@@ -38,17 +38,6 @@ _DATE_TIME_SHAPE_RE = re.compile(
     r"\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}"
 )
 _TIME_RE = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)")
-_GENERAL_HOURS_RE = re.compile(
-    r"\bс\s+(?:[01]?\d|2[0-3]):[0-5]\d\s+"
-    r"до\s+(?:[01]?\d|2[0-3]):[0-5]\d\b",
-    re.IGNORECASE,
-)
-_ONE_OFF_DATE_RE = re.compile(
-    r"(?<!\w)(?:\d{4}-\d{1,2}-\d{1,2}|"
-    r"\d{1,2}\.\d{1,2}(?:\.\d{2,4})?|"
-    r"сегодня|завтра|послезавтра)(?!\w)",
-    re.IGNORECASE,
-)
 _SLOT_RE = re.compile(
     r"(?P<date>\d{4}-\d{1,2}-\d{1,2}|"
     r"\d{1,2}\.\d{1,2}(?:\.\d{2,4})?|"
@@ -68,7 +57,6 @@ _GENERAL_ACCESS_RULES = (
         re.IGNORECASE,
     ),
 )
-_DAILY_ACCESS_RE = re.compile(r"\bдоступн\w*\s+ежедневно\b", re.IGNORECASE)
 _NEGATED_AVAILABILITY_RULES = (
     re.compile(
         r"\b(?:нет|не\s+доступно)\s+"
@@ -481,15 +469,9 @@ def validate_output(
     if _matches_after_removing(
         text,
         ignored=(
-            _NEGATED_AVAILABILITY_RULES + _GENERAL_ACCESS_RULES
-            if _TIME_RE.search(text) is None
-            or (
-                _GENERAL_HOURS_RE.search(text)
-                and _TIME_RE.search(_GENERAL_HOURS_RE.sub("", text)) is None
-                and _DAILY_ACCESS_RE.search(text)
-                and _ONE_OFF_DATE_RE.search(text) is None
-            )
-            else _NEGATED_AVAILABILITY_RULES
+            _NEGATED_AVAILABILITY_RULES
+            if _TIME_RE.search(text)
+            else _NEGATED_AVAILABILITY_RULES + _GENERAL_ACCESS_RULES
         ),
         blocked=(_AVAILABILITY_RE,),
     ):
