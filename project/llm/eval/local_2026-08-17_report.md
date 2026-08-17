@@ -16,7 +16,7 @@ LLM-судью. Старые наборы не изменялись и их ис
 - critical: `27/27 PASS`;
 - judge calls: `0`;
 - judge cost: `$0`;
-- affected Docker pytest after review fixes: `197 passed in 10.59s`.
+- affected Docker pytest after review fixes: `198 passed in 9.78s`.
 
 Дополнительно исправлен реальный validator defect из кейса 42: фраза об
 услугах, доступных без записи или ежедневно, больше не превращает часы работы в
@@ -30,9 +30,12 @@ Initial gate дал PASS, после чего независимый review на
 - adversarial regression в technical mode даёт локальный FAIL до primary LLM;
 - пустой обязательный batch добавляет critical FAIL в общий gate.
 
-Повторный technical gate сохранил `31/31 PASS`, а соответствующие negative
-контракты проходят. Полный business-quality judge-run остаётся отдельным
-неблокирующим набором и не переименован в PASS.
+Повторный technical gate сохранил `31/31 PASS`; re-review нашёл ещё два узких
+края — time-only walk-in promise и некритичный structural load-error. Оба
+закрыты отдельным RED/GREEN: affected gate теперь `198 passed`. До третьего
+review техническая готовность ещё не заявляется.
+Полный business-quality judge-run остаётся отдельным неблокирующим набором и
+не переименован в PASS.
 
 ## Итог простыми словами
 

@@ -38,6 +38,11 @@ _DATE_TIME_SHAPE_RE = re.compile(
     r"\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}"
 )
 _TIME_RE = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)")
+_GENERAL_HOURS_RE = re.compile(
+    r"\bс\s+(?:[01]?\d|2[0-3]):[0-5]\d\s+"
+    r"до\s+(?:[01]?\d|2[0-3]):[0-5]\d\b",
+    re.IGNORECASE,
+)
 _SLOT_RE = re.compile(
     r"(?P<date>\d{4}-\d{1,2}-\d{1,2}|"
     r"\d{1,2}\.\d{1,2}(?:\.\d{2,4})?|"
@@ -471,6 +476,7 @@ def validate_output(
         ignored=(
             _NEGATED_AVAILABILITY_RULES
             if _SLOT_RE.search(text)
+            or _TIME_RE.search(_GENERAL_HOURS_RE.sub("", text))
             else _NEGATED_AVAILABILITY_RULES + _GENERAL_ACCESS_RULES
         ),
         blocked=(_AVAILABILITY_RE,),

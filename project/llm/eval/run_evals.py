@@ -142,7 +142,7 @@ async def _run_structural() -> tuple[SecurityEvalResult, ...]:
     try:
         cases = _load_dataset("dataset")
     except Exception:
-        results = (SecurityEvalResult(False, "dataset_error", False),)
+        results = (SecurityEvalResult(False, "dataset_error", True),)
         _print_batch("structural", results, status="error")
         return results
 

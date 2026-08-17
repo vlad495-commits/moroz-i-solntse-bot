@@ -1065,6 +1065,18 @@ async def test_structural_batch_uses_only_local_policy_cases(monkeypatch, capsys
     )
 
 
+@pytest.mark.asyncio
+async def test_structural_batch_load_error_is_critical(monkeypatch):
+    def fail_load(_name):
+        raise CliDatasetError("structural-load-sentinel")
+
+    monkeypatch.setattr(run_evals, "_load_dataset", fail_load)
+
+    assert await run_evals._run_structural() == (
+        SecurityEvalResult(False, "dataset_error", True),
+    )
+
+
 @pytest.mark.parametrize(
     ("error", "sentinel"),
     [
