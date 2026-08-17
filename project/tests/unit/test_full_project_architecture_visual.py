@@ -23,12 +23,6 @@ ROOT_HTML_PATH = Path(
         REPOSITORY_ROOT / "moroz-i-solntse-full-architecture.html",
     )
 )
-ROOT_HTML_PATH = Path(
-    os.environ.get(
-        "ROOT_ARCHITECTURE_HTML_PATH",
-        REPOSITORY_ROOT / "moroz-i-solntse-full-architecture.html",
-    )
-)
 
 REQUIRED_SECTIONS = {
     "comparison",

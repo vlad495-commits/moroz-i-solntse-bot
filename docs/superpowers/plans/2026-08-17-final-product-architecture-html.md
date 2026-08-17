@@ -48,7 +48,7 @@ def test_visual_excludes_voice_and_site_channels() -> None:
 Run из `project/` в обычном checkout с внешним корневым `.env`:
 
 ```bash
-docker compose --env-file ../.env -p moroz-architecture-html-red --profile test run --rm -e FULL_ARCHITECTURE_HTML_PATH=/repo/docs/moroz-i-solntse-full-architecture.html -v ../docs:/repo/docs:ro test pytest tests/unit/test_full_project_architecture_visual.py -q
+docker compose --env-file ../.env -p moroz-architecture-html-red --profile test run --rm -e FULL_ARCHITECTURE_HTML_PATH=/repo/docs/architecture/moroz-i-solntse-full-architecture.html -v ../docs:/repo/docs:ro test pytest tests/unit/test_full_project_architecture_visual.py -q
 ```
 
 Expected: FAIL на отсутствующих новых секциях/узлах и ещё присутствующих voice/site nodes.
@@ -56,7 +56,7 @@ Expected: FAIL на отсутствующих новых секциях/узл�
 ### Task 2: Обновить HTML минимальным статичным diff
 
 **Files:**
-- Modify: `docs/moroz-i-solntse-full-architecture.html`
+- Modify: `docs/architecture/moroz-i-solntse-full-architecture.html`
 - Modify: `project/tests/unit/test_full_project_architecture_visual.py`
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`

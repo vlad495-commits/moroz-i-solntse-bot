@@ -105,7 +105,7 @@
     table.grid th { background: #eef3f7; color: #2b3b4a; font-size: 11px; letter-spacing: .25px; }
     code { padding: 1px 5px; border-radius: 4px; background: #eef1f4; font-size: 11px; overflow-wrap: anywhere; }
     .tiny { max-width: 1100px; margin: 34px auto 0; color: #87929c; text-align: center; font-size: 10.5px; line-height: 1.55; }
-    @media (max-width: 1100px) { .branches, .branches.five { grid-template-columns: repeat(2,minmax(230px,1fr)); } }
+    @media (max-width: 1100px) { .branches, .branches.five, .branches.three { grid-template-columns: repeat(2,minmax(230px,1fr)); } }
     @media (max-width: 760px) {
       body { padding: 22px 10px 48px; } h1 { font-size: 18px; } h2.sect { margin-top: 34px; }
       .row { display: flex; flex-direction: column; gap: 7px; } .center, .side-l, .side-r { width: 100%; text-align: center; }
@@ -119,8 +119,8 @@
 <body>
   <header>
     <h1>МОРОЗ И СОЛНЦЕ — ПОЛНАЯ АРХИТЕКТУРА ПРОЕКТА</h1>
-    <p class="sub">Фактический Telegram V1, функции с кодом без полного внешнего evidence и отдельно — согласованная целевая граница.</p>
-    <p class="sub"><b>Срез 04.08.2026</b> · база аудита: git <code>6cd6463</code> · Alembic <code>0009_production_admin</code> · runtime: <code>worker</code>, <code>scheduler</code>, <code>bot</code>, <code>admin</code>, <code>redis</code>, <code>postgres</code>, <code>rabbitmq</code></p>
+    <p class="sub">Один файл: фактический staging-контур, код с незакрытым внешним evidence и полная согласованная целевая архитектура.</p>
+    <p class="sub"><b>Срез 17.08.2026</b> · staging git <code>833db15</code> · Alembic <code>0011_yclients_service_catalog</code> · staging runtime: <code>bot</code>, <code>worker</code>, <code>admin</code>, <code>Caddy</code>, <code>redis</code>, <code>postgres</code>, <code>rabbitmq</code> · scheduler disabled in staging</p>
     <p class="sub"><b>Цветное:</b> РАБОТАЕТ · <b style="color:#7b6014">Жёлтая плашка:</b> КОД ЕСТЬ · НУЖНА ПРОВЕРКА · <b style="color:#818c96">Серое пунктирное:</b> ПЛАН</p>
   </header>
 
@@ -134,26 +134,25 @@
   </div>
 
   <section id="audit-status">
-    <h2 class="sect wide">0 · Аудит состояния на 04.08.2026</h2>
+    <h2 class="sect wide">0 · Аудит состояния на 17.08.2026</h2>
     <div class="aside wide">
-      <div class="card done"><h3>Автоматические проверки</h3><p><b>569 unit + 87 integration + 111 contract + 172 e2e = 939 passed</b>. Слои запущены отдельными непересекающимися Docker-группами; <code>939 tests collected</code> подтверждает итог без двойного счёта.</p></div>
-      <div class="card done"><h3>Staging и качество ответов</h3><p>Последний targeted manual QA от 01.08.2026: Telegram, буфер, guardrails, provider-side PII и отсутствие фейковой записи — PASS. В админке сохранены <b>53 eval-кейса · 3 прогона · 90 результатов</b>; свежий повтор всех 53 кейсов ещё нужен.</p></div>
-      <div class="card warn"><h3>Релизный статус</h3><p><b>Local-ready · staging-tested · production launch blocked</b>. Код и локальные контракты сильные, но внешние доступы, восстановление, мониторинг и эксплуатационная подпись пока не дают честно назвать систему production-ready.</p></div>
+      <div class="card done"><h3>Автоматические проверки</h3><p><b>Technical eval: 31/31 PASS</b> без live-цен. Связанный набор: <b>198 passed</b>. <b>Full Docker suite: 1232 passed</b>; независимый review не нашёл Critical, Important или Minor замечаний.</p></div>
+      <div class="card done"><h3>Staging</h3><p>Release candidate <code>833db15</code> развёрнут: <b>7/7 healthy</b>. Bot, worker, admin, Caddy, PostgreSQL, Redis и RabbitMQ работают в едином immutable-контуре; постоянный scheduler намеренно выключен.</p></div>
+      <div class="card warn"><h3>Релизный статус</h3><p><b>Staging-ready · production launch blocked</b>. Ядро технически собрано, но production rollout, restore drill, внешний uptime и часть внешнего YCLIENTS evidence ещё не закрыты.</p></div>
     </div>
     <div class="tblwrap wide" style="margin-top:13px"><table class="grid">
       <thead><tr><th>Приоритет</th><th>Что ещё подтвердить</th><th>Почему это не закрывается локальным pytest</th></tr></thead>
       <tbody>
-        <tr><td>P0</td><td>YCLIENTS live mutation smoke</td><td>Нужны реальные test/sandbox-доступы и безопасная проверка create/reschedule/cancel/reconciliation без клиентской записи.</td></tr>
-        <tr><td>P0</td><td>staging smoke/load/failure</td><td>Нужен прогон подготовленных smoke/k6/failure gates на актуальном серверном checkout, включая Redis, RabbitMQ, LLM и YCLIENTS degradation.</td></tr>
+        <tr><td>P0</td><td>YCLIENTS booking projection sync</td><td>Read-only job завершился fail-closed с безопасным кодом <code>yclients_http_status</code>; проекция осталась пустой, blind retry и mutations не выполнялись.</td></tr>
+        <tr><td>P0</td><td>production rollout и acceptance</td><td>Staging evidence не заменяет отдельные production credentials, rollout, smoke и эксплуатационную подпись.</td></tr>
         <tr><td>P0</td><td>изолированный restore drill</td><td>Скрипты backup/verify/restore протестированы, но реальное восстановление серверного дампа в отдельную БД не подтверждено.</td></tr>
         <tr><td>P0</td><td>внешний uptime и реальная доставка alert</td><td>Внутренний <code>/healthz</code> и alert-routing есть; независимый монитор и получение алерта человеком не проверены.</td></tr>
-        <tr><td>P1</td><td>prompt save + hot-reload</td><td>В истории есть <code>write_failed</code> серверной админки; нужно проверить права файла, новую версию в БД и применение без ручного restart.</td></tr>
-        <tr><td>P1</td><td>повторный прогон всех 53 eval-кейсов</td><td>Старые отчёты дают 25/25, а импортированный расширенный набор после последних prompt/security-изменений целиком не пересчитан.</td></tr>
+        <tr><td>P1</td><td>клиентский контент и catalog coverage</td><td>Технический eval закрыт без выдумывания цен; реальные цены и расширенный каталог появятся только после получения подтверждённых данных.</td></tr>
       </tbody>
     </table></div>
     <div class="aside wide">
-      <div class="card warn"><h3>Документация требует синхронизации</h3><p><code>AGENTS.md</code> и значительная часть старых чекбоксов дорожной карты всё ещё описывают прототип, хотя runtime уже содержит Production V1-компоненты. До следующего большого этапа нужен отдельный cleanup статусов без переписывания истории.</p></div>
-      <div class="card blue"><h3>Наблюдаемость тестов</h3><p>Один немой <code>pytest -q</code> занимает несколько минут. Практичнее держать CI jobs по слоям и выводить slowest tests/heartbeat: так нормальный долгий прогон не выглядит как зависание.</p></div>
+      <div class="card warn"><h3>YCLIENTS — честная граница</h3><p>Каталог услуг на staging синхронизирован read-only и содержит одну подтверждённую строку. Booking projection пока не считается работающей до разбора endpoint/прав/контракта.</p></div>
+      <div class="card blue"><h3>Как читать эту карту</h3><p>Серые блоки уже согласованы архитектурно, но не выданы за работающие. По мере реализации меняется их статус, а основной inbox/worker/outbox-каркас остаётся прежним.</p></div>
     </div>
   </section>
 
@@ -162,13 +161,13 @@
     <div class="tblwrap wide"><table class="grid">
       <thead><tr><th>Область</th><th>Lucky Hair Studio</th><th>Мороз и Солнце</th><th>Что расходится</th><th>Что можно перенять</th></tr></thead>
       <tbody>
-        <tr><td>Каналы и голос</td><td>4 live-канала и голос</td><td>Live только Telegram; WhatsApp, Instagram, VK, сайт и SpeechKit — план</td><td>Telegram V1 сознательно уже омниканального контура</td><td><span class="ph">СЛЕДУЮЩИЙ ШАГ</span><br>Расширить карту адаптеров новыми каналами; единый статусный язык уже используется.</td></tr>
+        <tr><td>Каналы</td><td>Несколько live-каналов</td><td>Live Telegram; VK, Instagram и WhatsApp — согласованный план</td><td>Новые каналы подключаются по одному к общему inbox/outbox</td><td><span class="ph">СЛЕДУЮЩИЙ ШАГ</span><br>Сначала единый профиль и identity mapping, затем адаптеры каналов.</td></tr>
         <tr><td>Очередь и фон</td><td>RabbitMQ, worker, scheduler, PostgreSQL, Redis</td><td>Тот же набор, но с durable inbox/outbox/task outbox и одним tasks-контрактом</td><td>У нас сильнее акцент на восстановление и точный порядок чата</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Очередь, worker и базовый lifecycle показаны одним читаемым потоком.</td></tr>
         <tr><td>Роутинг</td><td>Омниканальные scripts-first ветки</td><td>Scripts-first router, scenario engine, FAQ/booking/change/cancel/escalation</td><td>Мультинтент, платежи и маркетинг пока не входят в runtime</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Быстрые отказы до LLM, scripts-first и наглядный веер сценариев.</td></tr>
         <tr><td>LLM security</td><td>Guardrails, PII и проверка выхода</td><td>PII masking, guardrails, primary/reserve gateway, output validator уже в коде</td><td>У нас строгая durable-граница до и после внешнего вызова</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Masked context и демаскировка только после validation.</td></tr>
         <tr><td>Запись</td><td>Локальный booking flow</td><td>YCLIENTS ownership, exact key, reconciliation и защищённые мутации</td><td>Live provider-доступ и production smoke ещё не подтверждены</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Явное подтверждение и базовый lifecycle; <span class="ph">СЛЕДУЮЩИЙ ШАГ</span> — расширение после live evidence.</td></tr>
-        <tr><td>Маркетинг и деньги</td><td>Шире автоматизация маркетинга</td><td>ЮKassa, массовые рассылки и реактивация не построены</td><td>Отложено после надёжного Telegram/YCLIENTS V1</td><td><span class="ph">СЛЕДУЮЩИЙ ШАГ</span><br>Расширить lifecycle, затем добавить consent-гейты кампаний, рассылки и платежи.</td></tr>
-        <tr><td>Админка и качество</td><td>Широкий операционный UI и эвалы</td><td>FastAPI/Jinja, RBAC, CSRF, TOTP, audit, prompt versions и eval runs</td><td>Нет полноценного UI записей, платежей, рассылок и knowledge editor</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Единая карта ролей, моделей, eval-контуров и статусный язык.</td></tr>
+        <tr><td>Маркетинг и деньги</td><td>Шире автоматизация маркетинга</td><td>Кампании, реактивация и ЮKassa не построены</td><td>Отложено после надёжного Telegram/YCLIENTS V1</td><td><span class="ph">СЛЕДУЮЩИЙ ШАГ</span><br>Добавить consent-гейты, управляемые кампании и повторно использовать durable outbox.</td></tr>
+        <tr><td>Админка и качество</td><td>Широкий операционный UI и эвалы</td><td>FastAPI/Jinja, RBAC, CSRF, TOTP, audit, prompt/eval, эскалации и read-only записи</td><td>Mutations записей, платежи, кампании и knowledge editor ещё не построены</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Единая карта ролей, моделей, eval-контуров и статусный язык.</td></tr>
         <tr><td>152-ФЗ</td><td>Локальная PII-граница</td><td>Privacy gate, раздельные consent semantics, masking и safe logging</td><td>Юридические сроки и правила остаются production acceptance</td><td><span class="status done">УЖЕ ПЕРЕНЯТО</span><br>Отдельная карта Redis keys, данных и secret boundary.</td></tr>
       </tbody>
     </table></div>
@@ -178,8 +177,9 @@
     <h2 class="sect wide">1 · Каналы</h2>
     <div class="wide"><div class="branches">
       <div class="bcol"><span class="bhead" style="background:#2e7d5b">Текущий канал</span><div id="telegram-channel" class="node chan" data-status="implemented"><b>Telegram</b><small>aiogram webhook через Caddy; пользовательский канал Production V1</small><span class="status done">РАБОТАЕТ</span></div></div>
-      <div class="bcol"><span class="bhead">Целевая граница</span><div id="future-channels-reference" class="node future"><b>Новые текстовые каналы</b><small>WhatsApp · Instagram · ВКонтакте · чат на сайте</small><span class="ph">СМ. РАЗДЕЛ 14</span></div></div>
-      <div class="bcol"><span class="bhead">Целевая граница</span><div id="future-voice-reference" class="node future"><b>Голосовые сообщения</b><small>SpeechKit только после privacy gate</small><span class="ph">СМ. РАЗДЕЛ 14</span></div></div>
+      <div class="bcol"><span class="bhead">Следующий канал</span><div id="vk-channel" class="node future" data-status="planned"><b>ВКонтакте</b><small>подписанный webhook, dedup, rate limit, общий IncomingMessage</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><span class="bhead">После VK</span><div id="instagram-channel" class="node future" data-status="planned"><b>Instagram</b><small>webhook-адаптер и исходящая доставка через общий outbox</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><span class="bhead">После Instagram</span><div id="whatsapp-channel" class="node future" data-status="planned"><b>WhatsApp</b><small>адаптер общего inbox/outbox с contract и e2e gates</small><span class="ph">ПЛАН</span></div></div>
     </div></div>
   </section>
 
@@ -197,6 +197,16 @@
       <div class="row"><div class="center"><div id="privacy-gate" class="node local" data-status="implemented"><b>Privacy gate</b><small>до согласия нет текста в долгой истории и внешней LLM</small><span class="status done">РАБОТАЕТ</span></div><div class="arr short"></div></div></div>
       <div class="row"><div class="center"><div id="durable-inbox" class="node store" data-status="implemented"><b>Durable inbox + dedup</b><small><code>message_inbox</code>; unique <code>(channel, external_message_id)</code>, повтор не запускает второй сценарий</small><span class="status done">РАБОТАЕТ</span></div></div></div>
     </div></div>
+  </section>
+
+  <section id="customer-identity">
+    <h2 class="sect wide">2.1 · Единый профиль клиента между каналами</h2>
+    <div class="wide"><div class="branches three">
+      <div class="bcol"><div id="customer-profile" class="node future" data-status="planned"><b>Единый customer profile</b><small>стабильный <code>customer_id</code>, согласия, история, визиты, feedback и маркетинговый статус</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="channel-identity-map" class="node future" data-status="planned"><b>Channel identity map</b><small>Telegram/VK/Instagram/WhatsApp IDs хранятся отдельно и связываются с customer_id</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="identity-verification-audit" class="node future" data-status="planned"><b>Подтверждение и аудит</b><small>связь только по подтверждённому идентификатору; merge/split обратимы, спорные совпадения уходят человеку</small><span class="ph">ПЛАН</span></div></div>
+    </div></div>
+    <div class="aside"><div class="card warn"><h3>Privacy boundary</h3><p>Совпавшего имени или неподтверждённого телефона недостаточно. До подтверждения история одного канала не раскрывается в другом.</p></div></div>
   </section>
 
   <section id="queue-worker">
@@ -217,7 +227,7 @@
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#2e7d5b">Консультация</span><div class="node llm"><b>FAQ / consultation</b><small>контекст → security → primary/reserve LLM</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#7d4fa8">Запись</span><div class="node proc"><b>booking / change / cancel</b><small>детерминированная state machine с явным подтверждением</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#b97018">Уведомления</span><div class="node proc"><b>notification / lifecycle</b><small>реализованы в подтверждённой code/test boundary</small><span class="status done">РАБОТАЕТ</span></div></div>
-      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#a3473d">Человек</span><div class="node term"><b>Эскалация</b><small>durable запись и human mode; полного операторского UI нет</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#a3473d">Человек</span><div class="node term"><b>Эскалация</b><small>durable запись, human mode, admin queue и идемпотентный ответ клиенту через outbox</small><span class="status done">РАБОТАЕТ</span></div></div>
     </div><p class="bnote" style="text-align:center;margin-top:12px">Мультинтент, несколько услуг, оплата, массовые рассылки и полноценная реактивация не включены в этот рабочий веер.</p></div>
   </section>
 
@@ -239,7 +249,7 @@
       <div class="bcol"><span class="bhead">1 · Сценарий</span><div class="node proc"><b>Booking state machine</b><small>create, reschedule, cancel; needs input → confirm → executing → terminal</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><span class="bhead">2 · Владение</span><div class="node store"><b>Owner + exact booking key</b><small>trusted UUID, advisory lock, immutable ownership, fail closed</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><span class="bhead">3 · Подтверждение</span><div class="node proc"><b>Human confirmation</b><small>услуга, сотрудник, дата и время до provider mutation</small><span class="status done">РАБОТАЕТ</span></div></div>
-      <div class="bcol"><span class="bhead">4 · Интеграция</span><div id="yclients-live" class="node llm" data-status="evidence-pending"><b>YCLIENTS API</b><small>HTTP-адаптер и sandbox smoke-контур есть; доступы, live API и production smoke не подтверждены</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div></div>
+      <div class="bcol"><span class="bhead">4 · Интеграция</span><div id="yclients-live" class="node llm" data-status="evidence-pending"><b>YCLIENTS API</b><small>booking lifecycle и read-only catalog code есть; staging catalog работает, projection sync требует проверки</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div></div>
       <div class="bcol"><span class="bhead">5 · Исход</span><div class="node store"><b>Reconciliation</b><small>unknown mutation outcome перечитывается по exact key; blind retry запрещён</small><span class="status done">РАБОТАЕТ</span></div></div>
     </div></div>
     <div class="aside"><div class="card warn"><h3>Честная внешняя граница</h3><p>Локальные booking state/ownership/key/reconciliation/lifecycle модули и тесты реализованы. Это не означает, что реальные клиентские записи уже проходят через production YCLIENTS.</p></div></div>
@@ -265,6 +275,19 @@
     <div class="aside"><div class="card fail"><h3>Controlled failure</h3><ul><li>три повтора: 1 / 5 / 30 секунд;</li><li>manual ACK только после durable результата;</li><li>после исчерпания — DLQ на 30 дней;</li><li>неразрешённый бизнес-исход — durable эскалация.</li></ul></div></div>
   </section>
 
+  <section id="campaigns-reactivation">
+    <h2 class="sect wide">8.1 · Реактивация и ручные кампании</h2>
+    <div class="wide"><div class="branches">
+      <div class="bcol"><div id="campaign-builder" class="node future" data-status="planned"><b>Draft → preview → test-send</b><small>владелец видит итоговый текст и тестовую доставку до запуска</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="marketing-consent-audience" class="node future" data-status="planned"><b>Consent + audience</b><small>только marketing consent; unsubscribe и запреты действуют во всех связанных каналах</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="reactivation-selector" class="node future" data-status="planned"><b>Reactivation selector</b><small>90 дней без визита или содержательного диалога; не более одного follow-up через 5 дней</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="campaign-scheduler" class="node future" data-status="planned"><b>Campaign scheduler</b><small>лимиты скорости/дня, stop/pause и unique campaign × customer key</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="campaign-outbox-delivery" class="node future" data-status="planned"><b>Campaign → durable outbox</b><small>повторно использует существующую надёжную доставку и адаптер выбранного канала</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="campaign-stop-feedback" class="node future" data-status="planned"><b>Ответ / стоп</b><small>любой ответ возвращается в общий inbox и останавливает следующие сообщения кампании</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="campaign-analytics" class="node future" data-status="planned"><b>Аудит и аналитика</b><small>sent/delivered/replied/stopped/error без дублей и с понятной причиной остановки</small><span class="ph">ПЛАН</span></div></div>
+    </div></div>
+  </section>
+
   <section id="admin-evals">
     <h2 class="sect wide">9 · Админка и эвалы</h2>
     <div class="wide"><div class="branches three">
@@ -272,7 +295,7 @@
       <div class="bcol"><div id="eval-system" class="node llm" data-status="implemented"><b>Eval system</b><small>CRUD cases, runs/results, review, judge role и production gate</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div id="knowledge-editor-reference" class="node future"><b>Knowledge base editor</b><small>целевая функция вынесена в единый future-контур</small><span class="ph">СМ. РАЗДЕЛ 14</span></div></div>
     </div></div>
-    <div class="aside"><div class="card blue"><h3>Граница UI</h3><p>Диалоги, промпт, эвалы, управление ботом, логи и базовые метрики реализованы. Полноценные рабочие экраны эскалаций, записей, платежей и рассылок готовыми не считаются.</p></div></div>
+    <div class="aside"><div class="card blue"><h3>Граница UI</h3><p><b>Эскалации: очередь и ответ клиенту</b> работают через ordered outbox. <b>Записи: read-only центр</b> показывает локальную YCLIENTS-проекцию, provenance и расхождения. Mutations записей, платежи, кампании и knowledge editor остаются планом.</p></div></div>
   </section>
 
   <section id="data">
@@ -283,10 +306,20 @@
       <div class="bcol"><div id="rabbitmq-store" class="node queue" data-status="implemented"><b>RabbitMQ</b><small>доставка задач между процессами</small><span class="status done">РАБОТАЕТ</span></div></div>
     </div></div>
     <div class="aside wide">
-      <div class="card"><h3>PostgreSQL · Alembic 0001–0009</h3><p><code>messages</code>, <code>token_usage</code>, <code>prompt_versions</code>, <code>eval_cases/runs/results</code>, <code>eval_case_reviews</code>; <code>message_inbox</code>, <code>outbound_messages</code>, <code>task_outbox</code>, <code>processing_consents</code>; <code>booking_scenarios</code>, <code>bookings</code>, <code>booking_events</code>; <code>scheduler_jobs</code>, <code>notification_feedback_requests</code>, <code>escalations</code>, <code>human_mode</code>; <code>admin_users</code>, <code>admin_sessions</code>, <code>admin_audit_events</code>.</p></div>
+      <div class="card"><h3>PostgreSQL · Alembic 0001–0011</h3><p><code>messages</code>, <code>token_usage</code>, prompt/eval tables; durable inbox/outbox/task outbox и consents; booking/lifecycle/escalation/admin tables; <code>yclients_bookings_projection</code> и <code>yclients_service_catalog</code>.</p></div>
       <div class="card"><h3>Redis · реальные семейства</h3><p><code>buffer:{chat_id}</code>, <code>buffer:deadlines</code>, <code>lock:buffer:{chat_id}</code>; <code>chat:{chat_id}:messages</code>; <code>bot:paused</code>; prompt reload channel; <code>alert:{code}:{subject}</code> cooldown.</p></div>
       <div class="card"><h3>RabbitMQ · реальный контракт</h3><p><code>tasks</code> direct exchange/queue, publisher confirms, persistent messages, prefetch 4, manual ACK, <code>x-retry-count</code>, retry 1/5/30, <code>tasks.dlx</code> и <code>tasks.dlq</code> с TTL 30 дней.</p></div>
     </div>
+  </section>
+
+  <section id="traceability">
+    <h2 class="sect wide">10.1 · Сквозная техническая трассировка</h2>
+    <div class="wide"><div class="branches three">
+      <div class="bcol"><div id="technical-trace-journal" class="node future" data-status="planned"><b>Allowlisted trace journal</b><small>один <code>trace_id</code>/<code>correlation_id</code> связывает inbox, buffer, task, LLM, YCLIENTS, outbox и delivery</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div class="node proc"><b>Safe logging</b><small>сейчас уже запрещены токены, credentials и исходные ПД</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div class="node store"><b>Audit events</b><small>значимые admin/security действия сохраняются отдельно от application logs</small><span class="status done">РАБОТАЕТ</span></div></div>
+    </div></div>
+    <div class="aside"><div class="card warn"><h3>Что не попадёт в trace</h3><p>Raw prompt, исходный текст с ПД, секреты и полные provider payloads. Журнал хранит только разрешённые этапы, статусы, длительности и безопасные коды ошибок.</p></div></div>
   </section>
 
   <section id="infrastructure">
@@ -296,16 +329,17 @@
       <tbody>
         <tr><td><code>bot</code></td><td>Telegram webhook ingress и outbound delivery</td><td>bounded shutdown, PostgreSQL/Redis dependencies</td><td>РАБОТАЕТ</td></tr>
         <tr><td><code>worker</code></td><td>message, booking, notification tasks</td><td>heartbeat, manual ACK, retry/DLQ</td><td>РАБОТАЕТ</td></tr>
-        <tr><td><code>scheduler</code></td><td>due jobs → RabbitMQ</td><td>heartbeat, PostgreSQL claim</td><td>РАБОТАЕТ в code/test boundary</td></tr>
+        <tr><td><code>scheduler</code></td><td>due jobs → RabbitMQ</td><td>heartbeat, PostgreSQL claim</td><td>КОД/ТЕСТЫ ГОТОВЫ · STAGING DISABLED</td></tr>
         <tr><td><code>admin</code></td><td>FastAPI/Jinja control plane</td><td><code>/healthz</code>, owner metrics, audit</td><td>РАБОТАЕТ</td></tr>
+        <tr><td><code>Caddy</code></td><td>HTTPS ingress для webhook и admin</td><td>TLS, security headers, reverse proxy</td><td>РАБОТАЕТ НА STAGING</td></tr>
         <tr><td><code>postgres</code> · <code>redis</code> · <code>rabbitmq</code></td><td>state, cache/coordination, task broker</td><td>named volumes не считаются app-сервисами</td><td>РАБОТАЕТ</td></tr>
-        <tr><td><code>migrate</code></td><td>разовый профиль Alembic</td><td>head <code>0009_production_admin</code>, runtime DDL запрещён</td><td>РАБОТАЕТ</td></tr>
+        <tr><td><code>migrate</code></td><td>разовый профиль Alembic</td><td>head <code>0011_yclients_service_catalog</code>, runtime DDL запрещён</td><td>РАБОТАЕТ</td></tr>
       </tbody>
     </table></div>
     <div class="aside wide">
       <div class="card done"><h3>Release mechanics</h3><p>Docker Compose base/test/staging/production overlays, env validation, safe logging, healthz, owner-only metrics, staging/deploy gates и immutable app-only rollback реализованы в коде и runbooks.</p></div>
       <div id="production-backup" class="node store" data-status="evidence-pending"><b>Production backup / restore</b><small>скрипты шифрования, verify и restore есть; внешний backup и production restore drill не закрыты evidence</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div>
-      <div id="external-uptime" class="node proc" data-status="evidence-pending"><b>External uptime</b><small>public health contract есть; независимый внешний монитор и алерт ещё не подтверждены</small><span class="flagoff">КОД ЕСТЬ · НУЖНА ПРОВЕРКА</span></div>
+      <div id="external-uptime" class="node future" data-status="planned"><b>External uptime</b><small>public health endpoint есть, но независимый внешний монитор и реальная доставка alert ещё не подключены</small><span class="ph">ПЛАН</span></div>
     </div>
   </section>
 
@@ -318,8 +352,8 @@
         <tr><td>Reserve LLM</td><td>подхватывает разрешённые ошибки primary через единый gateway</td><td>РАБОТАЕТ</td></tr>
         <tr><td>Judge LLM</td><td>отдельная конфигурируемая роль для eval runs</td><td>РАБОТАЕТ</td></tr>
         <tr><td>Telegram Bot API</td><td>webhook + исходящая доставка</td><td>РАБОТАЕТ</td></tr>
-        <tr><td>YCLIENTS</td><td>adapter/sandbox code есть; live evidence нет</td><td>КОД ЕСТЬ · НУЖНА ПРОВЕРКА</td></tr>
-        <tr><td>ЮKassa · SpeechKit · новые каналы</td><td>последующие релизы</td><td>ПЛАН</td></tr>
+        <tr><td>YCLIENTS</td><td>adapter/lifecycle/catalog code есть; booking projection требует внешней проверки</td><td>КОД ЕСТЬ · НУЖНА ПРОВЕРКА</td></tr>
+        <tr><td>ЮKassa · новые каналы</td><td>последующие релизы</td><td>ПЛАН</td></tr>
       </tbody>
     </table></div>
   </section>
@@ -334,22 +368,15 @@
   </section>
 
   <section id="future-boundary">
-    <h2 class="sect wide">14 · Дальнейшая граница — не входит в рабочий поток</h2>
+    <h2 class="sect wide">14 · Остальная согласованная граница</h2>
     <div class="wide"><div class="branches five">
-      <div class="bcol"><div id="whatsapp-channel" class="node future" data-status="planned"><b>WhatsApp</b><small>адаптер к единому IncomingMessage</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="instagram-channel" class="node future" data-status="planned"><b>Instagram</b><small>webhook-адаптер и исходящая доставка</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="vk-channel" class="node future" data-status="planned"><b>ВКонтакте</b><small>адаптер сообщений сообщества</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="site-channel" class="node future" data-status="planned"><b>Чат на сайте</b><small>единый входной контракт</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="voice-speechkit" class="node future" data-status="planned"><b>Голос → Yandex SpeechKit</b><small>транскрибация только после privacy gate</small><span class="ph">ПЛАН</span></div></div>
       <div class="bcol"><div id="yookassa-payments" class="node future" data-status="planned"><b>ЮKassa</b><small>payment link, подписанный webhook, статусы, сверка и возвраты</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="mass-mailings" class="node future" data-status="planned"><b>Массовые рассылки</b><small>draft, preview, test, consent, limits, stop</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="reactivation" class="node future" data-status="planned"><b>Реактивация</b><small>кампании, уникальные ключи, лимиты и остановка по ответу</small><span class="ph">ПЛАН</span></div></div>
       <div class="bcol"><div id="knowledge-base-editor" class="node future" data-status="planned"><b>Knowledge base editor</b><small>версии базы знаний и клиентское управление содержимым</small><span class="ph">ПЛАН</span></div></div>
       <div class="bcol"><div id="extended-business-analytics" class="node future" data-status="planned"><b>Расширенная бизнес-аналитика</b><small>конверсия, KPI, затраты, latency и канал attribution</small><span class="ph">ПЛАН</span></div></div>
     </div></div>
-    <p class="bnote" style="max-width:1100px;margin:14px auto 0;text-align:center">Все обязательные planned-узлы собраны здесь и не соединены с рабочим Telegram V1 как выполняющиеся компоненты. Дополнительно в backlog остаются мультинтент и несколько услуг в одном запросе.</p>
+    <p class="bnote" style="max-width:1100px;margin:14px auto 0;text-align:center">Каналы, единый профиль, кампании и traceability уже показаны в местах подключения к основному потоку. Здесь остались самостоятельные post-launch модули.</p>
   </section>
 
-  <p class="tiny">Схема собрана по текущему коду, Docker Compose, миграциям 0001–0009, тестам, <code>docs/production-v1-architecture.html</code> и целевым документам. Lucky Hair Studio использован только как визуальный и сравнительный референс; его бизнес-факты не перенесены в свойства проекта.</p>
+  <p class="tiny">Схема собрана по staging runtime <code>833db15</code>, текущему коду, Docker Compose, миграциям 0001–0011, тестам, <code>docs/production-v1-architecture.html</code> и целевым документам. Lucky Hair Studio использован только как визуальный и сравнительный референс; его бизнес-факты не перенесены в свойства проекта.</p>
 </body>
 </html>
