@@ -185,6 +185,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "LLM_MAX_TOKENS": "${LLM_MAX_TOKENS:-2000}",
         "LLM_REQUEST_TIMEOUT_SEC": "${LLM_REQUEST_TIMEOUT_SEC:-30}",
         "CONTEXT_MESSAGES_LIMIT": "${CONTEXT_MESSAGES_LIMIT:-20}",
+        "DATA_RETENTION_DAYS": "${DATA_RETENTION_DAYS:-1095}",
         "YCLIENTS_PARTNER_TOKEN": "${YCLIENTS_PARTNER_TOKEN:-}",
         "YCLIENTS_USER_TOKEN": "${YCLIENTS_USER_TOKEN:-}",
         "YCLIENTS_COMPANY_ID": "${YCLIENTS_COMPANY_ID:-}",
@@ -194,6 +195,15 @@ def test_compose_process_environment_overrides_external_test_credentials():
     }
     for name in ("worker", "redis", "postgres"):
         assert "env_file" not in services[name]
+
+
+def test_retention_setting_is_limited_to_runtime_owners():
+    services = compose_services()
+
+    assert "DATA_RETENTION_DAYS" in services["bot"]["environment"]
+    assert "DATA_RETENTION_DAYS" in services["worker"]["environment"]
+    for name in ("test", "migrate", "cutover", "scheduler", "admin"):
+        assert "DATA_RETENTION_DAYS" not in services[name].get("environment", {})
 
 
 def test_reserve_llm_environment_is_limited_to_runtime_llm_services():

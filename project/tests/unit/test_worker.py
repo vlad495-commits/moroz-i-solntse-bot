@@ -36,6 +36,14 @@ async def _fake_close():
     return None
 
 
+class NoopRetentionCleanup:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def ensure_current(self, _now):
+        pass
+
+
 def test_worker_reads_explicit_pipeline_settings_without_aggregate_settings():
     source = Path("/workspace/worker/main.py").read_text(encoding="utf-8")
 
@@ -659,6 +667,19 @@ async def test_configured_worker_ensures_current_projection_before_queue_consume
             assert now.tzinfo is UTC
             events.append("catalog_ensure_current")
 
+    class RetentionCleanup:
+        def __init__(
+            self, received_database, scheduler, *, retention_days
+        ):
+            assert isinstance(received_database, RuntimeDatabase)
+            assert scheduler is not None
+            assert retention_days == 1095
+
+        async def ensure_current(self, now):
+            assert isinstance(now, datetime)
+            assert now.tzinfo is UTC
+            events.append("retention_ensure_current")
+
     async def supervise(*_args, **_kwargs):
         events.append("supervise")
 
@@ -673,6 +694,13 @@ async def test_configured_worker_ensures_current_projection_before_queue_consume
     monkeypatch.setattr(worker_main, "MessageRepository", lambda *args, **kwargs: RuntimeRepository())
     monkeypatch.setattr(worker_main, "_acquire_worker_lock", lambda _database: _fake_lock())
     monkeypatch.setattr(worker_main, "_release_worker_lock", lambda _lock: _fake_close())
+    monkeypatch.setattr(worker_main, "DATA_RETENTION_DAYS", 1095, raising=False)
+    monkeypatch.setattr(
+        worker_main,
+        "RetentionCleanupCoordinator",
+        RetentionCleanup,
+        raising=False,
+    )
     monkeypatch.setattr(
         worker_main,
         "_build_yclients_services",
@@ -685,7 +713,11 @@ async def test_configured_worker_ensures_current_projection_before_queue_consume
 
     assert events.count("ensure_current") == 1
     assert events.count("catalog_ensure_current") == 1
+    assert events.count("retention_ensure_current") == 1
     assert events.index("database_connect") < events.index("ensure_current") < events.index("queue_connect")
+    assert events.index("database_connect") < events.index(
+        "retention_ensure_current"
+    ) < events.index("queue_connect")
 
 
 @pytest.mark.asyncio
@@ -1112,6 +1144,9 @@ async def test_startup_failure_closes_every_created_runtime_resource(
         worker_main, "_release_worker_lock", lambda _lock: _fake_close()
     )
     monkeypatch.setattr(
+        worker_main, "RetentionCleanupCoordinator", NoopRetentionCleanup
+    )
+    monkeypatch.setattr(
         worker_main,
         "init_llm",
         lambda: (_ for _ in ()).throw(RuntimeError("LLM startup failed")),
@@ -1221,6 +1256,9 @@ async def test_run_attempts_all_cleanup_and_preserves_error_precedence(
     )
     monkeypatch.setattr(
         worker_main, "_release_worker_lock", lambda _lock: _fake_close()
+    )
+    monkeypatch.setattr(
+        worker_main, "RetentionCleanupCoordinator", NoopRetentionCleanup
     )
     monkeypatch.setattr(worker_main, "_supervise", supervise)
     monkeypatch.setattr(

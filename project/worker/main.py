@@ -11,7 +11,7 @@ from aiogram import Bot
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 
-from config import CONTEXT_MESSAGES_LIMIT
+from config import CONTEXT_MESSAGES_LIMIT, DATA_RETENTION_DAYS
 from llm import generate_response, init_llm, prompt_reload_listener
 from moroz.booking.catalog import (
     CATALOG_SYNC_KIND,
@@ -45,6 +45,7 @@ from moroz.retention import (
     RETENTION_CLEANUP_KIND,
     RETENTION_ERROR_CODE,
     RetentionCleanupError,
+    RetentionCleanupCoordinator,
 )
 
 
@@ -836,6 +837,13 @@ async def run() -> None:
     try:
         await database.connect()
         worker_lock = await _acquire_worker_lock(database)
+        scheduler_repository = SchedulerJobRepository(database)
+        retention_cleanup = RetentionCleanupCoordinator(
+            database,
+            scheduler_repository,
+            retention_days=DATA_RETENTION_DAYS,
+        )
+        await retention_cleanup.ensure_current(datetime.now(UTC))
         lifecycle, projection_sync, catalog_sync, catalog_repository = (
             _build_yclients_services(database)
         )
@@ -855,7 +863,7 @@ async def run() -> None:
             database,
             generate_response,
             TelegramSender(telegram, repository, context_cache=redis_client),
-            scheduler_repository=SchedulerJobRepository(database),
+            scheduler_repository=scheduler_repository,
             booking_port=LocalBookingPort(database),
             notification_outbox=NotificationOutbox(
                 repository,
@@ -864,6 +872,7 @@ async def run() -> None:
             lifecycle=lifecycle,
             projection_sync=projection_sync,
             catalog_sync=catalog_sync,
+            retention_cleanup=retention_cleanup,
             catalog_repository=catalog_repository,
         )
         alert_router = _build_alert_router(redis_client, telegram)

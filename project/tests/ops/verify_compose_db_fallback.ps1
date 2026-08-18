@@ -23,6 +23,7 @@ $expectedEnvironment = @{
     worker = @(
         "BUSINESS_ALERT_CHAT_ID",
         "CONTEXT_MESSAGES_LIMIT",
+        "DATA_RETENTION_DAYS",
         "DATABASE_URL",
         "LLM_API_KEY",
         "LLM_BASE_URL",

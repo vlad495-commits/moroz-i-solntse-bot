@@ -607,7 +607,7 @@ git commit -m "feat: маршрутизировать retention через worke
 - Consumes: `RetentionCleanupCoordinator(database, scheduler, retention_days=...)`.
 - Produces: startup guarantee текущей UTC job и явная передача `DATA_RETENTION_DAYS` только bot/worker runtime.
 
-- [ ] **Step 1: Написать RED startup/config tests**
+- [x] **Step 1: Написать RED startup/config tests**
 
 В `test_worker.py` расширить startup-order test fake coordinator-ом, который
 фиксирует `retention_ensure_current` до `queue_connect`/`supervise`.
@@ -630,7 +630,7 @@ def test_retention_setting_is_limited_to_runtime_owners():
         assert "DATA_RETENTION_DAYS" not in services[name].get("environment", {})
 ```
 
-- [ ] **Step 2: Запустить RED startup/config gate**
+- [x] **Step 2: Запустить RED startup/config gate**
 
 Run:
 
@@ -641,7 +641,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: FAIL, потому что worker ещё не получает setting и не обеспечивает job.
 
-- [ ] **Step 3: Создать coordinator при старте singleton worker**
+- [x] **Step 3: Создать coordinator при старте singleton worker**
 
 В `project/worker/main.py` импортировать `DATA_RETENTION_DAYS` из текущего
 `config.py`, а также `RetentionCleanupCoordinator`. После database connect и
@@ -660,7 +660,7 @@ singleton lock создать coordinator с существующим `Scheduler
 Передать тот же `scheduler_repository` и `retention_cleanup` в
 `MessageTaskHandler`. Не создавать второй repository внутри этого runtime graph.
 
-- [ ] **Step 4: Добавить Compose allowlist**
+- [x] **Step 4: Добавить Compose allowlist**
 
 В `worker.environment` базового `project/docker-compose.yml` добавить:
 
@@ -670,7 +670,7 @@ DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-1095}
 
 Scheduler, test, migrate, cutover и admin не изменять.
 
-- [ ] **Step 5: Запустить GREEN startup/config gate и config render**
+- [x] **Step 5: Запустить GREEN startup/config gate и config render**
 
 Run:
 
@@ -682,7 +682,7 @@ docker compose --env-file ../.env config --quiet
 
 Expected: pytest PASS; Compose config exit `0`.
 
-- [ ] **Step 6: Зафиксировать Task 4**
+- [x] **Step 6: Зафиксировать Task 4**
 
 ```powershell
 git add project/worker/main.py project/docker-compose.yml project/tests/unit/test_worker.py project/tests/unit/test_migration_profile.py
