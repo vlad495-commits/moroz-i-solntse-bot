@@ -450,7 +450,7 @@ git commit -m "test: доказать атомарную retention-очистк�
 - Consumes: `RETENTION_CLEANUP_KIND`, `RETENTION_ERROR_CODE`, `RetentionCleanupError`, coordinator из Task 1.
 - Produces: routing `scheduler_job -> retention_cleanup.run(job)` без booking/YCLIENTS dependencies и allowlisted failure code.
 
-- [ ] **Step 1: Написать RED handler/worker tests**
+- [x] **Step 1: Написать RED handler/worker tests**
 
 В `project/tests/e2e/notifications/test_reminders.py` добавить imports и тест:
 
@@ -535,7 +535,7 @@ async def test_retention_scheduler_job_needs_only_repository_and_coordinator():
 Добавить failure test: `RetentionCleanupError()` приводит к
 `record_failure(..., error_code="retention_cleanup_failed", terminal=False)`.
 
-- [ ] **Step 2: Запустить RED routing gate**
+- [x] **Step 2: Запустить RED routing gate**
 
 Run:
 
@@ -546,7 +546,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/e2e/noti
 
 Expected: FAIL из-за отсутствующих imports/parameter/routing branch.
 
-- [ ] **Step 3: Подключить retention к общему scheduler handler**
+- [x] **Step 3: Подключить retention к общему scheduler handler**
 
 В `handle_scheduler_job(...)` добавить keyword `retention_cleanup=None` и первую ветку:
 
@@ -559,7 +559,7 @@ Expected: FAIL из-за отсутствующих imports/parameter/routing br
 
 Импортировать `RETENTION_CLEANUP_KIND` из `moroz.retention`.
 
-- [ ] **Step 4: Подключить системную ветку в `MessageTaskHandler`**
+- [x] **Step 4: Подключить системную ветку в `MessageTaskHandler`**
 
 В constructor сохранить `retention_cleanup`; в набор job, не требующих booking
 lookup/lock, добавить `RETENTION_CLEANUP_KIND`. Во все вызовы
@@ -575,7 +575,7 @@ lookup/lock, добавить `RETENTION_CLEANUP_KIND`. Во все вызовы
 Обновить существующие exact kwargs assertions в `test_worker.py`, добавив
 `"retention_cleanup": None`.
 
-- [ ] **Step 5: Запустить GREEN и соседний scheduler regression**
+- [x] **Step 5: Запустить GREEN и соседний scheduler regression**
 
 Run:
 
@@ -586,7 +586,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/e2e/noti
 
 Expected: PASS без изменения booking/projection/catalog поведения.
 
-- [ ] **Step 6: Зафиксировать Task 3**
+- [x] **Step 6: Зафиксировать Task 3**
 
 ```powershell
 git add project/src/moroz/notifications/handlers.py project/worker/main.py project/tests/e2e/notifications/test_reminders.py project/tests/unit/test_worker.py

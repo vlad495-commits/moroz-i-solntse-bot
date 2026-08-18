@@ -13,6 +13,10 @@ from moroz.booking.yclients_catalog import YclientsCatalogError
 from moroz.booking.yclients_records import YclientsProjectionError
 from moroz.common.queue import MAX_RETRIES, QueueTask
 from moroz.notifications.models import JobResult, SchedulerJob
+from moroz.retention import (
+    RETENTION_CLEANUP_KIND,
+    RetentionCleanupError,
+)
 from worker import main as worker_main
 
 
@@ -248,6 +252,7 @@ async def test_message_task_handler_processes_scheduler_job():
         "lifecycle": lifecycle,
         "projection_sync": None,
         "catalog_sync": None,
+        "retention_cleanup": None,
     }
 
 
@@ -291,6 +296,93 @@ async def test_projection_scheduler_job_needs_only_repository_and_coordinator():
 
     assert projection_sync.jobs[0].id == job_id
     assert completed == [(job_id, JobResult.skipped("projection_busy"))]
+
+
+@pytest.mark.asyncio
+async def test_retention_scheduler_job_needs_only_repository_and_coordinator():
+    job_id = uuid4()
+    completed = []
+    job = SchedulerJob(
+        id=job_id,
+        kind=RETENTION_CLEANUP_KIND,
+        run_at=datetime(2026, 8, 18, tzinfo=UTC),
+        payload={},
+        idempotency_key="retention_cleanup:2026-08-18",
+        attempts=0,
+        booking_key=None,
+        booking_starts_at=None,
+    )
+
+    class SchedulerRepository:
+        async def get_claimed(self, requested):
+            assert requested == job_id
+            return job
+
+        async def complete(self, received, result):
+            completed.append((received.id, result))
+
+    retention = SimpleNamespace(run=AsyncMock(return_value=JobResult.sent()))
+    handler = worker_main.MessageTaskHandler(
+        object(),
+        object(),
+        object(),
+        scheduler_repository=SchedulerRepository(),
+        retention_cleanup=retention,
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="scheduler_job",
+            payload={"job_id": str(job_id)},
+            idempotency_key=f"scheduler_job:{job_id}",
+        )
+    )
+
+    retention.run.assert_awaited_once_with(job)
+    assert completed == [(job_id, JobResult.sent())]
+
+
+@pytest.mark.asyncio
+async def test_retention_failure_records_only_allowlisted_code():
+    job_id = uuid4()
+    failures = []
+    job = SchedulerJob(
+        id=job_id,
+        kind=RETENTION_CLEANUP_KIND,
+        run_at=datetime(2026, 8, 18, tzinfo=UTC),
+        payload={},
+        idempotency_key="retention_cleanup:2026-08-18",
+        attempts=0,
+        booking_key=None,
+        booking_starts_at=None,
+    )
+
+    class SchedulerRepository:
+        async def get_claimed(self, _requested):
+            return job
+
+        async def record_failure(self, received, *, error_code, terminal):
+            failures.append((received.id, error_code, terminal))
+
+    retention = SimpleNamespace(run=AsyncMock(side_effect=RetentionCleanupError()))
+    handler = worker_main.MessageTaskHandler(
+        object(),
+        object(),
+        object(),
+        scheduler_repository=SchedulerRepository(),
+        retention_cleanup=retention,
+    )
+
+    with pytest.raises(RetentionCleanupError):
+        await handler.handle(
+            QueueTask(
+                kind="scheduler_job",
+                payload={"job_id": str(job_id)},
+                idempotency_key=f"scheduler_job:{job_id}",
+            )
+        )
+
+    assert failures == [(job_id, "retention_cleanup_failed", False)]
 
 
 @pytest.mark.asyncio

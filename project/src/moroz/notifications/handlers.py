@@ -1,6 +1,7 @@
 from moroz.booking.projection import PROJECTION_SYNC_KIND
 from moroz.booking.catalog import CATALOG_SYNC_KIND
 from moroz.notifications.models import JobResult, SchedulerJob
+from moroz.retention import RETENTION_CLEANUP_KIND
 
 
 REMINDER_KINDS = {
@@ -21,7 +22,12 @@ async def handle_scheduler_job(
     lifecycle=None,
     projection_sync=None,
     catalog_sync=None,
+    retention_cleanup=None,
 ) -> JobResult:
+    if job.kind == RETENTION_CLEANUP_KIND:
+        if retention_cleanup is None:
+            raise RuntimeError("retention cleanup is not configured")
+        return await retention_cleanup.run(job)
     if job.kind == CATALOG_SYNC_KIND:
         if catalog_sync is None:
             raise RuntimeError("catalog sync is not configured")

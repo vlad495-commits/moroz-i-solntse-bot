@@ -41,6 +41,11 @@ from moroz.notifications.lifecycle import LifecycleService
 from moroz.notifications.ports import LocalBookingPort, NotificationOutbox
 from moroz.notifications.repository import SchedulerJobRepository
 from moroz.privacy import customer_lock_subject
+from moroz.retention import (
+    RETENTION_CLEANUP_KIND,
+    RETENTION_ERROR_CODE,
+    RetentionCleanupError,
+)
 
 
 logging.basicConfig(
@@ -126,6 +131,7 @@ class MessageTaskHandler:
         lifecycle=None,
         projection_sync=None,
         catalog_sync=None,
+        retention_cleanup=None,
         catalog_repository=None,
         clock=None,
         scheduler_handler=handle_scheduler_job,
@@ -140,6 +146,7 @@ class MessageTaskHandler:
         self._lifecycle = lifecycle
         self._projection_sync = projection_sync
         self._catalog_sync = catalog_sync
+        self._retention_cleanup = retention_cleanup
         self._catalog_repository = catalog_repository
         self._clock = clock or (lambda: datetime.now(UTC))
         self._scheduler_handler = scheduler_handler
@@ -172,7 +179,11 @@ class MessageTaskHandler:
         job = await self._scheduler_repository.get_claimed(job_id)
         if job is None:
             return
-        if job.kind in {PROJECTION_SYNC_KIND, CATALOG_SYNC_KIND}:
+        if job.kind in {
+            PROJECTION_SYNC_KIND,
+            CATALOG_SYNC_KIND,
+            RETENTION_CLEANUP_KIND,
+        }:
             try:
                 result = await self._scheduler_handler(
                     job,
@@ -181,6 +192,7 @@ class MessageTaskHandler:
                     lifecycle=self._lifecycle,
                     projection_sync=self._projection_sync,
                     catalog_sync=self._catalog_sync,
+                    retention_cleanup=self._retention_cleanup,
                 )
             except Exception as error:
                 await self._scheduler_repository.record_failure(
@@ -215,6 +227,7 @@ class MessageTaskHandler:
                     lifecycle=self._lifecycle,
                     projection_sync=self._projection_sync,
                     catalog_sync=self._catalog_sync,
+                    retention_cleanup=self._retention_cleanup,
                 )
             except Exception as error:
                 await self._scheduler_repository.record_failure(
@@ -252,6 +265,7 @@ class MessageTaskHandler:
                         lifecycle=self._lifecycle,
                         projection_sync=self._projection_sync,
                         catalog_sync=self._catalog_sync,
+                        retention_cleanup=self._retention_cleanup,
                     )
                 except Exception as error:
                     await self._scheduler_repository.record_failure(
@@ -743,6 +757,8 @@ async def _supervise(
 
 
 def _scheduler_error_code(error: Exception) -> str:
+    if isinstance(error, RetentionCleanupError):
+        return RETENTION_ERROR_CODE
     if (
         isinstance(error, YclientsProjectionError)
         and error.code in YCLIENTS_PROJECTION_ERROR_CODES

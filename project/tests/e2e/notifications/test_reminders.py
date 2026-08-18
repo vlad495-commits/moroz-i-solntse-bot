@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from types import MappingProxyType
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -8,9 +9,35 @@ from moroz.booking.projection import PROJECTION_SYNC_KIND
 from moroz.booking.catalog import CATALOG_SYNC_KIND
 from moroz.notifications.handlers import handle_scheduler_job
 from moroz.notifications.models import JobResult, SchedulerJob
+from moroz.retention import RETENTION_CLEANUP_KIND
 
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_retention_job_routes_without_booking_dependencies():
+    job = SchedulerJob(
+        id=uuid4(),
+        kind=RETENTION_CLEANUP_KIND,
+        run_at=datetime(2026, 8, 18, tzinfo=UTC),
+        payload=MappingProxyType({}),
+        idempotency_key="retention_cleanup:2026-08-18",
+        attempts=0,
+        booking_key=None,
+        booking_starts_at=None,
+    )
+    retention = AsyncMock()
+    retention.run.return_value = JobResult.sent()
+
+    result = await handle_scheduler_job(
+        job,
+        booking_port=None,
+        outbox=None,
+        retention_cleanup=retention,
+    )
+
+    assert result == JobResult.sent()
+    retention.run.assert_awaited_once_with(job)
 
 
 class Booking:
