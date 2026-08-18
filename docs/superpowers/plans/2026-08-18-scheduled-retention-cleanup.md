@@ -30,7 +30,7 @@
 - Consumes: `PlannedSchedulerJob`, `SchedulerJob`, `JobResult`, `SchedulerJobRepository.schedule(...)`, `Database.acquire()`.
 - Produces: `RETENTION_CLEANUP_KIND`, `RETENTION_ERROR_CODE`, `RetentionCleanupError`, `retention_job(now)`, `delete_expired_records(connection, retention_days)`, `RetentionCleanupCoordinator.ensure_current(now)`, `RetentionCleanupCoordinator.run(job)`.
 
-- [ ] **Step 1: Написать RED unit-контракт UTC bucket и disabled/next-job поведения**
+- [x] **Step 1: Написать RED unit-контракт UTC bucket и disabled/next-job поведения**
 
 Создать `project/tests/unit/test_retention.py`:
 
@@ -147,7 +147,7 @@ async def test_shared_delete_contract_returns_only_counts():
     }
 ```
 
-- [ ] **Step 2: Запустить RED unit gate**
+- [x] **Step 2: Запустить RED unit gate**
 
 Run:
 
@@ -158,7 +158,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: FAIL на `ModuleNotFoundError: No module named 'moroz.retention'`.
 
-- [ ] **Step 3: Реализовать минимальный `moroz.retention`**
+- [x] **Step 3: Реализовать минимальный `moroz.retention`**
 
 Создать `project/src/moroz/retention.py`:
 
@@ -244,7 +244,7 @@ class RetentionCleanupCoordinator:
         return JobResult.sent()
 ```
 
-- [ ] **Step 4: Запустить GREEN unit gate**
+- [x] **Step 4: Запустить GREEN unit gate**
 
 Run:
 
@@ -255,7 +255,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: `4 passed`.
 
-- [ ] **Step 5: Зафиксировать Task 1**
+- [x] **Step 5: Зафиксировать Task 1**
 
 ```powershell
 git add project/src/moroz/retention.py project/tests/unit/test_retention.py
