@@ -50,13 +50,15 @@ worker выполняет оба DELETE в одной транзакции, а l
 ### Планирование
 
 Singleton worker на старте вызывает `ensure_current(now)`. Для положительного
-`DATA_RETENTION_DAYS` coordinator ставит задачу на начало текущих UTC-суток.
-Если она ещё не исполнялась, scheduler подхватит её немедленно; повторный startup
-не создаст дубль благодаря unique `idempotency_key`.
+`DATA_RETENTION_DAYS` coordinator ставит задачи на начало текущих и следующих
+UTC-суток. Если текущая ещё не исполнялась, scheduler подхватит её немедленно;
+повторный startup не создаст дубль благодаря unique `idempotency_key`.
 
-Перед исполнением текущей задачи coordinator ставит задачу на следующие
-UTC-сутки. Так временный сбой очистки не разрывает ежедневную цепочку, а retry
-текущей задачи остаётся в штатном scheduler/RabbitMQ-контуре. При
+Перед исполнением текущей задачи coordinator сначала продлевает durable-окно до
+послезавтрашних суток, затем гарантирует завтрашнюю задачу. Так однодневный
+временный сбой планирования не разрывает ежедневную цепочку, а retry текущей
+задачи остаётся в штатном scheduler/RabbitMQ-контуре. Ошибки постановки также
+преобразуются в безопасный `retention_cleanup_failed`. При
 `DATA_RETENTION_DAYS <= 0` новая задача не создаётся; уже поставленная задача
 завершается как `skipped(retention_disabled)` без DELETE и без продолжения цепочки.
 
@@ -68,7 +70,10 @@ UTC-сутки. Так временный сбой очистки не разр�
 `retention_cleanup` обрабатывается как системная scheduler-задача до веток,
 которым нужны booking/YCLIENTS зависимости. `MessageTaskHandler` получает один
 `retention_cleanup` coordinator и передаёт его в существующий
-`handle_scheduler_job`.
+`handle_scheduler_job`. Редкие системные scheduler-задачи сериализуются внутри
+singleton worker; после входа в lock claimed-status читается повторно, поэтому
+две одновременные RabbitMQ-доставки одной job не запускают очистку дважды и не
+соревнуются за terminal status.
 
 Успех завершается обычным `JobResult.sent()`. Ошибка PostgreSQL преобразуется в
 `RetentionCleanupError`; в `scheduler_jobs.last_error_code`, alerts и logs

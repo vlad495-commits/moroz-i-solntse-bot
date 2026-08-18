@@ -351,6 +351,62 @@ async def test_retention_scheduler_job_needs_only_repository_and_coordinator():
 
 
 @pytest.mark.asyncio
+async def test_duplicate_system_job_deliveries_execute_retention_once():
+    job_id = uuid4()
+    job = SchedulerJob(
+        id=job_id,
+        kind=RETENTION_CLEANUP_KIND,
+        run_at=datetime(2026, 8, 18, tzinfo=UTC),
+        payload={},
+        idempotency_key="retention_cleanup:2026-08-18",
+        attempts=0,
+        booking_key=None,
+        booking_starts_at=None,
+    )
+
+    class SchedulerRepository:
+        def __init__(self):
+            self.claimed = job
+            self.completed = 0
+
+        async def get_claimed(self, _requested):
+            return self.claimed
+
+        async def complete(self, _job, _result):
+            self.completed += 1
+            self.claimed = None
+
+    class RetentionCleanup:
+        def __init__(self):
+            self.runs = 0
+
+        async def run(self, _job):
+            self.runs += 1
+            await asyncio.sleep(0)
+            return JobResult.sent()
+
+    repository = SchedulerRepository()
+    retention = RetentionCleanup()
+    handler = worker_main.MessageTaskHandler(
+        object(),
+        object(),
+        object(),
+        scheduler_repository=repository,
+        retention_cleanup=retention,
+    )
+    task = QueueTask(
+        kind="scheduler_job",
+        payload={"job_id": str(job_id)},
+        idempotency_key=f"scheduler_job:{job_id}",
+    )
+
+    await asyncio.gather(handler.handle(task), handler.handle(task))
+
+    assert retention.runs == 1
+    assert repository.completed == 1
+
+
+@pytest.mark.asyncio
 async def test_retention_failure_records_only_allowlisted_code():
     job_id = uuid4()
     failures = []
@@ -469,7 +525,7 @@ async def test_projection_scheduler_job_without_coordinator_fails_closed():
             )
         )
 
-    assert loaded == [job_id]
+    assert loaded == [job_id, job_id]
     assert failures == [(job_id, "RuntimeError", False)]
 
 

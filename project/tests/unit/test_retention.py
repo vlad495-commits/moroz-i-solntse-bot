@@ -8,6 +8,7 @@ import pytest
 from moroz.notifications.models import JobResult
 from moroz.retention import (
     RETENTION_CLEANUP_KIND,
+    RetentionCleanupError,
     RetentionCleanupCoordinator,
     delete_expired_records,
     retention_job,
@@ -22,7 +23,11 @@ class Scheduler:
         self.jobs = []
 
     async def schedule(self, job):
-        self.jobs.append(job)
+        if all(
+            existing.idempotency_key != job.idempotency_key
+            for existing in self.jobs
+        ):
+            self.jobs.append(job)
         return True
 
 
@@ -81,8 +86,25 @@ async def test_positive_retention_schedules_current_and_next_day_and_cleans():
     assert [job.idempotency_key for job in scheduler.jobs] == [
         "retention_cleanup:2026-08-18",
         "retention_cleanup:2026-08-19",
+        "retention_cleanup:2026-08-20",
     ]
     assert [days for _, days in connection.queries] == [1095, 1095]
+
+
+@pytest.mark.asyncio
+async def test_schedule_failure_uses_safe_retention_error_and_keeps_runway():
+    class FailingScheduler(Scheduler):
+        async def schedule(self, job):
+            raise RuntimeError("database detail")
+
+    coordinator = RetentionCleanupCoordinator(
+        Database(Connection()), FailingScheduler(), retention_days=1095
+    )
+
+    with pytest.raises(RetentionCleanupError) as raised:
+        await coordinator.run(retention_job(NOW))
+
+    assert raised.value.code == "retention_cleanup_failed"
 
 
 @pytest.mark.asyncio

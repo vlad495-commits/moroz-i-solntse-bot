@@ -703,7 +703,7 @@ git commit -m "feat: запускать retention ежедневно"
 - Consumes: завершённые Tasks 1–4 и фактический вывод Docker gates.
 - Produces: проверенную локальную поставку и честный roadmap status без staging/production claims.
 
-- [ ] **Step 1: Запустить focused retention gate**
+- [x] **Step 1: Запустить focused retention gate**
 
 ```powershell
 cd project
@@ -712,7 +712,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: все собранные тесты PASS, failures `0`.
 
-- [ ] **Step 2: Запустить privacy/scheduler regression**
+- [x] **Step 2: Запустить privacy/scheduler regression**
 
 ```powershell
 cd project
@@ -721,20 +721,23 @@ docker compose --env-file ../.env run --rm test pytest -q tests/e2e/test_privacy
 
 Expected: PASS, failures `0`; customer deletion и scheduler jobs не регрессировали.
 
-- [ ] **Step 3: Запустить полный Docker suite**
+- [x] **Step 3: Запустить полный Docker suite**
 
 ```powershell
 cd project
-docker compose --env-file ../.env run --rm test pytest -q
+docker compose --env-file ../.env run --rm \
+  --volume "${PWD}/../docs:/docs:ro" \
+  --volume "${PWD}/../moroz-i-solntse-full-architecture.html:/moroz-i-solntse-full-architecture.html:ro" \
+  test pytest -q
 ```
 
 Expected: exit `0`, failures `0`, skips перечислить явно, если они есть.
 
-- [ ] **Step 4: Запустить compile/config/diff gates**
+- [x] **Step 4: Запустить compile/config/diff gates**
 
 ```powershell
 cd project
-docker compose --env-file ../.env run --rm test python -m compileall -q /workspace
+docker compose --env-file ../.env run --rm -e PYTHONPYCACHEPREFIX=/tmp/pycache test python -m compileall -q /workspace
 docker compose --env-file ../.env config --quiet
 cd ..
 git diff --check
@@ -743,7 +746,7 @@ git status --short
 
 Expected: первые три команды exit `0`; status содержит только ожидаемые файлы retention-поставки до commit.
 
-- [ ] **Step 5: Обновить живые документы только фактическими результатами**
+- [x] **Step 5: Обновить живые документы только фактическими результатами**
 
 В `Дорожная карта.md` отметить parent retention task и implementation subtask
 `[x]`, записать точные focused/regression/full counts и явно указать, что
@@ -752,7 +755,7 @@ staging/production не изменялись.
 В `changelog.md` добавить строку UTC+3 с реализованным потоком, точными Docker
 результатами, compile/config/diff gates и отсутствием внешних действий.
 
-- [ ] **Step 6: Проверить staged scope и зафиксировать завершение**
+- [x] **Step 6: Проверить staged scope и зафиксировать завершение**
 
 ```powershell
 git add project/src/moroz/retention.py project/llm/db.py project/src/moroz/notifications/handlers.py project/worker/main.py project/docker-compose.yml project/tests/unit/test_retention.py project/tests/integration/test_retention_postgres.py project/tests/e2e/notifications/test_reminders.py project/tests/unit/test_worker.py project/tests/unit/test_migration_profile.py 'Дорожная карта.md' changelog.md

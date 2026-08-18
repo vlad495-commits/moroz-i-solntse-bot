@@ -151,6 +151,7 @@ class MessageTaskHandler:
         self._catalog_repository = catalog_repository
         self._clock = clock or (lambda: datetime.now(UTC))
         self._scheduler_handler = scheduler_handler
+        self._system_scheduler_lock = asyncio.Lock()
 
     async def handle(self, task: QueueTask) -> None:
         if task.kind == "process_message":
@@ -185,24 +186,28 @@ class MessageTaskHandler:
             CATALOG_SYNC_KIND,
             RETENTION_CLEANUP_KIND,
         }:
-            try:
-                result = await self._scheduler_handler(
-                    job,
-                    booking_port=self._booking_port,
-                    outbox=self._notification_outbox,
-                    lifecycle=self._lifecycle,
-                    projection_sync=self._projection_sync,
-                    catalog_sync=self._catalog_sync,
-                    retention_cleanup=self._retention_cleanup,
-                )
-            except Exception as error:
-                await self._scheduler_repository.record_failure(
-                    job,
-                    error_code=_scheduler_error_code(error),
-                    terminal=job.attempts >= MAX_RETRIES,
-                )
-                raise
-            await self._scheduler_repository.complete(job, result)
+            async with self._system_scheduler_lock:
+                job = await self._scheduler_repository.get_claimed(job_id)
+                if job is None:
+                    return
+                try:
+                    result = await self._scheduler_handler(
+                        job,
+                        booking_port=self._booking_port,
+                        outbox=self._notification_outbox,
+                        lifecycle=self._lifecycle,
+                        projection_sync=self._projection_sync,
+                        catalog_sync=self._catalog_sync,
+                        retention_cleanup=self._retention_cleanup,
+                    )
+                except Exception as error:
+                    await self._scheduler_repository.record_failure(
+                        job,
+                        error_code=_scheduler_error_code(error),
+                        terminal=job.attempts >= MAX_RETRIES,
+                    )
+                    raise
+                await self._scheduler_repository.complete(job, result)
             return
         if self._booking_port is None or self._notification_outbox is None:
             raise RuntimeError("scheduler job dependencies are not configured")

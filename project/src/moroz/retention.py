@@ -62,13 +62,26 @@ class RetentionCleanupCoordinator:
 
     async def ensure_current(self, now: datetime) -> None:
         if self._retention_days > 0:
-            await self._scheduler.schedule(retention_job(now))
+            try:
+                await self._scheduler.schedule(retention_job(now))
+                await self._scheduler.schedule(
+                    retention_job(now + timedelta(days=1))
+                )
+            except RetentionCleanupError:
+                raise
+            except Exception as error:
+                raise RetentionCleanupError() from error
 
     async def run(self, job) -> JobResult:
         if self._retention_days <= 0:
             return JobResult.skipped("retention_disabled")
-        await self._scheduler.schedule(retention_job(job.run_at + timedelta(days=1)))
         try:
+            await self._scheduler.schedule(
+                retention_job(job.run_at + timedelta(days=2))
+            )
+            await self._scheduler.schedule(
+                retention_job(job.run_at + timedelta(days=1))
+            )
             async with self._database.acquire() as connection:
                 async with connection.transaction():
                     await delete_expired_records(connection, self._retention_days)
