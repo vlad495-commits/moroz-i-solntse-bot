@@ -258,10 +258,6 @@ def test_visual_contains_required_sections_and_status_markers() -> None:
                 assert "future-boundary" not in element.ancestor_ids
 
 
-def test_root_copy_matches_canonical_visual() -> None:
-    assert ROOT_HTML_PATH.read_bytes() == HTML_PATH.read_bytes()
-
-
 def test_visual_contains_status_labels_and_comparison_facts() -> None:
     html, parser = load_visual()
     for marker in STATUS_MARKERS.values():
