@@ -275,7 +275,7 @@ git commit -m "feat: добавить daily retention coordinator"
 - Consumes: `delete_expired_records(connection, retention_days)` и `RetentionCleanupCoordinator` из Task 1.
 - Produces: доказанный PostgreSQL-контракт old/fresh/control/rollback и legacy delegation без второго набора DELETE.
 
-- [ ] **Step 1: Написать RED legacy-delegation contract и PostgreSQL integration tests**
+- [x] **Step 1: Написать RED legacy-delegation contract и PostgreSQL integration tests**
 
 В `project/tests/unit/test_retention.py` добавить:
 
@@ -385,7 +385,7 @@ async def test_second_delete_failure_rolls_back_first_delete(database):
         ) == 1
 ```
 
-- [ ] **Step 2: Запустить RED integration gate**
+- [x] **Step 2: Запустить RED integration gate**
 
 Run:
 
@@ -396,7 +396,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: PostgreSQL tests могут пройти, но общий Task 2 RED gate ниже падает на `test_legacy_cleanup_delegates_to_shared_retention_contract`, потому что `llm/db.py` ещё содержит собственный SQL-цикл.
 
-- [ ] **Step 3: Перевести legacy wrapper на общий DELETE-контракт**
+- [x] **Step 3: Перевести legacy wrapper на общий DELETE-контракт**
 
 В `project/llm/db.py` добавить:
 
@@ -418,7 +418,7 @@ from moroz.retention import delete_expired_records
 
 Обновить docstring: удалить ссылку на отсутствующий `_cleanup_loop`; указать, что production schedule принадлежит `moroz.retention.RetentionCleanupCoordinator`.
 
-- [ ] **Step 4: Довести PostgreSQL тесты до GREEN и проверить общий контракт**
+- [x] **Step 4: Довести PostgreSQL тесты до GREEN и проверить общий контракт**
 
 Run:
 
@@ -429,7 +429,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: все тесты в двух файлах PASS; rollback test подтверждает сохранение `messages` после ошибки `token_usage`.
 
-- [ ] **Step 5: Зафиксировать Task 2**
+- [x] **Step 5: Зафиксировать Task 2**
 
 ```powershell
 git add project/llm/db.py project/tests/integration/test_retention_postgres.py project/tests/unit/test_retention.py

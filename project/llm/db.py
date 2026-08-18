@@ -5,6 +5,7 @@ import logging
 
 from config import DATABASE_URL, CONTEXT_MESSAGES_LIMIT, DATA_RETENTION_DAYS
 from moroz.common.db import Database
+from moroz.retention import delete_expired_records
 
 logger = logging.getLogger(__name__)
 
@@ -120,25 +121,17 @@ async def cleanup_old_records() -> dict[str, int]:
     """Удалить старые записи. Срок хранения — DATA_RETENTION_DAYS (дефолт 3 года).
 
     Если DATA_RETENTION_DAYS <= 0 — автоочистка выключена, возвращает {}.
-    Запускать раз в сутки (см. _cleanup_loop в bot.py).
+    Production schedule принадлежит RetentionCleanupCoordinator.
     """
     if DATA_RETENTION_DAYS <= 0:
         logger.info("Автоочистка БД выключена (DATA_RETENTION_DAYS=%d)", DATA_RETENTION_DAYS)
         return {}
     if not await _ensure_pool():
         return {}
-    tables = ("messages", "token_usage")
-    result = {}
     try:
         async with _pool.acquire() as conn:
-            for table in tables:
-                status = await conn.execute(
-                    f"DELETE FROM {table} "
-                    f"WHERE created_at < NOW() - ($1 || ' days')::INTERVAL",
-                    str(DATA_RETENTION_DAYS),
-                )
-                result[table] = int(status.split()[-1])
-        return result
+            async with conn.transaction():
+                return await delete_expired_records(conn, DATA_RETENTION_DAYS)
     except Exception as error:
         logger.error("db_cleanup_failed error_type=%s", type(error).__name__)
         return {}

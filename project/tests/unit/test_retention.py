@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
@@ -108,3 +109,11 @@ async def test_shared_delete_contract_returns_only_counts():
         "messages": 2,
         "token_usage": 3,
     }
+
+
+def test_legacy_cleanup_delegates_to_shared_retention_contract():
+    source = Path("/workspace/llm/db.py").read_text(encoding="utf-8")
+
+    assert "from moroz.retention import delete_expired_records" in source
+    assert "return await delete_expired_records(conn, DATA_RETENTION_DAYS)" in source
+    assert 'f"DELETE FROM {table}' not in source
