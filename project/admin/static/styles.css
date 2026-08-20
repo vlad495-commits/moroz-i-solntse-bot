@@ -275,8 +275,6 @@ ul {
 .login-card label,
 .eval-form label,
 .prompt-form label,
-.review-card label,
-.review-new-form label,
 .logs-filters label {
     display: block;
     color: var(--text);
@@ -600,8 +598,6 @@ select:focus {
 
 .msg,
 .result-card,
-.review-card,
-.review-new,
 .prompt-form,
 .eval-form,
 .bot-toggle,
@@ -625,7 +621,6 @@ select:focus {
 
 .msg-header,
 .result-header,
-.review-card-head,
 .row-between {
     display: flex;
     align-items: center;
@@ -721,34 +716,29 @@ select:focus {
 .badge-output_blocked,
 .badge-verdict-fail,
 .badge-status-error,
-.badge-status-failed,
-.badge-review-delete {
+.badge-status-failed {
     background: rgba(255, 59, 31, 0.12);
     color: #A82717;
 }
 
 .badge-status-finished,
 .badge-verdict-pass,
-.badge-review-ok,
 .chip-score {
     background: rgba(7, 139, 91, 0.13);
     color: var(--ok);
 }
 
 .badge-status-running,
-.badge-review-new_case,
 .chip-kw {
     background: rgba(16, 75, 169, 0.12);
     color: var(--brand);
 }
 
-.badge-review-pending,
 .chip {
     background: rgba(107, 122, 144, 0.13);
     color: #3B4B61;
 }
 
-.badge-review-needs_edit,
 .badge-verdict-error,
 .chip-judge,
 .chip-forbidden {
@@ -771,8 +761,7 @@ select:focus {
 }
 
 .actions,
-.form-actions,
-.review-card-actions {
+.form-actions {
     display: flex;
     gap: 9px;
     flex-wrap: wrap;
@@ -835,8 +824,7 @@ button:hover {
 }
 
 .eval-form,
-.prompt-form,
-.review-new {
+.prompt-form {
     max-width: 1000px;
     padding: 22px;
     margin-bottom: 24px;
@@ -984,43 +972,6 @@ button:hover {
 
 .review-tab.active span { background: rgba(255, 255, 255, 0.2); }
 
-.review-new h2 { margin-top: 0; }
-.review-new-form {
-    display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.2fr);
-    gap: 12px;
-    align-items: end;
-}
-
-.review-new-form label:nth-child(3),
-.review-new-form .form-actions {
-    grid-column: 1 / -1;
-}
-
-.review-grid,
-.review-suggestions {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-    gap: 14px;
-}
-
-.review-card {
-    padding: 16px;
-    border-top: 4px solid var(--ice-strong);
-}
-
-.review-card-new { border-top-color: var(--brand); }
-.review-card-head { margin-bottom: 12px; }
-.review-block { margin-bottom: 12px; }
-.review-block strong {
-    display: block;
-    margin-bottom: 5px;
-    color: var(--text);
-}
-
-.review-card textarea,
-.review-new-form textarea { resize: vertical; }
-
 .bot-toggle {
     display: flex;
     align-items: center;
@@ -1162,12 +1113,6 @@ button:hover {
     .dialogs-table-head {
         align-items: flex-start;
         flex-direction: column;
-    }
-
-    .review-new-form,
-    .review-grid,
-    .review-suggestions {
-        grid-template-columns: 1fr;
     }
 
     .log-row {

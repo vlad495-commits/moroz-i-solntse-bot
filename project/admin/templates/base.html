@@ -41,9 +41,6 @@
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7h14v12H5z"/><path d="M8 4v6M16 4v6M5 11h14"/></svg></span>Записи
             </a>
             {% endif %}
-            <a href="{{ request.scope.get('root_path', '') }}/review/evals" class="{% if path.startswith('/review') %}active{% endif %}">
-                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4Z"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="m15 17 2 2 4-4"/></svg></span>Review кейсов
-            </a>
             {% if user.role == 'owner' %}
                 <a href="{{ request.scope.get('root_path', '') }}/bot-control/" class="{% if path.startswith('/bot-control') %}active{% endif %}">
                     <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.8 1.8 0 0 0-1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.8 1.8 0 0 0 .4-2 1.8 1.8 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.8 1.8 0 0 0 1.6-1 1.8 1.8 0 0 0-.4-2l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.8 1.8 0 0 0 2 .4 1.8 1.8 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.8 1.8 0 0 0 1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.8 1.8 0 0 0-.4 2 1.8 1.8 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.8 1.8 0 0 0-1.5 1Z"/></svg></span>Управление

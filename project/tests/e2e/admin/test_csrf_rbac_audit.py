@@ -358,6 +358,16 @@ def test_owner_only_navigation_links_are_hidden_from_admin_role():
     assert "/bot-control/" in base
 
 
+def test_review_cases_module_is_not_exposed():
+    base = (admin_app._BASE_DIR / "templates" / "base.html").read_text(
+        encoding="utf-8"
+    )
+    paths = {route.path for route in admin_app.app.routes}
+
+    assert "Review кейсов" not in base
+    assert not any(path.startswith("/review") for path in paths)
+
+
 @pytest.mark.asyncio
 async def test_customer_data_delete_rejects_admin_before_redis(monkeypatch):
     async def current_user(_request):

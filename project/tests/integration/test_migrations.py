@@ -461,7 +461,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0012_projection_suppression"
+            "0013_remove_eval_case_reviews"
         )
     finally:
         await conn.close()
@@ -600,7 +600,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0012_projection_suppression"
+        assert current_revision == "0013_remove_eval_case_reviews"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -763,7 +763,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0012_projection_suppression"
+        assert current_revision == "0013_remove_eval_case_reviews"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -860,7 +860,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0012_projection_suppression"
+        assert current_revision == "0013_remove_eval_case_reviews"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
@@ -933,7 +933,7 @@ async def test_yclients_booking_projection_migration_creates_bounded_schema(
     finally:
         await conn.close()
 
-    assert current_revision == "0012_projection_suppression"
+    assert current_revision == "0013_remove_eval_case_reviews"
     assert columns == [
         "external_id",
         "booking_key",
@@ -999,6 +999,27 @@ async def test_cutover_audits_and_stamps_exact_unversioned_schema(
 async def test_cutover_is_idempotent_for_versioned_baseline(baseline_database_url):
     result = run_cutover(baseline_database_url)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+async def test_review_cases_table_is_removed(disposable_database_url):
+    run_alembic(disposable_database_url, "upgrade", "0012_projection_suppression")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        await conn.execute("INSERT INTO eval_case_reviews DEFAULT VALUES")
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            "SELECT to_regclass('public.eval_case_reviews')"
+        ) is None
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0013_remove_eval_case_reviews"
+        )
+    finally:
+        await conn.close()
 
 
 async def test_baseline_downgrade_is_rejected_without_changing_schema_or_data(
@@ -1190,7 +1211,7 @@ async def test_yclients_service_catalog_migration_creates_only_bounded_columns(
     finally:
         await conn.close()
 
-    assert current_revision == "0012_projection_suppression"
+    assert current_revision == "0013_remove_eval_case_reviews"
     assert columns == [
         "service_id",
         "staff_id",
@@ -1247,7 +1268,7 @@ async def test_yclients_projection_suppression_migration_is_metadata_only(
     finally:
         await conn.close()
 
-    assert current_revision == "0012_projection_suppression"
+    assert current_revision == "0013_remove_eval_case_reviews"
     assert columns == [
         ("external_id", "text", "NO", None),
         ("created_at", "timestamp with time zone", "NO", "now()"),

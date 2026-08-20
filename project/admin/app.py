@@ -37,7 +37,6 @@ from auth import (  # noqa: E402
 from pricing import calculate_cost  # noqa: E402
 from prompt_routes import router as prompt_router  # noqa: E402
 from eval_routes import router as eval_router  # noqa: E402
-from review_routes import router as review_router  # noqa: E402
 from bot_control_routes import router as bot_control_router  # noqa: E402
 from logs_routes import router as logs_router  # noqa: E402
 from metrics_routes import router as metrics_router  # noqa: E402
@@ -76,7 +75,6 @@ templates = Jinja2Templates(directory=_BASE_DIR / "templates")
 
 app.include_router(prompt_router)
 app.include_router(eval_router)
-app.include_router(review_router)
 app.include_router(bot_control_router)
 app.include_router(logs_router)
 app.include_router(metrics_router)
