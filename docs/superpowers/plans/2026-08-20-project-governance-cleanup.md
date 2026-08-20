@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Runtime, migrations, Compose, prompt, secrets и deployment scripts не изменяются.
+- Runtime services, migrations, prompt, secrets и deployment scripts не изменяются. В test-only Compose profile разрешены только точечные read-only mounts документов, необходимых governance-контракту; корень репозитория и `.env` не монтируются.
 - Текущий release candidate сначала проходит review, PR, merge и staging verification по `docs/superpowers/plans/2026-08-20-staging-release-privacy-scheduler-fixes.md`.
 - Документационная ветка создаётся от exact post-release commit, а не от промежуточного candidate.
 - `Дорожная карта.md` — единственный источник текущего статуса.
@@ -25,13 +25,13 @@
 
 Этот prerequisite выполняется существующим release-планом и не реализуется повторно в этой документационной ветке.
 
-- [ ] Провести независимый review локального release HEAD `e8efa47000b859e8bf700a291a539673f85c9800`.
-- [ ] Исправить findings и повторить затронутые Docker gates, если findings существуют.
-- [ ] Опубликовать пять локальных коммитов в PR №2 и сверить exact PR head.
-- [ ] Выполнить merge и commit-pinned staging rollout с сохранённым rollback.
-- [ ] Подтвердить migration `0012`, scheduler health/synthetic terminal job, privacy smoke и safe logs.
-- [ ] Выполнить read-only диагностику `GET /api/v1/records/{company_id}` с выводом только HTTP status.
-- [ ] Зафиксировать post-release commit/tag и фактический runtime status в changelog/roadmap.
+- [x] Провести независимый review локального release HEAD `e8efa47000b859e8bf700a291a539673f85c9800`.
+- [x] Исправить findings и повторить затронутые Docker gates, если findings существуют.
+- [x] Опубликовать пять локальных коммитов в PR №2 и сверить exact PR head.
+- [x] Выполнить merge и commit-pinned staging rollout с сохранённым rollback.
+- [x] Подтвердить migration `0012`, scheduler health/synthetic terminal job, privacy smoke и safe logs.
+- [x] Выполнить read-only диагностику `GET /api/v1/records/{company_id}` с выводом только HTTP status.
+- [x] Зафиксировать post-release commit/tag и фактический runtime status в changelog/roadmap.
 
 Expected: существует один post-release commit, из которого можно честно построить новый текущий status.
 
@@ -41,12 +41,13 @@ Expected: существует один post-release commit, из которог
 
 **Files:**
 - Create: `project/tests/unit/test_project_governance_docs.py`
+- Modify: `project/docker-compose.yml` — только least-privilege read-only mounts test-profile.
 
 **Interfaces:**
 - Consumes: design `docs/superpowers/specs/2026-08-20-project-governance-design.md`.
 - Produces: pytest-контракт обязательных разделов, role-banner, архива и статусов референса.
 
-- [ ] **Step 1: Write the failing governance tests**
+- [x] **Step 1: Write the failing governance tests**
 
 ```python
 from pathlib import Path
@@ -99,7 +100,7 @@ def test_volodya_audit_has_current_disposition() -> None:
     assert "Исключено или не переносится" in audit
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -110,12 +111,16 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: FAIL because the new roadmap sections, archive, manual, banners and audit appendix do not yet exist.
 
-- [ ] **Step 3: Commit the RED contract**
+- [x] **Step 3: Commit the RED contract**
 
 ```powershell
 git add project/tests/unit/test_project_governance_docs.py changelog.md
 git commit -m "test: зафиксировать единый источник статуса"
 ```
+
+- [x] **Review fix: Make the contract part of the ordinary Docker suite**
+
+Self-review after the first GREEN found that a manual whole-worktree bind mount was required. The test profile now mounts only the exact root documents and three documentation directories read-only; `.env`, runtime services and production Compose behavior remain unchanged.
 
 ---
 
@@ -130,14 +135,14 @@ git commit -m "test: зафиксировать единый источник с
 - Consumes: exact post-release commit/tag and runtime evidence from prerequisite.
 - Produces: root status dashboard with fixed headings required by Task 1.
 
-- [ ] **Step 1: Move the historical roadmap without rewriting it**
+- [x] **Step 1: Move the historical roadmap without rewriting it**
 
 ```powershell
 New-Item -ItemType Directory -Force -Path docs/archive | Out-Null
 git mv -- 'Дорожная карта.md' 'docs/archive/roadmap-history-through-2026-08-20.md'
 ```
 
-- [ ] **Step 2: Capture the exact post-release evidence**
+- [x] **Step 2: Capture the exact post-release evidence**
 
 Run:
 
@@ -148,7 +153,7 @@ git log -1 --format='%cI %s'
 
 Copy the literal commit returned by the first command. Copy the exact test, review and staging evidence from the final release handoff/changelog entry. Do not write `latest`, a branch name, an unverified expected status or a placeholder into the roadmap.
 
-- [ ] **Step 3: Create the concise root roadmap**
+- [x] **Step 3: Create the concise root roadmap**
 
 Create `Дорожная карта.md` with this structure. For the four evidence bullets, insert the literal values captured in Step 2:
 
@@ -214,17 +219,17 @@ Create `Дорожная карта.md` with this structure. For the four eviden
 - История: `changelog.md` и `docs/archive/roadmap-history-through-2026-08-20.md`.
 ```
 
-- [ ] **Step 4: Record the move immediately**
+- [x] **Step 4: Record the move immediately**
 
 Append one timestamped line to `changelog.md` stating that the historical roadmap was preserved, the root roadmap became the only status source, and runtime/external systems were unchanged.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run the Task 1 Docker command.
 
 Expected: archive assertions pass; banner/manual/audit assertions still fail.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add -- 'Дорожная карта.md' 'docs/archive/roadmap-history-through-2026-08-20.md' changelog.md
@@ -246,7 +251,7 @@ git commit -m "docs: сделать дорожную карту пультом �
 - Consumes: root roadmap created in Task 2.
 - Produces: one role per root document and no competing current stage in `AGENTS.md`.
 
-- [ ] **Step 1: Remove stale status from AGENTS**
+- [x] **Step 1: Remove stale status from AGENTS**
 
 Replace the current `Текущая ступень: 1` block with:
 
@@ -255,7 +260,7 @@ Replace the current `Текущая ступень: 1` block with:
 > `AGENTS.md` содержит только правила работы и не определяет текущую ступень, релиз или состояние staging.
 ```
 
-- [ ] **Step 2: Add exact role banners**
+- [x] **Step 2: Add exact role banners**
 
 Add after the title of each file:
 
@@ -283,11 +288,11 @@ Add after the title of each file:
 > **Роль документа:** исторический общий production-ready checklist стартового шаблона. Актуальные приоритеты находятся в `Дорожная карта.md`, release gates — в `План реализации.md` и профильных runbooks/checklists.
 ```
 
-- [ ] **Step 3: Run focused tests**
+- [x] **Step 3: Run focused tests**
 
 Expected: roadmap and role assertions pass; manual/audit assertions still fail.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add AGENTS.md 'ТЗ и архитектура.md' 'План реализации.md' changelog.md checklist.md
@@ -306,7 +311,7 @@ git commit -m "docs: разделить роли проектных докуме
 - Consumes: registry and rules from the approved design.
 - Produces: reusable project-governance manual without current release status.
 
-- [ ] **Step 1: Create the manual**
+- [x] **Step 1: Create the manual**
 
 The file must contain the following complete sections; expand each table row into normal Markdown without adding current release status:
 
@@ -373,11 +378,11 @@ External reference → audit → owner decision → roadmap. Референс н
 
 Expand bracketed sections with the complete approved content; no placeholders remain in the created file.
 
-- [ ] **Step 2: Log and run focused tests**
+- [x] **Step 2: Log and run focused tests**
 
 Expected: only audit disposition test remains failing.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add 'docs/project/Система управления проектом.md' changelog.md
@@ -396,7 +401,7 @@ git commit -m "docs: описать систему управления прое
 - Consumes: historical audit and post-release factual status.
 - Produces: current disposition without rewriting the dated audit conclusions.
 
-- [ ] **Step 1: Append, do not rewrite, the current disposition**
+- [x] **Step 1: Append, do not rewrite, the current disposition**
 
 Add `## Актуализация статусов после аудита` with three subsections:
 
@@ -410,11 +415,11 @@ Finish with:
 Новый кандидат из референса проходит только путь: audit → решение владельца → roadmap → spec → plan → implementation.
 ```
 
-- [ ] **Step 2: Run full focused governance test**
+- [x] **Step 2: Run full focused governance test**
 
 Expected: `4 passed`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add 'docs/audits/Аудит решений бота Володи 2026-08-13.md' changelog.md
@@ -434,7 +439,7 @@ git commit -m "docs: актуализировать решения рефере�
 - Consumes: Tasks 1–5.
 - Produces: verified documentation-only delivery and one current status source.
 
-- [ ] **Step 1: Check scope**
+- [x] **Step 1: Check scope**
 
 ```powershell
 git diff --name-only <POST_RELEASE_BASE>..HEAD
@@ -443,7 +448,7 @@ git diff --check <POST_RELEASE_BASE>..HEAD
 
 Expected: only the explicitly listed documentation files and `project/tests/unit/test_project_governance_docs.py`; no runtime, migration, Compose, prompt, secret or deployment file.
 
-- [ ] **Step 2: Run Docker verification**
+- [x] **Step 2: Run Docker verification**
 
 ```powershell
 Set-Location project
@@ -452,7 +457,7 @@ docker compose --env-file ../.env run --build --rm test pytest -q tests/unit/tes
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Verify links and forbidden competing status**
+- [x] **Step 3: Verify links and forbidden competing status**
 
 ```powershell
 rg -n "Текущая ступень|единственный источник текущего статуса|Роль документа" AGENTS.md 'Дорожная карта.md' 'ТЗ и архитектура.md' 'План реализации.md' changelog.md checklist.md
@@ -460,18 +465,18 @@ rg -n "Текущая ступень|единственный источник �
 
 Expected: `Текущая ступень` absent from AGENTS; the root roadmap is the only current status source; role banners exist in four static documents.
 
-- [ ] **Step 4: Close the plan and roadmap**
+- [x] **Step 4: Close the plan and roadmap**
 
 Mark every completed checkbox in this plan, mark governance cleanup completed in the root roadmap, set `Что нужно от владельца` to the exact remaining decision or `Ничего`, and append exact verification evidence to changelog.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add 'Дорожная карта.md' changelog.md 'docs/superpowers/plans/2026-08-20-project-governance-cleanup.md'
 git commit -m "docs: завершить упорядочивание проекта"
 ```
 
-- [ ] **Step 6: Final clean-state proof**
+- [x] **Step 6: Final clean-state proof**
 
 ```powershell
 git status --short

@@ -16,7 +16,14 @@ services:
     volumes:
       - .:/workspace:ro
       - ../AGENTS.md:/repo/AGENTS.md:ro
+      - ../Дорожная карта.md:/repo/Дорожная карта.md:ro
       - ../План реализации.md:/repo/План реализации.md:ro
+      - ../ТЗ и архитектура.md:/repo/ТЗ и архитектура.md:ro
+      - ../changelog.md:/repo/changelog.md:ro
+      - ../checklist.md:/repo/checklist.md:ro
+      - ../docs/archive:/repo/docs/archive:ro
+      - ../docs/audits:/repo/docs/audits:ro
+      - ../docs/project:/repo/docs/project:ro
       - ../docs/superpowers/plans:/repo/docs/superpowers/plans:ro
     depends_on:
       postgres:

@@ -33,7 +33,7 @@ Telegram LLM-assistant for the Moroz i Solntse tanning and cryotherapy center.
 - Текущий статус и активная работа: `Дорожная карта.md`.
 - Целевые требования и архитектурные границы: `ТЗ и архитектура.md`.
 - Состав Telegram Production V1: `План реализации.md`.
-- Актуальная визуальная схема: `docs/moroz-i-solntse-full-architecture.html`.
+- Актуальная визуальная схема: `docs/architecture/moroz-i-solntse-full-architecture.html`.
 - Runtime-код, Compose и тесты: `project/`.
 - Правила координации документов: `docs/project/Система управления проектом.md`.
 
