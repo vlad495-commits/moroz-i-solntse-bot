@@ -9,7 +9,7 @@ import pytest
 import redis.asyncio as redis
 
 from customer_data_deletion import CustomerDataDeletionError, delete_customer_data
-from moroz.booking.projection import ProjectionRepository
+from moroz.booking.projection import PROJECTION_LOCK, ProjectionRepository
 from moroz.booking.yclients_records import ProjectionRecord, ProjectionSnapshot
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage
@@ -394,6 +394,49 @@ async def test_projection_privacy_failure_rolls_back_customer_deletion(
         await cache.aclose()
         await pool.close()
         await conn.close()
+
+
+async def test_deletion_waits_for_projection_writer(migrated_database_url):
+    lock_conn = await asyncpg.connect(migrated_database_url)
+    pool = Database(migrated_database_url, min_size=1, max_size=2)
+    await pool.connect()
+    cache = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    await lock_conn.execute(
+        "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+        PROJECTION_LOCK,
+    )
+    task = asyncio.create_task(
+        delete_customer_data(
+            pool=pool,
+            redis_client=cache,
+            chat_id=42,
+            actor_id=1,
+            ip_address=None,
+            user_agent=None,
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert task.done() is False
+
+        await lock_conn.execute(
+            "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+            PROJECTION_LOCK,
+        )
+        result = await asyncio.wait_for(task, timeout=3)
+
+        assert result.status == "already_absent"
+    finally:
+        if not task.done():
+            task.cancel()
+        await lock_conn.execute(
+            "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+            PROJECTION_LOCK,
+        )
+        await cache.delete("privacy:deleting:telegram:42")
+        await cache.aclose()
+        await pool.close()
+        await lock_conn.close()
 
 
 async def test_redis_cleanup_failure_rolls_back_postgres(migrated_database_url):

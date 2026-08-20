@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
+from moroz.booking.projection import PROJECTION_LOCK
 from moroz.privacy import (
     DELETION_MARKER_TTL_SECONDS,
     DELETION_OPERATION_TIMEOUT_SECONDS,
@@ -114,6 +115,10 @@ async def _delete_customer_data(
                 await conn.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     customer_lock_subject(chat),
+                )
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    PROJECTION_LOCK,
                 )
 
                 user_ids = {chat}
