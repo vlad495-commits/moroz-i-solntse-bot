@@ -92,7 +92,13 @@ async def logs_page(
 
 
 @router.get("/tail")
-async def logs_tail(level: str = "ALL", search: str = "", lines: int = 300):
+async def logs_tail(
+    request: Request,
+    level: str = "ALL",
+    search: str = "",
+    lines: int = 300,
+):
+    await get_current_user(request)
     raw = _read_tail(LOG_FILE, min(max(lines, 10), 2000))
     rows = _filter_lines(raw, level, search)
     return JSONResponse({"rows": rows, "log_exists": LOG_FILE.exists()})

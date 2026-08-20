@@ -132,9 +132,13 @@ def test_production_compose_adds_caddy_and_keeps_admin_localhost_only():
     assert "pgbackups:/backups/postgres" in compose
     assert "ops-check:" in compose
     assert "BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY outside Git}" in compose
+    assert "backup:" in compose
+    assert "BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}" in compose
+    assert 'command: ["sh", "/ops/run-backups.sh"]' in compose
+    assert "restart: unless-stopped" in compose
     assert "ADMIN_ROOT_PATH: /admin" in compose
     assert "ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:?set ADMIN_COOKIE_SECURE outside Git}" in compose
-    assert "TELEGRAM_MODE: webhook" in compose
+    assert "TELEGRAM_MODE" not in compose
 
 
 def test_caddyfile_routes_only_webhook_and_admin_prefix():

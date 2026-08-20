@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -11,8 +12,10 @@ import yaml
 
 ROOT = Path("/workspace")
 BASE = ROOT / "docker-compose.yml"
+ENV_EXAMPLE = ROOT / ".env.example"
 STAGING = ROOT / "docker-compose.staging.yml"
 CADDYFILE = ROOT / "ops/staging/Caddyfile"
+PIN_IMAGE_TAG = ROOT / "ops/pin-staging-image-tag.sh"
 
 
 class ComposeLoader(yaml.SafeLoader):
@@ -30,6 +33,106 @@ def load_compose(path):
 
 def load_staging():
     return load_compose(STAGING)
+
+
+def test_pin_staging_image_tag_replaces_drift_without_touching_secrets(tmp_path):
+    env_file = tmp_path / ".env"
+    private_value = "private-value-that-must-not-be-printed"
+    env_file.write_text(
+        "ADMIN_PASSWORD=" + private_value + "\n"
+        "STAGING_IMAGE_TAG=stale-tag\n"
+        "START_REPLY=approved external value\n"
+        "STAGING_IMAGE_TAG=duplicate-stale-tag\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["sh", str(PIN_IMAGE_TAG), str(env_file), "rc-0123456789ab"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text(encoding="utf-8") == (
+        "ADMIN_PASSWORD=" + private_value + "\n"
+        "STAGING_IMAGE_TAG=rc-0123456789ab\n"
+        "START_REPLY=approved external value\n"
+    )
+    assert private_value not in result.stdout + result.stderr
+
+
+def test_pin_staging_image_tag_rejects_non_immutable_tag_without_mutation(tmp_path):
+    env_file = tmp_path / ".env"
+    original = "STAGING_IMAGE_TAG=known-good\n"
+    env_file.write_text(original, encoding="utf-8")
+
+    result = subprocess.run(
+        ["sh", str(PIN_IMAGE_TAG), str(env_file), "latest"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert env_file.read_text(encoding="utf-8") == original
+
+
+def test_pin_staging_image_tag_accepts_service_mapped_rollback_tag(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("STAGING_IMAGE_TAG=rc-0123456789ab\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "sh",
+            str(PIN_IMAGE_TAG),
+            str(env_file),
+            "rollback-20260806T115200Z",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text(encoding="utf-8") == (
+        "STAGING_IMAGE_TAG=rollback-20260806T115200Z\n"
+    )
+
+
+def test_staging_runbook_protects_rc_tag_and_exact_runtime_rollback():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    build = text.split("## 4. Config, build и image evidence", 1)[1].split(
+        "### 4.1.", 1
+    )[0]
+    capture = build
+    apps = text.split("## 7. Apps, health и HTTPS", 1)[1].split("## 8.", 1)[0]
+    rollback = text.split("## 13. Image-only rollback", 1)[1].split(
+        "## 14.", 1
+    )[0]
+
+    assert "candidate image tag already exists" in build
+    assert "cd /opt/moroz-staging/project\nset -eu\n" in build
+    assert "candidate-image-ids" in build
+    assert "bot worker scheduler admin migrate" in build
+
+    assert "previous-image-ids" in capture
+    assert 'docker image tag "$image_id"' in capture
+    assert "rollback-tag" in capture
+    assert "bot worker admin" in capture
+
+    assert "candidate-image-ids" in apps
+    assert "docker inspect -f '{{.Image}}'" in apps
+    assert "bot worker scheduler admin" in apps
+
+    assert "bot worker admin" in rollback
+    assert 'pin-staging-image-tag.sh ../.env "$STAGING_PREVIOUS_IMAGE_TAG"' in rollback
+    assert 'pin-staging-image-tag.sh ../.env "$STAGING_CANDIDATE_IMAGE_TAG"' in rollback
+    assert "previous-image-ids" in rollback
+    assert "candidate-image-ids" in rollback
+    assert 'test -n "$expected_id" || return 1' in rollback
+    assert '= "$expected_id" || return 1' in rollback
+    assert "  return 0\n}" in rollback
 
 
 def load_staging_module():
@@ -57,6 +160,7 @@ def test_staging_override_tags_apps_and_never_publishes_stores():
     services = load_staging()["services"]
     assert services["bot"]["image"] == "moroz-staging-bot:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     assert services["worker"]["image"] == "moroz-staging-worker:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
+    assert services["scheduler"]["image"] == "moroz-staging-scheduler:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     assert services["admin"]["image"] == "moroz-staging-admin:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
     assert services["yclients-smoke"]["image"] == services["worker"]["image"]
     assert services["migrate"]["image"] == "moroz-staging-migrate:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
@@ -103,7 +207,7 @@ def test_staging_bot_healthcheck_probes_http_listener():
     bot = load_staging()["services"]["bot"]
     health = " ".join(bot["healthcheck"]["test"])
 
-    assert bot["environment"]["TELEGRAM_MODE"] == "webhook"
+    assert "TELEGRAM_MODE" not in bot.get("environment", {})
     assert "http://127.0.0.1:8081/healthz" in health
     assert "/openapi.json" not in health
     assert "/proc/1/cmdline" not in health
@@ -164,7 +268,7 @@ def test_caddy_storage_is_initialized_before_non_root_start():
     assert caddy["depends_on"]["admin"]["condition"] == "service_healthy"
 
 
-def test_merged_staging_enables_admin_disables_scheduler_and_resets_admin_ports():
+def test_merged_staging_enables_admin_and_pinned_scheduler():
     base = load_compose(BASE)["services"]
     override = load_staging()["services"]
     merged = {
@@ -173,7 +277,22 @@ def test_merged_staging_enables_admin_disables_scheduler_and_resets_admin_ports(
     }
 
     assert "profiles" not in override["admin"]
-    assert merged["scheduler"]["profiles"] == ["disabled-in-staging"]
+    assert "profiles" not in override["scheduler"]
+    assert merged["scheduler"]["image"] == (
+        "moroz-staging-scheduler:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
+    )
+    assert set(merged["scheduler"]["environment"]) == {
+        "RABBITMQ_URL",
+        "DATABASE_URL",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+    }
+    assert not any(
+        marker in key
+        for key in merged["scheduler"]["environment"]
+        for marker in ("TELEGRAM", "LLM", "OPENAI", "YCLIENTS")
+    )
     assert merged["admin"]["ports"] == []
     assert override["admin"]["image"] == (
         "moroz-staging-admin:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
@@ -187,6 +306,21 @@ def test_merged_staging_enables_admin_disables_scheduler_and_resets_admin_ports(
             "${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET}"
         ),
     }
+
+
+def test_base_compose_admin_bootstrap_defaults_fail_closed():
+    compose_text = BASE.read_text(encoding="utf-8")
+    example_text = ENV_EXAMPLE.read_text(encoding="utf-8")
+
+    assert compose_text.count("ADMIN_USERNAME: ${ADMIN_USERNAME:-}") == 2
+    assert compose_text.count("ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}") == 2
+    assert compose_text.count("ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}") == 2
+    assert "ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}" not in compose_text
+    assert "ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}" not in compose_text
+    assert "ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-me" not in compose_text
+    assert "ADMIN_USERNAME=\n" in example_text
+    assert "ADMIN_PASSWORD=\n" in example_text
+    assert "ADMIN_SESSION_SECRET=\n" in example_text
 
 
 def test_staging_webhook_receives_only_required_environment():
@@ -513,6 +647,49 @@ async def test_synthetic_inject_uses_next_unused_label_id(monkeypatch):
 
     assert result == {"ok": True, "action": "inject", "label": "redis-loss"}
     assert posted[0]["update_id"] == -1000000004
+
+
+@pytest.mark.asyncio
+async def test_scheduler_smoke_uses_one_metadata_only_terminal_job(monkeypatch):
+    staging = load_staging_module()
+    calls = []
+
+    class FakeConnection:
+        async def execute(self, query, *args):
+            calls.append((query, args))
+            return "INSERT 0 1"
+
+        async def fetchrow(self, query, *args):
+            calls.append((query, args))
+            return {
+                "status": "skipped",
+                "last_error_code": "staging_scheduler_smoke",
+                "booking_key": None,
+                "booking_starts_at": None,
+            }
+
+        async def close(self):
+            return None
+
+    async def connect(_database_url):
+        return FakeConnection()
+
+    monkeypatch.setattr(staging.asyncpg, "connect", connect)
+
+    result = await staging.scheduler_smoke(
+        "postgresql://unused",
+        timeout_seconds=0.1,
+    )
+
+    assert result == {
+        "ok": True,
+        "action": "scheduler",
+        "status": "skipped",
+    }
+    assert "staging_scheduler_smoke" in calls[0][0]
+    assert "customer_id" not in calls[0][0]
+    assert "booking_key" not in calls[0][0]
+    assert len(calls[0][1]) == 2
 
 
 @pytest.mark.asyncio
@@ -1129,7 +1306,7 @@ def test_staging_runbook_log_scan_propagates_producer_failure():
     )
     assert (
         "set -o pipefail\n"
-        f"{prefix} logs --no-color --since=10m bot worker caddy | "
+        f"{prefix} logs --no-color --since=10m bot worker scheduler caddy | "
         f"{prefix} --profile staging-tools run -T --rm "
         "staging-smoke scan-logs"
     ) in logs
@@ -1140,12 +1317,17 @@ def test_staging_runbook_rollback_restores_and_verifies_candidate_images():
     rollback = text.split("## 13. Image-only rollback", 1)[1].split(
         "## 14. Safe stop", 1
     )[0]
-    up = "up -d --no-build --wait --wait-timeout 120 bot worker"
+    candidate_up = (
+        "up -d --no-build --wait --wait-timeout 120 "
+        "bot worker scheduler admin"
+    )
+    previous_up = "up -d --no-build --wait --wait-timeout 120 $rollback_services"
     webhook = "run --rm staging-webhook status"
     assert 'STAGING_CANDIDATE_IMAGE_TAG="${STAGING_IMAGE_TAG:?current tag required}"' in rollback
     assert 'STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"' in rollback
     assert 'STAGING_IMAGE_TAG="$STAGING_CANDIDATE_IMAGE_TAG"' in rollback
-    assert rollback.count(up) == 2
+    assert rollback.count(candidate_up) == 1
+    assert rollback.count(previous_up) == 1
     assert rollback.count(webhook) == 2
     trap = rollback.index("trap restore_candidate EXIT HUP INT TERM")
     previous = rollback.index('STAGING_IMAGE_TAG="$STAGING_PREVIOUS_IMAGE_TAG"')
@@ -1153,6 +1335,29 @@ def test_staging_runbook_rollback_restores_and_verifies_candidate_images():
     restore = rollback.rindex("restore_candidate")
     preserve_failure = rollback.index('test "$rollback_result" -eq 0')
     assert trap < previous < result < restore < preserve_failure
+
+
+def test_staging_runbook_pins_scheduler_and_handles_first_enable_rollback():
+    text = (ROOT / "ops/staging-runbook.md").read_text(encoding="utf-8")
+    build = text.split("## 4. Config, build и image evidence", 1)[1].split(
+        "### 4.1. Backward compatibility gate", 1
+    )[0]
+    rollout = text.split("## 7. Apps, health и HTTPS", 1)[1].split(
+        "## 8.", 1
+    )[0]
+    rollback = text.split("## 13. Image-only rollback", 1)[1].split(
+        "## 14. Safe stop", 1
+    )[0]
+
+    assert "for service in bot worker scheduler admin migrate" in build
+    assert "scheduler absent" in build
+    assert "scheduler/Dockerfile" in build
+    assert "moroz-staging-scheduler:${STAGING_IMAGE_TAG}" in build
+    assert "bot worker scheduler admin" in rollout
+    assert "staging-smoke scheduler" in rollout
+    assert "bot worker scheduler admin" in rollback
+    assert "rm -sf scheduler" in rollback
+    assert 'test "$previous_scheduler" = absent' in rollback
 
 
 def test_staging_runbook_safe_stop_requires_empty_error_free_webhook():

@@ -150,9 +150,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
             assert services[name]["environment"][key] == (
                 f"${{{key}:?set {key} outside Git}}"
             )
-    assert services["bot"]["environment"]["TELEGRAM_MODE"] == (
-        "${TELEGRAM_MODE:-webhook}"
-    )
+    assert "TELEGRAM_MODE" not in services["bot"]["environment"]
     assert "POLICY_URL" in services["bot"]["environment"]
     assert {
         "CONSENT_PROMPT",
@@ -174,6 +172,8 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "REDIS_URL": "${REDIS_URL:?set REDIS_URL outside Git}",
         "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN:-}",
         "STAFF_TELEGRAM_CHAT_ID": "${STAFF_TELEGRAM_CHAT_ID:-}",
+        "TECHNICAL_ALERT_CHAT_ID": "${TECHNICAL_ALERT_CHAT_ID:-}",
+        "BUSINESS_ALERT_CHAT_ID": "${BUSINESS_ALERT_CHAT_ID:-}",
         "LLM_API_KEY": "${LLM_API_KEY:-}",
         "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
         "LLM_BASE_URL": "${LLM_BASE_URL:-}",
@@ -185,6 +185,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "LLM_MAX_TOKENS": "${LLM_MAX_TOKENS:-2000}",
         "LLM_REQUEST_TIMEOUT_SEC": "${LLM_REQUEST_TIMEOUT_SEC:-30}",
         "CONTEXT_MESSAGES_LIMIT": "${CONTEXT_MESSAGES_LIMIT:-20}",
+        "DATA_RETENTION_DAYS": "${DATA_RETENTION_DAYS:-1095}",
         "YCLIENTS_PARTNER_TOKEN": "${YCLIENTS_PARTNER_TOKEN:-}",
         "YCLIENTS_USER_TOKEN": "${YCLIENTS_USER_TOKEN:-}",
         "YCLIENTS_COMPANY_ID": "${YCLIENTS_COMPANY_ID:-}",
@@ -194,6 +195,15 @@ def test_compose_process_environment_overrides_external_test_credentials():
     }
     for name in ("worker", "redis", "postgres"):
         assert "env_file" not in services[name]
+
+
+def test_retention_setting_is_limited_to_runtime_owners():
+    services = compose_services()
+
+    assert "DATA_RETENTION_DAYS" in services["bot"]["environment"]
+    assert "DATA_RETENTION_DAYS" in services["worker"]["environment"]
+    for name in ("test", "migrate", "cutover", "scheduler", "admin"):
+        assert "DATA_RETENTION_DAYS" not in services[name].get("environment", {})
 
 
 def test_reserve_llm_environment_is_limited_to_runtime_llm_services():
@@ -315,6 +325,12 @@ def test_all_python_services_pin_same_native_anthropic_runtime():
     assert "anthropic==0.116.0" in admin.splitlines()
 
 
+def test_admin_image_installs_queue_dependency_used_by_database_module():
+    requirements = (ROOT / "admin/requirements.txt").read_text(encoding="utf-8")
+
+    assert "aio-pika==9.6.2" in requirements.splitlines()
+
+
 def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
     services = compose_services()
     worker_health = " ".join(services["worker"]["healthcheck"]["test"])
@@ -327,14 +343,21 @@ def test_worker_and_scheduler_healthchecks_require_fresh_runtime_signals():
     assert "75" in scheduler_health
 
 
-def test_bot_healthcheck_supports_webhook_and_polling_modes():
+def test_bot_healthcheck_only_probes_webhook_runtime():
     health = " ".join(compose_services()["bot"]["healthcheck"]["test"])
 
-    assert "$${TELEGRAM_MODE:-webhook}" in health
     assert "http://127.0.0.1:8081/healthz" in health
     assert "/openapi.json" not in health
-    assert "/proc/1/cmdline" in health
-    assert "python bot.py" in health
+    assert "TELEGRAM_MODE" not in health
+    assert "python bot.py" not in health
+
+
+def test_bot_image_only_starts_webhook_runtime():
+    dockerfile = (ROOT / "llm/Dockerfile").read_text(encoding="utf-8")
+
+    assert 'CMD ["uvicorn", "webhook:app", "--host", "0.0.0.0", "--port", "8081"]' in dockerfile
+    assert "TELEGRAM_MODE" not in dockerfile
+    assert "python bot.py" not in dockerfile
 
 
 def test_admin_port_is_isolatable_without_changing_default_url():

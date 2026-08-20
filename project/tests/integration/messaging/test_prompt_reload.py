@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import os
 from types import SimpleNamespace
 
@@ -48,10 +50,26 @@ async def test_reload_listener_changes_prompt_used_by_generate_response(
         else:
             raise AssertionError("prompt listener did not subscribe")
 
-        prompt_path.write_text("Второй prompt", encoding="utf-8")
-        await client.publish(PROMPT_RELOAD_CHANNEL, "reload")
+        updated_prompt = "Второй prompt"
+        request_id = "b" * 32
+        prompt_path.write_text(updated_prompt, encoding="utf-8")
+        await client.publish(
+            PROMPT_RELOAD_CHANNEL,
+            json.dumps(
+                {
+                    "version_id": 2,
+                    "request_id": request_id,
+                    "sha256": hashlib.sha256(
+                        updated_prompt.encode("utf-8")
+                    ).hexdigest(),
+                }
+            ),
+        )
         for _ in range(100):
-            if llm_module._system_prompt == "Второй prompt":
+            if (
+                llm_module._system_prompt == updated_prompt
+                and await client.get(f"prompt:reload:ack:{request_id}") == "applied"
+            ):
                 break
             await asyncio.sleep(0.01)
         else:

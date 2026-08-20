@@ -9,8 +9,36 @@ from moroz.security.validator import (
     StructuredFacts,
     ValidationVerdict,
     extract_structured_facts,
+    merge_structured_facts,
     validate_output,
 )
+
+
+def test_merge_structured_facts_unions_each_allowlist_without_mutation() -> None:
+    base = StructuredFacts(
+        frozenset({"2400"}), frozenset({"https://example.ru"}),
+        frozenset({"2026-08-16 10:00"}), frozenset({"анна"}),
+    )
+    catalog = StructuredFacts(
+        frozenset({"1230,50"}), frozenset(), frozenset(), frozenset({"мария"}),
+    )
+
+    merged = merge_structured_facts(base, catalog)
+
+    assert merged.prices == frozenset({"2400", "1230.5"})
+    assert merged.public_contacts == base.public_contacts
+    assert merged.slots == base.slots
+    assert merged.public_pii == frozenset({"анна", "мария"})
+    assert base.prices == frozenset({"2400"})
+
+
+def test_validator_accepts_catalog_decimal_but_rejects_other_decimal() -> None:
+    facts = StructuredFacts(frozenset({"1230,50"}), frozenset(), frozenset())
+
+    assert validate_output("Цена 1 230,50 ₽", facts, frozenset()).ok is True
+    assert validate_output("Цена 1 231,50 ₽", facts, frozenset()).code == (
+        "invented_price"
+    )
 
 
 def _facts(
@@ -230,6 +258,40 @@ def test_invocation_raw_values_are_rejected_but_source_owned_facts_pass() -> Non
     assert public_source not in repr(facts)
 
 
+def test_source_owned_address_can_be_returned_without_source_prefix() -> None:
+    facts = extract_structured_facts(
+        "Адрес: Тульская область, Новомосковск, "
+        "ул. Трудовые резервы, 33Б, ТРЦ Первый, цокольный этаж"
+    )
+
+    assert validate_output(
+        "Адрес: ул. Трудовые резервы, 33Б, ТРЦ Первый, цокольный этаж",
+        facts,
+        frozenset(),
+    ).ok is True
+    assert validate_output(
+        "Адрес: ул. Ленина, 10",
+        facts,
+        frozenset(),
+    ).code == "raw_pii"
+
+
+def test_source_owned_address_stops_before_public_contact_sentence() -> None:
+    facts = extract_structured_facts(
+        "Адрес: Тульская область, Новомосковск, ул. Трудовые резервы, 33Б, "
+        "ТРЦ Первый, цокольный этаж. Ориентир - вывеска Мороз и Солнце.\n"
+        "Телефон +7 (902) 906-61-66, Telegram https://t.me/krio_71"
+    )
+
+    assert validate_output(
+        "Адрес: ул. Трудовые резервы, 33Б, ТРЦ Первый, цокольный этаж. "
+        "Ориентир — вывеска Мороз и Солнце. Для записи позвоните "
+        "+7 (902) 906-61-66 или напишите в Telegram https://t.me/krio_71.",
+        facts,
+        frozenset(),
+    ).ok is True
+
+
 def test_source_owned_public_contact_remains_allowed_when_seen_in_invocation() -> None:
     public_phone = "+7 902 906-61-66"
     facts = extract_structured_facts(f"Телефон центра: {public_phone}")
@@ -443,6 +505,41 @@ def test_negative_availability_and_general_hours_need_no_slot_facts() -> None:
         facts,
         frozenset(),
     ).ok is True
+
+
+def test_walk_in_policy_with_hours_is_not_an_invented_slot() -> None:
+    facts = _facts(slots=frozenset())
+    answer = (
+        "На солярий, коллариум и коллагенарий можно прийти без записи. "
+        "Центр работает ежедневно с 10:00 до 21:00."
+    )
+
+    assert validate_output(answer, facts, frozenset()).ok is True
+    assert validate_output(
+        "Эти услуги доступны ежедневно с 10:00 до 21:00.",
+        facts,
+        frozenset(),
+    ).code == "invented_slot"
+    assert validate_output(
+        "Свободно сегодня в 15:00",
+        facts,
+        frozenset(),
+    ).code == "invented_slot"
+    assert validate_output(
+        "Эта услуга доступна без записи завтра в 15:00.",
+        facts,
+        frozenset(),
+    ).code == "invented_slot"
+    assert validate_output(
+        "Эта услуга доступна без записи в 15:00.",
+        facts,
+        frozenset(),
+    ).code == "invented_slot"
+    assert validate_output(
+        "Эта услуга доступна без записи с 15:00 до 16:00 только сегодня.",
+        facts,
+        frozenset(),
+    ).code == "invented_slot"
 
 
 @pytest.mark.parametrize(

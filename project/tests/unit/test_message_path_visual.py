@@ -8,6 +8,7 @@ HTML_PATH = Path(
         "MESSAGE_PATH_HTML",
         Path(__file__).resolve().parents[3]
         / "docs"
+        / "architecture"
         / "message-processing-path.html",
     )
 )

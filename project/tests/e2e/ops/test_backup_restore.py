@@ -31,6 +31,10 @@ def make_fake_bin(tmp_path: Path) -> Path:
         "  [ \"$1\" = \"-out\" ] && { shift; out=\"$1\"; }\n"
         "  shift\n"
         "done\n"
+        "if [ \"${FAKE_OPENSSL_FAIL:-}\" = \"1\" ]; then\n"
+        "  printf partial > \"$out\"\n"
+        "  exit 9\n"
+        "fi\n"
         "cp \"$in\" \"$out\"\n",
         encoding="utf-8",
     )
@@ -79,6 +83,21 @@ def test_backup_postgres_creates_encrypted_dump_and_checksum(tmp_path):
     assert "sha256sum" in commands
 
 
+def test_backup_failure_removes_raw_and_partial_artifacts(tmp_path):
+    env = base_env(tmp_path)
+    env["FAKE_OPENSSL_FAIL"] = "1"
+
+    result = subprocess.run(
+        ["sh", str(PROJECT_ROOT / "ops" / "backup-postgres.sh")],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 9
+    assert list((tmp_path / "backups").iterdir()) == []
+
+
 def test_restore_postgres_refuses_to_restore_over_primary_database(tmp_path):
     env = base_env(tmp_path)
     env["RESTORE_TARGET_DB"] = "moroz"
@@ -112,6 +131,65 @@ def test_restore_postgres_restores_into_separate_database(tmp_path):
     assert result.returncode == 0, result.stderr
     commands = (tmp_path / "commands.log").read_text(encoding="utf-8")
     assert "openssl enc -d -aes-256-cbc -pbkdf2" in commands
-    assert "createdb moroz_restore" in commands
-    assert "pg_restore --clean --if-exists --no-owner --no-acl --dbname moroz_restore" in commands
-    assert "psql --dbname moroz_restore" in commands
+    assert "createdb --username moroz moroz_restore" in commands
+    assert (
+        "pg_restore --clean --if-exists --no-owner --no-acl "
+        "--username moroz --dbname moroz_restore" in commands
+    )
+    assert "psql --username moroz --dbname moroz_restore" in commands
+
+
+def test_daily_backup_runner_rejects_invalid_interval():
+    env = os.environ.copy()
+    env["BACKUP_INTERVAL_SECONDS"] = "not-a-number"
+
+    result = subprocess.run(
+        ["sh", str(PROJECT_ROOT / "ops" / "run-backups.sh")],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "BACKUP_INTERVAL_SECONDS must be a positive integer" in result.stderr
+
+
+def test_daily_backup_runner_executes_backup_then_sleeps():
+    runner = (PROJECT_ROOT / "ops" / "run-backups.sh").read_text(encoding="utf-8")
+
+    backup_call = runner.index('sh "$SCRIPT_DIR/backup-postgres.sh"')
+    sleep_call = runner.index('sleep "$BACKUP_INTERVAL_SECONDS"')
+    assert "BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}" in runner
+    assert "while :" in runner
+    assert backup_call < sleep_call
+
+
+def test_backup_image_initializes_volume_then_drops_privileges():
+    dockerfile = (PROJECT_ROOT / "ops" / "Dockerfile.backup").read_text(
+        encoding="utf-8"
+    )
+    entrypoint = (PROJECT_ROOT / "ops" / "backup-entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "USER postgres" not in dockerfile
+    assert "backup-entrypoint.sh" in dockerfile
+    assert 'BACKUP_DIR=/backups/postgres' in entrypoint
+    assert 'chown -R postgres:postgres "$BACKUP_DIR"' in entrypoint
+    assert "find /tmp" in entrypoint
+    assert 'exec gosu postgres "$@"' in entrypoint
+
+
+def test_backup_uses_unique_tmpfs_raw_and_partial_names():
+    script = (PROJECT_ROOT / "ops" / "backup-postgres.sh").read_text(
+        encoding="utf-8"
+    )
+    compose = (PROJECT_ROOT / "docker-compose.prod.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "mktemp /tmp/moroz-backup.dump.XXXXXX" in script
+    assert "run_suffix=" in script
+    assert "dump.enc.partial" in script
+    assert "encrypted_local" not in script
+    assert "/tmp:size=${BACKUP_TMPFS_SIZE:-1g},mode=0700,uid=70,gid=70" in compose

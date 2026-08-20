@@ -4,10 +4,20 @@
 <h1>Системный промпт <span class="muted">({{ file_path }})</span></h1>
 
 {% if saved %}
-<div class="success">Сохранено. Версия #{{ saved }}. Бот перечитает промпт без рестарта.</div>
+<div class="success">Сохранено. Версия #{{ saved }}.</div>
 {% endif %}
 {% if error %}
-<div class="error">Ошибка: {{ error }}</div>
+<div class="error">
+    {% if error == 'reload_failed' %}
+    Файл и версия сохранены, но применение в runtime не подтверждено. Не считайте новую версию активной до повторной проверки.
+    {% elif error == 'reload_rejected' %}
+    Runtime отклонил новую версию. Активный файл восстановлен, версия не сохранена.
+    {% elif error == 'restore_failed' %}
+    Runtime отклонил новую версию, а автоматическое восстановление файла не подтвердилось. Не перезапускайте worker до ручной проверки.
+    {% else %}
+    Ошибка: {{ error }}
+    {% endif %}
+</div>
 {% endif %}
 
 <form method="post" action="{{ request.scope.get('root_path', '') }}/prompt/save" class="prompt-form">

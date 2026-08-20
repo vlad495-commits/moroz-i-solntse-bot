@@ -101,7 +101,6 @@ async def test_buffer_joins_fast_messages_after_deadline(
     )
     assert task["kind"] == "process_message"
     assert json.loads(task["payload"]) == {
-        "chat_id": "42",
         "update_ids": ["1", "2"],
     }
     assert task["idempotency_key"] == "process_message:1,2"
@@ -249,10 +248,43 @@ async def test_service_falls_back_to_single_durable_task_when_redis_is_down(
     assert inbox_count == 1
     assert task["kind"] == "process_message"
     assert json.loads(task["payload"]) == {
-        "chat_id": "42",
         "update_ids": ["6"],
     }
     assert task["idempotency_key"] == "process_message:6"
+
+
+async def test_consented_service_fallback_commits_inbox_and_task_together(
+    database, clock
+):
+    async with database.acquire() as connection:
+        await connection.execute(
+            "INSERT INTO processing_consents "
+            "(channel, user_id, consent_version) VALUES ('telegram', '7', 'v1')"
+        )
+    unavailable = redis.from_url(
+        "redis://127.0.0.1:1/0",
+        decode_responses=True,
+        socket_connect_timeout=0.1,
+    )
+    service = MessageService(
+        MessageRepository(database),
+        MessageBuffer(unavailable, database, clock=clock),
+        database,
+    )
+    try:
+        assert await service.accept_consented(incoming("consented-fallback")) is True
+    finally:
+        await unavailable.aclose()
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval("SELECT count(*) FROM message_inbox") == 1
+        task = await connection.fetchrow(
+            "SELECT kind, payload FROM task_outbox"
+        )
+    assert task["kind"] == "process_message"
+    assert json.loads(task["payload"]) == {
+        "update_ids": ["consented-fallback"],
+    }
 
 
 async def test_service_falls_back_when_buffer_lock_is_busy(

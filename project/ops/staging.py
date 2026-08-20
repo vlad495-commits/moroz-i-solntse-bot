@@ -12,6 +12,7 @@ import sys
 from typing import Mapping
 from urllib import error, request
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import asyncpg
 from aiogram import Bot
@@ -426,9 +427,66 @@ async def inject_synthetic(
     return {"ok": True, "action": "inject", "label": label}
 
 
+async def scheduler_smoke(
+    database_url: str,
+    *,
+    timeout_seconds: float = 60,
+) -> dict[str, object]:
+    job_id = uuid4()
+    connection = await asyncpg.connect(database_url)
+    try:
+        await connection.execute(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status)
+            VALUES ($1, 'staging_scheduler_smoke', now(), '{}'::jsonb,
+                    $2, 'pending')
+            """,
+            job_id,
+            f"staging_scheduler_smoke:{job_id}",
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        while loop.time() < deadline:
+            row = await connection.fetchrow(
+                """
+                SELECT status, last_error_code, booking_key, booking_starts_at
+                FROM scheduler_jobs
+                WHERE id = $1
+                """,
+                job_id,
+            )
+            if row is not None and row["status"] in {
+                "finished",
+                "skipped",
+                "failed",
+            }:
+                valid = (
+                    row["status"] == "skipped"
+                    and row["last_error_code"] == "staging_scheduler_smoke"
+                    and row["booking_key"] is None
+                    and row["booking_starts_at"] is None
+                )
+                return {
+                    "ok": valid,
+                    "action": "scheduler",
+                    "status": row["status"],
+                }
+            await asyncio.sleep(1)
+        return {
+            "ok": False,
+            "action": "scheduler",
+            "status": "timed_out",
+        }
+    finally:
+        await connection.close()
+
+
 async def run_smoke(args: argparse.Namespace) -> dict[str, object]:
     if args.action == "scan-logs":
         return scan_log_lines(sys.stdin)
+    if args.action == "scheduler":
+        return await scheduler_smoke(database_url_from_env(os.environ))
     database_url, public_url, secret = smoke_config(os.environ)
     if args.action == "snapshot":
         return await snapshot_command(args.label, database_url)
@@ -510,6 +568,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--label", choices=("worker-restart", "redis-loss"), required=True
     )
     smoke_actions.add_parser("scan-logs")
+    smoke_actions.add_parser("scheduler")
     return parser
 
 

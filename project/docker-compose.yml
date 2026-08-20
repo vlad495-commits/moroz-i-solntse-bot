@@ -74,6 +74,8 @@ services:
       REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       STAFF_TELEGRAM_CHAT_ID: ${STAFF_TELEGRAM_CHAT_ID:-}
+      TECHNICAL_ALERT_CHAT_ID: ${TECHNICAL_ALERT_CHAT_ID:-}
+      BUSINESS_ALERT_CHAT_ID: ${BUSINESS_ALERT_CHAT_ID:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -85,6 +87,7 @@ services:
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-2000}
       LLM_REQUEST_TIMEOUT_SEC: ${LLM_REQUEST_TIMEOUT_SEC:-30}
       CONTEXT_MESSAGES_LIMIT: ${CONTEXT_MESSAGES_LIMIT:-20}
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-1095}
       YCLIENTS_PARTNER_TOKEN: ${YCLIENTS_PARTNER_TOKEN:-}
       YCLIENTS_USER_TOKEN: ${YCLIENTS_USER_TOKEN:-}
       YCLIENTS_COMPANY_ID: ${YCLIENTS_COMPANY_ID:-}
@@ -172,7 +175,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_MODE: ${TELEGRAM_MODE:-webhook}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET outside Git}
       LLM_API_KEY: ${LLM_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -195,9 +197,9 @@ services:
       LOG_FILE_BACKUPS: ${LOG_FILE_BACKUPS:-5}
       SHUTDOWN_INFLIGHT_TIMEOUT_SEC: ${SHUTDOWN_INFLIGHT_TIMEOUT_SEC:-15}
       DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-1095}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
-      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-me-in-production}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
       ADMIN_SESSION_TTL_SEC: ${ADMIN_SESSION_TTL_SEC:-86400}
       BOT_PAUSED_REPLY: ${BOT_PAUSED_REPLY:-Сейчас бот на технической паузе. Мы скоро вернёмся.}
       LOGS_TAIL_LINES: ${LOGS_TAIL_LINES:-300}
@@ -219,7 +221,7 @@ services:
         max-size: "10m"
         max-file: "5"
     healthcheck:
-      test: ["CMD-SHELL", "if [ \"$${TELEGRAM_MODE:-webhook}\" = polling ]; then tr '\\0' ' ' < /proc/1/cmdline | grep -q 'python bot.py'; else python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=3).status == 200 else 1)\"; fi"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=3).status == 200 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -237,9 +239,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL outside Git}
       RABBITMQ_METRICS_URL: ${RABBITMQ_METRICS_URL:-http://rabbitmq:15692}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
-      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-me-min-32-chars-please}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
       ADMIN_SESSION_TTL_SEC: ${ADMIN_SESSION_TTL_SEC:-86400}
       LLM_API_KEY: ${LLM_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

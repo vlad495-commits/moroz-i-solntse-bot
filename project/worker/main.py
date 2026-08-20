@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -10,10 +11,23 @@ from aiogram import Bot
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 
-from config import CONTEXT_MESSAGES_LIMIT
+from config import CONTEXT_MESSAGES_LIMIT, DATA_RETENTION_DAYS
 from llm import generate_response, init_llm, prompt_reload_listener
+from moroz.booking.catalog import (
+    CATALOG_SYNC_KIND,
+    CatalogRepository,
+    CatalogSyncCoordinator,
+)
+from moroz.booking.projection import (
+    PROJECTION_SYNC_KIND,
+    ProjectionRepository,
+    ProjectionSyncCoordinator,
+)
 from moroz.booking.yclients import YclientsAdapter
+from moroz.booking.yclients_catalog import YclientsCatalogError, YclientsCatalogReader
 from moroz.booking.yclients_http import YclientsConfig
+from moroz.booking.yclients_records import YclientsProjectionError, YclientsRecordsReader
+from moroz.common.alerts import AlertRouter
 from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
 from moroz.common.queue import MAX_RETRIES, QueueTask, RabbitQueue
@@ -22,10 +36,20 @@ from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
 from moroz.notifications.feedback import FeedbackService
-from moroz.notifications.handlers import handle_scheduler_job
+from moroz.notifications.handlers import (
+    STAGING_SCHEDULER_SMOKE_KIND,
+    handle_scheduler_job,
+)
 from moroz.notifications.lifecycle import LifecycleService
 from moroz.notifications.ports import LocalBookingPort, NotificationOutbox
 from moroz.notifications.repository import SchedulerJobRepository
+from moroz.privacy import customer_lock_subject
+from moroz.retention import (
+    RETENTION_CLEANUP_KIND,
+    RETENTION_ERROR_CODE,
+    RetentionCleanupError,
+    RetentionCleanupCoordinator,
+)
 
 
 logging.basicConfig(
@@ -38,11 +62,64 @@ PUMP_INTERVAL_SECONDS = 0.5
 REDIS_RETRY_INTERVAL_SECONDS = 5.0
 SUPERVISOR_SHUTDOWN_TIMEOUT_SECONDS = 24.0
 WORKER_LOCK_NAME = "moroz:worker:singleton"
+YCLIENTS_PROJECTION_ERROR_CODES = frozenset(
+    {
+        "yclients_transport",
+        "yclients_http_status",
+        "yclients_response_shape",
+        "yclients_page_bound",
+        "yclients_projection_write",
+    }
+)
+YCLIENTS_CATALOG_ERROR_CODES = frozenset(
+    {
+        "yclients_catalog_transport",
+        "yclients_catalog_http_status",
+        "yclients_catalog_response_shape",
+        "yclients_catalog_bound",
+        "yclients_catalog_write",
+    }
+)
 
 
 async def handle(task: QueueTask) -> None:
     logger.error("No worker task handler is registered; task will be retried")
     raise NotImplementedError("No worker task handlers are registered")
+
+
+async def _handle_with_alerts(task: QueueTask, handler, alert_router) -> None:
+    try:
+        await handler(task)
+    except Exception as error:
+        try:
+            await alert_router.emit(
+                code="worker_task_failed",
+                subject=task.kind,
+                severity="critical",
+                text=f"worker task failed error_type={type(error).__name__}",
+            )
+        except Exception as alert_error:
+            logger.error(
+                "worker_alert_failed error_type=%s",
+                type(alert_error).__name__,
+            )
+        raise
+
+
+def _build_alert_router(redis_client, telegram: Bot):
+    technical_chat_id = os.environ.get("TECHNICAL_ALERT_CHAT_ID", "").strip()
+    if not technical_chat_id:
+        return None
+
+    async def send_alert(chat_id: str, text: str) -> None:
+        await telegram.send_message(chat_id=chat_id, text=text)
+
+    return AlertRouter(
+        redis_client,
+        send_alert,
+        technical_chat_id=technical_chat_id,
+        business_chat_id=os.environ.get("BUSINESS_ALERT_CHAT_ID", "").strip(),
+    )
 
 
 class MessageTaskHandler:
@@ -56,6 +133,11 @@ class MessageTaskHandler:
         booking_port=None,
         notification_outbox=None,
         lifecycle=None,
+        projection_sync=None,
+        catalog_sync=None,
+        retention_cleanup=None,
+        catalog_repository=None,
+        clock=None,
         scheduler_handler=handle_scheduler_job,
     ):
         self._database = database
@@ -66,7 +148,13 @@ class MessageTaskHandler:
         self._booking_port = booking_port
         self._notification_outbox = notification_outbox
         self._lifecycle = lifecycle
+        self._projection_sync = projection_sync
+        self._catalog_sync = catalog_sync
+        self._retention_cleanup = retention_cleanup
+        self._catalog_repository = catalog_repository
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._scheduler_handler = scheduler_handler
+        self._system_scheduler_lock = asyncio.Lock()
 
     async def handle(self, task: QueueTask) -> None:
         if task.kind == "process_message":
@@ -91,37 +179,118 @@ class MessageTaskHandler:
         job_id = UUID(raw_job_id)
         if task.idempotency_key != f"scheduler_job:{job_id}":
             raise ValueError("scheduler_job idempotency key does not match job_id")
-        if (
-            self._scheduler_repository is None
-            or self._booking_port is None
-            or self._notification_outbox is None
-        ):
+        if self._scheduler_repository is None:
             raise RuntimeError("scheduler job dependencies are not configured")
         job = await self._scheduler_repository.get_claimed(job_id)
         if job is None:
             return
-        try:
-            result = await self._scheduler_handler(
-                job,
-                booking_port=self._booking_port,
-                outbox=self._notification_outbox,
-                lifecycle=self._lifecycle,
-            )
-        except Exception as error:
-            await self._scheduler_repository.record_failure(
-                job,
-                error_code=type(error).__name__,
-                terminal=job.attempts >= MAX_RETRIES,
-            )
-            raise
-        await self._scheduler_repository.complete(job, result)
+        if job.kind in {
+            PROJECTION_SYNC_KIND,
+            CATALOG_SYNC_KIND,
+            RETENTION_CLEANUP_KIND,
+            STAGING_SCHEDULER_SMOKE_KIND,
+        }:
+            async with self._system_scheduler_lock:
+                job = await self._scheduler_repository.get_claimed(job_id)
+                if job is None:
+                    return
+                try:
+                    result = await self._scheduler_handler(
+                        job,
+                        booking_port=self._booking_port,
+                        outbox=self._notification_outbox,
+                        lifecycle=self._lifecycle,
+                        projection_sync=self._projection_sync,
+                        catalog_sync=self._catalog_sync,
+                        retention_cleanup=self._retention_cleanup,
+                    )
+                except Exception as error:
+                    await self._scheduler_repository.record_failure(
+                        job,
+                        error_code=_scheduler_error_code(error),
+                        terminal=job.attempts >= MAX_RETRIES,
+                    )
+                    raise
+                await self._scheduler_repository.complete(job, result)
+            return
+        if self._booking_port is None or self._notification_outbox is None:
+            raise RuntimeError("scheduler job dependencies are not configured")
+        customer_id = job.payload.get("customer_id")
+        if (
+            not isinstance(customer_id, str)
+            and job.booking_key is not None
+            and hasattr(self._database, "acquire")
+        ):
+            async with self._database.acquire() as lookup:
+                customer_id = await lookup.fetchval(
+                    "SELECT customer_id FROM bookings WHERE booking_key = $1",
+                    job.booking_key,
+                )
+        if not isinstance(customer_id, str) or not hasattr(
+            self._database, "acquire"
+        ):
+            try:
+                result = await self._scheduler_handler(
+                    job,
+                    booking_port=self._booking_port,
+                    outbox=self._notification_outbox,
+                    lifecycle=self._lifecycle,
+                    projection_sync=self._projection_sync,
+                    catalog_sync=self._catalog_sync,
+                    retention_cleanup=self._retention_cleanup,
+                )
+            except Exception as error:
+                await self._scheduler_repository.record_failure(
+                    job,
+                    error_code=_scheduler_error_code(error),
+                    terminal=job.attempts >= MAX_RETRIES,
+                )
+                raise
+            await self._scheduler_repository.complete(job, result)
+            return
+
+        async with self._database.acquire() as privacy_connection:
+            async with privacy_connection.transaction():
+                await privacy_connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(customer_id),
+                )
+                job = await self._scheduler_repository.get_claimed(job_id)
+                if job is None:
+                    return
+                if job.booking_key is not None:
+                    exists = await privacy_connection.fetchval(
+                        "SELECT EXISTS (SELECT 1 FROM bookings "
+                        "WHERE booking_key = $1 AND customer_id = $2)",
+                        job.booking_key,
+                        customer_id,
+                    )
+                    if not exists:
+                        return
+                try:
+                    result = await self._scheduler_handler(
+                        job,
+                        booking_port=self._booking_port,
+                        outbox=self._notification_outbox,
+                        lifecycle=self._lifecycle,
+                        projection_sync=self._projection_sync,
+                        catalog_sync=self._catalog_sync,
+                        retention_cleanup=self._retention_cleanup,
+                    )
+                except Exception as error:
+                    await self._scheduler_repository.record_failure(
+                        job,
+                        error_code=_scheduler_error_code(error),
+                        terminal=job.attempts >= MAX_RETRIES,
+                    )
+                    raise
+                await self._scheduler_repository.complete(job, result)
 
     async def _process_message(self, task: QueueTask) -> None:
         chat_id = task.payload.get("chat_id")
         update_ids = task.payload.get("update_ids")
         if (
-            not isinstance(chat_id, str)
-            or not isinstance(update_ids, list)
+            not isinstance(update_ids, list)
             or not update_ids
             or any(not isinstance(value, str) for value in update_ids)
             or len(set(update_ids)) != len(update_ids)
@@ -129,6 +298,24 @@ class MessageTaskHandler:
             raise ValueError("invalid process_message payload")
         if task.idempotency_key != process_message_key(update_ids):
             raise ValueError("process_message idempotency key does not match updates")
+        if chat_id is None:
+            async with self._database.acquire() as lookup:
+                candidates = await lookup.fetch(
+                    """
+                    SELECT DISTINCT chat_id
+                    FROM message_inbox
+                    WHERE channel = 'telegram'
+                      AND external_message_id = ANY($1::text[])
+                    """,
+                    update_ids,
+                )
+            if not candidates:
+                return
+            if len(candidates) != 1:
+                raise ValueError("process_message updates span multiple chats")
+            chat_id = candidates[0]["chat_id"]
+        elif not isinstance(chat_id, str):
+            raise ValueError("invalid process_message payload")
         numeric_chat_id = int(chat_id)
         reply_key = f"reply:{task.idempotency_key}"
 
@@ -136,7 +323,7 @@ class MessageTaskHandler:
             async with connection.transaction():
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                    chat_id,
+                    customer_lock_subject(chat_id),
                 )
                 inbox_rows = await connection.fetch(
                     """
@@ -160,6 +347,14 @@ class MessageTaskHandler:
                     if row["external_message_id"] in update_ids
                 }
                 if len(requested) != len(update_ids):
+                    existing = await connection.fetchval(
+                        "SELECT count(*) FROM message_inbox "
+                        "WHERE channel = 'telegram' "
+                        "AND external_message_id = ANY($1::text[])",
+                        update_ids,
+                    )
+                    if existing == 0:
+                        return
                     raise ValueError("process_message inbox rows are missing")
                 if [
                     row["external_message_id"]
@@ -213,6 +408,32 @@ class MessageTaskHandler:
                     raise ValueError("process_message spans multiple users")
                 user_id = int(user_ids.pop())
                 persisted_text = "\n".join(payload["text"] for payload in payloads)
+                accepted_ids = [row["external_message_id"] for row in accepted]
+
+                human_mode = await connection.fetchval(
+                    "SELECT enabled FROM human_mode WHERE customer_id = $1",
+                    chat_id,
+                )
+                if human_mode:
+                    await connection.execute(
+                        """
+                        INSERT INTO messages (chat_id, user_id, role, content)
+                        VALUES ($1, $2, 'user', $3)
+                        """,
+                        numeric_chat_id,
+                        user_id,
+                        persisted_text,
+                    )
+                    await connection.execute(
+                        """
+                        UPDATE message_inbox
+                        SET status = 'processed'
+                        WHERE channel = 'telegram'
+                          AND external_message_id = ANY($1::text[])
+                        """,
+                        accepted_ids,
+                    )
+                    return
 
                 rows = await connection.fetch(
                     """
@@ -239,11 +460,19 @@ class MessageTaskHandler:
                     """,
                     chat_id,
                 )
-                result = await self._llm(
-                    persisted_text,
-                    context,
-                    recent_message_count=int(recent_message_count),
-                )
+                catalog = None
+                if self._catalog_repository is not None:
+                    catalog = await self._catalog_repository.ground(
+                        connection,
+                        persisted_text,
+                        self._clock(),
+                    )
+                llm_options = {
+                    "recent_message_count": int(recent_message_count),
+                }
+                if catalog is not None:
+                    llm_options["catalog"] = catalog
+                result = await self._llm(persisted_text, context, **llm_options)
 
                 await connection.execute(
                     """
@@ -285,7 +514,7 @@ class MessageTaskHandler:
                     WHERE channel = 'telegram'
                       AND external_message_id = ANY($1::text[])
                     """,
-                    [row["external_message_id"] for row in accepted],
+                    accepted_ids,
                 )
 
 
@@ -537,7 +766,30 @@ async def _supervise(
         _raise_after_cleanup(primary_error, cleanup_results)
 
 
-def _build_lifecycle_service(database: Database):
+def _scheduler_error_code(error: Exception) -> str:
+    if isinstance(error, RetentionCleanupError):
+        return RETENTION_ERROR_CODE
+    if (
+        isinstance(error, YclientsProjectionError)
+        and error.code in YCLIENTS_PROJECTION_ERROR_CODES
+    ):
+        return error.code
+    if (
+        isinstance(error, YclientsCatalogError)
+        and error.code in YCLIENTS_CATALOG_ERROR_CODES
+    ):
+        return error.code
+    return type(error).__name__
+
+
+def _build_yclients_services(
+    database: Database,
+) -> tuple[
+    LifecycleService | None,
+    ProjectionSyncCoordinator | None,
+    CatalogSyncCoordinator | None,
+    CatalogRepository | None,
+]:
     required = (
         "YCLIENTS_PARTNER_TOKEN",
         "YCLIENTS_USER_TOKEN",
@@ -545,15 +797,31 @@ def _build_lifecycle_service(database: Database):
     )
     present = tuple(bool(os.environ.get(name, "").strip()) for name in required)
     if not any(present):
-        return None
+        return None, None, None, None
     if not all(present):
         raise ValueError("YCLIENTS lifecycle configuration is incomplete")
     config = YclientsConfig.from_env(os.environ)
-    return LifecycleService(
+    lifecycle = LifecycleService(
         database,
         YclientsAdapter(config),
         FeedbackService(database),
     )
+    reader = YclientsRecordsReader(config)
+    projection_sync = ProjectionSyncCoordinator(
+        ProjectionRepository(database),
+        reader,
+        SchedulerJobRepository(database),
+        clock=lambda: datetime.now(UTC),
+    )
+    catalog_reader = YclientsCatalogReader(config)
+    catalog_repository = CatalogRepository(database)
+    catalog_sync = CatalogSyncCoordinator(
+        catalog_repository,
+        catalog_reader,
+        SchedulerJobRepository(database),
+        clock=lambda: datetime.now(UTC),
+    )
+    return lifecycle, projection_sync, catalog_sync, catalog_repository
 
 
 async def run() -> None:
@@ -578,7 +846,20 @@ async def run() -> None:
     try:
         await database.connect()
         worker_lock = await _acquire_worker_lock(database)
-        lifecycle = _build_lifecycle_service(database)
+        scheduler_repository = SchedulerJobRepository(database)
+        retention_cleanup = RetentionCleanupCoordinator(
+            database,
+            scheduler_repository,
+            retention_days=DATA_RETENTION_DAYS,
+        )
+        await retention_cleanup.ensure_current(datetime.now(UTC))
+        lifecycle, projection_sync, catalog_sync, catalog_repository = (
+            _build_yclients_services(database)
+        )
+        if projection_sync is not None:
+            await projection_sync.ensure_current(datetime.now(UTC))
+        if catalog_sync is not None:
+            await catalog_sync.ensure_current(datetime.now(UTC))
         repository = MessageRepository(database)
         reconciled = await repository.reconcile_stale_outbound_deliveries()
         if reconciled:
@@ -590,15 +871,27 @@ async def run() -> None:
         task_handler = MessageTaskHandler(
             database,
             generate_response,
-            TelegramSender(telegram, repository),
-            scheduler_repository=SchedulerJobRepository(database),
+            TelegramSender(telegram, repository, context_cache=redis_client),
+            scheduler_repository=scheduler_repository,
             booking_port=LocalBookingPort(database),
             notification_outbox=NotificationOutbox(
                 repository,
                 staff_chat_id=os.environ.get("STAFF_TELEGRAM_CHAT_ID", ""),
             ),
             lifecycle=lifecycle,
+            projection_sync=projection_sync,
+            catalog_sync=catalog_sync,
+            retention_cleanup=retention_cleanup,
+            catalog_repository=catalog_repository,
         )
+        alert_router = _build_alert_router(redis_client, telegram)
+
+        async def runtime_handler(task: QueueTask) -> None:
+            if alert_router is None:
+                await task_handler.handle(task)
+                return
+            await _handle_with_alerts(task, task_handler.handle, alert_router)
+
         pump = PipelinePump(
             MessageBuffer(redis_client, database),
             OutboxRelay(database, queue),
@@ -608,7 +901,7 @@ async def run() -> None:
         await _supervise(
             queue,
             stop,
-            handler=task_handler.handle,
+            handler=runtime_handler,
             pump=pump,
             prompt_listener=prompt_reload_listener,
             shutdown_budget=shutdown_budget,

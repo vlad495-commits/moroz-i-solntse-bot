@@ -1,14 +1,43 @@
 from datetime import UTC, datetime
 from types import MappingProxyType
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+from moroz.booking.projection import PROJECTION_SYNC_KIND
+from moroz.booking.catalog import CATALOG_SYNC_KIND
 from moroz.notifications.handlers import handle_scheduler_job
 from moroz.notifications.models import JobResult, SchedulerJob
+from moroz.retention import RETENTION_CLEANUP_KIND
 
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_retention_job_routes_without_booking_dependencies():
+    job = SchedulerJob(
+        id=uuid4(),
+        kind=RETENTION_CLEANUP_KIND,
+        run_at=datetime(2026, 8, 18, tzinfo=UTC),
+        payload=MappingProxyType({}),
+        idempotency_key="retention_cleanup:2026-08-18",
+        attempts=0,
+        booking_key=None,
+        booking_starts_at=None,
+    )
+    retention = AsyncMock()
+    retention.run.return_value = JobResult.sent()
+
+    result = await handle_scheduler_job(
+        job,
+        booking_port=None,
+        outbox=None,
+        retention_cleanup=retention,
+    )
+
+    assert result == JobResult.sent()
+    retention.run.assert_awaited_once_with(job)
 
 
 class Booking:
@@ -92,6 +121,74 @@ def scheduler_job(kind, booking, *, index=None):
         booking_key=booking.booking_key,
         booking_starts_at=booking.starts_at,
     )
+
+
+async def test_projection_job_runs_before_booking_lookup():
+    booking = Booking()
+    calls = []
+
+    class ProjectionSync:
+        async def run(self, job):
+            calls.append(job)
+            return JobResult.sent()
+
+    class BookingPort:
+        async def get_booking(self, _booking_key):
+            raise AssertionError("projection jobs must not load bookings")
+
+    job = scheduler_job(PROJECTION_SYNC_KIND, booking)
+    result = await handle_scheduler_job(
+        job,
+        booking_port=BookingPort(),
+        outbox=None,
+        projection_sync=ProjectionSync(),
+    )
+
+    assert result == JobResult.sent()
+    assert calls == [job]
+
+
+async def test_projection_job_without_coordinator_fails_closed():
+    with pytest.raises(RuntimeError, match="projection sync is not configured"):
+        await handle_scheduler_job(
+            scheduler_job(PROJECTION_SYNC_KIND, Booking()),
+            booking_port=None,
+            outbox=None,
+        )
+
+
+async def test_catalog_job_runs_before_booking_lookup():
+    booking = Booking()
+    calls = []
+
+    class CatalogSync:
+        async def run(self, job):
+            calls.append(job)
+            return JobResult.sent()
+
+    class NoBookingLookup:
+        async def get_booking(self, _booking_key):
+            raise AssertionError("catalog jobs must not load bookings")
+
+    job = scheduler_job(CATALOG_SYNC_KIND, booking)
+    result = await handle_scheduler_job(
+        job,
+        booking_port=NoBookingLookup(),
+        outbox=None,
+        catalog_sync=CatalogSync(),
+    )
+
+    assert result == JobResult.sent()
+    assert calls == [job]
+
+
+async def test_catalog_job_without_coordinator_fails_closed():
+    with pytest.raises(RuntimeError, match="catalog sync is not configured"):
+        await handle_scheduler_job(
+            scheduler_job(CATALOG_SYNC_KIND, Booking()),
+            booking_port=None,
+            outbox=None,
+        )
 
 
 async def test_normal_reminder_sends_one_customer_message():

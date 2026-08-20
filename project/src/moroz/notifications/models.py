@@ -22,8 +22,8 @@ class PlannedSchedulerJob:
     run_at: datetime
     payload: MappingProxyType
     idempotency_key: str
-    booking_key: UUID
-    booking_starts_at: datetime
+    booking_key: UUID | None
+    booking_starts_at: datetime | None
 
 
 @dataclass(frozen=True)

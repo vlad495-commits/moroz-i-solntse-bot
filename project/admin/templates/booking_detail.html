@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Запись — Admin{% endblock %}
+{% block content %}
+<section class="bookings-page">
+    <a class="back" href="{{ request.scope.get('root_path', '') }}/bookings/?view=upcoming">← К записям</a>
+    <p class="page-eyebrow">Локальная проекция · только просмотр</p>
+    <h1>Запись</h1>
+    <article class="booking-card">
+        <dl class="booking-meta">
+            <div><dt>ID провайдера</dt><dd>{{ booking.external_id }}</dd></div>
+            <div><dt>Начало</dt><dd>{{ booking.starts_at }}</dd></div>
+            <div><dt>Окончание</dt><dd>{{ booking.scheduled_end_at or 'Не указано' }}</dd></div>
+            <div><dt>Статус</dt><dd>{{ booking.status_label }}</dd></div>
+            <div><dt>Локально обновлено</dt><dd>{{ booking.updated_at }}</dd></div>
+            <div><dt>Сценарий</dt><dd>{{ booking.scenario_label }}</dd></div>
+            <div><dt>Этап</dt><dd>{{ booking.phase_label }}</dd></div>
+        </dl>
+        {% if booking.customer_chat_id is not none %}<a class="back" href="{{ request.scope.get('root_path', '') }}/chats/{{ booking.customer_chat_id }}">Открыть диалог клиента</a>{% else %}<span class="muted">{{ booking.customer_label }}</span>{% endif %}
+        {% if booking.error_label %}<p class="failed">{{ booking.error_label }}</p>{% endif %}
+    </article>
+
+    <h2>События</h2>
+    {% if booking.events %}
+    <ol class="booking-events">
+        {% for event in booking.events %}<li><strong>{{ event.title }}</strong><span>{{ event.created_at }}</span></li>{% endfor %}
+    </ol>
+    {% else %}<p class="empty">Безопасных событий для показа нет</p>{% endif %}
+</section>
+{% endblock %}

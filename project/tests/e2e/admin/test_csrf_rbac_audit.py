@@ -1,4 +1,5 @@
 import importlib
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -9,15 +10,16 @@ from httpx import ASGITransport, AsyncClient
 auth = importlib.import_module("auth")
 admin_app = importlib.import_module("app")
 bot_control_routes = importlib.import_module("bot_control_routes")
+customer_data_routes = importlib.import_module("customer_data_routes")
 prompt_routes = importlib.import_module("prompt_routes")
 rbac = importlib.import_module("rbac")
 audit_repository = importlib.import_module("audit_repository")
 
 
-def user(role="owner", csrf_token="known-csrf"):
+def user(role="owner", csrf_token="known-csrf", username="owner"):
     return auth.AuthenticatedUser(
         id=7,
-        username="owner",
+        username=username,
         role=role,
         csrf_token=csrf_token,
         session_id="session-id",
@@ -107,6 +109,175 @@ async def test_prompt_save_rejects_admin_role_before_file_write(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_prompt_save_reports_reload_delivery_failure(monkeypatch):
+    created = {}
+
+    async def current_user(_request):
+        return user(username="o" * 65)
+
+    async def create_version(**kwargs):
+        created.update(kwargs)
+        return 17
+
+    async def reload_not_delivered(_version_id, _content):
+        return prompt_routes.PROMPT_RELOAD_UNCONFIRMED
+
+    async def no_audit(**_kwargs):
+        return None
+
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes, "_write_prompt", lambda _content: True)
+    monkeypatch.setattr(prompt_routes.pdb, "create_version", create_version)
+    monkeypatch.setattr(prompt_routes, "_publish_reload", reload_not_delivered)
+    monkeypatch.setattr(prompt_routes, "record_audit", no_audit)
+
+    response = await prompt_routes.prompt_save(
+        SimpleNamespace(scope={}),
+        content="new prompt",
+        comment="test",
+        csrf_token="known-csrf",
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/prompt/?saved=17&error=reload_failed"
+    assert created["author"] == "o" * 64
+
+
+@pytest.mark.asyncio
+async def test_prompt_rollback_persists_username_not_user_object(monkeypatch):
+    created = {}
+
+    async def current_user(_request):
+        return user()
+
+    async def get_version(_version_id):
+        return {"content": "same prompt\n"}
+
+    async def create_version(**kwargs):
+        created.update(kwargs)
+        return 18
+
+    async def reload_applied(_version_id, _content):
+        return prompt_routes.PROMPT_RELOAD_APPLIED
+
+    async def no_audit(**_kwargs):
+        return None
+
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes.pdb, "get_version", get_version)
+    monkeypatch.setattr(prompt_routes.pdb, "create_version", create_version)
+    monkeypatch.setattr(prompt_routes, "_read_prompt_snapshot", lambda: "same prompt\n")
+    monkeypatch.setattr(prompt_routes, "_write_prompt", lambda _content: True)
+    monkeypatch.setattr(prompt_routes, "_publish_reload", reload_applied)
+    monkeypatch.setattr(prompt_routes, "record_audit", no_audit)
+
+    response = await prompt_routes.prompt_rollback(
+        SimpleNamespace(scope={}),
+        version_id=17,
+        csrf_token="known-csrf",
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/prompt/?saved=18"
+    assert created["author"] == "owner"
+
+
+@pytest.mark.asyncio
+async def test_prompt_save_db_failure_keeps_active_file_unchanged(monkeypatch):
+    async def current_user(_request):
+        return user()
+
+    async def fail_create_version(**_kwargs):
+        raise RuntimeError("database unavailable")
+
+    def write_must_not_be_called(_content):
+        raise AssertionError("active prompt changed before version commit")
+
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes.pdb, "create_version", fail_create_version)
+    monkeypatch.setattr(prompt_routes, "_write_prompt", write_must_not_be_called)
+
+    response = await prompt_routes.prompt_save(
+        SimpleNamespace(scope={}),
+        content="new prompt",
+        comment="test",
+        csrf_token="known-csrf",
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/prompt/?error=db_failed"
+
+
+@pytest.mark.asyncio
+async def test_prompt_save_write_failure_discards_unactivated_version(monkeypatch):
+    discarded = []
+
+    async def current_user(_request):
+        return user()
+
+    async def create_version(**_kwargs):
+        return 18
+
+    async def delete_version(version_id):
+        discarded.append(version_id)
+
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes.pdb, "create_version", create_version)
+    monkeypatch.setattr(prompt_routes.pdb, "delete_version", delete_version)
+    monkeypatch.setattr(prompt_routes, "_write_prompt", lambda _content: False)
+
+    response = await prompt_routes.prompt_save(
+        SimpleNamespace(scope={}),
+        content="new prompt",
+        comment="test",
+        csrf_token="known-csrf",
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/prompt/?error=write_failed"
+    assert discarded == [18]
+
+
+@pytest.mark.asyncio
+async def test_prompt_save_rejected_reload_restores_previous_file(
+    monkeypatch, tmp_path
+):
+    prompt_file = tmp_path / "system.md"
+    prompt_file.write_text("old prompt\n", encoding="utf-8")
+    discarded = []
+
+    async def current_user(_request):
+        return user()
+
+    async def create_version(**_kwargs):
+        return 19
+
+    async def delete_version(version_id):
+        discarded.append(version_id)
+
+    async def reject_reload(_version_id, _content):
+        return prompt_routes.PROMPT_RELOAD_REJECTED
+
+    monkeypatch.setattr(prompt_routes, "PROMPT_FILE", prompt_file)
+    monkeypatch.setattr(prompt_routes, "get_current_user", current_user)
+    monkeypatch.setattr(prompt_routes.pdb, "create_version", create_version)
+    monkeypatch.setattr(prompt_routes.pdb, "delete_version", delete_version)
+    monkeypatch.setattr(prompt_routes, "_publish_reload", reject_reload)
+
+    response = await prompt_routes.prompt_save(
+        SimpleNamespace(scope={}),
+        content="rejected prompt",
+        comment="test",
+        csrf_token="known-csrf",
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/prompt/?error=reload_rejected"
+    assert prompt_file.read_text(encoding="utf-8") == "old prompt\n"
+    assert discarded == [19]
+
+
+@pytest.mark.asyncio
 async def test_prompt_rollback_rejects_admin_role_before_db_read(monkeypatch):
     async def current_user(_request):
         return user(role="admin")
@@ -185,6 +356,127 @@ def test_owner_only_navigation_links_are_hidden_from_admin_role():
     assert "/stats" in base
     assert "/prompt/" in base
     assert "/bot-control/" in base
+
+
+@pytest.mark.asyncio
+async def test_customer_data_delete_rejects_admin_before_redis(monkeypatch):
+    async def current_user(_request):
+        return user(role="admin")
+
+    async def forbidden_redis():
+        raise AssertionError("redis must not be touched before owner RBAC")
+
+    monkeypatch.setattr(customer_data_routes, "get_current_user", current_user)
+    monkeypatch.setattr(customer_data_routes, "_redis_client", forbidden_redis)
+    app = FastAPI()
+    app.include_router(customer_data_routes.router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/customer-data/delete",
+            data={
+                "chat_id": "42",
+                "csrf_token": "known-csrf",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_customer_data_delete_rejects_bad_confirmation_before_redis(
+    monkeypatch,
+):
+    async def current_user(_request):
+        return user()
+
+    async def forbidden_redis():
+        raise AssertionError("redis must not be touched before confirmation")
+
+    monkeypatch.setattr(customer_data_routes, "get_current_user", current_user)
+    monkeypatch.setattr(customer_data_routes, "_redis_client", forbidden_redis)
+    app = FastAPI()
+    app.include_router(customer_data_routes.router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/customer-data/delete",
+            data={
+                "chat_id": "42",
+                "csrf_token": "known-csrf",
+                "confirmation": "нет",
+            },
+        )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_customer_data_delete_owner_redirects_without_identifier(
+    monkeypatch,
+):
+    deleted = {}
+
+    class FakeRedis:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    cache = FakeRedis()
+
+    async def current_user(_request):
+        return user()
+
+    async def redis_client():
+        return cache
+
+    async def delete_customer_data(**kwargs):
+        deleted.update(kwargs)
+        return SimpleNamespace(status="deleted")
+
+    monkeypatch.setattr(customer_data_routes, "get_current_user", current_user)
+    monkeypatch.setattr(customer_data_routes, "_redis_client", redis_client)
+    monkeypatch.setattr(
+        customer_data_routes, "delete_customer_data", delete_customer_data
+    )
+    monkeypatch.setattr(customer_data_routes.database, "_pool", object())
+    app = FastAPI()
+    app.include_router(customer_data_routes.router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/customer-data/delete",
+            data={
+                "chat_id": "42",
+                "csrf_token": "known-csrf",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/?deleted=deleted"
+    assert "42" not in response.headers["location"]
+    assert deleted["chat_id"] == 42
+    assert cache.closed is True
+
+
+def test_customer_data_danger_zone_is_owner_only():
+    template = (
+        admin_app._BASE_DIR / "templates" / "chat_detail.html"
+    ).read_text(encoding="utf-8")
+
+    assert "{% if user.role == 'owner' %}" in template
+    assert "/customer-data/delete" in template
+    assert 'name="csrf_token"' in template
+    assert 'name="confirmation"' in template
 
 
 @pytest.mark.asyncio

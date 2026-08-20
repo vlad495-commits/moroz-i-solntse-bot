@@ -12,7 +12,7 @@ _ROOT_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
 if _ROOT_ENV.exists():
     load_dotenv(_ROOT_ENV)
 
-from fastapi import FastAPI, Form, Request  # noqa: E402
+from fastapi import FastAPI, Form, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.templating import Jinja2Templates  # noqa: E402
@@ -41,6 +41,9 @@ from review_routes import router as review_router  # noqa: E402
 from bot_control_routes import router as bot_control_router  # noqa: E402
 from logs_routes import router as logs_router  # noqa: E402
 from metrics_routes import router as metrics_router  # noqa: E402
+from customer_data_routes import router as customer_data_router  # noqa: E402
+from escalation_routes import router as escalation_router  # noqa: E402
+from booking_routes import router as booking_router  # noqa: E402
 from paths import admin_url  # noqa: E402
 from rbac import require_role  # noqa: E402
 
@@ -77,6 +80,9 @@ app.include_router(review_router)
 app.include_router(bot_control_router)
 app.include_router(logs_router)
 app.include_router(metrics_router)
+app.include_router(customer_data_router)
+app.include_router(escalation_router)
+app.include_router(booking_router)
 
 
 # Jinja2 фильтры для форматирования
@@ -189,11 +195,23 @@ async def index(request: Request):
 
 
 @app.get("/chats/{chat_id}", response_class=HTMLResponse)
-async def chat_detail(request: Request, chat_id: int):
+async def chat_detail(
+    request: Request,
+    chat_id: int,
+    events_cursor: str | None = Query(None, max_length=2048),
+):
     user = await get_current_user(request)
     detail = await database.get_chat_detail(chat_id)
     if not detail:
         return RedirectResponse(url=admin_url(request, "/"), status_code=302)
+    try:
+        events = await database.get_customer_events(
+            chat_id,
+            limit=50,
+            cursor=events_cursor,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="invalid events cursor") from error
     await record_audit(
         actor_id=user.id,
         action="chat.view",
@@ -218,7 +236,7 @@ async def chat_detail(request: Request, chat_id: int):
     return templates.TemplateResponse(
         request,
         "chat_detail.html",
-        {"user": user, "chat": detail},
+        {"user": user, "chat": detail, "events": events},
     )
 
 

@@ -43,8 +43,9 @@ trap - EXIT
 git pull --ff-only
 docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml --profile ops run --rm ops-check
 docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml --profile migration run --rm migrate alembic -c /app/alembic.ini upgrade head
-docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml build bot worker scheduler admin
-docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml up -d postgres redis rabbitmq bot worker scheduler admin caddy
+docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml build bot worker scheduler admin backup
+sudo sh ./ops/prepare-runtime-dirs.sh
+docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml up -d postgres redis rabbitmq bot worker scheduler admin backup caddy
 pwsh ./ops/smoke.ps1
 ```
 

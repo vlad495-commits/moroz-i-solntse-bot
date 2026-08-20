@@ -21,6 +21,14 @@ Telegram LLM-assistant for the Moroz i Solntse tanning and cryotherapy center. S
 - `Дорожная карта.md` — живой план задач и статусов.
 - `changelog.md` — обязательный лог всех значимых действий.
 
+## Единственный рабочий контур админки
+
+- До отдельного production rollout рабочая админка находится только на staging: `https://moroz-staging.109.71.246.167.sslip.io/admin/login`.
+- Единственный источник staging credentials — server-only файл `/opt/moroz-staging/.env`. Локальный `.env` не является источником staging-логина или staging-пароля.
+- Не направлять пользователя к локальному `.env` за staging-доступом и не копировать staging-пароль в Git, документацию, changelog или чат.
+- Локальный admin bootstrap отключён пустыми `ADMIN_USERNAME` и `ADMIN_PASSWORD`; базовый Compose не должен подставлять `admin/admin` или публичный session secret.
+- `AGENTS.md` управляет работой Codex/разработчиков. Приложение и контейнеры его не читают; Docker build context находится в `project/`.
+
 ## Структура проекта (на ступени 1)
 
 ```
@@ -40,8 +48,8 @@ moroz-i-solntse-bot/
     │
     └── llm/                 ← КОНТЕЙНЕР 1: бот + LLM
         ├── Dockerfile, requirements.txt
-        ├── bot.py           ← точка входа, aiogram polling
-        ├── handlers.py      ← /start, обработка текста, отказ на нетекст
+        ├── webhook.py       ← единственная runtime-точка входа Telegram
+        ├── bot.py           ← fail-closed legacy entrypoint, polling отключён
         ├── llm.py           ← клиент к LLM-провайдеру (универсальный)
         ├── config.py        ← все настройки из .env
         ├── db.py            ← Postgres: история сообщений
@@ -78,24 +86,19 @@ moroz-i-solntse-bot/
 ┌─────────────────────────────────────────────────┐
 │ КОНТЕЙНЕР bot                                   │
 │                                                 │
-│  bot.py (long-polling aiogram)                  │
+│  webhook.py (FastAPI + Telegram webhook)        │
 │    │                                            │
 │    ▼                                            │
-│  handlers.py                                    │
-│    │ 1. проверка длины (MAX_INPUT_LENGTH)       │
-│    │ 2. save user message ───── Postgres       │
-│    │ 3. typing indicator                        │
+│  consent + durable inbox ───── Postgres         │
 │    │                                            │
 │    ▼                                            │
-│  llm.py                                         │
-│    │ контекст диалога ──────── Redis: chat:{id} │
+│  RabbitMQ → worker → llm.py                     │
+│    │ буфер/состояние ───────── Redis            │
 │    │ system_prompt из prompts/system.md         │
-│    │ ── LLM-провайдер (один вызов)              │
+│    │ ── LLM-провайдер                           │
 │    │                                            │
 │    ▼                                            │
-│  send_message(пользователю)                     │
-│    │                                            │
-│    └─ message → Postgres                        │
+│  durable outbox → Telegram                      │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -105,7 +108,7 @@ moroz-i-solntse-bot/
 ### Что в Postgres
 - `messages` — вся история (user/assistant)
 
-**Срок хранения:** `messages` чистятся раз в сутки фоновой задачей `_cleanup_loop`. По умолчанию хранятся **3 года** (`DATA_RETENTION_DAYS=1095` в `.env`). Чтобы хранить вечно — `DATA_RETENTION_DAYS=0`.
+**Срок хранения:** функция `cleanup_old_records` поддерживает лимит **3 года** по умолчанию (`DATA_RETENTION_DAYS=1095`), но после отключения polling её ежедневный runtime-запуск не автоматизирован. Это отдельный открытый ops gate; `DATA_RETENTION_DAYS=0` отключает саму очистку.
 
 ---
 

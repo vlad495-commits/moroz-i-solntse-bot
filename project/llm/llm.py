@@ -11,7 +11,10 @@
 """
 
 import asyncio
+import hashlib
+import json
 import logging
+import re
 from dataclasses import dataclass
 
 from openai import AsyncOpenAI
@@ -41,6 +44,10 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+PROMPT_RELOAD_ACK_PREFIX = "prompt:reload:ack:"
+PROMPT_RELOAD_ACK_TTL_SECONDS = 30
+PROMPT_RELOAD_REQUEST_ID_RE = re.compile(r"[0-9a-f]{32}")
+PROMPT_RELOAD_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,16 +99,84 @@ def _create_client(api_key: str, base_url: str | None, kind: str):
     return AsyncOpenAI(**kwargs)
 
 
-def _load_prompt() -> None:
-    """Перечитать system.md с диска. Идемпотентно."""
-    global _system_prompt
-    if SYSTEM_PROMPT_PATH.exists():
-        _system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
-    else:
-        _system_prompt = ""
+def _load_prompt(expected_sha256: str | None = None) -> None:
+    """Build and atomically install a complete prompt pipeline snapshot."""
+    global _system_prompt, _pipeline
+    raw_candidate = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    if expected_sha256 is not None:
+        actual_sha256 = hashlib.sha256(raw_candidate.encode("utf-8")).hexdigest()
+        if actual_sha256 != expected_sha256:
+            raise ValueError("prompt content does not match reload version")
+    candidate = raw_candidate.strip()
+    if not candidate:
+        raise ValueError("system prompt is empty")
+    facts = extract_structured_facts(candidate)
+    candidate_pipeline = None
     if _pipeline is not None:
-        _pipeline.system_prompt = _system_prompt
-        _pipeline.facts = extract_structured_facts(_system_prompt)
+        candidate_pipeline = SecurityPipeline(_pipeline.gateway, candidate, facts)
+
+    _system_prompt = candidate
+    if candidate_pipeline is not None:
+        _pipeline = candidate_pipeline
+
+
+def _parse_prompt_reload(payload: str) -> tuple[str, str]:
+    message = json.loads(payload)
+    if not isinstance(message, dict) or not isinstance(
+        message.get("version_id"), int
+    ):
+        raise ValueError("invalid prompt reload payload")
+    request_id = message.get("request_id")
+    digest = message.get("sha256")
+    if not isinstance(request_id, str) or not PROMPT_RELOAD_REQUEST_ID_RE.fullmatch(
+        request_id
+    ):
+        raise ValueError("invalid prompt reload request id")
+    if not isinstance(digest, str) or not PROMPT_RELOAD_DIGEST_RE.fullmatch(digest):
+        raise ValueError("invalid prompt reload digest")
+    return f"{PROMPT_RELOAD_ACK_PREFIX}{request_id}", digest
+
+
+async def _set_prompt_reload_ack(client, ack_key: str, value: str) -> None:
+    try:
+        await client.set(
+            ack_key,
+            value,
+            ex=PROMPT_RELOAD_ACK_TTL_SECONDS,
+        )
+    except Exception as error:
+        logger.error(
+            "prompt_reload_ack_failed error_type=%s",
+            type(error).__name__,
+        )
+
+
+async def _process_prompt_reload(client, payload: str) -> bool:
+    try:
+        ack_key, expected_sha256 = _parse_prompt_reload(payload)
+    except Exception as error:
+        logger.error(
+            "prompt_reload_rejected error_type=%s",
+            type(error).__name__,
+        )
+        return False
+
+    try:
+        _load_prompt(expected_sha256)
+    except Exception as error:
+        await _set_prompt_reload_ack(client, ack_key, "rejected")
+        logger.error(
+            "prompt_reload_rejected error_type=%s",
+            type(error).__name__,
+        )
+        return False
+
+    await _set_prompt_reload_ack(client, ack_key, "applied")
+    logger.info(
+        "prompt_reload_applied prompt_length=%d",
+        len(_system_prompt),
+    )
+    return True
 
 
 def init_llm() -> None:
@@ -205,6 +280,7 @@ async def generate_response(
     user_message: str,
     context: list[dict[str, str]],
     recent_message_count: int = 1,
+    catalog=None,
 ) -> LLMResponse:
     """Сгенерировать ответ через общий security pipeline."""
     if not _primary_client:
@@ -221,6 +297,7 @@ async def generate_response(
         user_message,
         context,
         recent_message_count=recent_message_count,
+        catalog=catalog,
     )
 
 
@@ -240,11 +317,7 @@ async def prompt_reload_listener() -> None:
             async for msg in pubsub.listen():
                 if msg.get("type") != "message":
                     continue
-                _load_prompt()
-                logger.info(
-                    "prompt_reload_applied prompt_length=%d",
-                    len(_system_prompt),
-                )
+                await _process_prompt_reload(client, msg.get("data", ""))
         except asyncio.CancelledError:
             raise
         except Exception as error:

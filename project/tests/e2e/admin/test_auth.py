@@ -26,6 +26,21 @@ async def test_login_page_requires_totp_code():
 
 
 @pytest.mark.asyncio
+async def test_logs_tail_requires_authenticated_session():
+    transport = ASGITransport(app=admin_app.app)
+
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=False,
+    ) as client:
+        response = await client.get("/logs/tail")
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+
+
+@pytest.mark.asyncio
 async def test_login_submit_passes_totp_and_sets_session_cookie(monkeypatch):
     seen = {}
 
@@ -232,6 +247,22 @@ async def test_bootstrap_env_login_rejects_default_credentials(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_session_is_rejected_when_bootstrap_is_disabled(monkeypatch):
+    async def no_db_users():
+        return 0
+
+    monkeypatch.setattr(auth.user_repository, "count_admin_users", no_db_users)
+    monkeypatch.setenv("ADMIN_USERNAME", "")
+    monkeypatch.setenv("ADMIN_PASSWORD", "")
+    token = auth.create_session_token(
+        auth.AuthenticatedUser(id=None, username="admin", role="owner")
+    )
+
+    with pytest.raises(auth._LoginRequired):
+        await auth.get_current_user(RequestStub(token))
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_env_login_only_works_with_explicit_safe_values(monkeypatch):
     async def no_db_users():
         return 0
@@ -241,7 +272,7 @@ async def test_bootstrap_env_login_only_works_with_explicit_safe_values(monkeypa
 
     monkeypatch.setattr(auth.user_repository, "count_admin_users", no_db_users)
     monkeypatch.setattr(auth.user_repository, "get_user_by_username", no_db_user)
-    monkeypatch.setattr(auth, "SESSION_SECRET", "local-explicit-secret")
+    monkeypatch.setattr(auth, "SESSION_SECRET", "local-explicit-secret-32-characters")
     monkeypatch.setenv("ADMIN_USERNAME", "bootstrap")
     monkeypatch.setenv("ADMIN_PASSWORD", "bootstrap-secret")
 
@@ -255,7 +286,7 @@ async def test_bootstrap_env_login_only_works_with_explicit_safe_values(monkeypa
 @pytest.mark.asyncio
 async def test_bootstrap_env_login_fails_closed_when_db_pool_is_missing(monkeypatch):
     monkeypatch.setattr(auth.user_repository.database, "_pool", None)
-    monkeypatch.setattr(auth, "SESSION_SECRET", "local-explicit-secret")
+    monkeypatch.setattr(auth, "SESSION_SECRET", "local-explicit-secret-32-characters")
     monkeypatch.setenv("ADMIN_USERNAME", "bootstrap")
     monkeypatch.setenv("ADMIN_PASSWORD", "bootstrap-secret")
 

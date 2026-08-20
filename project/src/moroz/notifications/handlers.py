@@ -1,4 +1,7 @@
+from moroz.booking.projection import PROJECTION_SYNC_KIND
+from moroz.booking.catalog import CATALOG_SYNC_KIND
 from moroz.notifications.models import JobResult, SchedulerJob
+from moroz.retention import RETENTION_CLEANUP_KIND
 
 
 REMINDER_KINDS = {
@@ -9,6 +12,7 @@ REMINDER_KINDS = {
     "morning_hour_before",
 }
 LIFECYCLE_KINDS = {"no_show_check", "visit_outcome_check"}
+STAGING_SCHEDULER_SMOKE_KIND = "staging_scheduler_smoke"
 
 
 async def handle_scheduler_job(
@@ -17,7 +21,24 @@ async def handle_scheduler_job(
     booking_port,
     outbox,
     lifecycle=None,
+    projection_sync=None,
+    catalog_sync=None,
+    retention_cleanup=None,
 ) -> JobResult:
+    if job.kind == STAGING_SCHEDULER_SMOKE_KIND:
+        return JobResult.skipped(STAGING_SCHEDULER_SMOKE_KIND)
+    if job.kind == RETENTION_CLEANUP_KIND:
+        if retention_cleanup is None:
+            raise RuntimeError("retention cleanup is not configured")
+        return await retention_cleanup.run(job)
+    if job.kind == CATALOG_SYNC_KIND:
+        if catalog_sync is None:
+            raise RuntimeError("catalog sync is not configured")
+        return await catalog_sync.run(job)
+    if job.kind == PROJECTION_SYNC_KIND:
+        if projection_sync is None:
+            raise RuntimeError("projection sync is not configured")
+        return await projection_sync.run(job)
     if job.kind == "feedback_request":
         customer_id = job.payload.get("customer_id")
         if not isinstance(customer_id, str) or job.booking_key is None:

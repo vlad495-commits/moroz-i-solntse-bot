@@ -14,9 +14,10 @@ _PLACEHOLDER_RESIDUAL_RE = re.compile(
     r"<\s*PII(?:[_\s-][^\s<>]*)?",
     re.IGNORECASE,
 )
+_PRICE_VALUE_PATTERN = r"\d+(?:[ \u00a0]\d{3})*(?:[.,]\d{1,2})?"
 _PRICE_RE = re.compile(
-    r"(?<!\d)(?P<values>\d+(?:[ \u00a0]\d{3})*"
-    r"(?:\s*/\s*\d+(?:[ \u00a0]\d{3})*)*)"
+    rf"(?<!\d)(?P<values>{_PRICE_VALUE_PATTERN}"
+    rf"(?:\s*/\s*{_PRICE_VALUE_PATTERN})*)"
     r"\s*(?:руб(?:\.|лей?)?|₽)",
     re.IGNORECASE,
 )
@@ -49,6 +50,12 @@ _AVAILABILITY_RE = re.compile(
     r"есть\s+(?:врем\w*|мест\w*)|можно\s+записат\w*|"
     r"available|open\s+slot)\b",
     re.IGNORECASE,
+)
+_GENERAL_ACCESS_RULES = (
+    re.compile(
+        r"\bдоступн\w*\s+(?:без\s+запис\w*|ежедневно\b)",
+        re.IGNORECASE,
+    ),
 )
 _NEGATED_AVAILABILITY_RULES = (
     re.compile(
@@ -206,15 +213,20 @@ _MEDICAL_GUARANTEE_RULES = (
 
 
 def _normalize_price(value: str) -> str:
-    match = re.search(r"\d+(?:[ \u00a0]\d{3})*", value)
-    return "" if match is None else re.sub(r"\D", "", match.group(0))
+    match = re.search(_PRICE_VALUE_PATTERN, value)
+    if match is None:
+        return ""
+    normalized = re.sub(r"[ \u00a0]", "", match.group(0)).replace(",", ".")
+    whole, separator, fraction = normalized.partition(".")
+    fraction = fraction.rstrip("0")
+    return whole if not separator or not fraction else f"{whole}.{fraction}"
 
 
 def _prices(text: str) -> frozenset[str]:
     return frozenset(
-        re.sub(r"\D", "", value)
+        _normalize_price(value)
         for match in _PRICE_RE.finditer(text)
-        for value in re.findall(r"\d+(?:[ \u00a0]\d{3})*", match["values"])
+        for value in re.findall(_PRICE_VALUE_PATTERN, match["values"])
     )
 
 
@@ -287,7 +299,10 @@ def _contacts(text: str) -> frozenset[str]:
 
 
 def _normalize_public_pii(value: str) -> str:
-    return " ".join(value.strip().split()).casefold()
+    punctuation_normalized = value.translate(
+        str.maketrans({"—": "-", "–": "-", "«": '"', "»": '"'})
+    )
+    return " ".join(punctuation_normalized.strip().split()).casefold()
 
 
 def _matches_after_removing(
@@ -340,6 +355,18 @@ class StructuredFacts:
                 if value.strip()
             ),
         )
+
+
+def merge_structured_facts(
+    base: StructuredFacts,
+    extra: StructuredFacts,
+) -> StructuredFacts:
+    return StructuredFacts(
+        prices=base.prices | extra.prices,
+        public_contacts=base.public_contacts | extra.public_contacts,
+        slots=base.slots | extra.slots,
+        public_pii=base.public_pii | extra.public_pii,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,11 +440,19 @@ def validate_output(
     output_pii.mask(text)
     if output_pii.raw_values(frozenset({"payment"})):
         return ValidationVerdict(False, "raw_pii")
+    output_addresses = output_pii.raw_values(frozenset({"address"}))
+    if any(
+        (normalized := _normalize_public_pii(value)) not in facts.public_pii
+        and not any(
+            len(normalized) >= 12 and normalized in public_value
+            for public_value in facts.public_pii
+        )
+        for value in output_addresses
+    ):
+        return ValidationVerdict(False, "raw_pii")
     if any(
         _normalize_public_pii(value) not in facts.public_pii
-        for value in output_pii.raw_values(
-            frozenset({"name", "address", "medical"})
-        )
+        for value in output_pii.raw_values(frozenset({"name", "medical"}))
     ):
         return ValidationVerdict(False, "raw_pii")
     if _contacts(text) - facts.public_contacts:
@@ -433,7 +468,11 @@ def validate_output(
         return ValidationVerdict(False, "invented_price")
     if _matches_after_removing(
         text,
-        ignored=_NEGATED_AVAILABILITY_RULES,
+        ignored=(
+            _NEGATED_AVAILABILITY_RULES
+            if _TIME_RE.search(text)
+            else _NEGATED_AVAILABILITY_RULES + _GENERAL_ACCESS_RULES
+        ),
         blocked=(_AVAILABILITY_RE,),
     ):
         output_slots = _slot_keys(text)

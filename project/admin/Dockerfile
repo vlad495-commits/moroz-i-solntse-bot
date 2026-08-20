@@ -21,8 +21,8 @@ COPY src/ /app/src/
 RUN mkdir -p /app/logs
 
 # Non-root system user без home
-RUN groupadd --system appuser && \
-    useradd --system --gid appuser --no-create-home appuser && \
+RUN groupadd --system --gid 10001 appuser && \
+    useradd --system --uid 10001 --gid 10001 --no-create-home appuser && \
     chown -R appuser:appuser /app
 USER appuser
 

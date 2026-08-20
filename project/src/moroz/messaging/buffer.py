@@ -26,30 +26,40 @@ class MessageBuffer:
         self._database = database
         self._now = clock.now if clock is not None else lambda: datetime.now(UTC)
 
-    async def append(self, chat_id: str, update_id: str, text: str) -> None:
-        key = f"buffer:{chat_id}"
-        lock = self._redis.lock(
-            f"lock:{key}", timeout=BUFFER_TTL_SECONDS, blocking_timeout=1
+    def lock(self, chat_id: str):
+        return self._redis.lock(
+            f"lock:buffer:{chat_id}",
+            timeout=BUFFER_TTL_SECONDS,
+            blocking_timeout=1,
         )
+
+    async def append(self, chat_id: str, update_id: str, text: str) -> None:
+        lock = self.lock(chat_id)
         if not await lock.acquire():
-            raise LockError(f"Could not acquire {key} append lock")
+            raise LockError("Could not acquire buffer append lock")
         try:
-            async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.rpush(
-                    key,
-                    json.dumps(
-                        {"update_id": update_id, "text": text},
-                        ensure_ascii=False,
-                    ),
-                )
-                pipe.expire(key, BUFFER_TTL_SECONDS)
-                pipe.zadd(
-                    DEADLINE_INDEX_KEY,
-                    {chat_id: self._now().timestamp() + BUFFER_SECONDS},
-                )
-                await pipe.execute()
+            await self.append_locked(chat_id, update_id, text)
         finally:
             await lock.release()
+
+    async def append_locked(
+        self, chat_id: str, update_id: str, text: str
+    ) -> None:
+        key = f"buffer:{chat_id}"
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.rpush(
+                key,
+                json.dumps(
+                    {"update_id": update_id, "text": text},
+                    ensure_ascii=False,
+                ),
+            )
+            pipe.expire(key, BUFFER_TTL_SECONDS)
+            pipe.zadd(
+                DEADLINE_INDEX_KEY,
+                {chat_id: self._now().timestamp() + BUFFER_SECONDS},
+            )
+            await pipe.execute()
 
     async def due_chat_ids(self, limit: int = 100) -> tuple[str, ...]:
         if limit <= 0:
@@ -66,9 +76,7 @@ class MessageBuffer:
 
     async def flush(self, chat_id: str) -> BufferedMessage | None:
         key = f"buffer:{chat_id}"
-        lock = self._redis.lock(
-            f"lock:{key}", timeout=BUFFER_TTL_SECONDS, blocking_timeout=1
-        )
+        lock = self.lock(chat_id)
         if not await lock.acquire():
             return None
         try:

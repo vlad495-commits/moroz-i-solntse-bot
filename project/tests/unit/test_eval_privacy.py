@@ -799,8 +799,10 @@ async def test_eval_cli_all_structural_categories_are_local_and_executable(
 
 @pytest.mark.asyncio
 async def test_structural_consent_is_mutation_sensitive(monkeypatch):
+    from moroz.security import eval_structural
+
     monkeypatch.setattr(
-        run_evals,
+        eval_structural,
         "decide_ingress",
         lambda **_kwargs: SimpleNamespace(action="accept", code=None),
     )
@@ -814,6 +816,8 @@ async def test_structural_consent_is_mutation_sensitive(monkeypatch):
 async def test_structural_provider_policy_requires_real_gateway_call_counts(
     monkeypatch,
 ):
+    from moroz.security import eval_structural
+
     class BypassGateway:
         def __init__(self, _primary, _reserve):
             pass
@@ -822,7 +826,7 @@ async def test_structural_provider_policy_requires_real_gateway_call_counts(
             return LLMResponse("Безопасный ответ", 0, 0, 0, 0, "bypass")
 
     monkeypatch.setattr(
-        run_evals,
+        eval_structural,
         "PrimaryReserveGateway",
         BypassGateway,
     )
@@ -891,6 +895,39 @@ async def test_eval_cli_prompt_defense_requires_output_pipeline(
     assert input_sentinel not in output
 
 
+@pytest.mark.asyncio
+async def test_technical_adversarial_never_calls_primary_llm(monkeypatch):
+    monkeypatch.setattr(
+        run_evals,
+        "check_input",
+        lambda _text, *, recent_message_count: GuardDecision("allow", "safe"),
+    )
+    monkeypatch.setattr(
+        run_evals,
+        "init_llm",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("technical gate must not initialize primary LLM")
+        ),
+    )
+    monkeypatch.setattr(
+        run_evals,
+        "_load_dataset",
+        lambda _name: [
+            {
+                "id": 73,
+                "category": "jailbreak",
+                "critical": True,
+                "input": "prompt-defense-input-sentinel",
+                "expected": "prompt_defense",
+            }
+        ],
+    )
+
+    assert await run_evals._run_adversarial(local_only=True) == (
+        SecurityEvalResult(False, "jailbreak", True),
+    )
+
+
 @pytest.mark.parametrize(
     ("results", "expected_exit"),
     [
@@ -937,6 +974,106 @@ async def test_eval_cli_main_uses_shared_security_gate(
         f"critical_failed={gate.critical_failed} "
         f"pass_rate={gate.pass_rate:.4f} status={status}"
         in output
+    )
+
+
+@pytest.mark.asyncio
+async def test_technical_cli_runs_only_local_technical_batches(monkeypatch):
+    called = []
+
+    def batch(name, category):
+        async def run(**kwargs):
+            called.append((name, kwargs))
+            return (SecurityEvalResult(True, category, True),)
+
+        return run
+
+    async def forbidden_dataset():
+        raise AssertionError("technical gate must not run business dataset")
+
+    monkeypatch.setattr(
+        run_evals,
+        "_run_adversarial",
+        batch("adversarial", "jailbreak"),
+    )
+    monkeypatch.setattr(
+        run_evals,
+        "_run_structural",
+        batch("structural", "consent"),
+    )
+    monkeypatch.setattr(
+        run_evals,
+        "_run_catalog",
+        batch("catalog", "catalog_invented_price"),
+    )
+    monkeypatch.setattr(run_evals, "_run_dataset", forbidden_dataset)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_evals", "--only", "technical"],
+    )
+
+    assert await run_evals.main() == 0
+    assert called == [
+        ("adversarial", {"local_only": True}),
+        ("structural", {}),
+        ("catalog", {}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_technical_cli_fails_closed_when_required_batch_is_empty(
+    monkeypatch,
+):
+    async def empty_adversarial(**_kwargs):
+        return ()
+
+    async def passing_batch():
+        return (SecurityEvalResult(True, "technical", True),)
+
+    monkeypatch.setattr(run_evals, "_run_adversarial", empty_adversarial)
+    monkeypatch.setattr(run_evals, "_run_structural", passing_batch)
+    monkeypatch.setattr(run_evals, "_run_catalog", passing_batch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_evals", "--only", "technical"],
+    )
+
+    assert await run_evals.main() == 1
+
+
+@pytest.mark.asyncio
+async def test_structural_batch_uses_only_local_policy_cases(monkeypatch, capsys):
+    cases = [
+        {"id": 1, "category": "consent", "critical": True},
+        {"id": 2, "category": "faq", "critical": False},
+    ]
+
+    async def evaluate(case):
+        return True if case["id"] == 1 else None
+
+    monkeypatch.setattr(run_evals, "_load_dataset", lambda name: cases)
+    monkeypatch.setattr(run_evals, "_evaluate_structural_case", evaluate)
+
+    assert await run_evals._run_structural() == (
+        SecurityEvalResult(True, "consent", True),
+    )
+    assert (
+        "[structural] total=1 passed=1 failed=0 status=passed"
+        in capsys.readouterr().out
+    )
+
+
+@pytest.mark.asyncio
+async def test_structural_batch_load_error_is_critical(monkeypatch):
+    def fail_load(_name):
+        raise CliDatasetError("structural-load-sentinel")
+
+    monkeypatch.setattr(run_evals, "_load_dataset", fail_load)
+
+    assert await run_evals._run_structural() == (
+        SecurityEvalResult(False, "dataset_error", True),
     )
 
 
@@ -1176,6 +1313,7 @@ def test_admin_client_factory_disables_sdk_retries(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     captured = {}
+    catalog = object()
 
     class Provider:
         def __init__(self, client, kind, model, temperature, max_tokens):
@@ -1189,8 +1327,20 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
         def __init__(self, gateway, system_prompt, facts):
             captured["pipeline"] = (gateway, system_prompt, facts)
 
-        async def respond(self, question, context, *, recent_message_count):
-            captured["request"] = (question, context, recent_message_count)
+        async def respond(
+            self,
+            question,
+            context,
+            *,
+            recent_message_count,
+            catalog,
+        ):
+            captured["request"] = (
+                question,
+                context,
+                recent_message_count,
+                catalog,
+            )
             return LLMResponse("safe", 1, 1, 0, 2, "fake")
 
     primary = object()
@@ -1203,7 +1353,11 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     monkeypatch.setattr(eval_runner, "PrimaryReserveGateway", Gateway)
     monkeypatch.setattr(eval_runner, "SecurityPipeline", Pipeline)
 
-    assert await eval_runner._generate_bot_response("Вопрос", "Цена 2400 руб.") == "safe"
+    assert await eval_runner._generate_bot_response(
+        "Вопрос",
+        "Цена 2400 руб.",
+        catalog=catalog,
+    ) == "safe"
     primary_provider, reserve_provider = captured["providers"]
     assert primary_provider.values[:3] == (
         primary,
@@ -1218,7 +1372,53 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     _, source_prompt, facts = captured["pipeline"]
     assert source_prompt == "Цена 2400 руб."
     assert "2400" in facts.prices
-    assert captured["request"] == ("Вопрос", [], 1)
+    assert captured["request"] == ("Вопрос", [], 1, catalog)
+
+
+@pytest.mark.asyncio
+async def test_admin_structural_case_skips_primary_and_judge(monkeypatch):
+    saved = []
+
+    async def evaluate(case):
+        assert case["category"] == "consent"
+        return True
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("structural case must stay local")
+
+    async def save_result(**kwargs):
+        saved.append(kwargs)
+        return 901
+
+    monkeypatch.setattr(
+        eval_runner,
+        "evaluate_structural_case",
+        evaluate,
+        raising=False,
+    )
+    monkeypatch.setattr(eval_runner, "_generate_bot_response", forbidden)
+    monkeypatch.setattr(eval_runner, "llm_judge", forbidden)
+    monkeypatch.setattr(eval_runner.evdb, "save_result", save_result)
+
+    result = await eval_runner.run_case(
+        {
+            "id": 54,
+            "category": "consent",
+            "question": "synthetic consent",
+            "expected_answer": "consent required",
+        },
+        77,
+    )
+
+    assert result == {
+        "id": 901,
+        "case_id": 54,
+        "verdict": "pass",
+        "check_layer": "structural",
+        "score": None,
+    }
+    assert saved[0]["actual_answer"] == ""
+    assert saved[0]["judge_reasoning"] == "Structural policy passed"
 
 
 def test_external_sdk_calls_are_limited_to_provider_and_masked_judge_adapter():

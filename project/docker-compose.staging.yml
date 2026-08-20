@@ -1,8 +1,6 @@
 services:
   bot:
     image: "moroz-staging-bot:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
-    environment:
-      TELEGRAM_MODE: webhook
     ports:
       - "127.0.0.1:${STAGING_BOT_PORT:-18081}:8081"
     healthcheck:
@@ -40,7 +38,7 @@ services:
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET}
 
   scheduler:
-    profiles: ["disabled-in-staging"]
+    image: "moroz-staging-scheduler:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
 
   staging-webhook:
     profiles: ["staging-tools"]

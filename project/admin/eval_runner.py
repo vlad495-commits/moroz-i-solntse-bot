@@ -7,7 +7,6 @@
 - Двухступенчатая проверка: regex/keywords → если не прошёл → LLM-judge.
 """
 
-import asyncio
 import json
 import logging
 import math
@@ -21,10 +20,11 @@ from openai import AsyncOpenAI
 import eval_database as evdb
 from moroz.security.eval_gate import (
     SecurityEvalResult,
-    SecurityGateResult,
+    SecurityGateResult as SecurityGateResult,
     is_critical_category,
     security_gate,
 )
+from moroz.security.eval_structural import evaluate_structural_case
 from moroz.security.llm_gateway import PrimaryReserveGateway, SDKProvider
 from moroz.security.pii import PiiSession
 from moroz.security.pipeline import SecurityPipeline
@@ -250,7 +250,12 @@ async def llm_judge(question: str, expected: str, actual: str) -> tuple[float, s
 
 # --- Прогон одного кейса ---
 
-async def _generate_bot_response(question: str, system_prompt: str) -> str:
+async def _generate_bot_response(
+    question: str,
+    system_prompt: str,
+    *,
+    catalog=None,
+) -> str:
     """Сгенерировать ответ через общий runtime/eval security pipeline."""
     primary = SDKProvider(
         _primary,
@@ -274,11 +279,11 @@ async def _generate_bot_response(question: str, system_prompt: str) -> str:
         PrimaryReserveGateway(primary, reserve),
         system_prompt,
         extract_structured_facts(system_prompt),
-    ).respond(question, [], recent_message_count=1)
+    ).respond(question, [], recent_message_count=1, catalog=catalog)
     return result.text
 
 
-async def run_case(case: dict, run_id: int) -> dict:
+async def run_case(case: dict, run_id: int, *, catalog=None) -> dict:
     """Прогнать один тест-кейс. Записать результат в БД. Вернуть запись результата."""
     started = time.time()
     system_prompt = _read_system_prompt()
@@ -291,48 +296,64 @@ async def run_case(case: dict, run_id: int) -> dict:
     error_message: str | None = None
 
     try:
-        # 1. Получаем фактический ответ бота
-        actual_answer = await _generate_bot_response(case["question"], system_prompt)
+        structural = await evaluate_structural_case(case)
+        if structural is not None:
+            verdict = "pass" if structural else "fail"
+            check_layer = "structural"
+            reasoning = (
+                "Structural policy passed"
+                if structural
+                else "Structural policy failed"
+            )
+        else:
+            # 1. Получаем фактический ответ бота
+            actual_answer = await _generate_bot_response(
+                case["question"],
+                system_prompt,
+                catalog=catalog,
+            )
 
-        # 2. Слой 1: regex/keywords
-        keywords = list(case.get("expected_keywords") or [])
-        forbidden = list(case.get("forbidden_keywords") or [])
+            # 2. Слой 1: regex/keywords
+            keywords = list(case.get("expected_keywords") or [])
+            forbidden = list(case.get("forbidden_keywords") or [])
 
-        if keywords or forbidden:
-            ok, reason = keyword_check(actual_answer, keywords, forbidden)
-            if ok:
-                verdict = "pass"
-                check_layer = "regex"
-                reasoning = "Все ключевые слова найдены"
+            if keywords or forbidden:
+                ok, reason = keyword_check(actual_answer, keywords, forbidden)
+                if ok:
+                    verdict = "pass"
+                    check_layer = "regex"
+                    reasoning = "Все ключевые слова найдены"
+                else:
+                    # Слой 1 не прошёл — пробуем judge
+                    check_layer = "judge"
+                    reasoning_part_1 = reason
+                    if case.get("expected_answer"):
+                        score, judge_reason = await llm_judge(
+                            case["question"],
+                            case["expected_answer"],
+                            actual_answer,
+                        )
+                        reasoning = f"{reasoning_part_1}. Judge: {judge_reason}"
+                        verdict = (
+                            "pass" if score >= JUDGE_PASS_THRESHOLD else "fail"
+                        )
+                    else:
+                        verdict = "fail"
+                        reasoning = reasoning_part_1
             else:
-                # Слой 1 не прошёл — пробуем judge
+                # Нет keywords — сразу judge
                 check_layer = "judge"
-                reasoning_part_1 = reason
                 if case.get("expected_answer"):
                     score, judge_reason = await llm_judge(
                         case["question"],
                         case["expected_answer"],
                         actual_answer,
                     )
-                    reasoning = f"{reasoning_part_1}. Judge: {judge_reason}"
+                    reasoning = judge_reason
                     verdict = "pass" if score >= JUDGE_PASS_THRESHOLD else "fail"
                 else:
                     verdict = "fail"
-                    reasoning = reasoning_part_1
-        else:
-            # Нет keywords — сразу judge
-            check_layer = "judge"
-            if case.get("expected_answer"):
-                score, judge_reason = await llm_judge(
-                    case["question"],
-                    case["expected_answer"],
-                    actual_answer,
-                )
-                reasoning = judge_reason
-                verdict = "pass" if score >= JUDGE_PASS_THRESHOLD else "fail"
-            else:
-                verdict = "fail"
-                reasoning = "Нет expected_answer — нечего сравнивать"
+                    reasoning = "Нет expected_answer — нечего сравнивать"
 
     except Exception as error:
         case_id = case.get("id")

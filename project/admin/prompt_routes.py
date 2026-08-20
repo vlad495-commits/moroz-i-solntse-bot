@@ -10,9 +10,14 @@
 LLM-контейнер подписан на этот канал и перечитывает файл.
 """
 
+import asyncio
+import hashlib
+import json
 import logging
 import os
 from pathlib import Path
+import tempfile
+from uuid import uuid4
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Form, Request
@@ -35,14 +40,53 @@ templates = Jinja2Templates(directory=_BASE_DIR / "templates")
 PROMPT_FILE = Path(os.getenv("PROMPT_FILE_PATH", "/app/prompts/system.md"))
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 PROMPT_RELOAD_CHANNEL = "prompt:reload"
+PROMPT_RELOAD_ACK_PREFIX = "prompt:reload:ack:"
+PROMPT_RELOAD_ACK_POLLS = 20
+PROMPT_RELOAD_ACK_INTERVAL_SECONDS = 0.1
+PROMPT_RELOAD_APPLIED = "applied"
+PROMPT_RELOAD_REJECTED = "rejected"
+PROMPT_RELOAD_UNCONFIRMED = "unconfirmed"
+PROMPT_UPDATE_LOCK = asyncio.Lock()
 
 
-async def _publish_reload(version_id: int) -> None:
-    """Опубликовать в Redis канал, чтобы LLM перечитал промпт."""
+async def _publish_reload(version_id: int, content: str) -> str:
+    """Publish a version-bound reload and wait for the worker ACK."""
     client = None
+    published = False
     try:
         client = aioredis.from_url(REDIS_URL, decode_responses=True)
-        await client.publish(PROMPT_RELOAD_CHANNEL, f"version:{version_id}")
+        request_id = uuid4().hex
+        ack_key = f"{PROMPT_RELOAD_ACK_PREFIX}{request_id}"
+        payload = json.dumps(
+            {
+                "version_id": version_id,
+                "request_id": request_id,
+                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            },
+            separators=(",", ":"),
+        )
+        subscribers = await client.publish(
+            PROMPT_RELOAD_CHANNEL, payload
+        )
+        published = bool(subscribers)
+        if not published:
+            logger.error("prompt_reload_publish_failed error_type=NoSubscribers")
+            return PROMPT_RELOAD_REJECTED
+        for _ in range(PROMPT_RELOAD_ACK_POLLS):
+            acknowledgement = await client.get(ack_key)
+            if acknowledgement is not None:
+                if acknowledgement != "applied":
+                    logger.error(
+                        "prompt_reload_apply_failed error_type=Rejected"
+                    )
+                return (
+                    PROMPT_RELOAD_APPLIED
+                    if acknowledgement == "applied"
+                    else PROMPT_RELOAD_REJECTED
+                )
+            await asyncio.sleep(PROMPT_RELOAD_ACK_INTERVAL_SECONDS)
+        logger.error("prompt_reload_apply_failed error_type=AckTimeout")
+        return PROMPT_RELOAD_UNCONFIRMED
     except Exception as error:
         logger.error(
             "prompt_reload_publish_failed error_type=%s", type(error).__name__
@@ -56,6 +100,46 @@ async def _publish_reload(version_id: int) -> None:
                     "prompt_reload_redis_close_failed error_type=%s",
                     type(error).__name__,
                 )
+    return PROMPT_RELOAD_UNCONFIRMED
+
+
+async def _discard_unactivated_version(version_id: int) -> None:
+    try:
+        await pdb.delete_version(version_id)
+    except Exception as error:
+        logger.error(
+            "prompt_version_cleanup_failed error_type=%s",
+            type(error).__name__,
+        )
+
+
+def _read_prompt_snapshot() -> str | None:
+    if not PROMPT_FILE.exists():
+        return None
+    return PROMPT_FILE.read_text(encoding="utf-8")
+
+
+def _restore_prompt_if_current(
+    expected_content: str,
+    previous_content: str | None,
+) -> bool:
+    try:
+        if not PROMPT_FILE.exists():
+            if previous_content is None:
+                return True
+            return _write_prompt(previous_content)
+        if PROMPT_FILE.read_text(encoding="utf-8") != expected_content:
+            return True
+        if previous_content is None:
+            PROMPT_FILE.unlink()
+            return True
+        return _write_prompt(previous_content)
+    except OSError as error:
+        logger.error(
+            "prompt_restore_failed error_type=%s",
+            type(error).__name__,
+        )
+        return False
 
 
 def _read_current_prompt() -> str:
@@ -69,13 +153,34 @@ def _read_current_prompt() -> str:
 
 
 def _write_prompt(content: str) -> bool:
+    temporary_path: Path | None = None
     try:
         PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        PROMPT_FILE.write_text(content, encoding="utf-8")
+        descriptor, name = tempfile.mkstemp(
+            dir=PROMPT_FILE.parent,
+            prefix=f".{PROMPT_FILE.name}.",
+            suffix=".tmp",
+        )
+        temporary_path = Path(name)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, PROMPT_FILE)
+        temporary_path = None
         return True
     except OSError as error:
         logger.error("prompt_write_failed error_type=%s", type(error).__name__)
         return False
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError as error:
+                logger.error(
+                    "prompt_temp_cleanup_failed error_type=%s",
+                    type(error).__name__,
+                )
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -109,22 +214,54 @@ async def prompt_save(
     require_role(user, {"owner"})
     content = content.replace("\r\n", "\n").rstrip() + "\n"
 
-    if not _write_prompt(content):
-        return RedirectResponse(
-            url=admin_url(request, "/prompt/?error=write_failed"), status_code=302
-        )
+    async with PROMPT_UPDATE_LOCK:
+        try:
+            previous_content = _read_prompt_snapshot()
+        except OSError as error:
+            logger.error(
+                "prompt_read_failed error_type=%s",
+                type(error).__name__,
+            )
+            return RedirectResponse(
+                url=admin_url(request, "/prompt/?error=read_failed"),
+                status_code=302,
+            )
+        try:
+            version_id = await pdb.create_version(
+                content=content,
+                author=user.username[:64],
+                comment=comment.strip() or None,
+            )
+        except Exception as error:
+            logger.error(
+                "prompt_db_save_failed error_type=%s",
+                type(error).__name__,
+            )
+            return RedirectResponse(
+                url=admin_url(request, "/prompt/?error=db_failed"),
+                status_code=302,
+            )
 
-    try:
-        version_id = await pdb.create_version(
-            content=content, author=user, comment=comment.strip() or None,
-        )
-    except Exception as error:
-        logger.error("prompt_db_save_failed error_type=%s", type(error).__name__)
-        return RedirectResponse(
-            url=admin_url(request, "/prompt/?error=db_failed"), status_code=302
-        )
+        if not _write_prompt(content):
+            await _discard_unactivated_version(version_id)
+            return RedirectResponse(
+                url=admin_url(request, "/prompt/?error=write_failed"),
+                status_code=302,
+            )
 
-    await _publish_reload(version_id)
+        reload_status = await _publish_reload(version_id, content)
+        if reload_status == PROMPT_RELOAD_REJECTED:
+            restored = _restore_prompt_if_current(content, previous_content)
+            await _discard_unactivated_version(version_id)
+            return RedirectResponse(
+                url=admin_url(
+                    request,
+                    "/prompt/?error="
+                    + ("reload_rejected" if restored else "restore_failed"),
+                ),
+                status_code=302,
+            )
+
     await record_audit(
         actor_id=user.id,
         action="prompt.save",
@@ -136,7 +273,16 @@ async def prompt_save(
         user_agent=request_user_agent(request),
     )
     return RedirectResponse(
-        url=admin_url(request, f"/prompt/?saved={version_id}"), status_code=302
+        url=admin_url(
+            request,
+            f"/prompt/?saved={version_id}"
+            + (
+                ""
+                if reload_status == PROMPT_RELOAD_APPLIED
+                else "&error=reload_failed"
+            ),
+        ),
+        status_code=302,
     )
 
 
@@ -169,26 +315,52 @@ async def prompt_rollback(
         )
 
     content = version["content"]
-    if not _write_prompt(content):
-        return RedirectResponse(
-            url=admin_url(request, "/prompt/?error=write_failed"), status_code=302
-        )
+    async with PROMPT_UPDATE_LOCK:
+        try:
+            previous_content = _read_prompt_snapshot()
+        except OSError as error:
+            logger.error(
+                "prompt_read_failed error_type=%s",
+                type(error).__name__,
+            )
+            return RedirectResponse(
+                url=admin_url(request, "/prompt/?error=read_failed"),
+                status_code=302,
+            )
+        try:
+            new_id = await pdb.create_version(
+                content=content,
+                author=user.username[:64],
+                comment=f"Откат на версию #{version_id}",
+            )
+        except Exception as error:
+            logger.error(
+                "prompt_db_rollback_failed error_type=%s", type(error).__name__
+            )
+            return RedirectResponse(
+                url=admin_url(request, "/prompt/?error=db_failed"), status_code=302
+            )
 
-    try:
-        new_id = await pdb.create_version(
-            content=content,
-            author=user,
-            comment=f"Откат на версию #{version_id}",
-        )
-    except Exception as error:
-        logger.error(
-            "prompt_db_rollback_failed error_type=%s", type(error).__name__
-        )
-        return RedirectResponse(
-            url=admin_url(request, "/prompt/?error=db_failed"), status_code=302
-        )
+        if not _write_prompt(content):
+            await _discard_unactivated_version(new_id)
+            return RedirectResponse(
+                url=admin_url(request, "/prompt/?error=write_failed"),
+                status_code=302,
+            )
 
-    await _publish_reload(new_id)
+        reload_status = await _publish_reload(new_id, content)
+        if reload_status == PROMPT_RELOAD_REJECTED:
+            restored = _restore_prompt_if_current(content, previous_content)
+            await _discard_unactivated_version(new_id)
+            return RedirectResponse(
+                url=admin_url(
+                    request,
+                    "/prompt/?error="
+                    + ("reload_rejected" if restored else "restore_failed"),
+                ),
+                status_code=302,
+            )
+
     await record_audit(
         actor_id=user.id,
         action="prompt.rollback",
@@ -200,5 +372,14 @@ async def prompt_rollback(
         user_agent=request_user_agent(request),
     )
     return RedirectResponse(
-        url=admin_url(request, f"/prompt/?saved={new_id}"), status_code=302
+        url=admin_url(
+            request,
+            f"/prompt/?saved={new_id}"
+            + (
+                ""
+                if reload_status == PROMPT_RELOAD_APPLIED
+                else "&error=reload_failed"
+            ),
+        ),
+        status_code=302,
     )

@@ -29,6 +29,7 @@ from moroz.booking.yclients_http import (
     YclientsHttpClient,
     YclientsTransportError,
 )
+from moroz.booking.yclients_records import normalize_visit_status
 
 
 _SLOT_PREFIX = "yclients:v1:"
@@ -606,28 +607,9 @@ def _external_booking(
         booking_key=booking_key,
         slot_id=slot_id,
         starts_at=starts_at,
-        status=_visit_status(record),
+        status=normalize_visit_status(record),
         scheduled_end_at=scheduled_end_at,
     )
-
-
-def _visit_status(record: Mapping[str, object]) -> BookingStatus:
-    deleted = record.get("deleted", False)
-    if type(deleted) is not bool:
-        raise BookingTemporaryError()
-    if deleted:
-        return "cancelled"
-    attendance = record.get("attendance")
-    if attendance is None:
-        return "unknown"
-    if type(attendance) is not int:
-        raise BookingTemporaryError()
-    return {
-        -1: "no_show",
-        0: "confirmed",
-        1: "completed",
-        2: "confirmed",
-    }.get(attendance, "unknown")
 
 
 def _has_conflict_code(value: object) -> bool:

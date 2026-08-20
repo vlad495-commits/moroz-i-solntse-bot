@@ -1,13 +1,37 @@
 import json
+from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage, OutboundMessage
-from moroz.messaging.outbox import enqueue_process_message
+from moroz.messaging.outbox import (
+    enqueue_process_message,
+    enqueue_process_message_in_transaction,
+)
+from moroz.escalation.service import (
+    ADMIN_REPLY_PREFIX,
+    complete_admin_reply_delivery,
+    parse_admin_reply_key,
+)
+from moroz.privacy import customer_lock_subject
 
 
 class OutboundDeliveryBlocked(Exception):
     """An earlier delivery for the same chat is still non-terminal."""
+
+
+def _outbound_from_row(row) -> OutboundMessage:
+    options = row["delivery_options"]
+    return OutboundMessage(
+        id=row["id"],
+        channel=row["channel"],
+        chat_id=row["chat_id"],
+        text=row["text"],
+        delivery_options=(
+            json.loads(options) if isinstance(options, str) else options
+        ),
+        idempotency_key=row["idempotency_key"],
+    )
 
 
 class MessageRepository:
@@ -16,6 +40,43 @@ class MessageRepository:
 
     async def accept(self, message: IncomingMessage) -> bool:
         """Persist an update after the caller has verified processing consent."""
+        async with self._database.acquire() as connection:
+            return await self._insert_incoming(connection, message)
+
+    async def accept_if_consented(
+        self,
+        message: IncomingMessage,
+        *,
+        enqueue_directly: bool = False,
+    ) -> bool:
+        """Serialize privacy-sensitive ingress and recheck durable consent."""
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(message.chat_id),
+                )
+                consented = await connection.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM processing_consents
+                        WHERE channel = $1 AND user_id = $2
+                    )
+                    """,
+                    message.channel,
+                    message.user_id,
+                )
+                if not consented:
+                    return False
+                accepted = await self._insert_incoming(connection, message)
+                if accepted and enqueue_directly:
+                    await enqueue_process_message_in_transaction(
+                        connection,
+                        update_ids=(message.update_id,),
+                    )
+                return accepted
+
+    async def _insert_incoming(self, connection, message: IncomingMessage) -> bool:
         payload = json.dumps(
             {
                 "update_id": message.update_id,
@@ -29,8 +90,7 @@ class MessageRepository:
             },
             ensure_ascii=False,
         )
-        async with self._database.acquire() as connection:
-            row = await connection.fetchrow(
+        row = await connection.fetchrow(
                 """
                 INSERT INTO message_inbox
                     (id, channel, external_message_id, chat_id, payload,
@@ -45,7 +105,7 @@ class MessageRepository:
                 message.chat_id,
                 payload,
                 message.correlation_id,
-            )
+        )
         return row is not None
 
     async def enqueue_outbound(
@@ -165,33 +225,67 @@ class MessageRepository:
                         raise OutboundDeliveryBlocked
         if row is None:
             return None
-        options = row["delivery_options"]
-        return OutboundMessage(
-            id=row["id"],
-            channel=row["channel"],
-            chat_id=row["chat_id"],
-            text=row["text"],
-            delivery_options=(
-                json.loads(options) if isinstance(options, str) else options
-            ),
-            idempotency_key=row["idempotency_key"],
-        )
+        return _outbound_from_row(row)
+
+    @asynccontextmanager
+    async def fence_claimed_outbound(self, outbound: OutboundMessage):
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(outbound.chat_id),
+                )
+                row = await connection.fetchrow(
+                    """
+                    SELECT id, channel, chat_id, text, delivery_options,
+                           idempotency_key
+                    FROM outbound_messages
+                    WHERE id = $1 AND channel = $2 AND chat_id = $3
+                      AND status = 'sending'
+                    """,
+                    outbound.id,
+                    outbound.channel,
+                    outbound.chat_id,
+                )
+                yield None if row is None else _outbound_from_row(row)
 
     async def mark_outbound_sent(
         self,
         outbound_id: UUID,
         external_message_id: str,
-    ) -> None:
+    ) -> str | None:
         async with self._database.acquire() as connection:
-            await connection.execute(
-                """
-                UPDATE outbound_messages
-                SET status = 'sent', external_message_id = $2
-                WHERE id = $1 AND status = 'sending'
-                """,
-                outbound_id,
-                external_message_id,
-            )
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    """
+                    UPDATE outbound_messages
+                    SET status = 'sent', external_message_id = $2
+                    WHERE id = $1 AND status = 'sending'
+                    RETURNING channel, chat_id, text, idempotency_key
+                    """,
+                    outbound_id,
+                    external_message_id,
+                )
+                if row is None:
+                    return None
+                parsed = parse_admin_reply_key(row["idempotency_key"])
+                if parsed is None:
+                    if row["idempotency_key"].startswith(
+                        f"{ADMIN_REPLY_PREFIX}:"
+                    ):
+                        raise ValueError("malformed admin reply key")
+                    return None
+                escalation_id, _ = parsed
+                if row["channel"] != "telegram":
+                    raise ValueError("admin reply channel mismatch")
+                await complete_admin_reply_delivery(
+                    connection,
+                    outbound_id=outbound_id,
+                    escalation_id=escalation_id,
+                    chat_id=row["chat_id"],
+                    text=row["text"],
+                )
+                return row["chat_id"]
 
     async def mark_outbound_delivery_unknown(
         self,

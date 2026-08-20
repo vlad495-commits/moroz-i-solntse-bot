@@ -1,10 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+import json
+from pathlib import Path
 
 import pytest
 
 from moroz.security.guardrails import GuardDecision, check_input
+
+
+ADVERSARIAL_DATASET = Path("/workspace/llm/eval/adversarial_dataset.json")
+
+
+def test_every_universal_adversarial_input_is_blocked_locally() -> None:
+    cases = json.loads(ADVERSARIAL_DATASET.read_text(encoding="utf-8"))
+
+    bypasses = [
+        case["id"]
+        for case in cases
+        if check_input(case["input"], recent_message_count=1)
+        != GuardDecision("block", "prompt_injection")
+    ]
+
+    assert bypasses == []
 
 
 @pytest.mark.parametrize(
@@ -182,6 +200,27 @@ def test_ordinary_preparation_rules_question_is_allowed() -> None:
         "Какие правила подготовки к криокапсуле?",
         recent_message_count=1,
     ).action == "allow"
+
+
+def test_medical_cure_guarantee_question_escalates_locally() -> None:
+    assert check_input(
+        "Гарантируете, что процедура вылечит?",
+        recent_message_count=1,
+    ) == GuardDecision("escalate", "medical_risk")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Какие правила посещения центра?",
+        "Где находится ваш адрес?",
+        "Расскажите про услуги и цены",
+        "Можно обновить номер телефона в моей записи?",
+        "Произошла ошибка оплаты, что делать?",
+    ],
+)
+def test_privilege_words_in_normal_business_questions_are_allowed(text: str) -> None:
+    assert check_input(text, recent_message_count=1).action == "allow"
 
 
 def test_decision_is_immutable_and_does_not_contain_input() -> None:

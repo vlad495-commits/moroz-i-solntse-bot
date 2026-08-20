@@ -19,6 +19,32 @@
     <div class="stat"><div class="stat-label">Модель</div><div class="stat-value model">{{ chat.stats.last_model or '—' }}</div></div>
 </div>
 
+<section class="customer-events">
+    <h2>События клиента</h2>
+    {% if events['items'] %}
+    <div class="customer-events-list">
+        {% for event in events['items'] %}
+        <article class="customer-event customer-event-category-{{ event.category }}">
+            <div class="customer-event-head">
+                <span class="customer-event-category">{{ event.category }}</span>
+                <time>{{ event.occurred_at.strftime('%Y-%m-%d %H:%M:%S') }}</time>
+            </div>
+            <strong>{{ event.title }}</strong>
+            {% if event.description %}<p>{{ event.description }}</p>{% endif %}
+            {% if event.status %}<span class="customer-event-status">{{ event.status }}</span>{% endif %}
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">Событий пока нет.</p>
+    {% endif %}
+    {% if events.next_cursor is not none %}
+    <nav class="customer-events-pagination" aria-label="Страницы событий">
+        {% if events.next_cursor is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ chat.chat_id }}?events_cursor={{ events.next_cursor|urlencode }}">Раньше →</a>{% endif %}
+    </nav>
+    {% endif %}
+</section>
+
 <h2>Сообщения</h2>
 <div class="messages">
     {% for msg in chat.messages %}
@@ -31,4 +57,18 @@
     </div>
     {% endfor %}
 </div>
+
+{% if user.role == 'owner' %}
+<section class="danger-zone">
+    <h2>Удаление данных</h2>
+    <p>Удалит историю, согласие, локальные записи и временную память. Данные в YCLIENTS не изменятся.</p>
+    <form method="post" action="{{ request.scope.get('root_path', '') }}/customer-data/delete">
+        <input type="hidden" name="chat_id" value="{{ chat.chat_id }}">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+        <label for="delete-confirmation">Для подтверждения введите УДАЛИТЬ</label>
+        <input id="delete-confirmation" name="confirmation" autocomplete="off" required>
+        <button class="danger-button" type="submit">Удалить локальные данные</button>
+    </form>
+</section>
+{% endif %}
 {% endblock %}
