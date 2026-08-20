@@ -1,51 +1,51 @@
-# Customer-owned YCLIENTS Production App Onboarding Implementation Plan
+# План реализации подключения рабочего приложения YCLIENTS заказчика
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Browser actions that save settings, create credentials or change permissions require action-time confirmation.
+> **Для исполнителей:** обязательный скилл — `executing-plans`. Выполнять план последовательно по задачам и отмечать шаги флажками `- [ ]`. Перед сохранением настроек, созданием реквизитов доступа или изменением прав в браузере обязательно получать подтверждение непосредственно перед действием.
 
-**Goal:** Создать контролируемое заказчиком бесплатное непубличное YCLIENTS-приложение, безопасно подключить его к staging, доказать read-only sync и один согласованный booking lifecycle, затем допустить credentials к production release gate.
+**Цель:** Создать контролируемое заказчиком бесплатное непубличное приложение YCLIENTS, безопасно подключить его к тестовому серверу, подтвердить синхронизацию только для чтения и один согласованный полный цикл тестовой записи, после чего допустить реквизиты доступа к финальной проверке перед рабочим запуском.
 
-**Architecture:** Текущий single-tenant worker использует статические `YCLIENTS_PARTNER_TOKEN`, `YCLIENTS_USER_TOKEN` и `YCLIENTS_COMPANY_ID`. Customer-owned приложение предоставляет системного пользователя с минимальными правами только к одному филиалу; staging первым выполняет bounded acceptance, а production получает credentials только после успешного read-only, synthetic lifecycle и release gates.
+**Архитектура:** Текущий одноклиентский worker использует статические `YCLIENTS_PARTNER_TOKEN`, `YCLIENTS_USER_TOKEN` и `YCLIENTS_COMPANY_ID`. Приложение заказчика предоставляет системного пользователя с минимальными правами только к одному филиалу. Сначала проводится ограниченная приёмка на staging, а рабочий сервер получает реквизиты доступа только после успешной проверки чтения, синтетического цикла записи и всех релизных проверок.
 
-**Tech Stack:** YCLIENTS developer cabinet/API v2, Docker Compose, existing `YclientsConfig`, `YclientsAdapter`, projection scheduler, `yclients-smoke`, server-only `.env`, PostgreSQL projection and safe-log tooling.
+**Технологии:** кабинет разработчика и API v2 YCLIENTS, Docker Compose, существующие `YclientsConfig`, `YclientsAdapter`, scheduler проекции, `yclients-smoke`, серверный `.env`, проекция PostgreSQL и безопасная проверка логов.
 
-## Global Constraints
+## Общие ограничения
 
-- Design source: `docs/superpowers/specs/2026-08-20-customer-owned-yclients-app-design.md`.
-- Текущее приложение разработчика остаётся dev/test; его tokens не копируются в production.
-- Production-приложение принадлежит заказчику, тип `Непубличное`, монетизация `Бесплатное`.
-- Пароль, TOTP, Partner Token, User Token, test phone, raw provider body и ПД запрещены в Git, чатах, документации, screenshots, changelog и command output.
-- Любое изменение в кабинете YCLIENTS выполняется только после action-time подтверждения заказчика/владельца.
-- До отдельного разрешения допустимы только GET/read-only вызовы.
-- Mutation smoke создаёт ровно одну синтетическую запись и не читает, не изменяет и не удаляет чужие записи.
-- Blind retry после неопределённого POST/PUT/DELETE запрещён; такой результат требует ручной проверки.
-- Docker-only; прямой запуск Python на хосте запрещён.
-- Production rollout запрещён до закрытия YCLIENTS, owner TOTP, full Docker, review, staging acceptance и rollback gates.
-- Если onboarding выявит кодовый разрыв, внешний rollout останавливается; исправление выполняется отдельным TDD-планом, а не ad hoc на сервере.
+- Источник решения: `docs/superpowers/specs/2026-08-20-customer-owned-yclients-app-design.md`.
+- Текущее приложение разработчика остаётся в контуре разработки и тестирования; его токены не копируются в рабочий контур.
+- Рабочее приложение принадлежит заказчику, тип `Непубличное`, монетизация `Бесплатное`.
+- Пароль, TOTP, партнёрский токен, пользовательский токен, тестовый телефон, необработанное тело ответа провайдера и персональные данные запрещены в Git, чатах, документации, снимках экрана, журнале изменений и выводе команд.
+- Любое изменение в кабинете YCLIENTS выполняется только после подтверждения заказчика или владельца непосредственно перед действием.
+- До отдельного разрешения допустимы только GET-запросы для чтения.
+- Проверка изменяющих операций создаёт ровно одну синтетическую запись и не читает, не изменяет и не удаляет чужие записи.
+- Слепой повтор после неопределённого результата POST/PUT/DELETE запрещён; такой результат требует ручной проверки.
+- Все действия выполняются только через Docker; прямой запуск Python на хосте запрещён.
+- Рабочая выкладка запрещена до закрытия проверок YCLIENTS, TOTP владельца, полного Docker-теста, ревью, приёмки staging и отката.
+- Если подключение выявит разрыв в коде, внешняя выкладка останавливается; исправление выполняется по отдельному TDD-плану, а не напрямую на сервере.
 
-## Files and systems
+## Файлы и системы
 
-- Read: `project/src/moroz/booking/yclients_http.py` — production config boundary.
-- Read: `project/src/moroz/booking/yclients.py` — availability and protected lifecycle adapter.
-- Read: `project/src/moroz/booking/yclients_records.py` — records-list projection reader.
-- Read: `project/src/moroz/booking/yclients_sandbox_smoke.py` — consented lifecycle smoke.
-- Read: `project/src/moroz/booking/projection.py` — scheduler projection contract.
-- Modify throughout execution: `Дорожная карта.md`, `changelog.md` — status and append-only evidence.
-- External: customer YCLIENTS developer cabinet and one production branch.
-- External secret store: `/opt/moroz-staging/.env`, later the production server-only env.
-- Server rollback artifact: timestamped directory under `/opt/moroz-staging/backups/`; never Git.
-- Runtime source changes: none expected. Any required source change becomes a separate reviewed plan.
+- Читать: `project/src/moroz/booking/yclients_http.py` — граница рабочей конфигурации.
+- Читать: `project/src/moroz/booking/yclients.py` — адаптер доступности и защищённого цикла записи.
+- Читать: `project/src/moroz/booking/yclients_records.py` — получение списка записей для проекции.
+- Читать: `project/src/moroz/booking/yclients_sandbox_smoke.py` — согласованная проверка полного цикла записи.
+- Читать: `project/src/moroz/booking/projection.py` — контракт scheduler проекции.
+- Обновлять по ходу выполнения: `Дорожная карта.md`, `changelog.md` — статус и журнал доказательств.
+- Внешние системы: кабинет разработчика YCLIENTS заказчика и один рабочий филиал.
+- Внешнее хранилище секретов: `/opt/moroz-staging/.env`, позднее — серверный `.env` рабочего контура.
+- Артефакт отката на сервере: каталог с отметкой времени внутри `/opt/moroz-staging/backups/`; никогда не сохраняется в Git.
+- Изменения исполняемого кода не ожидаются. Любое необходимое изменение исходников оформляется отдельным планом и проходит ревью.
 
 ---
 
-### Task 1: Freeze prerequisites and local baseline
+### Задача 1: Зафиксировать исходные условия и локальную базовую проверку
 
-**Consumes:** approved customer-owned app design and current merged Telegram Production V1.
+**Вход:** утверждённая спецификация приложения заказчика и актуальная объединённая версия Telegram Production V1.
 
-**Produces:** verified code baseline, named human participants, safe test inputs and a no-mutation starting point.
+**Результат:** проверенная кодовая база, назначенные участники, безопасные тестовые данные и исходная точка без внешних изменений.
 
-- [ ] **Step 1: Verify repository identity and clean task scope**
+- [ ] **Шаг 1: Проверить состояние репозитория и границы задачи**
 
-Run from repository root:
+Выполнить из корня репозитория:
 
 ```powershell
 git rev-parse HEAD
@@ -53,11 +53,11 @@ git status --short --branch
 git log -3 --oneline
 ```
 
-Expected: exact intended main commit; only approved onboarding progress files may be modified. Do not push.
+Ожидается: выбран точный целевой коммит `main`; изменяться могут только утверждённые файлы прогресса подключения. Push не выполнять.
 
-- [ ] **Step 2: Run the focused Docker baseline**
+- [ ] **Шаг 2: Запустить целевую базовую проверку в Docker**
 
-Run from `project/`:
+Выполнить из каталога `project/`:
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -67,21 +67,21 @@ docker compose --env-file ../.env run --rm test pytest -q `
   tests/unit/test_worker.py
 ```
 
-Expected: exit `0`; no external YCLIENTS call because tests use fake/local transports.
+Ожидается: код завершения `0`; внешних запросов в YCLIENTS нет, потому что тесты используют локальные имитации транспорта.
 
-- [ ] **Step 3: Confirm the customer session inputs without secrets**
+- [ ] **Шаг 3: Подтвердить входные данные совместной сессии без секретов**
 
-Record only these non-secret facts in the roadmap/changelog:
+Записать в дорожную карту и журнал изменений только следующие несекретные сведения:
 
-- customer representative who can manage YCLIENTS users/rights;
-- exact target branch name and numeric `company_id` presence, without client data;
-- one test service and employee selected by the customer;
-- two future test windows where a synthetic booking cannot disrupt operations;
-- explicit owner responsible for the final mutation consent.
+- представитель заказчика, который может управлять пользователями и правами YCLIENTS;
+- точное название целевого филиала и наличие числового `company_id`, без данных клиентов;
+- одна тестовая услуга и один сотрудник, выбранные заказчиком;
+- два будущих временных окна, в которых синтетическая запись не помешает работе;
+- владелец, который непосредственно перед запуском разрешит изменяющую проверку.
 
-Do not record login, phone, tokens or TOTP.
+Не записывать логин, телефон, токены или TOTP.
 
-- [ ] **Step 4: Commit the baseline checkpoint**
+- [ ] **Шаг 4: Зафиксировать исходную точку коммитом**
 
 ```powershell
 git add -- 'Дорожная карта.md' changelog.md
@@ -90,97 +90,97 @@ git commit -m "docs: начать подключение YCLIENTS заказчи
 
 ---
 
-### Task 2: Create the customer-owned private application
+### Задача 2: Создать непубличное приложение под контролем заказчика
 
-**Consumes:** customer session from Task 1.
+**Вход:** совместная сессия, подготовленная в задаче 1.
 
-**Produces:** one free private application controlled by the customer; no credentials leave the approved secret path.
+**Результат:** одно бесплатное непубличное приложение под контролем заказчика; реквизиты доступа не покидают утверждённый защищённый канал.
 
-- [ ] **Step 1: Customer signs in and opens the developer cabinet**
+- [ ] **Шаг 1: Заказчик входит и открывает кабинет разработчика**
 
-The customer performs authentication and TOTP personally. Technical assistance may navigate only after explicit approval; credentials are never typed into chat or stored by the project.
+Заказчик самостоятельно проходит авторизацию и TOTP. Технический специалист может помогать с навигацией только после явного разрешения; реквизиты входа не вводятся в чат и не сохраняются в проекте.
 
-- [ ] **Step 2: Create the production application**
+- [ ] **Шаг 2: Создать рабочее приложение**
 
-Set and save:
+Установить и сохранить:
 
-- application name: `Moroz i Solntse Telegram Bot — Production`;
-- application type: `Непубличное`;
-- monetization type: `Бесплатное`;
-- category: `Онлайн-запись`.
+- название приложения: `Moroz i Solntse Telegram Bot — Production`;
+- тип приложения: `Непубличное`;
+- тип монетизации: `Бесплатное`;
+- категория: `Онлайн-запись`.
 
-Do not configure paid trial, marketplace publication, multi-branch onboarding, iframe registration or user-data transfer.
+Не настраивать платный пробный период, публикацию в маркетплейсе, подключение нескольких филиалов, регистрацию через iframe или передачу данных пользователя.
 
-- [ ] **Step 3: Verify ownership and isolation read-only**
+- [ ] **Шаг 3: Без изменений проверить владение и изоляцию**
 
-Confirm visibly, without copying token values:
+Визуально подтвердить, не копируя значения токенов:
 
-- application appears in the customer-controlled developer cabinet;
-- type is private and monetization is free;
-- application ID and User Token fields exist;
-- current developer-owned dev/test application is unchanged.
+- приложение отображается в кабинете разработчика, который контролирует заказчик;
+- тип приложения — непубличный, монетизация — бесплатная;
+- поля `Application ID` и `User Token` существуют;
+- текущее приложение разработчика для разработки и тестов не изменилось.
 
-- [ ] **Step 4: Record safe evidence**
+- [ ] **Шаг 4: Записать безопасное подтверждение**
 
-Changelog may contain only `customer-owned app created`, private/free booleans and the date. Application IDs, tokens, user names and screenshots are excluded.
+В changelog разрешено записать только факт создания приложения заказчика, признаки «непубличное/бесплатное» и дату. Идентификаторы приложения, токены, имена пользователей и снимки экрана исключаются.
 
 ---
 
-### Task 3: Configure least-privilege access and the booking marker
+### Задача 3: Настроить минимальные права и маркер записи
 
-**Consumes:** private production application from Task 2.
+**Вход:** непубличное рабочее приложение из задачи 2.
 
-**Produces:** system user rights sufficient for current endpoints and one exact `moroz_booking_key` field.
+**Результат:** права системного пользователя, достаточные для используемых API-методов, и одно точное поле `moroz_booking_key`.
 
-- [ ] **Step 1: Select only the approved permission allowlist**
+- [ ] **Шаг 1: Выбрать только утверждённый список прав**
 
-Enable:
+Включить:
 
 - `Журнал записи` → `Неограниченный доступ к истории расписания и записей`, `Перенос записи`;
 - `Форма записи` → `Доступ к данным клиентов`, `Доступ к созданию новых клиентов в записи`, `Просмотр дополнительных полей записи`, `Создавать записи`, `Изменять записи`, `Изменять дополнительные поля записи`, `Изменять комментарий`, `Изменять состав услуг`, `Удалять записи`;
-- `Настройки` → read access to `Услуги` and `Сотрудники`;
+- `Настройки` → доступ на чтение разделов `Услуги` и `Сотрудники`;
 - `Раздел «Обзор»` → `Просматривать список записей`.
 
-Keep client database export, phone-list visibility, finance, payments, loyalty, warehouse, messaging, users and system administration disabled.
+Оставить отключёнными экспорт клиентской базы, просмотр списка телефонов, финансы, платежи, лояльность, склад, сообщения, управление пользователями и системное администрирование.
 
-- [ ] **Step 2: Save permissions only after action-time confirmation**
+- [ ] **Шаг 2: Сохранить права только после непосредственного подтверждения**
 
-Before clicking `Сохранить`, show the final permission summary to the customer. After saving, re-open the page and verify the same selected set.
+Перед нажатием `Сохранить` показать заказчику итоговый набор прав. После сохранения заново открыть страницу и убедиться, что выбран тот же набор.
 
-- [ ] **Step 3: Create the exact additional record field**
+- [ ] **Шаг 3: Создать точное дополнительное поле записи**
 
-In the customer branch create:
+В филиале заказчика создать:
 
-- code: `moroz_booking_key`;
-- type: text;
-- editable by the application system user;
-- hidden from normal customer-facing flows where YCLIENTS allows it.
+- код: `moroz_booking_key`;
+- тип: текст;
+- доступно для изменения системному пользователю приложения;
+- скрыто из обычных клиентских сценариев там, где это позволяет YCLIENTS.
 
-Do not repurpose an existing field with another code or business meaning.
+Не использовать существующее поле с другим кодом или бизнес-смыслом.
 
-- [ ] **Step 4: Stop on any permission mismatch**
+- [ ] **Шаг 4: Остановиться при любом несовпадении прав**
 
-If YCLIENTS uses different labels or refuses a required setting, capture only the label and HTTP/status class, update changelog, and stop. Do not broaden rights speculatively.
+Если YCLIENTS использует другие названия или не позволяет сохранить обязательную настройку, зафиксировать только название и класс HTTP-статуса, обновить журнал изменений и остановиться. Не расширять права без доказанной необходимости.
 
 ---
 
-### Task 4: Transfer secrets to staging with exact rollback
+### Задача 4: Передать секреты на staging с точным откатом
 
-**Consumes:** Partner Token, User Token and `company_id` from the customer-owned app; customer-approved test service/name/phone exist only in the secure execution channel.
+**Вход:** Partner Token, User Token и `company_id` приложения заказчика; согласованные тестовые услуга, имя и телефон существуют только в защищённом канале выполнения.
 
-**Produces:** staging worker bound to customer YCLIENTS plus a restorable prior env snapshot.
+**Результат:** worker на staging, подключённый к YCLIENTS заказчика, и восстанавливаемая резервная копия предыдущего `.env`.
 
-- [ ] **Step 1: Read-only staging preflight**
+- [ ] **Шаг 1: Провести предварительную проверку staging без изменений**
 
-Using the deploy workflow, verify exact `/opt/moroz-staging`, current commit/tag, app image IDs, schema head, health and owner/mode of `/opt/moroz-staging/.env`. Output only safe booleans/counts.
+По процессу деплоя проверить точный каталог `/opt/moroz-staging`, текущий коммит и тег, идентификаторы образов приложения, версию схемы, состояние сервисов, владельца и права файла `/opt/moroz-staging/.env`. Выводить только безопасные признаки и количества.
 
-- [ ] **Step 2: Create a protected env backup**
+- [ ] **Шаг 2: Создать защищённую резервную копию `.env`**
 
-Create one timestamped backup directory inside `/opt/moroz-staging/backups/`, copy only the current `.env`, retain original owner/mode, and record only backup path and SHA-256. Never print file contents.
+Создать один каталог с отметкой времени внутри `/opt/moroz-staging/backups/`, скопировать только текущий `.env`, сохранить владельца и права, записать только путь резервной копии и SHA-256. Содержимое файла не выводить.
 
-- [ ] **Step 3: Replace the exact YCLIENTS keys atomically**
+- [ ] **Шаг 3: Атомарно заменить только точные ключи YCLIENTS**
 
-Through suppressed non-echoing input, replace only:
+Через защищённый ввод без отображения значений заменить только:
 
 ```text
 YCLIENTS_PARTNER_TOKEN
@@ -194,128 +194,127 @@ YCLIENTS_TEST_NAME
 YCLIENTS_TEST_PHONE
 ```
 
-Keep `YCLIENTS_SANDBOX_CONSENT` unset. Verify presence/non-empty state, numeric `company_id`, URL host, timezone and file permissions without values.
+Не задавать `YCLIENTS_SANDBOX_CONSENT`. Без вывода значений проверить наличие и непустое состояние переменных, числовой `company_id`, адрес сервера, часовой пояс и права файла.
 
-- [ ] **Step 4: Recreate only the worker for read-only acceptance**
+- [ ] **Шаг 4: Пересоздать только worker для проверки чтения**
 
-Use the already pinned staging image and canonical Compose project. Recreate `worker`; do not rebuild, migrate, restart stores or start `yclients-smoke`. Verify worker health and fresh safe-log counters.
+Использовать уже закреплённый образ staging и штатный Compose-проект. Пересоздать `worker`; не пересобирать образы, не выполнять миграции, не перезапускать хранилища и не запускать `yclients-smoke`. Проверить состояние worker и свежие безопасные счётчики логов.
 
-- [ ] **Step 5: Prove env rollback before external reads**
+- [ ] **Шаг 5: Подтвердить процедуру отката `.env` до внешних запросов**
 
-Document the exact command sequence that restores the backup `.env`, preserves owner/mode and recreates only worker. Do not execute rollback unless acceptance fails or a rehearsal is explicitly authorized.
+Зафиксировать точную последовательность команд, которая восстанавливает резервный `.env`, сохраняет владельца и права и пересоздаёт только worker. Не выполнять откат, если проверка не провалилась и отдельная репетиция явно не разрешена.
 
 ---
 
-### Task 5: Run the read-only YCLIENTS acceptance gate
+### Задача 5: Провести приёмочную проверку YCLIENTS только для чтения
 
-**Consumes:** staging worker with customer-owned credentials and no mutation consent.
+**Вход:** worker на staging с реквизитами приложения заказчика без разрешения изменяющих операций.
 
-**Produces:** redacted proof of permissions, catalog, records-list, projection and scheduler.
+**Результат:** обезличенное подтверждение прав, каталога, списка записей, проекции и scheduler.
 
-- [ ] **Step 1: Probe authorization and catalog with GET only**
+- [ ] **Шаг 1: Проверить авторизацию и каталог только GET-запросами**
 
-Call only official read endpoints for user permissions, services, staff, bookable dates/times, additional record fields and records-list. Output only HTTP status, counts, true/false permission flags and exact `moroz_booking_key` match count; suppress response bodies, IDs, names, phones and tokens.
+Вызывать только официальные методы чтения прав пользователя, услуг, сотрудников, доступных дат и времени, дополнительных полей записи и списка записей. Выводить только HTTP-статусы, количества, признаки прав `true/false` и число точных совпадений `moroz_booking_key`; скрывать тела ответов, идентификаторы, имена, телефоны и токены.
 
-Expected: every required endpoint returns `200`; `Просматривать список записей` is effective; one exact field exists.
+Ожидается: каждый обязательный API-метод возвращает `200`; право «Просматривать список записей» действует; существует ровно одно нужное поле.
 
-- [ ] **Step 2: Trigger projection through the existing scheduler path**
+- [ ] **Шаг 2: Запустить проекцию через существующий путь scheduler**
 
-Allow the existing worker/scheduler contract to enqueue and execute one projection sync. Do not call a mutation endpoint and do not insert provider fixtures.
+Разрешить существующей связке worker/scheduler поставить в очередь и выполнить одну синхронизацию проекции. Не вызывать изменяющие API-методы и не создавать тестовые данные у провайдера.
 
-- [ ] **Step 3: Verify projection safely**
+- [ ] **Шаг 3: Безопасно проверить проекцию**
 
-Query PostgreSQL for projection row count, latest sync timestamp, terminal scheduler state and safe failure code. Do not output projected client/staff/service values.
+Запросить в PostgreSQL количество строк проекции, время последней синхронизации, конечное состояние scheduler и безопасный код ошибки. Не выводить значения клиентов, сотрудников и услуг из проекции.
 
-Expected: sync terminal-success, freshness advances, scheduler schedules the next ten-minute job, and no secret/PII log counter increases.
+Ожидается: синхронизация завершилась успешно, время актуальности обновилось, scheduler запланировал следующую задачу через десять минут, счётчики утечек секретов и ПД не увеличились.
 
-- [ ] **Step 4: Handle failure fail-closed**
+- [ ] **Шаг 4: При ошибке остановиться безопасно**
 
-For `401/403`, restore the previous env/worker state if the customer binding caused runtime degradation, then fix only the proven missing permission or credential. For malformed/transport/provider errors, keep the gate open and do not proceed to mutation smoke.
+При `401/403` восстановить предыдущее состояние `.env` и worker, если новое подключение ухудшило работу, затем исправить только доказанно отсутствующее право или реквизит. При ошибке формата, транспорта или провайдера оставить проверку незакрытой и не переходить к изменяющим операциям.
 
-- [ ] **Step 5: Commit the read-only evidence**
+- [ ] **Шаг 5: Зафиксировать подтверждение чтения коммитом**
 
-Update roadmap/changelog with statuses/counts only, then commit:
+Обновить дорожную карту и журнал изменений, указав только статусы и количества, затем сделать коммит:
 
 ```powershell
 git add -- 'Дорожная карта.md' changelog.md
-git commit -m "test: подтвердить YCLIENTS заказчика read-only"
+git commit -m "test: подтвердить чтение YCLIENTS заказчика"
 ```
 
 ---
 
-### Task 6: Run one explicitly consented lifecycle smoke
+### Задача 6: Выполнить одну явно разрешённую проверку полного цикла записи
 
-**Consumes:** fully green Task 5, customer-selected service/staff/windows and fresh explicit mutation consent.
+**Вход:** полностью успешная задача 5, выбранные заказчиком услуга, сотрудник и временные окна, а также свежее явное разрешение изменяющих операций.
 
-**Produces:** one create/get/reschedule/get/cancel proof with zero active synthetic matches.
+**Результат:** подтверждённая цепочка create/get/reschedule/get/cancel и отсутствие активных синтетических записей после отмены.
 
-- [ ] **Step 1: Obtain action-time consent**
+- [ ] **Шаг 1: Получить подтверждение непосредственно перед запуском**
 
-Immediately before starting, confirm the exact branch, test service, test identity and that one synthetic record will be created, moved and cancelled. Without this confirmation, stop.
+Непосредственно перед запуском подтвердить точный филиал, тестовую услугу, тестовые данные и то, что одна синтетическая запись будет создана, перенесена и отменена. Без такого подтверждения остановиться.
 
-- [ ] **Step 2: Set mutation consent only for this process**
+- [ ] **Шаг 2: Передать разрешение изменяющих операций только текущему процессу**
 
-Pass `YCLIENTS_SANDBOX_CONSENT=yes` as a process-only override to the one `yclients-smoke` run. Do not persist it in `.env`.
+Передать `YCLIENTS_SANDBOX_CONSENT=yes` только как временную переменную единственного запуска `yclients-smoke`. Не сохранять её в `.env`.
 
-- [ ] **Step 3: Execute the existing Docker smoke once**
+- [ ] **Шаг 3: Один раз выполнить существующую Docker-проверку**
 
-From the exact deployed source/image context run the equivalent canonical command:
+Из контекста точно развёрнутого исходного кода и образа выполнить соответствующую штатную команду:
 
 ```powershell
 docker compose --env-file ../.env --profile yclients-smoke run --rm `
   -e YCLIENTS_SANDBOX_CONSENT=yes yclients-smoke
 ```
 
-Expected safe summary: services read, two future slots, create/get/reschedule/get/cancel confirmed, `matches=1`, `active_matches=0`, `success=true`, `manual_review_required=false`. Raw provider records and identifiers remain suppressed.
+Ожидаемый безопасный итог: услуги прочитаны, найдены два будущих окна, цепочка create/get/reschedule/get/cancel подтверждена, `matches=1`, `active_matches=0`, `success=true`, `manual_review_required=false`. Необработанные записи и идентификаторы провайдера не выводятся.
 
-- [ ] **Step 4: Never auto-repeat an uncertain mutation**
+- [ ] **Шаг 4: Никогда автоматически не повторять неопределённую операцию**
 
-If output reports transport uncertainty, unknown outcome, malformed success or manual review, do not rerun and do not guess a DELETE target. Ask the customer to inspect the narrow agreed time window and resolve the synthetic record manually.
+Если результат сообщает о неопределённости транспорта, неизвестном исходе, некорректном успешном ответе или необходимости ручной проверки, не запускать проверку повторно и не угадывать цель DELETE. Попросить заказчика проверить узкое согласованное временное окно и вручную обработать синтетическую запись.
 
-- [ ] **Step 5: Verify no active synthetic remnant**
+- [ ] **Шаг 5: Проверить отсутствие активного синтетического остатка**
 
-Perform only exact `moroz_booking_key` read-only reconciliation from the smoke. Expected: one historical match and zero active matches.
+Выполнить только точную сверку по `moroz_booking_key` для чтения. Ожидается одно историческое совпадение и ноль активных совпадений.
 
-- [ ] **Step 6: Record and commit safe evidence**
+- [ ] **Шаг 6: Записать и закоммитить безопасное подтверждение**
 
 ```powershell
 git add -- 'Дорожная карта.md' changelog.md
-git commit -m "test: подтвердить lifecycle YCLIENTS заказчика"
+git commit -m "test: подтвердить цикл записи YCLIENTS заказчика"
 ```
 
 ---
 
-### Task 7: Final release gate and production handoff
+### Задача 7: Финальная релизная проверка и передача в рабочий контур
 
-**Consumes:** Tasks 1–6 green, owner/admin TOTP login proven, remaining non-YCLIENTS release tasks complete.
+**Вход:** задачи 1–6 успешно завершены, вход владельца и администратора с TOTP подтверждён, остальные независимые от YCLIENTS релизные задачи закрыты.
 
-**Produces:** reviewed production candidate with restorable credentials and customer offboarding control.
+**Результат:** проверенный кандидат в рабочий контур с восстанавливаемыми реквизитами и возможностью заказчика самостоятельно отключить интеграцию.
 
-- [ ] **Step 1: Run the fresh full Docker release suite**
+- [ ] **Шаг 1: Запустить свежий полный релизный набор Docker-тестов**
 
-Use the canonical test-profile with documented read-only mounts. Expected: all tests pass, compile/config gates exit `0`, `git diff --check` clean.
+Использовать штатный тестовый профиль с документированными подключениями файлов только для чтения. Ожидается: все тесты проходят, проверки компиляции и конфигурации завершаются кодом `0`, `git diff --check` не находит ошибок.
 
-- [ ] **Step 2: Request independent review**
+- [ ] **Шаг 2: Провести независимое ревью**
 
-Review exact diff and operational evidence for Critical/Important issues, secret/PII disclosure, permission creep, blind mutation retry and rollback gaps. Fix any finding before continuing.
+Проверить точный diff и эксплуатационные доказательства на критические и важные ошибки, раскрытие секретов или ПД, избыточные права, слепые повторы изменяющих операций и разрывы отката. Исправить каждое замечание до продолжения.
 
-- [ ] **Step 3: Rehearse staging app/env rollback**
+- [ ] **Шаг 3: Отрепетировать откат приложения и `.env` на staging**
 
-Run candidate → previous → candidate for application images and separately prove the protected env restore procedure without DB downgrade. Final state must be the reviewed candidate with customer-owned credentials and all services healthy.
+Выполнить цикл «кандидат → предыдущая версия → кандидат» для образов приложения и отдельно подтвердить защищённое восстановление `.env` без отката схемы БД. Финальное состояние — проверенный кандидат с реквизитами приложения заказчика и исправными сервисами.
 
-- [ ] **Step 4: Copy credentials to production through the secure channel**
+- [ ] **Шаг 4: Передать реквизиты в рабочий контур через защищённый канал**
 
-Create the production server-only backup first, replace only the approved YCLIENTS keys, verify presence/mode without values, and deploy the exact reviewed immutable image/tag. No production smoke may create another synthetic booking.
+Сначала создать серверную резервную копию рабочего `.env`, заменить только утверждённые ключи YCLIENTS, проверить наличие и права без вывода значений и развернуть точный проверенный неизменяемый образ и тег. Проверка рабочего контура не должна создавать ещё одну синтетическую запись.
 
-- [ ] **Step 5: Run production read-only smoke**
+- [ ] **Шаг 5: Провести проверку рабочего контура только для чтения**
 
-Verify health, HTTPS/webhook, permissions, projection freshness, scheduler terminal state and safe logs. Do not repeat lifecycle mutations in production.
+Проверить состояние сервисов, HTTPS/webhook, права, актуальность проекции, финальный статус scheduler и безопасные логи. Не повторять изменяющие операции полного цикла в рабочем контуре.
 
-- [ ] **Step 6: Document rotation and offboarding**
+- [ ] **Шаг 6: Описать ротацию и отключение интеграции**
 
-The customer can revoke the production app. Technical handoff records how to rotate both tokens, restore prior server env, disable YCLIENTS operations and keep FAQ/admin handoff working. No secret values enter the handoff document.
+Заказчик может отозвать рабочее приложение. В технической передаче описывается, как заменить оба токена, восстановить предыдущий серверный `.env`, отключить операции YCLIENTS и сохранить работу FAQ и передачи администратору. Значения секретов в документ не включаются.
 
-- [ ] **Step 7: Mark release complete only after every gate is evidenced**
+- [ ] **Шаг 7: Отметить релиз завершённым только после подтверждения всех проверок**
 
-Update `Дорожная карта.md`, `changelog.md` and the final launch checklist. Merge/push/deploy actions require their normal authorization and must reference the exact commit/tag.
-
+Обновить `Дорожная карта.md`, `changelog.md` и финальный чек-лист запуска. Для merge, push и deploy требуется обычное разрешение; каждое действие должно ссылаться на точный коммит и тег.
