@@ -17,6 +17,9 @@ def test_roadmap_is_the_only_current_status_source() -> None:
     assert "## Что нужно от владельца" in roadmap
     assert "## Дальше: Now / Next / Later" in roadmap
     assert "Текущая ступень" not in agents
+    assert "Step 1 prototype" not in agents
+    assert "← ты здесь" not in agents
+    assert "ежедневный runtime-запуск не автоматизирован" not in agents
     assert "единственный источник текущего статуса" in agents
 
 
