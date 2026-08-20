@@ -438,6 +438,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
             "notification_feedback_requests",
             "scheduler_jobs",
             "yclients_booking_projection",
+            "yclients_projection_suppressions",
             "yclients_service_catalog",
         }
 
@@ -460,7 +461,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0011_yclients_service_catalog"
+            "0012_projection_suppression"
         )
     finally:
         await conn.close()
@@ -599,7 +600,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0011_yclients_service_catalog"
+        assert current_revision == "0012_projection_suppression"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -762,7 +763,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0011_yclients_service_catalog"
+        assert current_revision == "0012_projection_suppression"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -859,7 +860,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0011_yclients_service_catalog"
+        assert current_revision == "0012_projection_suppression"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
@@ -932,7 +933,7 @@ async def test_yclients_booking_projection_migration_creates_bounded_schema(
     finally:
         await conn.close()
 
-    assert current_revision == "0011_yclients_service_catalog"
+    assert current_revision == "0012_projection_suppression"
     assert columns == [
         "external_id",
         "booking_key",
@@ -1189,7 +1190,7 @@ async def test_yclients_service_catalog_migration_creates_only_bounded_columns(
     finally:
         await conn.close()
 
-    assert current_revision == "0011_yclients_service_catalog"
+    assert current_revision == "0012_projection_suppression"
     assert columns == [
         "service_id",
         "staff_id",
@@ -1208,3 +1209,47 @@ async def test_yclients_service_catalog_migration_creates_only_bounded_columns(
     assert "price_max" in constraints["ck_yclients_catalog_price"]
     assert "duration_minutes" in constraints["ck_yclients_catalog_duration"]
     assert not {"description", "raw", "payload", "phone", "email"} & set(columns)
+
+
+async def test_yclients_projection_suppression_migration_is_metadata_only(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        current_revision = await conn.fetchval(
+            "SELECT version_num FROM alembic_version"
+        )
+        columns = [
+            (
+                row["column_name"],
+                row["data_type"],
+                row["is_nullable"],
+                row["column_default"],
+            )
+            for row in await conn.fetch(
+                """
+                SELECT column_name, data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_name = 'yclients_projection_suppressions'
+                ORDER BY ordinal_position
+                """
+            )
+        ]
+        primary_key = await conn.fetchval(
+            """
+            SELECT pg_get_constraintdef(oid, true)
+            FROM pg_constraint
+            WHERE conrelid = 'yclients_projection_suppressions'::regclass
+              AND contype = 'p'
+            """
+        )
+    finally:
+        await conn.close()
+
+    assert current_revision == "0012_projection_suppression"
+    assert columns == [
+        ("external_id", "text", "NO", None),
+        ("created_at", "timestamp with time zone", "NO", "now()"),
+    ]
+    assert primary_key == "PRIMARY KEY (external_id)"
