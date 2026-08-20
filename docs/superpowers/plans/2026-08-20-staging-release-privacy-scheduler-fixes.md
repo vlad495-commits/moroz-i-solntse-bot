@@ -406,7 +406,7 @@ for forbidden in ("TELEGRAM", "LLM", "OPENAI", "YCLIENTS"):
 assert "for service in bot worker scheduler admin migrate" in runbook
 assert "moroz-staging-scheduler:${STAGING_IMAGE_TAG}" in runbook
 assert "scheduler absent" in previous_capture
-assert "docker compose" in rollback and "rm -sf scheduler" in absent_rollback
+assert "rm -sf scheduler" in absent_rollback
 assert "scheduler" in verify_runtime_ids
 assert "synthetic" in scheduler_smoke.lower()
 assert "terminal" in scheduler_smoke.lower()

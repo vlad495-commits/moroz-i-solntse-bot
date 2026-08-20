@@ -38,7 +38,7 @@ services:
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET}
 
   scheduler:
-    profiles: ["disabled-in-staging"]
+    image: "moroz-staging-scheduler:${STAGING_IMAGE_TAG:?set STAGING_IMAGE_TAG}"
 
   staging-webhook:
     profiles: ["staging-tools"]

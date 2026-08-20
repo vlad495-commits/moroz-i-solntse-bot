@@ -36,7 +36,10 @@ from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
 from moroz.notifications.feedback import FeedbackService
-from moroz.notifications.handlers import handle_scheduler_job
+from moroz.notifications.handlers import (
+    STAGING_SCHEDULER_SMOKE_KIND,
+    handle_scheduler_job,
+)
 from moroz.notifications.lifecycle import LifecycleService
 from moroz.notifications.ports import LocalBookingPort, NotificationOutbox
 from moroz.notifications.repository import SchedulerJobRepository
@@ -185,6 +188,7 @@ class MessageTaskHandler:
             PROJECTION_SYNC_KIND,
             CATALOG_SYNC_KIND,
             RETENTION_CLEANUP_KIND,
+            STAGING_SCHEDULER_SMOKE_KIND,
         }:
             async with self._system_scheduler_lock:
                 job = await self._scheduler_repository.get_claimed(job_id)

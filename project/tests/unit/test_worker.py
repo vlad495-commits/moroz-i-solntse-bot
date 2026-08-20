@@ -307,6 +307,48 @@ async def test_projection_scheduler_job_needs_only_repository_and_coordinator():
 
 
 @pytest.mark.asyncio
+async def test_staging_scheduler_smoke_is_terminal_without_dependencies():
+    job_id = uuid4()
+    completed = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, requested):
+            assert requested == job_id
+            return SchedulerJob(
+                id=job_id,
+                kind="staging_scheduler_smoke",
+                run_at=None,
+                payload={},
+                idempotency_key=f"staging_scheduler_smoke:{job_id}",
+                attempts=0,
+                booking_key=None,
+                booking_starts_at=None,
+            )
+
+        async def complete(self, job, result):
+            completed.append((job.id, result))
+
+    handler = worker_main.MessageTaskHandler(
+        object(),
+        object(),
+        object(),
+        scheduler_repository=SchedulerRepository(),
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="scheduler_job",
+            payload={"job_id": str(job_id)},
+            idempotency_key=f"scheduler_job:{job_id}",
+        )
+    )
+
+    assert completed == [
+        (job_id, JobResult.skipped("staging_scheduler_smoke"))
+    ]
+
+
+@pytest.mark.asyncio
 async def test_retention_scheduler_job_needs_only_repository_and_coordinator():
     job_id = uuid4()
     completed = []

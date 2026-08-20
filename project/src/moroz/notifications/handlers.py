@@ -12,6 +12,7 @@ REMINDER_KINDS = {
     "morning_hour_before",
 }
 LIFECYCLE_KINDS = {"no_show_check", "visit_outcome_check"}
+STAGING_SCHEDULER_SMOKE_KIND = "staging_scheduler_smoke"
 
 
 async def handle_scheduler_job(
@@ -24,6 +25,8 @@ async def handle_scheduler_job(
     catalog_sync=None,
     retention_cleanup=None,
 ) -> JobResult:
+    if job.kind == STAGING_SCHEDULER_SMOKE_KIND:
+        return JobResult.skipped(STAGING_SCHEDULER_SMOKE_KIND)
     if job.kind == RETENTION_CLEANUP_KIND:
         if retention_cleanup is None:
             raise RuntimeError("retention cleanup is not configured")
