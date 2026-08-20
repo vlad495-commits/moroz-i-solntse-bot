@@ -9,7 +9,8 @@ import pytest
 import redis.asyncio as redis
 
 from customer_data_deletion import CustomerDataDeletionError, delete_customer_data
-from bookings_database import list_bookings
+from moroz.booking.projection import ProjectionRepository
+from moroz.booking.yclients_records import ProjectionRecord, ProjectionSnapshot
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.repository import MessageRepository
@@ -124,14 +125,6 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
             """,
             booking_key,
         )
-        projection_before = await conn.fetchrow(
-            """
-            SELECT external_id, booking_key, bot_marker_state, starts_at,
-                   scheduled_end_at, status, deleted, client_name, staff_name,
-                   service_names, synced_at
-            FROM yclients_booking_projection WHERE external_id = '401'
-            """
-        )
         await conn.execute(
             """
             CREATE FUNCTION reject_deletion_provider_mutation() RETURNS trigger
@@ -229,26 +222,61 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
         assert await conn.fetchval("SELECT count(*) FROM messages WHERE chat_id = 84") == 1
         assert await conn.fetchval("SELECT count(*) FROM processing_consents WHERE user_id = '8'") == 1
 
-        projection_after = await conn.fetchrow(
-            """
-            SELECT external_id, booking_key, bot_marker_state, starts_at,
-                   scheduled_end_at, status, deleted, client_name, staff_name,
-                   service_names, synced_at
-            FROM yclients_booking_projection WHERE external_id = '401'
-            """
+        assert await conn.fetchval(
+            "SELECT count(*) FROM yclients_booking_projection "
+            "WHERE external_id = '401'"
+        ) == 0
+        stored_suppression = json.loads(
+            await conn.fetchval(
+                "SELECT to_jsonb(s)::text "
+                "FROM yclients_projection_suppressions AS s "
+                "WHERE external_id = '401'"
+            )
         )
-        assert projection_after == projection_before
-        provider_page = await list_bookings(
-            pool,
-            view="attention",
-            status=None,
-            cursor=None,
-            now=datetime.now(UTC),
+        assert set(stored_suppression) == {"external_id", "created_at"}
+        assert stored_suppression["external_id"] == "401"
+
+        starts_at = datetime.now(UTC)
+        replacement = ProjectionSnapshot(
+            records=(
+                ProjectionRecord(
+                    external_id="401",
+                    booking_key=booking_key,
+                    bot_marker_state="valid",
+                    starts_at=starts_at,
+                    scheduled_end_at=None,
+                    status="confirmed",
+                    deleted=False,
+                    client_name="Удалённый клиент",
+                    staff_name="Мастер",
+                    service_names=("Услуга",),
+                ),
+                ProjectionRecord(
+                    external_id="402",
+                    booking_key=uuid4(),
+                    bot_marker_state="valid",
+                    starts_at=starts_at,
+                    scheduled_end_at=None,
+                    status="confirmed",
+                    deleted=False,
+                    client_name="Контроль",
+                    staff_name="Мастер",
+                    service_names=("Услуга",),
+                ),
+            ),
+            synced_at=starts_at,
         )
-        provider_row = provider_page["items"][0]
-        assert provider_row["reconciliation_state"] == "local_missing"
-        assert provider_row["detail_id"] is None
-        assert provider_row["customer_chat_id"] is None
+        projection = ProjectionRepository(pool)
+        async with projection.serialized() as projection_conn:
+            assert projection_conn is not None
+            await projection.replace(projection_conn, replacement)
+        assert [
+            row["external_id"]
+            for row in await conn.fetch(
+                "SELECT external_id FROM yclients_booking_projection "
+                "ORDER BY external_id"
+            )
+        ] == ["402"]
 
         assert await cache.get("chat:42:messages") is None
         assert await cache.get("buffer:42") is None
@@ -268,6 +296,99 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
         assert payload["channel"] == "telegram"
         assert "chat_id" not in payload
         assert "user_id" not in payload
+    finally:
+        await cache.flushdb()
+        await cache.aclose()
+        await pool.close()
+        await conn.close()
+
+
+@pytest.mark.parametrize("failure_target", ["suppression", "projection"])
+async def test_projection_privacy_failure_rolls_back_customer_deletion(
+    migrated_database_url,
+    failure_target,
+):
+    conn = await asyncpg.connect(migrated_database_url)
+    pool = Database(migrated_database_url, min_size=1, max_size=2)
+    await pool.connect()
+    cache = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    await cache.flushdb()
+    scenario_id = uuid4()
+    booking_key = uuid4()
+    try:
+        await conn.execute(
+            """
+            INSERT INTO booking_scenarios
+                (id, kind, phase, idempotency_key, customer_id, state)
+            VALUES ($1, 'create', 'confirmed', $2, '42', '{}')
+            """,
+            scenario_id,
+            f"privacy-rollback:{scenario_id}",
+        )
+        await conn.execute(
+            """
+            INSERT INTO bookings
+                (id, last_scenario_id, external_id, customer_id, slot_id,
+                 starts_at, status, snapshot, booking_key)
+            VALUES ($1, $2, 'privacy-rollback', '42', 'slot', now(),
+                    'confirmed', '{}', $3)
+            """,
+            uuid4(),
+            scenario_id,
+            booking_key,
+        )
+        await conn.execute(
+            """
+            INSERT INTO yclients_booking_projection
+                (external_id, booking_key, bot_marker_state, starts_at,
+                 status, deleted, service_names, synced_at)
+            VALUES ('privacy-rollback', $1, 'valid', now(),
+                    'confirmed', false, ARRAY[]::text[], now())
+            """,
+            booking_key,
+        )
+        table, action = (
+            ("yclients_projection_suppressions", "INSERT")
+            if failure_target == "suppression"
+            else ("yclients_booking_projection", "DELETE")
+        )
+        await conn.execute(
+            f"""
+            CREATE FUNCTION reject_projection_privacy_change() RETURNS trigger
+            LANGUAGE plpgsql AS $$
+            BEGIN
+                RAISE EXCEPTION 'forced privacy failure';
+            END;
+            $$;
+            CREATE TRIGGER reject_projection_privacy_change
+            BEFORE {action} ON {table}
+            FOR EACH ROW EXECUTE FUNCTION reject_projection_privacy_change();
+            """
+        )
+
+        with pytest.raises(
+            CustomerDataDeletionError,
+            match="^customer data deletion failed$",
+        ):
+            await delete_customer_data(
+                pool=pool,
+                redis_client=cache,
+                chat_id=42,
+                actor_id=1,
+                ip_address=None,
+                user_agent=None,
+            )
+
+        assert await conn.fetchval(
+            "SELECT count(*) FROM bookings WHERE customer_id='42'"
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM yclients_booking_projection "
+            "WHERE external_id='privacy-rollback'"
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM yclients_projection_suppressions"
+        ) == 0
     finally:
         await cache.flushdb()
         await cache.aclose()

@@ -158,6 +158,14 @@ async def _delete_customer_data(
                         chat,
                     )
                 ]
+                external_ids = [
+                    row["external_id"]
+                    for row in await conn.fetch(
+                        "SELECT DISTINCT external_id FROM bookings "
+                        "WHERE customer_id = $1 AND external_id IS NOT NULL",
+                        chat,
+                    )
+                ]
                 outbound_ids = [
                     str(row["id"])
                     for row in await conn.fetch(
@@ -176,6 +184,39 @@ async def _delete_customer_data(
                 await _clear_redis(redis_client, chat, user_ids)
 
                 counts: dict[str, int] = {}
+                if external_ids:
+                    inserted = await conn.fetch(
+                        """
+                        INSERT INTO yclients_projection_suppressions (external_id)
+                        SELECT unnest($1::text[])
+                        ON CONFLICT (external_id) DO NOTHING
+                        RETURNING external_id
+                        """,
+                        external_ids,
+                    )
+                    counts["yclients_projection_suppressions"] = len(inserted)
+                    await _delete(
+                        conn,
+                        counts,
+                        "yclients_booking_projection",
+                        "DELETE FROM yclients_booking_projection "
+                        "WHERE external_id = ANY($1::text[])",
+                        external_ids,
+                    )
+                    suppression_count = await conn.fetchval(
+                        "SELECT count(*) FROM yclients_projection_suppressions "
+                        "WHERE external_id = ANY($1::text[])",
+                        external_ids,
+                    )
+                    projection_count = await conn.fetchval(
+                        "SELECT count(*) FROM yclients_booking_projection "
+                        "WHERE external_id = ANY($1::text[])",
+                        external_ids,
+                    )
+                    if suppression_count != len(external_ids) or projection_count:
+                        raise CustomerDataDeletionError(
+                            "customer data deletion failed"
+                        )
                 await _delete(
                     conn,
                     counts,

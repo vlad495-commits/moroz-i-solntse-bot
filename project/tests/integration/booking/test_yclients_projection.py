@@ -122,6 +122,48 @@ async def test_replace_is_atomic_and_persists_only_allowlisted_projection(databa
     assert RAW_JSON not in stored
 
 
+async def test_replace_omits_suppressed_record_and_keeps_unrelated(database):
+    repository = ProjectionRepository(database)
+    blocked = snapshot(suffix="blocked").records[0]
+    allowed = snapshot(suffix="allowed", offset=1).records[0]
+    replacement = ProjectionSnapshot(
+        records=(blocked, allowed),
+        synced_at=NOW,
+    )
+    async with database.acquire() as connection:
+        await connection.execute(
+            "INSERT INTO yclients_projection_suppressions (external_id) "
+            "VALUES ($1)",
+            blocked.external_id,
+        )
+
+    async with repository.serialized() as connection:
+        assert connection is not None
+        await repository.replace(connection, replacement)
+
+    rows = await projection_rows(database)
+    assert [row[0] for row in rows] == [allowed.external_id]
+
+
+async def test_replace_fails_closed_when_suppression_lookup_fails(database):
+    repository = ProjectionRepository(database)
+    original = snapshot(suffix="original")
+    replacement = snapshot(suffix="replacement", offset=1)
+    async with repository.serialized() as connection:
+        assert connection is not None
+        await repository.replace(connection, original)
+    expected = await projection_rows(database)
+    async with database.acquire() as connection:
+        await connection.execute("DROP TABLE yclients_projection_suppressions")
+
+    with pytest.raises(YclientsProjectionError, match="^yclients_projection_write$"):
+        async with repository.serialized() as connection:
+            assert connection is not None
+            await repository.replace(connection, replacement)
+
+    assert await projection_rows(database) == expected
+
+
 async def test_serialized_uses_a_session_advisory_lock(database):
     first = ProjectionRepository(database)
     second = ProjectionRepository(database)

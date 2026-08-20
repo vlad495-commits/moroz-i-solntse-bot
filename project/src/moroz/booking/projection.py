@@ -62,6 +62,16 @@ class ProjectionRepository:
         ]
         try:
             async with connection.transaction():
+                suppressed_ids = {
+                    row["external_id"]
+                    for row in await connection.fetch(
+                        "SELECT external_id "
+                        "FROM yclients_projection_suppressions "
+                        "WHERE external_id = ANY($1::text[])",
+                        [row[0] for row in rows],
+                    )
+                }
+                rows = [row for row in rows if row[0] not in suppressed_ids]
                 await connection.execute("DELETE FROM yclients_booking_projection")
                 if rows:
                     await connection.executemany(
