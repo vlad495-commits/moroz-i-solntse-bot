@@ -43,19 +43,22 @@ async def deliver_claimed_outbound(
     context_cache=None,
 ) -> DeliveryResult:
     try:
-        send_arguments = {
-            "chat_id": int(outbound.chat_id),
-            "text": outbound.text,
-        }
-        reply_markup = outbound.delivery_options.get("reply_markup")
-        if reply_markup is not None:
-            send_arguments["reply_markup"] = (
-                InlineKeyboardMarkup.model_validate(reply_markup)
-            )
-        parse_mode = outbound.delivery_options.get("parse_mode")
-        if parse_mode is not None:
-            send_arguments["parse_mode"] = str(parse_mode)
-        sent_message = await telegram.send_message(**send_arguments)
+        async with repository.fence_claimed_outbound(outbound) as current:
+            if current is None:
+                return DeliveryResult.SKIPPED
+            send_arguments = {
+                "chat_id": int(current.chat_id),
+                "text": current.text,
+            }
+            reply_markup = current.delivery_options.get("reply_markup")
+            if reply_markup is not None:
+                send_arguments["reply_markup"] = (
+                    InlineKeyboardMarkup.model_validate(reply_markup)
+                )
+            parse_mode = current.delivery_options.get("parse_mode")
+            if parse_mode is not None:
+                send_arguments["parse_mode"] = str(parse_mode)
+            sent_message = await telegram.send_message(**send_arguments)
     except asyncio.CancelledError:
         await repository.mark_outbound_delivery_unknown(outbound.id)
         logger.error(

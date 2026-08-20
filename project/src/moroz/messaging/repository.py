@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 from moroz.common.db import Database
@@ -17,6 +18,20 @@ from moroz.privacy import customer_lock_subject
 
 class OutboundDeliveryBlocked(Exception):
     """An earlier delivery for the same chat is still non-terminal."""
+
+
+def _outbound_from_row(row) -> OutboundMessage:
+    options = row["delivery_options"]
+    return OutboundMessage(
+        id=row["id"],
+        channel=row["channel"],
+        chat_id=row["chat_id"],
+        text=row["text"],
+        delivery_options=(
+            json.loads(options) if isinstance(options, str) else options
+        ),
+        idempotency_key=row["idempotency_key"],
+    )
 
 
 class MessageRepository:
@@ -210,17 +225,29 @@ class MessageRepository:
                         raise OutboundDeliveryBlocked
         if row is None:
             return None
-        options = row["delivery_options"]
-        return OutboundMessage(
-            id=row["id"],
-            channel=row["channel"],
-            chat_id=row["chat_id"],
-            text=row["text"],
-            delivery_options=(
-                json.loads(options) if isinstance(options, str) else options
-            ),
-            idempotency_key=row["idempotency_key"],
-        )
+        return _outbound_from_row(row)
+
+    @asynccontextmanager
+    async def fence_claimed_outbound(self, outbound: OutboundMessage):
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(outbound.chat_id),
+                )
+                row = await connection.fetchrow(
+                    """
+                    SELECT id, channel, chat_id, text, delivery_options,
+                           idempotency_key
+                    FROM outbound_messages
+                    WHERE id = $1 AND channel = $2 AND chat_id = $3
+                      AND status = 'sending'
+                    """,
+                    outbound.id,
+                    outbound.channel,
+                    outbound.chat_id,
+                )
+                yield None if row is None else _outbound_from_row(row)
 
     async def mark_outbound_sent(
         self,

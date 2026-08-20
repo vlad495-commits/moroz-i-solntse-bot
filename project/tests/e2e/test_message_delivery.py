@@ -16,6 +16,7 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
 )
 
+from customer_data_deletion import delete_customer_data
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask
 from moroz.escalation.service import admin_reply_key
@@ -26,7 +27,11 @@ from moroz.messaging.repository import (
     MessageRepository,
     OutboundDeliveryBlocked,
 )
-from moroz.messaging.telegram import DeliveryResult, TelegramSender
+from moroz.messaging.telegram import (
+    DeliveryResult,
+    TelegramSender,
+    deliver_claimed_outbound,
+)
 from moroz.security.consent import ConsentService, PROCESSING_CONSENT_VERSION
 from webhook import create_app
 from worker.main import (
@@ -153,6 +158,93 @@ async def test_worker_does_not_send_sent_outbound_twice(database):
         assert await connection.fetchval(
             "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
         ) == "sent"
+
+
+async def test_claimed_outbound_deleted_before_fence_is_not_sent(
+    database,
+    redis_client,
+):
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Удалённый ответ",
+        idempotency_key="reply:deleted-before-fence",
+    )
+    claimed = await repository.claim_outbound_delivery(outbound_id)
+    assert claimed is not None
+    deletion = await delete_customer_data(
+        pool=database,
+        redis_client=redis_client,
+        chat_id=42,
+        actor_id=1,
+        ip_address=None,
+        user_agent=None,
+    )
+    telegram = FakeTelegram()
+
+    assert deletion.status == "deleted"
+    assert await deliver_claimed_outbound(
+        telegram,
+        repository,
+        claimed,
+    ) == DeliveryResult.SKIPPED
+    assert telegram.sent_messages == []
+
+
+async def test_send_holds_customer_lock_until_provider_call_finishes(
+    database,
+    redis_client,
+):
+    class BlockingTelegram(FakeTelegram):
+        def __init__(self):
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def send_message(self, **kwargs):
+            self.sent_messages.append(kwargs)
+            self.entered.set()
+            await self.release.wait()
+            return SimpleNamespace(message_id=701)
+
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Успевший ответ",
+        idempotency_key="reply:send-before-deletion",
+    )
+    claimed = await repository.claim_outbound_delivery(outbound_id)
+    assert claimed is not None
+    telegram = BlockingTelegram()
+    send_task = asyncio.create_task(
+        deliver_claimed_outbound(telegram, repository, claimed)
+    )
+    await asyncio.wait_for(telegram.entered.wait(), timeout=3)
+    deletion_task = asyncio.create_task(
+        delete_customer_data(
+            pool=database,
+            redis_client=redis_client,
+            chat_id=42,
+            actor_id=1,
+            ip_address=None,
+            user_agent=None,
+        )
+    )
+    try:
+        await asyncio.sleep(0.1)
+        assert deletion_task.done() is False
+        telegram.release.set()
+        assert await asyncio.wait_for(send_task, timeout=3) == DeliveryResult.SENT
+        assert (await asyncio.wait_for(deletion_task, timeout=3)).status == "deleted"
+    finally:
+        telegram.release.set()
+        for task in (send_task, deletion_task):
+            if not task.done():
+                task.cancel()
+
+    assert telegram.sent_messages == [{"chat_id": 42, "text": "Успевший ответ"}]
 
 
 async def test_network_send_result_is_terminal_and_safe(
