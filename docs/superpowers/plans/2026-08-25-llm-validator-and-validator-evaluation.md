@@ -582,15 +582,15 @@ git commit -m "feat: добавить Validator Evaluation в админку"
 - Consumes: completed Tasks 1–5.
 - Produces: verified local implementation, independent review evidence, explicit external acceptance blocker.
 
-- [ ] **Step 1: Run focused Docker gate**
+- [x] **Step 1: Run focused Docker gate**
 
 Run the exact validator/runtime/admin/migration test files plus touched Router/Input Security regressions. Expected: zero failed/error tests.
 
-- [ ] **Step 2: Verify migration and packaging**
+- [x] **Step 2: Verify migration and packaging**
 
 Run fresh `test` and `migrate` images, `migrate upgrade head`, `migrate current`, `alembic heads`, dataset checksum tests and `docker compose --env-file ../.env config --quiet`. Expected: one head `0016_llm_validator`.
 
-- [ ] **Step 3: Run compile and full Docker suite**
+- [x] **Step 3: Run compile and full Docker suite**
 
 Run only through Docker, preserving the repository's required read-only architecture mounts used by the last green `1460`-test gate:
 
@@ -607,19 +607,21 @@ docker compose --env-file ../.env config --quiet
 
 Expected: all tests pass, compile/config exit `0`.
 
-- [ ] **Step 4: Run privacy and diff checks**
+- [x] **Step 4: Run privacy and diff checks**
 
 Run `git diff --check`, dataset secret-pattern search and assertions that validator results/logs contain only allowlisted structured fields/error types. Expected: no violations.
 
-- [ ] **Step 5: Request independent code review**
+- [x] **Step 5: Request independent code review**
 
 Invoke `requesting-code-review`; review the complete change against the design/spec, fix every confirmed Critical/Important issue test-first, and rerun affected + full Docker gates. Record exact findings/evidence.
 
-- [ ] **Step 6: Update plan, roadmap and changelog truthfully**
+По прямому решению владельца работать самостоятельно и без subagents выполнен whole-branch self-review по тому же reviewer template. Найденные `2 Important / 1 Minor` закрыты test-first; повторный review — `0 Critical / 0 Important / 0 Minor`.
+
+- [x] **Step 6: Update plan, roadmap and changelog truthfully**
 
 Record implemented components, exact pass counts, migration head, review findings and remaining blocker. Keep the roadmap item unchecked until runtime + web suite + explicitly authorized real-provider 60-case acceptance all pass.
 
-- [ ] **Step 7: Commit local verified implementation docs**
+- [x] **Step 7: Commit local verified implementation docs**
 
 ```powershell
 git add docs/superpowers/plans/2026-08-25-llm-validator-and-validator-evaluation.md \
@@ -627,7 +629,7 @@ git add docs/superpowers/plans/2026-08-25-llm-validator-and-validator-evaluation
 git commit -m "docs: зафиксировать проверку LLM Validator"
 ```
 
-- [ ] **Step 8: Stop before paid real-provider acceptance**
+- [x] **Step 8: Stop before paid real-provider acceptance**
 
 Report the exact local gate and ask separate permission to run one complete 60-case Validator Evaluation against configured `gpt-4.1-mini`. Do not call Telegram, YCLIENTS, staging, production, deploy, push or external provider before that permission.
 
