@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
+import logging
 
 from moroz.messaging.router import (
     RouteDecision,
@@ -29,6 +30,9 @@ from moroz.security.validator import (
     merge_structured_facts,
     validate_output,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 INPUT_BLOCK_REPLY = (
@@ -272,7 +276,7 @@ class SecurityPipeline:
         validator_code: str | None = None
         initial_validator_code: str | None = None
 
-        for _ in range(2):
+        for attempt in range(1, 3):
             messages = base_messages
             if validator_code is not None:
                 messages = (
@@ -311,6 +315,17 @@ class SecurityPipeline:
                 )
                 if semantic.usage:
                     accumulated.append(_usage_only(semantic.usage))
+                latest_usage = semantic.usage[-1] if semantic.usage else None
+                logger.info(
+                    "output_validator_decision attempt=%s action=%s source=%s "
+                    "reason_code=%s model=%s total_tokens=%s",
+                    attempt,
+                    semantic.decision.action,
+                    semantic.decision.source,
+                    semantic.decision.reason_code,
+                    latest_usage.model if latest_usage else "none",
+                    sum(item.total_tokens for item in semantic.usage),
+                )
                 if semantic.decision.action == "allow":
                     try:
                         restored = session.restore_validated(

@@ -234,7 +234,7 @@ async def get_run_results(run_id: int) -> list[dict[str, Any]]:
                       result.verdict, result.check_layer, result.score,
                       result.judge_reasoning, result.duration_ms,
                       result.error_message, result.actual_data,
-                      cases.expected_data, result.created_at
+                      cases.input_data, cases.expected_data, result.created_at
                FROM eval_results result
                JOIN eval_runs runs ON runs.id = result.run_id
                LEFT JOIN eval_cases cases
@@ -242,7 +242,10 @@ async def get_run_results(run_id: int) -> list[dict[str, Any]]:
                WHERE result.run_id = $1 ORDER BY result.id ASC""",
             run_id,
         )
-    return [_decode_json_fields(r, "expected_data", "actual_data") for r in rows]
+    return [
+        _decode_json_fields(r, "input_data", "expected_data", "actual_data")
+        for r in rows
+    ]
 
 
 async def get_run_results_since(run_id: int, last_id: int) -> list[dict[str, Any]]:

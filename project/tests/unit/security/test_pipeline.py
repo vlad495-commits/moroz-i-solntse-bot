@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 import json
+import logging
 
 import pytest
 
@@ -902,6 +903,43 @@ async def test_semantic_reject_informs_one_retry_and_revalidates_second() -> Non
     assert len(semantic.calls) == 2
     assert "VALIDATOR_RETRY code=unprofessional" in repr(gateway.requests[1])
     assert "Читайте прайс сами." not in repr(gateway.requests[1])
+
+
+@pytest.mark.asyncio
+async def test_semantic_decisions_log_only_safe_operational_fields(caplog) -> None:
+    secret_candidate = "Читайте прайс сами. raw-candidate-sentinel"
+    semantic = RecordingOutputValidator(
+        OutputValidationVerdict(
+            OutputValidationDecision("regenerate", "llm", "unprofessional"),
+            (LLMUsage("validator", 2, 1, 0, 3, "validator-model"),),
+        ),
+        OutputValidationVerdict(
+            OutputValidationDecision("allow", "llm", "safe"),
+            (LLMUsage("validator", 3, 1, 0, 4, "validator-model"),),
+        ),
+    )
+    gateway = CapturingGateway(
+        secret_candidate,
+        "Конечно, помогу уточнить стоимость.",
+    )
+
+    with caplog.at_level(
+        logging.INFO,
+        logger="moroz.security.pipeline",
+    ):
+        await pipeline(gateway, output_validator=semantic).respond(
+            "Сколько стоит услуга? raw-input-sentinel",
+            [],
+        )
+
+    assert "attempt=1 action=regenerate source=llm reason_code=unprofessional" in (
+        caplog.text
+    )
+    assert "attempt=2 action=allow source=llm reason_code=safe" in caplog.text
+    assert "model=validator-model total_tokens=3" in caplog.text
+    assert "model=validator-model total_tokens=4" in caplog.text
+    assert "raw-candidate-sentinel" not in caplog.text
+    assert "raw-input-sentinel" not in caplog.text
 
 
 @pytest.mark.asyncio

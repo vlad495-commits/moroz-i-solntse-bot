@@ -189,6 +189,12 @@ async def test_validator_detail_and_stream_require_owner(monkeypatch):
         return [{
             "case_id": 160, "question": "synthetic", "verdict": "pass",
             "check_layer": "validator", "score": None, "duration_ms": 2,
+            "input_data": {
+                "input": "Мой телефон <PII_PHONE_1>",
+                "context": [{"role": "assistant", "content": "Контекст"}],
+                "route_metadata": "ROUTE intents=faq; source=llm",
+                "candidate": "{\"role\":\"assistant\",\"content\":\"ответ\"}",
+            },
             "expected_data": {
                 "action": "regenerate", "source": "local",
                 "reason_code": "technical_artifact",
@@ -214,6 +220,10 @@ async def test_validator_detail_and_stream_require_owner(monkeypatch):
     assert "Validator Evaluation" in body
     assert "technical_artifact" in body
     assert "validator" in body
+    assert "Мой телефон &lt;PII_PHONE_1&gt;" in body
+    assert "Контекст" in body
+    assert "ROUTE intents=faq; source=llm" in body
+    assert "{&#34;role&#34;:&#34;assistant&#34;" in body
     assert "row.innerHTML" not in body
 
 
@@ -223,4 +233,4 @@ def test_eval_sse_appends_untrusted_questions_without_inner_html():
     )
 
     assert "row.innerHTML" not in template
-    assert "question.textContent" in template
+    assert "span.textContent = value" in template

@@ -93,8 +93,17 @@
             <div><strong>Сравнение:</strong><div class="quoted reasoning">{{ r.judge_reasoning }}</div></div>
             {% endif %}
             {% elif run.suite == 'validator' %}
+            {% set input = r.input_data or {} %}
             {% set expected = r.expected_data or {} %}
             {% set actual = r.actual_data or {} %}
+            <div><strong>Вход:</strong><div class="quoted">
+                {{ input.get('input', '—') }}
+                {% for item in input.get('context', []) %}
+                <br><span class="muted">{{ item.get('role', 'unknown') }}:</span> {{ item.get('content', '') }}
+                {% endfor %}
+                <br><span class="muted">route:</span> {{ input.get('route_metadata', '—') }}
+            </div></div>
+            <div><strong>Candidate:</strong><div class="quoted quoted-actual">{{ input.get('candidate', '—') }}</div></div>
             <div><strong>Ожидалось:</strong><div class="quoted">
                 action: {{ expected.get('action', '—') }}<br>
                 source: {{ expected.get('source', '—') }}<br>
@@ -173,8 +182,7 @@
                 layer
             );
         }
-        const question = appendSpan('log-question', r.question || '');
-        question.textContent = r.question || '';
+        appendSpan('log-question', r.question || '');
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
     });

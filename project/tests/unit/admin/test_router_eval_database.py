@@ -126,6 +126,7 @@ async def test_result_reads_project_suite_safe_expected_and_actual_data(monkeypa
     await evdb.get_run_results(8)
     await evdb.get_run_results_since(8, 3)
 
+    assert "input_data" in connection.calls[0][0]
     for query, _args in connection.calls:
         assert "expected_data" in query
         assert "actual_data" in query
@@ -155,3 +156,4 @@ async def test_structured_jsonb_is_decoded_at_eval_read_boundary(monkeypatch):
     assert cases[0]["expected_data"] == {"intents": ["faq"]}
     assert results[0]["expected_data"] == {"intents": ["faq"]}
     assert results[0]["actual_data"] == {"intents": ["faq"], "source": "llm"}
+    assert results[0]["input_data"] == {"input": "masked", "context": []}
