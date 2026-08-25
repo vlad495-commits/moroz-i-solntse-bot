@@ -105,6 +105,22 @@ def test_router_eval_navigation_stays_under_admin_prefix():
     assert 'href="/admin/eval/router/"' in response.body.decode("utf-8")
 
 
+def test_security_eval_navigation_stays_under_admin_prefix():
+    import eval_routes
+
+    response = eval_routes.templates.TemplateResponse(
+        request("/eval/security/"),
+        "base.html",
+        {
+            "user": SimpleNamespace(
+                username="owner", role="owner", csrf_token="csrf"
+            ),
+        },
+    )
+
+    assert 'href="/admin/eval/security/"' in response.body.decode("utf-8")
+
+
 def test_admin_templates_do_not_escape_public_prefix():
     templates = PROJECT_ROOT / "admin" / "templates"
 

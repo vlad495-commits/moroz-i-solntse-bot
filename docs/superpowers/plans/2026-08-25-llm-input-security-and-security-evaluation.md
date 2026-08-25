@@ -496,11 +496,11 @@ Expected: tests PASS; local migration head is `0015_llm_input_security_evaluatio
 - Produces: `run_security_case(case, run_id, classifier)` and `run_security_eval_set(...)`.
 - Produces owner-only GET `/eval/security/`, POST full/problem runs.
 
-- [ ] **Step 1: Write RED runner/route/privacy tests**
+- [x] **Step 1: Write RED runner/route/privacy tests**
 
 Mirror Router suite tests but assert Security Evaluation never calls answer LLM, Router or judge; masks PII; stores only `{action,source,reason_code}`; isolates problem cases by suite; requires owner+CSRF; renders root-path-safe read-only UI; and sanitizes exception/provider payloads.
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 ```powershell
 Set-Location project
@@ -509,15 +509,15 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/admin/test_
 
 Expected: FAIL because suite runner/routes/UI do not exist.
 
-- [ ] **Step 3: Implement shared security runner**
+- [x] **Step 3: Implement shared security runner**
 
 `run_security_case` performs local `check_input`; maps terminal local action/source, otherwise masks current/context and calls classifier only when local action is `review` or expected runtime route is unresolved. Compare exact action/source, save safe `actual_data`, and store exception type only. `run_security_eval_set` runs sequentially, updates progress, applies existing `security_gate`, and persists terminal `finished/failed/error`.
 
-- [ ] **Step 4: Add owner-only routes and shared templates**
+- [x] **Step 4: Add owner-only routes and shared templates**
 
 Add `/security/`, `/security/runs`, `/security/runs/problematic` using existing `_start_eval_task`, audit and `admin_url`. Extend templates with `is_component = suite in {'router','security'}` and suite-specific expected/actual fields. Component datasets remain read-only; answer CRUD unchanged. Require owner for security detail/SSE through the existing non-answer suite check.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```powershell
 Set-Location project

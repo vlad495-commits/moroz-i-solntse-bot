@@ -14,6 +14,7 @@ import math
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -26,6 +27,11 @@ from moroz.security.eval_gate import (
     security_gate,
 )
 from moroz.security.eval_structural import evaluate_structural_case
+from moroz.security.guardrails import check_input
+from moroz.security.input_security import (
+    InputSecurityDecision,
+    LLMInputSecurityClassifier,
+)
 from moroz.security.llm_gateway import PrimaryReserveGateway, SDKProvider
 from moroz.security.pii import PiiSession
 from moroz.security.pipeline import SecurityPipeline
@@ -59,6 +65,7 @@ ROUTER_MODEL = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
 ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "") or LLM_API_KEY
 ROUTER_BASE_URL = os.getenv("ROUTER_BASE_URL", "") or LLM_BASE_URL
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
+SECURITY_MODEL = LLM_MODEL
 
 PROMPT_PATH = Path("/app/prompts/system.md")
 
@@ -88,6 +95,29 @@ def _build_router() -> LLMIntentRouter:
     return LLMIntentRouter(
         SDKProvider(client, kind, ROUTER_MODEL, 0.0, ROUTER_MAX_TOKENS)
     )
+
+
+def _build_security_classifier() -> LLMInputSecurityClassifier:
+    _init_clients()
+    primary = SDKProvider(
+        _primary,
+        _primary_kind,
+        LLM_MODEL,
+        0.0,
+        ROUTER_MAX_TOKENS,
+    )
+    reserve = (
+        SDKProvider(
+            _reserve,
+            _reserve_kind,
+            RESERVE_MODEL,
+            0.0,
+            ROUTER_MAX_TOKENS,
+        )
+        if _reserve is not None
+        else None
+    )
+    return LLMInputSecurityClassifier(PrimaryReserveGateway(primary, reserve))
 
 
 _primary = None
@@ -490,6 +520,108 @@ async def run_router_case(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _SecurityEvalDecision:
+    action: str
+    source: str
+    reason_code: str
+
+
+def security_case_diff(
+    expected: dict,
+    actual: InputSecurityDecision | _SecurityEvalDecision,
+) -> tuple[bool, str]:
+    if expected["action"] != actual.action:
+        return False, "action_mismatch"
+    if expected["source"] != actual.source:
+        return False, "source_mismatch"
+    return True, "matched"
+
+
+async def run_security_case(
+    case: dict,
+    run_id: int,
+    *,
+    classifier: LLMInputSecurityClassifier,
+) -> dict:
+    started = time.monotonic()
+    try:
+        input_data = case["input_data"]
+        raw_input = input_data["input"]
+        guard = check_input(raw_input, recent_message_count=0)
+        if guard.action == "block":
+            decision = _SecurityEvalDecision("block", "local", guard.code)
+        elif guard.action in {"stop", "escalate"}:
+            decision = _SecurityEvalDecision("allow", "local", guard.code)
+        else:
+            session = PiiSession()
+            masked_input = session.mask(raw_input).text
+            masked_context = [
+                {
+                    "role": item["role"],
+                    "content": session.mask(item["content"]).text,
+                }
+                for item in input_data["context"]
+            ]
+            route = deterministic_route(masked_input)
+            if guard.action == "review" or route is None:
+                decision = (
+                    await classifier.classify(masked_input, masked_context)
+                ).decision
+            else:
+                decision = _SecurityEvalDecision(
+                    "allow",
+                    "local",
+                    guard.code,
+                )
+        ok, reason = security_case_diff(case["expected_data"], decision)
+        actual_data = {
+            "action": decision.action,
+            "source": decision.source,
+            "reason_code": decision.reason_code,
+        }
+        verdict = "pass" if ok else "fail"
+        error_message = None
+    except Exception as error:
+        verdict = "error"
+        reason = type(error).__name__
+        actual_data = {}
+        error_message = type(error).__name__
+        case_id = case.get("id")
+        safe_case_id = (
+            case_id
+            if isinstance(case_id, int) and not isinstance(case_id, bool)
+            else "unknown"
+        )
+        logger.error(
+            "security_eval_case_failed case_id=%s error_type=%s",
+            safe_case_id,
+            error_message,
+        )
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    result_id = await evdb.save_result(
+        run_id=run_id,
+        case_id=case.get("id"),
+        question=case["question"],
+        expected_answer="",
+        actual_answer="",
+        verdict=verdict,
+        check_layer="security",
+        score=None,
+        judge_reasoning=reason,
+        duration_ms=duration_ms,
+        error_message=error_message,
+        actual_data=actual_data,
+    )
+    return {
+        "id": result_id,
+        "case_id": case.get("id"),
+        "verdict": verdict,
+        "check_layer": "security",
+    }
+
+
 # --- Главный прогон ---
 
 async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
@@ -661,6 +793,96 @@ async def run_router_eval_set(
         except Exception as finalize_error:
             logger.error(
                 "router_eval_run_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )
+
+
+async def run_security_eval_set(
+    run_id: int,
+    cases: list[dict] | None = None,
+    *,
+    classifier: LLMInputSecurityClassifier | None = None,
+) -> None:
+    passed = 0
+    failed = 0
+    results: list[SecurityEvalResult] = []
+    safe_run_id = (
+        run_id
+        if isinstance(run_id, int) and not isinstance(run_id, bool)
+        else "unknown"
+    )
+
+    try:
+        cases = await evdb.list_cases("security") if cases is None else cases
+        active_classifier = classifier or _build_security_classifier()
+        for case in cases:
+            result = await run_security_case(
+                case,
+                run_id,
+                classifier=active_classifier,
+            )
+            case_passed = result["verdict"] == "pass"
+            results.append(
+                SecurityEvalResult(
+                    passed=case_passed,
+                    category=str(case["category"]),
+                    critical=bool(case["critical"]),
+                )
+            )
+            passed += int(case_passed)
+            failed += int(not case_passed)
+            await evdb.update_run_progress(run_id, passed, failed)
+
+        gate = security_gate(results)
+        status = "finished" if gate.ok else "failed"
+        logger.info(
+            "input_security_eval_gate run_id=%s total=%s passed=%s failed=%s "
+            "critical_total=%s critical_failed=%s pass_rate=%.4f status=%s",
+            safe_run_id,
+            gate.total,
+            gate.passed,
+            gate.failed,
+            gate.critical_total,
+            gate.critical_failed,
+            gate.pass_rate,
+            status,
+        )
+        await evdb.finish_run(run_id, passed, failed, status=status)
+    except asyncio.CancelledError:
+        try:
+            await evdb.finish_run(
+                run_id,
+                passed,
+                failed,
+                status="error",
+                error_message="CancelledError",
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "input_security_eval_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )
+        raise
+    except Exception as error:
+        error_message = type(error).__name__
+        logger.error(
+            "input_security_eval_failed run_id=%s error_type=%s",
+            safe_run_id,
+            error_message,
+        )
+        try:
+            await evdb.finish_run(
+                run_id,
+                passed,
+                failed,
+                status="error",
+                error_message=error_message,
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "input_security_eval_finalize_failed run_id=%s error_type=%s",
                 safe_run_id,
                 type(finalize_error).__name__,
             )

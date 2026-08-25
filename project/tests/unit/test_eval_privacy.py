@@ -457,6 +457,33 @@ async def test_run_eval_set_catches_init_failure_and_persists_only_type(
 
 
 @pytest.mark.asyncio
+async def test_security_eval_init_failure_persists_only_error_type(
+    monkeypatch, caplog
+):
+    sentinel = "https://user:password@provider security-init-sentinel"
+    finished = []
+
+    def fail_init():
+        raise EvalInitError(sentinel)
+
+    async def finish_run(*args, **kwargs):
+        finished.append((args, kwargs))
+
+    monkeypatch.setattr(eval_runner, "_build_security_classifier", fail_init)
+    monkeypatch.setattr(eval_runner.evdb, "finish_run", finish_run)
+
+    with caplog.at_level(logging.ERROR, logger=eval_runner.logger.name):
+        await eval_runner.run_security_eval_set(56, cases=[])
+
+    assert finished == [
+        ((56, 0, 0), {"status": "error", "error_message": "EvalInitError"})
+    ]
+    assert "input_security_eval_failed run_id=56 error_type=EvalInitError" in caplog.text
+    assert sentinel not in caplog.text
+    assert sentinel not in repr(finished)
+
+
+@pytest.mark.asyncio
 async def test_run_eval_set_recovers_from_gate_finalization_failure(
     monkeypatch, caplog
 ):

@@ -100,6 +100,23 @@ async def router_eval_index(request: Request):
     )
 
 
+@router.get("/security/", response_class=HTMLResponse)
+async def security_eval_index(request: Request):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    return templates.TemplateResponse(
+        request,
+        "eval_list.html",
+        {
+            "user": user,
+            "suite": "security",
+            "cases": await evdb.list_cases("security"),
+            "problem_cases": await evdb.list_problem_cases("security"),
+            "runs": await evdb.list_runs(10, "security"),
+        },
+    )
+
+
 @router.get("/cases/new", response_class=HTMLResponse)
 async def eval_case_new(request: Request):
     user = await get_current_user(request)
@@ -363,13 +380,96 @@ async def router_eval_problem_run_start(
     )
 
 
+@router.post("/security/runs")
+async def security_eval_run_start(
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    validate_csrf(user, csrf_token)
+    cases = await evdb.list_cases("security")
+    if not cases:
+        return RedirectResponse(
+            url=admin_url(request, "/eval/security/?error=no_cases"),
+            status_code=302,
+        )
+
+    run_id = await evdb.create_run(
+        len(cases),
+        eval_runner.SECURITY_MODEL,
+        "security",
+    )
+    _start_eval_task(
+        run_id,
+        eval_runner.run_security_eval_set(run_id, cases=cases),
+    )
+    await record_audit(
+        actor_id=user.id,
+        action="eval.security_run_start",
+        object_type="eval_run",
+        object_id=str(run_id),
+        before=None,
+        after={"total": len(cases), "suite": "security"},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
+    return RedirectResponse(
+        url=admin_url(request, f"/eval/runs/{run_id}"),
+        status_code=302,
+    )
+
+
+@router.post("/security/runs/problematic")
+async def security_eval_problem_run_start(
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    validate_csrf(user, csrf_token)
+    cases = await evdb.list_problem_cases("security")
+    if not cases:
+        return RedirectResponse(
+            url=admin_url(
+                request,
+                "/eval/security/?error=no_problem_cases",
+            ),
+            status_code=302,
+        )
+
+    run_id = await evdb.create_run(
+        len(cases),
+        eval_runner.SECURITY_MODEL,
+        "security",
+    )
+    _start_eval_task(
+        run_id,
+        eval_runner.run_security_eval_set(run_id, cases=cases),
+    )
+    await record_audit(
+        actor_id=user.id,
+        action="eval.security_problem_run_start",
+        object_type="eval_run",
+        object_id=str(run_id),
+        before=None,
+        after={"total": len(cases), "suite": "security"},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
+    return RedirectResponse(
+        url=admin_url(request, f"/eval/runs/{run_id}"),
+        status_code=302,
+    )
+
+
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
 async def eval_run_detail(request: Request, run_id: int):
     user = await get_current_user(request)
     run = await evdb.get_run(run_id)
     if not run:
         return RedirectResponse(url=admin_url(request, "/eval/"), status_code=302)
-    if run.get("suite") == "router":
+    if run.get("suite") != "answer":
         require_role(user, {"owner"})
     results = await evdb.get_run_results(run_id)
     return templates.TemplateResponse(
@@ -384,7 +484,7 @@ async def eval_run_stream(request: Request, run_id: int):
     """SSE-стрим для прогресс-бара. Шлёт обновления статуса прогона + новые результаты."""
     user = await get_current_user(request)
     initial_run = await evdb.get_run(run_id)
-    if initial_run and initial_run.get("suite") == "router":
+    if initial_run and initial_run.get("suite") != "answer":
         require_role(user, {"owner"})
 
     async def _gen():
