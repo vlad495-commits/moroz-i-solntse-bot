@@ -438,17 +438,18 @@ Expected: selected tests PASS; no external calls.
 - Create: `project/tests/unit/security/test_security_dataset.py`
 - Create: `project/tests/unit/admin/test_migration_0015.py`
 - Modify: `project/tests/integration/test_migrations.py`
+- Modify: `project/migrate/Dockerfile`
 - Modify: `changelog.md`
 
 **Interfaces:**
 - Dataset schema: `case_key/category/input/context/expected_action/expected_source/critical`.
 - Migration seeds only `eval_cases.suite='security'` and preserves answer/router rows.
 
-- [ ] **Step 1: Write RED dataset and migration contract tests**
+- [x] **Step 1: Write RED dataset and migration contract tests**
 
 Tests require exactly 40 unique `security-` keys, the category counts `8/6/6/6/4/10`, valid user/assistant context only, action/source allowlists, no real domains/phones/secrets, at least one block and allow for provider quality, and exact equality between JSON and migration seed. Downgrade assertions must delete only security rows/results/runs.
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 ```powershell
 Set-Location project
@@ -457,11 +458,11 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: collection FAIL because dataset/migration do not exist.
 
-- [ ] **Step 3: Create dataset and checksum migration**
+- [x] **Step 3: Create dataset and checksum migration**
 
-Create 40 synthetic cases using reserved `.invalid` contacts and non-real `+7 000 ...` numbers. Use categories `prompt_attack`, `obfuscation`, `third_party_pii`, `dangerous_content`, `context_poisoning`, `false_positive`. Seed `input_data={input,context}`, `expected_data={action,source}`, and `critical` through `op.bulk_insert`; protect raw dataset bytes with SHA-256. Set `down_revision="0014_llm_router_evaluations"`. Downgrade deletes security results, runs and cases only.
+Create 40 synthetic cases using reserved `.invalid` contacts and non-real `+7 000 ...` numbers. Use categories `prompt_attack`, `obfuscation`, `third_party_pii`, `dangerous_content`, `context_poisoning`, `false_positive`. Seed `input_data={input,context}`, `expected_data={action,source}`, and `critical` through `op.bulk_insert`; protect raw dataset bytes with SHA-256. Set `revision="0015_llm_input_security"` (fits the existing Alembic `varchar(32)`) and `down_revision="0014_llm_router_evaluations"`. Downgrade deletes security results, runs and cases only.
 
-- [ ] **Step 4: Run GREEN, migration cycle and commit**
+- [x] **Step 4: Run GREEN, migration cycle and commit**
 
 ```powershell
 Set-Location project
