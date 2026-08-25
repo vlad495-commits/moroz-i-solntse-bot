@@ -462,7 +462,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0015_llm_input_security"
+            "0016_llm_validator"
         )
     finally:
         await conn.close()
@@ -601,7 +601,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0015_llm_input_security"
+        assert current_revision == "0016_llm_validator"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -764,7 +764,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0015_llm_input_security"
+        assert current_revision == "0016_llm_validator"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -861,7 +861,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0015_llm_input_security"
+        assert current_revision == "0016_llm_validator"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
@@ -934,7 +934,7 @@ async def test_yclients_booking_projection_migration_creates_bounded_schema(
     finally:
         await conn.close()
 
-    assert current_revision == "0015_llm_input_security"
+    assert current_revision == "0016_llm_validator"
     assert columns == [
         "external_id",
         "booking_key",
@@ -1017,7 +1017,7 @@ async def test_review_cases_table_is_removed(disposable_database_url):
             "SELECT to_regclass('public.eval_case_reviews')"
         ) is None
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0015_llm_input_security"
+            "0016_llm_validator"
         )
     finally:
         await conn.close()
@@ -1078,7 +1078,7 @@ async def test_router_eval_migration_preserves_answer_rows_and_downgrades_only_r
             "SELECT to_regclass('public.router_eval_cases')"
         ) is None
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0015_llm_input_security"
+            "0016_llm_validator"
         )
 
         router_case = await conn.fetchval(
@@ -1196,7 +1196,7 @@ async def test_security_eval_migration_preserves_other_suites_on_downgrade(
             security_case,
         )
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0015_llm_input_security"
+            "0016_llm_validator"
         )
     finally:
         await conn.close()
@@ -1231,6 +1231,107 @@ async def test_security_eval_migration_preserves_other_suites_on_downgrade(
         ) is None
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
             "0014_llm_router_evaluations"
+        )
+    finally:
+        await conn.close()
+
+
+async def test_validator_eval_migration_seeds_cases_and_downgrades_only_validator(
+    disposable_database_url,
+):
+    run_alembic(
+        disposable_database_url,
+        "upgrade",
+        "0015_llm_input_security",
+    )
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        answer_case = await conn.fetchval(
+            "INSERT INTO eval_cases (suite, question, expected_answer) "
+            "VALUES ('answer', 'legacy', 'answer') RETURNING id"
+        )
+        security_case = await conn.fetchval(
+            "SELECT id FROM eval_cases WHERE suite = 'security' ORDER BY id LIMIT 1"
+        )
+        answer_run = await conn.fetchval(
+            "INSERT INTO eval_runs (suite) VALUES ('answer') RETURNING id"
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE suite = 'validator'"
+        ) == 60
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases "
+            "WHERE suite = 'validator' AND critical"
+        ) == 20
+        validator_case = await conn.fetchval(
+            "SELECT id FROM eval_cases WHERE suite = 'validator' ORDER BY id LIMIT 1"
+        )
+        validator_run = await conn.fetchval(
+            "INSERT INTO eval_runs (suite) VALUES ('validator') RETURNING id"
+        )
+        validator_result = await conn.fetchval(
+            """
+            INSERT INTO eval_results
+                (run_id, case_id, question, expected_answer, verdict, actual_data)
+            VALUES ($1, $2, 'validator', '', 'passed',
+                    '{"action":"allow","source":"llm"}'::jsonb)
+            RETURNING id
+            """,
+            validator_run,
+            validator_case,
+        )
+        cross_suite_result = await conn.fetchval(
+            """
+            INSERT INTO eval_results
+                (run_id, case_id, question, expected_answer, verdict)
+            VALUES ($1, $2, 'answer-cross-suite', '', 'passed')
+            RETURNING id
+            """,
+            answer_run,
+            validator_case,
+        )
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0016_llm_validator"
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(
+        disposable_database_url,
+        "downgrade",
+        "0015_llm_input_security",
+    )
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE id = $1", answer_case
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE id = $1", security_case
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_runs WHERE id = $1", answer_run
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE id = $1", validator_case
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_runs WHERE id = $1", validator_run
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_results WHERE id = $1", validator_result
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT case_id FROM eval_results WHERE id = $1", cross_suite_result
+        ) is None
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0015_llm_input_security"
         )
     finally:
         await conn.close()
@@ -1425,7 +1526,7 @@ async def test_yclients_service_catalog_migration_creates_only_bounded_columns(
     finally:
         await conn.close()
 
-    assert current_revision == "0015_llm_input_security"
+    assert current_revision == "0016_llm_validator"
     assert columns == [
         "service_id",
         "staff_id",
@@ -1482,7 +1583,7 @@ async def test_yclients_projection_suppression_migration_is_metadata_only(
     finally:
         await conn.close()
 
-    assert current_revision == "0015_llm_input_security"
+    assert current_revision == "0016_llm_validator"
     assert columns == [
         ("external_id", "text", "NO", None),
         ("created_at", "timestamp with time zone", "NO", "now()"),

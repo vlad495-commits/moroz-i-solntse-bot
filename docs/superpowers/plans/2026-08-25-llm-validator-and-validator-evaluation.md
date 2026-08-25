@@ -367,7 +367,7 @@ git commit -m "feat: валидировать каждый LLM-ответ пер
 - Consumes: design category/count contract and common eval schema.
 - Produces: 60 immutable cases and Alembic head `0016_llm_validator` (revision <= 32 chars).
 
-- [ ] **Step 1: Write failing dataset and migration tests**
+- [x] **Step 1: Write failing dataset and migration tests**
 
 Assert exact case keys/shape/counts:
 
@@ -394,7 +394,7 @@ Require exact fields, synthetic `.invalid` markers, no real domains/IP/secrets, 
 
 Migration tests mirror `test_migration_0015.py`: common tables only, down revision `0015_llm_input_security`, checksum with CRLF normalization, tampering rejection, suite-only downgrade and migrate Dockerfile copy.
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 Run:
 
@@ -406,11 +406,11 @@ docker compose --env-file ../.env run --rm test pytest -q \
 
 Expected: missing dataset/migration collection failure.
 
-- [ ] **Step 3: Create the 60-case dataset**
+- [x] **Step 3: Create the 60-case dataset**
 
 Use only synthetic customer inputs/context and Moroz-specific candidate replies. Expected source is `local` only when deterministic `validate_output` rejects; otherwise `llm`. Every expected local reason must equal the runtime stable code.
 
-- [ ] **Step 4: Implement checksum-pinned additive migration**
+- [x] **Step 4: Implement checksum-pinned additive migration**
 
 Follow migration `0015` with canonical bytes:
 
@@ -424,7 +424,7 @@ def _load_validator_cases(path: Path) -> list[dict]:
 
 Seed `suite="validator"`, `input_data={input, context, route_metadata, candidate}`, `expected_data={action, source, reason_code}`. Downgrade first removes results belonging to validator runs, then validator runs/cases only.
 
-- [ ] **Step 5: Package and verify migration image**
+- [x] **Step 5: Package and verify migration image**
 
 Add:
 
@@ -446,7 +446,7 @@ docker compose --env-file ../.env run --rm migrate current
 
 Expected: one head `0016_llm_validator` and all tests pass.
 
-- [ ] **Step 6: Log and commit Task 4**
+- [x] **Step 6: Log and commit Task 4**
 
 ```powershell
 git add project/llm/eval/validator_dataset.json project/tests/unit/security/test_validator_dataset.py \
