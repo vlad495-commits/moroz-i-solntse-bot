@@ -118,6 +118,16 @@ _PROMPT_LEAK_RULES = (
         re.IGNORECASE,
     ),
 )
+_TECHNICAL_ARTIFACT_RULES = (
+    re.compile(r"^\s*(?:null|undefined|\[object Object\])\s*$", re.IGNORECASE),
+    re.compile(
+        r'^\s*\{.*"(?:role|content|error)"\s*:',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(r"<\|(?:assistant|system|user)\|>", re.IGNORECASE),
+    re.compile(r"^\s*(?:Traceback \(|ERROR:)", re.IGNORECASE),
+    re.compile(r"\{\{\s*[a-z_][a-z0-9_]*\s*\}\}", re.IGNORECASE),
+)
 _NEGATED_MEDICAL_GUARANTEE_RULES = (
     re.compile(
         r"\b(?:результат\w*|эффект\w*|result|effect)\b.{0,12}\b"
@@ -417,6 +427,8 @@ def validate_output(
         blocked=_PROMPT_LEAK_RULES,
     ):
         return ValidationVerdict(False, "prompt_leak")
+    if any(rule.search(text) is not None for rule in _TECHNICAL_ARTIFACT_RULES):
+        return ValidationVerdict(False, "technical_artifact")
     placeholders = set(_PLACEHOLDER_SHAPE_RE.findall(text))
     if (
         placeholders - set(allowed_placeholders)

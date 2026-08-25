@@ -80,6 +80,40 @@ def test_prompt_leak_wins_over_later_failures() -> None:
     ).code == "prompt_leak"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "null",
+        "undefined",
+        "[object Object]",
+        '{"role":"assistant","content":"internal"}',
+        "<|assistant|> Ответ клиенту",
+        "Traceback (most recent call last): RuntimeError",
+        "ERROR: NoneType object has no attribute 'text'",
+        "Ответ: {{answer}}",
+    ],
+)
+def test_validator_rejects_unambiguous_technical_artifacts(text: str) -> None:
+    assert validate_output(
+        text,
+        _facts(),
+        frozenset(),
+    ) == ValidationVerdict(False, "technical_artifact")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "CRYO — название процедуры, ответ остаётся на русском.",
+        "Подготовка: первый этап — консультация, второй — процедура.",
+        "Можно выбрать один из вариантов (1 или 2).",
+        "Фигурные скобки { } сами по себе не являются ошибкой.",
+    ],
+)
+def test_validator_allows_normal_formatting_and_latin_brand(text: str) -> None:
+    assert validate_output(text, _facts(), frozenset()).ok is True
+
+
 def test_context_only_placeholder_is_rejected() -> None:
     assert validate_output(
         "Здравствуйте, <PII_EMAIL_1>",

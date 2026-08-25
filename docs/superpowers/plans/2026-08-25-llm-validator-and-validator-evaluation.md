@@ -170,7 +170,7 @@ git commit -m "feat: добавить типизированный LLM output va
 - Consumes: current `validate_output(...)` inputs.
 - Produces: stable local reason `technical_artifact` without changing existing reason priority.
 
-- [ ] **Step 1: Add failing artifact and false-positive tests**
+- [x] **Step 1: Add failing artifact and false-positive tests**
 
 Add exact rejects for `null`, `undefined`, `[object Object]`, JSON object-only response, `<|assistant|>`, traceback/error prefix and unfilled `{{answer}}`. Add allow cases for natural braces, a legitimate URL, service brand in Latin and normal colon/list formatting.
 
@@ -186,7 +186,7 @@ def test_validator_rejects_unambiguous_technical_artifacts(text):
     assert validate_output(text, _facts(), frozenset()).code == "technical_artifact"
 ```
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 Run:
 
@@ -196,7 +196,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: only new artifact cases fail.
 
-- [ ] **Step 3: Implement narrow local rules at the correct priority**
+- [x] **Step 3: Implement narrow local rules at the correct priority**
 
 Add anchored/full-message patterns after empty/prompt-leak and before placeholder/PII checks. Do not add broad language or profanity regexes.
 
@@ -210,7 +210,7 @@ _TECHNICAL_ARTIFACT_RULES = (
 )
 ```
 
-- [ ] **Step 4: Run focused local regression**
+- [x] **Step 4: Run focused local regression**
 
 Run:
 
@@ -220,7 +220,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: all pass.
 
-- [ ] **Step 5: Log and commit Task 2**
+- [x] **Step 5: Log and commit Task 2**
 
 ```powershell
 git add project/src/moroz/security/validator.py project/tests/unit/security/test_validator.py changelog.md
