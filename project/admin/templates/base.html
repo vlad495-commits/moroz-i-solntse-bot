@@ -40,6 +40,9 @@
             <a href="{{ request.scope.get('root_path', '') }}/eval/security/" class="{% if path.startswith('/eval/security') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6Z"/><path d="m9 12 2 2 4-4"/></svg></span>Input Security
             </a>
+            <a href="{{ request.scope.get('root_path', '') }}/eval/validator/" class="{% if path.startswith('/eval/validator') %}active{% endif %}">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12 9 17 20 6"/><path d="M4 6h8"/></svg></span>Validator Evaluation
+            </a>
             {% endif %}
             <a href="{{ request.scope.get('root_path', '') }}/escalations/" class="{% if path.startswith('/escalations') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg></span>Эскалации

@@ -34,9 +34,17 @@ from moroz.security.input_security import (
     needs_input_security_review,
 )
 from moroz.security.llm_gateway import PrimaryReserveGateway, SDKProvider
+from moroz.security.output_validator import (
+    LLMOutputValidator,
+    OutputValidationDecision,
+)
 from moroz.security.pii import PiiSession
 from moroz.security.pipeline import SecurityPipeline
-from moroz.security.validator import extract_structured_facts
+from moroz.security.validator import (
+    StructuredFacts,
+    extract_structured_facts,
+    validate_output,
+)
 from moroz.messaging.router import (
     LLMIntentRouter,
     RouteDecision,
@@ -67,6 +75,7 @@ ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "") or LLM_API_KEY
 ROUTER_BASE_URL = os.getenv("ROUTER_BASE_URL", "") or LLM_BASE_URL
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
 SECURITY_MODEL = LLM_MODEL
+VALIDATOR_MODEL = LLM_MODEL
 
 PROMPT_PATH = Path("/app/prompts/system.md")
 
@@ -119,6 +128,29 @@ def _build_security_classifier() -> LLMInputSecurityClassifier:
         else None
     )
     return LLMInputSecurityClassifier(PrimaryReserveGateway(primary, reserve))
+
+
+def _build_output_validator() -> LLMOutputValidator:
+    _init_clients()
+    primary = SDKProvider(
+        _primary,
+        _primary_kind,
+        LLM_MODEL,
+        LLM_TEMPERATURE,
+        LLM_MAX_TOKENS,
+    )
+    reserve = (
+        SDKProvider(
+            _reserve,
+            _reserve_kind,
+            RESERVE_MODEL,
+            LLM_TEMPERATURE,
+            LLM_MAX_TOKENS,
+        )
+        if _reserve is not None
+        else None
+    )
+    return LLMOutputValidator(PrimaryReserveGateway(primary, reserve))
 
 
 _primary = None
@@ -627,6 +659,113 @@ async def run_security_case(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _ValidatorEvalDecision:
+    action: str
+    source: str
+    reason_code: str
+
+
+def validator_case_diff(
+    expected: dict,
+    actual: OutputValidationDecision | _ValidatorEvalDecision,
+) -> tuple[bool, str]:
+    for field in ("action", "source", "reason_code"):
+        if expected[field] != getattr(actual, field):
+            return False, f"{field}_mismatch"
+    return True, "matched"
+
+
+async def run_validator_case(
+    case: dict,
+    run_id: int,
+    *,
+    validator: LLMOutputValidator,
+) -> dict:
+    started = time.monotonic()
+    try:
+        input_data = case["input_data"]
+        candidate = input_data["candidate"]
+        local = validate_output(
+            candidate,
+            StructuredFacts(frozenset(), frozenset(), frozenset()),
+            frozenset(),
+        )
+        if not local.ok:
+            decision = _ValidatorEvalDecision(
+                "regenerate",
+                "local",
+                local.code,
+            )
+        else:
+            session = PiiSession()
+            masked_input = session.mask(input_data["input"]).text
+            masked_context = [
+                {
+                    "role": item["role"],
+                    "content": session.mask(item["content"]).text,
+                }
+                for item in input_data["context"]
+            ]
+            masked_route = session.mask(input_data["route_metadata"]).text
+            masked_candidate = session.mask(candidate).text
+            decision = (
+                await validator.validate(
+                    masked_input=masked_input,
+                    masked_context=masked_context,
+                    route_metadata=masked_route,
+                    candidate=masked_candidate,
+                )
+            ).decision
+
+        ok, reason = validator_case_diff(case["expected_data"], decision)
+        actual_data = {
+            "action": decision.action,
+            "source": decision.source,
+            "reason_code": decision.reason_code,
+        }
+        verdict = "pass" if ok else "fail"
+        error_message = None
+    except Exception as error:
+        verdict = "error"
+        reason = type(error).__name__
+        actual_data = {}
+        error_message = type(error).__name__
+        case_id = case.get("id")
+        safe_case_id = (
+            case_id
+            if isinstance(case_id, int) and not isinstance(case_id, bool)
+            else "unknown"
+        )
+        logger.error(
+            "validator_eval_case_failed case_id=%s error_type=%s",
+            safe_case_id,
+            error_message,
+        )
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    result_id = await evdb.save_result(
+        run_id=run_id,
+        case_id=case.get("id"),
+        question=case["question"],
+        expected_answer="",
+        actual_answer="",
+        verdict=verdict,
+        check_layer="validator",
+        score=None,
+        judge_reasoning=reason,
+        duration_ms=duration_ms,
+        error_message=error_message,
+        actual_data=actual_data,
+    )
+    return {
+        "id": result_id,
+        "case_id": case.get("id"),
+        "verdict": verdict,
+        "check_layer": "validator",
+    }
+
+
 # --- Главный прогон ---
 
 async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
@@ -888,6 +1027,96 @@ async def run_security_eval_set(
         except Exception as finalize_error:
             logger.error(
                 "input_security_eval_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )
+
+
+async def run_validator_eval_set(
+    run_id: int,
+    cases: list[dict] | None = None,
+    *,
+    validator: LLMOutputValidator | None = None,
+) -> None:
+    passed = 0
+    failed = 0
+    results: list[SecurityEvalResult] = []
+    safe_run_id = (
+        run_id
+        if isinstance(run_id, int) and not isinstance(run_id, bool)
+        else "unknown"
+    )
+
+    try:
+        cases = await evdb.list_cases("validator") if cases is None else cases
+        active_validator = validator or _build_output_validator()
+        for case in cases:
+            result = await run_validator_case(
+                case,
+                run_id,
+                validator=active_validator,
+            )
+            case_passed = result["verdict"] == "pass"
+            results.append(
+                SecurityEvalResult(
+                    passed=case_passed,
+                    category=str(case["category"]),
+                    critical=bool(case["critical"]),
+                )
+            )
+            passed += int(case_passed)
+            failed += int(not case_passed)
+            await evdb.update_run_progress(run_id, passed, failed)
+
+        gate = security_gate(results)
+        status = "finished" if gate.ok else "failed"
+        logger.info(
+            "validator_eval_gate run_id=%s total=%s passed=%s failed=%s "
+            "critical_total=%s critical_failed=%s pass_rate=%.4f status=%s",
+            safe_run_id,
+            gate.total,
+            gate.passed,
+            gate.failed,
+            gate.critical_total,
+            gate.critical_failed,
+            gate.pass_rate,
+            status,
+        )
+        await evdb.finish_run(run_id, passed, failed, status=status)
+    except asyncio.CancelledError:
+        try:
+            await evdb.finish_run(
+                run_id,
+                passed,
+                failed,
+                status="error",
+                error_message="CancelledError",
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "validator_eval_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )
+        raise
+    except Exception as error:
+        error_message = type(error).__name__
+        logger.error(
+            "validator_eval_failed run_id=%s error_type=%s",
+            safe_run_id,
+            error_message,
+        )
+        try:
+            await evdb.finish_run(
+                run_id,
+                passed,
+                failed,
+                status="error",
+                error_message=error_message,
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "validator_eval_finalize_failed run_id=%s error_type=%s",
                 safe_run_id,
                 type(finalize_error).__name__,
             )

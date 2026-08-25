@@ -473,7 +473,7 @@ git commit -m "feat: добавить immutable Validator Evaluation dataset"
 - Consumes: common `evdb`, `LLMOutputValidator`, local `validate_output`, `security_gate`.
 - Produces: `validator_case_diff`, `run_validator_case`, `run_validator_eval_set`, `/eval/validator/` full/problem UI.
 
-- [ ] **Step 1: Write failing runner tests**
+- [x] **Step 1: Write failing runner tests**
 
 Cover:
 
@@ -493,7 +493,7 @@ def validator_case_diff(expected, actual):
     return True, "matched"
 ```
 
-- [ ] **Step 2: Write failing route/template tests**
+- [x] **Step 2: Write failing route/template tests**
 
 Mirror Security Evaluation tests for:
 
@@ -506,7 +506,7 @@ Mirror Security Evaluation tests for:
 - run detail labels `Validator Evaluation`, expected/actual action/source/reason and `validator` layer;
 - SSE/detail owner protection remains common.
 
-- [ ] **Step 3: Run RED admin tests**
+- [x] **Step 3: Run RED admin tests**
 
 Run:
 
@@ -518,11 +518,11 @@ docker compose --env-file ../.env run --rm test pytest -q \
 
 Expected: missing functions/routes/template variants.
 
-- [ ] **Step 4: Implement runner using runtime components**
+- [x] **Step 4: Implement runner using runtime components**
 
 For each case: create `PiiSession`, mask input/context/candidate inputs as appropriate, run deterministic validator first, otherwise injected/built `LLMOutputValidator`, compare exact contract, save safe structured result, and update shared gate. Do not call `_generate_bot_response` or `llm_judge`.
 
-- [ ] **Step 5: Add owner-only routes and read-only template variants**
+- [x] **Step 5: Add owner-only routes and read-only template variants**
 
 Add:
 
@@ -541,7 +541,7 @@ Reuse `_component_eval_index`, `_start_component_run` helpers if current Router/
 
 In templates extend `is_component` to include validator and render candidate + expected reason. Keep dynamic SSE output escaped with DOM text or the existing safe escape helper.
 
-- [ ] **Step 6: Run admin and cross-suite regression**
+- [x] **Step 6: Run admin and cross-suite regression**
 
 Run:
 
@@ -558,7 +558,7 @@ docker compose --env-file ../.env run --rm test pytest -q \
 
 Expected: all suites pass and remain isolated.
 
-- [ ] **Step 7: Log and commit Task 5**
+- [x] **Step 7: Log and commit Task 5**
 
 ```powershell
 git add project/admin/eval_runner.py project/admin/eval_routes.py \

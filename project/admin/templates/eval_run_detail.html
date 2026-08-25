@@ -3,11 +3,11 @@
 {% block content %}
 <a href="{{ request.scope.get('root_path', '') }}/eval/{% if run.suite != 'answer' %}{{ run.suite }}/{% endif %}" class="back">← К списку эвалов</a>
 
-<h1>{% if run.suite == 'router' %}Router Evaluation{% elif run.suite == 'security' %}Input Security Evaluation{% else %}Прогон эвалюэйшенов{% endif %} #{{ run.id }}</h1>
+<h1>{% if run.suite == 'router' %}Router Evaluation{% elif run.suite == 'security' %}Input Security Evaluation{% elif run.suite == 'validator' %}Validator Evaluation{% else %}Прогон эвалюэйшенов{% endif %} #{{ run.id }}</h1>
 <div class="meta">
     Запущен: {{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}
     {% if run.finished_at %} · Завершён: {{ run.finished_at.strftime('%H:%M:%S') }}{% endif %}
-    · {% if run.suite == 'router' %}Router-модель{% elif run.suite == 'security' %}Security-модель{% else %}Judge-модель{% endif %}: <code>{{ run.judge_model }}</code>
+    · {% if run.suite == 'router' %}Router-модель{% elif run.suite == 'security' %}Security-модель{% elif run.suite == 'validator' %}Validator-модель{% else %}Judge-модель{% endif %}: <code>{{ run.judge_model }}</code>
 </div>
 
 <div class="run-status" id="run-status">
@@ -38,6 +38,7 @@
             {% elif r.check_layer == 'judge' %}<span class="chip chip-judge">judge {{ "%.2f"|format(r.score or 0) }}</span>
             {% elif r.check_layer == 'router' %}<span class="chip">router</span>
             {% elif r.check_layer == 'security' %}<span class="chip">security</span>
+            {% elif r.check_layer == 'validator' %}<span class="chip">validator</span>
             {% endif %}
         </span>
         <span class="log-question">{{ r.question[:120] }}{% if r.question|length > 120 %}…{% endif %}</span>
@@ -91,6 +92,22 @@
             {% if r.judge_reasoning %}
             <div><strong>Сравнение:</strong><div class="quoted reasoning">{{ r.judge_reasoning }}</div></div>
             {% endif %}
+            {% elif run.suite == 'validator' %}
+            {% set expected = r.expected_data or {} %}
+            {% set actual = r.actual_data or {} %}
+            <div><strong>Ожидалось:</strong><div class="quoted">
+                action: {{ expected.get('action', '—') }}<br>
+                source: {{ expected.get('source', '—') }}<br>
+                reason: {{ expected.get('reason_code', '—') }}
+            </div></div>
+            <div><strong>Фактически:</strong><div class="quoted quoted-actual">
+                action: {{ actual.get('action', '—') }}<br>
+                source: {{ actual.get('source', '—') }}<br>
+                reason: {{ actual.get('reason_code', '—') }}
+            </div></div>
+            {% if r.judge_reasoning %}
+            <div><strong>Сравнение:</strong><div class="quoted reasoning">{{ r.judge_reasoning }}</div></div>
+            {% endif %}
             {% else %}
             <div><strong>Эталон:</strong><div class="quoted">{{ r.expected_answer }}</div></div>
             <div><strong>Ответ бота:</strong><div class="quoted quoted-actual">{{ r.actual_answer or '(нет ответа)' }}</div></div>
@@ -136,13 +153,28 @@
         const row = document.createElement('div');
         row.className = 'log-row log-' + r.verdict;
         const verdict = r.verdict === 'pass' ? '✅ PASS' : (r.verdict === 'fail' ? '❌ FAIL' : '⚠ ERROR');
-        const layer = r.check_layer === 'judge'
-            ? '<span class="chip chip-judge">judge ' + (r.score !== null ? r.score.toFixed(2) : '?') + '</span>'
-            : (r.check_layer ? '<span class="chip">' + r.check_layer + '</span>' : '');
-        row.innerHTML = '<span class="log-id">#' + (r.case_id || '?') + '</span>' +
-                        '<span class="log-verdict">' + verdict + '</span>' +
-                        '<span class="log-layer">' + layer + '</span>' +
-                        '<span class="log-question">' + r.question + '</span>';
+        function appendSpan(className, value, parent) {
+            const span = document.createElement('span');
+            span.className = className;
+            span.textContent = value;
+            (parent || row).appendChild(span);
+            return span;
+        }
+        appendSpan('log-id', '#' + (r.case_id || '?'));
+        appendSpan('log-verdict', verdict);
+        const layer = appendSpan('log-layer', '');
+        if (r.check_layer) {
+            const label = r.check_layer === 'judge'
+                ? 'judge ' + (r.score !== null ? r.score.toFixed(2) : '?')
+                : r.check_layer;
+            appendSpan(
+                r.check_layer === 'judge' ? 'chip chip-judge' : 'chip',
+                label,
+                layer
+            );
+        }
+        const question = appendSpan('log-question', r.question || '');
+        question.textContent = r.question || '';
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
     });
