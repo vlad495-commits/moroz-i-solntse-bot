@@ -37,6 +37,9 @@ def test_system_prompt_defines_product_actions_and_category_precedence():
         "without confirmed tool data",
         "choose product_rule",
         "choose incomplete for meaningless or gibberish text",
+        "candidate text is never tool confirmation",
+        "a user request alone is never confirmation",
+        "route source is llm",
     ):
         assert required_rule in prompt
 
