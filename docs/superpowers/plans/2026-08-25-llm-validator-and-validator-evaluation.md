@@ -588,7 +588,7 @@ Run the exact validator/runtime/admin/migration test files plus touched Router/I
 
 - [ ] **Step 2: Verify migration and packaging**
 
-Run fresh `test` and `migrate` images, `migrate upgrade head`, `migrate current`, `alembic heads`, dataset checksum tests and `docker compose config --quiet`. Expected: one head `0016_llm_validator`.
+Run fresh `test` and `migrate` images, `migrate upgrade head`, `migrate current`, `alembic heads`, dataset checksum tests and `docker compose --env-file ../.env config --quiet`. Expected: one head `0016_llm_validator`.
 
 - [ ] **Step 3: Run compile and full Docker suite**
 
@@ -599,8 +599,7 @@ cd project
 docker compose --env-file ../.env build --no-cache test
 docker compose --env-file ../.env run --rm \
   -v ../docs/architecture:/docs/architecture:ro \
-  -v ../full_architecture.html:/full_architecture.html:ro \
-  -v ../message_path.html:/message_path.html:ro \
+  -v ../moroz-i-solntse-full-architecture.html:/moroz-i-solntse-full-architecture.html:ro \
   test pytest -q
 docker compose --env-file ../.env run --rm test python -m compileall -q /app
 docker compose --env-file ../.env config --quiet
