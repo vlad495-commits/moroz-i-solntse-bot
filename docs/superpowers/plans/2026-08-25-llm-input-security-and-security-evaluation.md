@@ -593,13 +593,13 @@ Use `requesting-code-review` against baseline `963b79e`. Reviewer must answer:
 
 Fix every Critical/Important finding test-first and rerun affected/full gates. Expected final review: `0 Critical / 0 Important`.
 
-- [ ] **Step 6: Request explicit authorization for real-provider quality run**
+- [x] **Step 6: Request explicit authorization for real-provider quality run**
 
 Without explicit permission, stop before any paid/external call and keep the roadmap item unchecked with exact blocker `awaiting authorized real-provider Security Evaluation`. If authorized, run exact 40-case versioned suite through admin runner, record only aggregate counts, critical result, model and run ID. Do not call Telegram/YCLIENTS/staging/production.
 
 Expected acceptance: all critical pass and total pass rate `>=95%`.
 
-- [ ] **Step 7: Close docs and commit**
+- [x] **Step 7: Close docs and commit**
 
 Check completed plan boxes, write exact evidence to roadmap/changelog, and mark the pair complete only after runtime, suite, Docker, review and authorized quality gates all pass.
 
