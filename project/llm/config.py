@@ -33,6 +33,10 @@ LLM_REQUEST_TIMEOUT_SEC = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "30"))
 RESERVE_API_KEY = os.getenv("RESERVE_API_KEY", "")
 RESERVE_BASE_URL = os.getenv("RESERVE_BASE_URL", "") or None
 RESERVE_MODEL = os.getenv("RESERVE_MODEL", "")
+ROUTER_MODEL = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
+ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "") or LLM_API_KEY
+ROUTER_BASE_URL = os.getenv("ROUTER_BASE_URL", "") or LLM_BASE_URL
+ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
 
 # --- Хранилища ---
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")

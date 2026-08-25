@@ -42,6 +42,15 @@ class ForbiddenGateway:
         raise AssertionError("simple catalog answer must not call LLM")
 
 
+class ForbiddenRouter:
+    def __init__(self):
+        self.calls = 0
+
+    async def route(self, _text, _context):
+        self.calls += 1
+        raise AssertionError("deterministic catalog route must not call Router")
+
+
 class CatalogRepository:
     def __init__(self, grounding):
         self.grounding = grounding
@@ -98,7 +107,13 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
     repository = MessageRepository(database)
     assert await repository.accept(incoming())
     gateway = ForbiddenGateway()
-    pipeline = SecurityPipeline(gateway, "", extract_structured_facts(""))
+    router = ForbiddenRouter()
+    pipeline = SecurityPipeline(
+        gateway,
+        "",
+        extract_structured_facts(""),
+        router=router,
+    )
 
     async def llm(text, context, *, recent_message_count, catalog):
         return await pipeline.respond(
@@ -140,6 +155,7 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
     assert tuple(usage.values()) == (0, 0, 0, "catalog-local")
     assert len(catalog_repository.calls) == 1
     assert gateway.calls == 0
+    assert router.calls == 0
 
 
 async def test_human_mode_never_reads_catalog_or_calls_llm(database):

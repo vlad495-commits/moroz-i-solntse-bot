@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from openai import AsyncOpenAI
 import redis.asyncio as aioredis
+from moroz.messaging.router import LLMIntentRouter
 from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
@@ -40,6 +41,10 @@ from config import (
     RESERVE_API_KEY,
     RESERVE_BASE_URL,
     RESERVE_MODEL,
+    ROUTER_API_KEY,
+    ROUTER_BASE_URL,
+    ROUTER_MAX_TOKENS,
+    ROUTER_MODEL,
     SYSTEM_PROMPT_PATH,
 )
 
@@ -113,7 +118,12 @@ def _load_prompt(expected_sha256: str | None = None) -> None:
     facts = extract_structured_facts(candidate)
     candidate_pipeline = None
     if _pipeline is not None:
-        candidate_pipeline = SecurityPipeline(_pipeline.gateway, candidate, facts)
+        candidate_pipeline = SecurityPipeline(
+            _pipeline.gateway,
+            candidate,
+            facts,
+            router=getattr(_pipeline, "router", None),
+        )
 
     _system_prompt = candidate
     if candidate_pipeline is not None:
@@ -212,10 +222,19 @@ def init_llm() -> None:
             LLM_TEMPERATURE,
             LLM_MAX_TOKENS,
         )
+    router_kind = _detect_kind(ROUTER_MODEL, ROUTER_BASE_URL)
+    router_provider = SDKProvider(
+        _create_client(ROUTER_API_KEY, ROUTER_BASE_URL, router_kind),
+        router_kind,
+        ROUTER_MODEL,
+        0.0,
+        ROUTER_MAX_TOKENS,
+    )
     _pipeline = SecurityPipeline(
         PrimaryReserveGateway(primary, reserve),
         _system_prompt,
         extract_structured_facts(_system_prompt),
+        router=LLMIntentRouter(router_provider),
     )
     _pipeline_client = _primary_client
     logger.info(

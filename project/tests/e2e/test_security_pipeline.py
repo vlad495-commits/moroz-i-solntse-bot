@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from moroz.common.db import Database
 from moroz.common.queue import QueueTask
 from moroz.messaging.buffer import MessageBuffer
 from moroz.messaging.models import IncomingMessage
+from moroz.messaging.router import RouteDecision, RouterVerdict
 from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
@@ -23,6 +25,7 @@ from moroz.security.llm_gateway import (
 )
 from moroz.security.pipeline import (
     INPUT_BLOCK_REPLY,
+    MEDICAL_ESCALATION_REPLY,
     SAFE_OUTPUT_FALLBACK,
     SecurityPipeline,
 )
@@ -79,6 +82,42 @@ class ScriptedProvider:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class BlockingSecurityGateway:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.requests = []
+
+    async def complete(self, request):
+        self.requests.append(request)
+        if request.purpose == "security":
+            self.started.set()
+            await self.release.wait()
+            return _response("ALLOW")
+        return _response("Безопасный ответ.")
+
+
+class ImmediateRouter:
+    def __init__(self, decision):
+        self.decision = decision
+        self.started = asyncio.Event()
+        self.calls = []
+
+    async def route(self, text, context):
+        self.calls.append((text, context))
+        self.started.set()
+        return RouterVerdict(self.decision, ())
+
+
+class ForbiddenRouter:
+    def __init__(self):
+        self.calls = 0
+
+    async def route(self, _text, _context):
+        self.calls += 1
+        raise AssertionError("local security decision must not call Router")
 
 
 def _response(text: str = "Безопасный ответ.") -> LLMResponse:
@@ -247,6 +286,89 @@ async def test_pre_consent_update_has_no_inbox_history_security_or_provider_call
     assert response.status_code == 200
     assert inbox == history == process_tasks == 0
     assert security_calls == provider.calls == 0
+
+
+async def test_no_downstream_state_before_allow_and_no_synthetic_route_state(database):
+    repository = MessageRepository(database)
+    update_id = "router-gate"
+    assert await repository.accept(_incoming(update_id))
+    gateway = BlockingSecurityGateway()
+    router = ImmediateRouter(
+        RouteDecision(("booking", "human_handoff"), False, "llm", 0.91)
+    )
+    pipeline = SecurityPipeline(
+        gateway,
+        "",
+        extract_structured_facts(""),
+        router=router,
+    )
+
+    async def secured_llm(text, context, *, recent_message_count):
+        return await pipeline.respond(
+            text,
+            context,
+            recent_message_count=recent_message_count,
+        )
+
+    handler = MessageTaskHandler(
+        database,
+        secured_llm,
+        TelegramSender(FakeTelegram(), repository),
+    )
+    task = asyncio.create_task(
+        handler.handle(
+            QueueTask(
+                kind="process_message",
+                payload={"chat_id": "42", "update_ids": [update_id]},
+                idempotency_key=process_message_key([update_id]),
+            )
+        )
+    )
+    await asyncio.wait_for(gateway.started.wait(), 1)
+    await asyncio.wait_for(router.started.wait(), 1)
+
+    async with database.acquire() as connection:
+        before_allow = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT count(*) FROM booking_scenarios) AS booking,
+                (SELECT count(*) FROM escalations) AS handoff,
+                (SELECT count(*) FROM outbound_messages) AS outbound
+            """
+        )
+    assert tuple(before_allow.values()) == (0, 0, 0)
+
+    gateway.release.set()
+    await task
+
+    async with database.acquire() as connection:
+        after_allow = await connection.fetchrow(
+            """
+            SELECT
+                (SELECT count(*) FROM booking_scenarios) AS booking,
+                (SELECT count(*) FROM escalations) AS handoff,
+                (SELECT count(*) FROM outbound_messages) AS outbound
+            """
+        )
+    assert tuple(after_allow.values()) == (0, 0, 1)
+    answer_system = gateway.requests[-1].messages[0]["content"]
+    assert "intents=booking,human_handoff" in answer_system
+
+
+async def test_medical_risk_is_authoritative_and_never_calls_router():
+    gateway = ForbiddenGateway()
+    router = ForbiddenRouter()
+
+    result = await SecurityPipeline(
+        gateway,
+        "",
+        extract_structured_facts(""),
+        router=router,
+    ).respond("Не могу дышать", [])
+
+    assert result.text == MEDICAL_ESCALATION_REPLY
+    assert gateway.calls == 0
+    assert router.calls == 0
 
 
 @pytest.mark.parametrize(

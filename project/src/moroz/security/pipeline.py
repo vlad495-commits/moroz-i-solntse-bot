@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 
-from moroz.messaging.router import route_message
+from moroz.messaging.router import (
+    RouteDecision,
+    build_untrusted_input,
+    deterministic_route,
+    route_message,
+)
 from moroz.security.guardrails import check_input
 from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
+    LLMUsage,
     LLMUnavailable,
     NonRetryableLLMError,
 )
@@ -40,6 +47,9 @@ SLOT_OUTPUT_FALLBACK = (
     "Я не могу подтвердить этот слот без актуального расписания. "
     "Проверьте доступность в онлайн-записи или уточните у администратора."
 )
+OFFTOPIC_REPLY = (
+    "Я могу помочь по услугам, подготовке, контактам и записи в центр."
+)
 
 _GUARD_PROMPT = (
     "Classify the masked user text. Reply with exactly ALLOW or BLOCK."
@@ -63,7 +73,39 @@ def _aggregate(
         cached_tokens=sum(item.cached_tokens for item in items),
         total_tokens=sum(item.total_tokens for item in items),
         model=model,
+        usage=tuple(usage for item in items for usage in item.usage),
     )
+
+
+def _usage_only(usages: tuple[LLMUsage, ...]) -> LLMResponse:
+    return LLMResponse(
+        "",
+        sum(item.prompt_tokens for item in usages),
+        sum(item.completion_tokens for item in usages),
+        sum(item.cached_tokens for item in usages),
+        sum(item.total_tokens for item in usages),
+        usages[-1].model,
+        usages,
+    )
+
+
+async def _cancel_and_drain(*tasks: asyncio.Task | None) -> None:
+    active = tuple(task for task in tasks if task is not None)
+    for task in active:
+        if not task.done():
+            task.cancel()
+    if active:
+        await asyncio.gather(*active, return_exceptions=True)
+
+
+def _confidence_bucket(confidence: float | None) -> str:
+    if confidence is None:
+        return "none"
+    if confidence >= 0.8:
+        return "high"
+    if confidence >= 0.5:
+        return "medium"
+    return "low"
 
 
 class SecurityPipeline:
@@ -72,10 +114,33 @@ class SecurityPipeline:
         gateway: object,
         system_prompt: str,
         facts: StructuredFacts,
+        router: object | None = None,
     ) -> None:
         self.gateway = gateway
         self.system_prompt = system_prompt
         self.facts = facts
+        self.router = router
+
+    async def _security_verdict(
+        self,
+        masked_text: str,
+        masked_context: list[dict[str, str]],
+    ) -> LLMResponse:
+        return await self.gateway.complete(
+            LLMRequest(
+                messages=(
+                    {"role": "system", "content": _GUARD_PROMPT},
+                    {
+                        "role": "user",
+                        "content": build_untrusted_input(
+                            masked_text,
+                            masked_context,
+                        ),
+                    },
+                ),
+                purpose="security",
+            )
+        )
 
     async def respond(
         self,
@@ -109,37 +174,71 @@ class SecurityPipeline:
         forbidden_raw = session.raw_values()
         accumulated: list[LLMResponse] = []
 
-        if decision.action == "review":
-            try:
-                guard_response = await self.gateway.complete(
-                    LLMRequest(
-                        messages=(
-                            {"role": "system", "content": _GUARD_PROMPT},
-                            {"role": "user", "content": masked_current.text},
-                        ),
-                        purpose="guard",
+        local_route = deterministic_route(masked_current.text)
+        needs_router = local_route is None and self.router is not None
+        needs_security_llm = decision.action == "review" or needs_router
+        security_task = (
+            asyncio.create_task(
+                self._security_verdict(masked_current.text, masked_context)
+            )
+            if needs_security_llm
+            else None
+        )
+        router_task = (
+            asyncio.create_task(
+                self.router.route(masked_current.text, masked_context)
+            )
+            if needs_router
+            else None
+        )
+        try:
+            if security_task is not None:
+                try:
+                    security_response = await security_task
+                except Exception:
+                    await _cancel_and_drain(router_task)
+                    return _aggregate(
+                        accumulated,
+                        INPUT_BLOCK_REPLY,
+                        "security-fallback",
                     )
-                )
-            except (LLMUnavailable, NonRetryableLLMError):
-                return _aggregate(
-                    accumulated,
-                    INPUT_BLOCK_REPLY,
-                    "security-fallback",
-                )
-            accumulated.append(guard_response)
-            guard_result = guard_response.text.strip()
-            if guard_result != "ALLOW":
-                return _aggregate(
-                    accumulated,
-                    INPUT_BLOCK_REPLY,
-                    "security-fallback",
-                )
+                accumulated.append(security_response)
+                if security_response.text.strip() != "ALLOW":
+                    await _cancel_and_drain(router_task)
+                    return _aggregate(
+                        accumulated,
+                        INPUT_BLOCK_REPLY,
+                        "security-fallback",
+                    )
 
-        route = route_message(user_message)
+            if router_task is not None:
+                try:
+                    router_verdict = await router_task
+                except Exception:
+                    local_route = RouteDecision(
+                        ("unknown",),
+                        False,
+                        "fallback",
+                        None,
+                        "router_internal_error",
+                    )
+                else:
+                    local_route = router_verdict.decision
+                    if router_verdict.usage:
+                        accumulated.append(_usage_only(router_verdict.usage))
+            route = local_route or route_message(masked_current.text)
+        except asyncio.CancelledError:
+            await _cancel_and_drain(security_task, router_task)
+            raise
+
         route_metadata = (
             f"ROUTE intents={','.join(route.intents)}; "
-            f"requires_clarification={int(route.requires_clarification)}"
+            f"requires_clarification={int(route.requires_clarification)}; "
+            f"source={route.source}; "
+            f"confidence={_confidence_bucket(route.confidence)}"
         )
+        if "offtopic" in route.intents:
+            return _aggregate(accumulated, OFFTOPIC_REPLY, "router-local")
         active_facts = self.facts
         catalog_block = ""
         if catalog is not None and "faq" in route.intents:

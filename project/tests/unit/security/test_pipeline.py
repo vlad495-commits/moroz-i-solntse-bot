@@ -10,16 +10,23 @@ from moroz.booking.catalog import (
     CatalogService,
     CatalogVariant,
 )
+from moroz.messaging.router import (
+    RouteDecision,
+    RouterVerdict,
+    build_untrusted_input,
+)
 
 from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
     LLMUnavailable,
+    LLMUsage,
     NonRetryableLLMError,
 )
 from moroz.security.pipeline import (
     INPUT_BLOCK_REPLY,
     MEDICAL_ESCALATION_REPLY,
+    OFFTOPIC_REPLY,
     SAFE_OUTPUT_FALLBACK,
     STOP_REPLY,
     SecurityPipeline,
@@ -48,12 +55,23 @@ class CapturingGateway:
 def response(
     text: str = "Безопасный ответ",
     *,
+    purpose: str = "answer",
     prompt_tokens: int = 3,
     completion_tokens: int = 2,
     cached_tokens: int = 1,
     total_tokens: int = 5,
     model: str = "test-model",
 ) -> LLMResponse:
+    usage = () if total_tokens == 0 else (
+        LLMUsage(
+            purpose,
+            prompt_tokens,
+            completion_tokens,
+            cached_tokens,
+            total_tokens,
+            model,
+        ),
+    )
     return LLMResponse(
         text=text,
         prompt_tokens=prompt_tokens,
@@ -61,19 +79,386 @@ def response(
         cached_tokens=cached_tokens,
         total_tokens=total_tokens,
         model=model,
+        usage=usage,
     )
 
 
 def pipeline(
-    gateway: CapturingGateway,
+    gateway: object,
     *,
     prices: frozenset[str] = frozenset({"2400"}),
+    router: object | None = None,
 ) -> SecurityPipeline:
     return SecurityPipeline(
         gateway,
         "OWNED SYSTEM PROMPT",
         StructuredFacts(prices, frozenset(), frozenset()),
+        router=router,
     )
+
+
+class BlockingRouter:
+    def __init__(self, started, release, verdict):
+        self.started = started
+        self.release = release
+        self.verdict = verdict
+        self.calls = []
+        self.cancelled = False
+
+    async def route(self, text, context):
+        self.calls.append((text, context))
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return self.verdict
+
+
+class ControlledGateway:
+    def __init__(self, started, release, event):
+        self.started = started
+        self.release = release
+        self.event = event
+        self.requests = []
+        self.cancelled = False
+
+    async def complete(self, request):
+        self.requests.append(request)
+        if request.purpose == "security":
+            self.started.set()
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+        if isinstance(self.event, BaseException):
+            raise self.event
+        return self.event
+
+
+class CapturingRouter:
+    def __init__(self, verdict):
+        self.verdict = verdict
+        self.calls = []
+
+    async def route(self, text, context):
+        self.calls.append((text, context))
+        if isinstance(self.verdict, BaseException):
+            raise self.verdict
+        return self.verdict
+
+
+class NeverFinishingGateway:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.cancelled = False
+
+    async def complete(self, _request):
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+class NeverFinishingRouter:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.cancelled = False
+
+    async def route(self, _text, _context):
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+@pytest.mark.asyncio
+async def test_unresolved_security_and_router_start_in_parallel_but_route_waits_for_allow():
+    security_started = asyncio.Event()
+    router_started = asyncio.Event()
+    security_release = asyncio.Event()
+    router_release = asyncio.Event()
+    gateway = ControlledGateway(
+        security_started,
+        security_release,
+        response("ALLOW", purpose="security"),
+    )
+    router = BlockingRouter(
+        router_started,
+        router_release,
+        RouterVerdict(RouteDecision(("faq",), False, "llm", 0.9), ()),
+    )
+    task = asyncio.create_task(
+        pipeline(gateway, router=router).respond("Да, завтра", [])
+    )
+
+    await asyncio.wait_for(security_started.wait(), 1)
+    await asyncio.wait_for(router_started.wait(), 1)
+    router_release.set()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    security_release.set()
+    result = await task
+    assert result.text
+
+
+@pytest.mark.asyncio
+async def test_security_block_discards_router_without_answer_or_route_usage():
+    security_started = asyncio.Event()
+    security_release = asyncio.Event()
+    router_started = asyncio.Event()
+    router_release = asyncio.Event()
+    gateway = ControlledGateway(
+        security_started,
+        security_release,
+        response("BLOCK", purpose="security"),
+    )
+    router = BlockingRouter(
+        router_started,
+        router_release,
+        RouterVerdict(
+            RouteDecision(("booking",), False, "llm", 0.99),
+            (LLMUsage("router", 4, 2, 0, 6, "router-model"),),
+        ),
+    )
+
+    task = asyncio.create_task(
+        pipeline(gateway, router=router).respond("Да, завтра", [])
+    )
+    await asyncio.gather(security_started.wait(), router_started.wait())
+    security_release.set()
+    result = await task
+
+    assert result.text == INPUT_BLOCK_REPLY
+    assert router.cancelled is True
+    assert [request.purpose for request in gateway.requests] == ["security"]
+    assert [item.purpose for item in result.usage] == ["security"]
+
+
+@pytest.mark.asyncio
+async def test_router_and_security_receive_the_same_bounded_masked_payload():
+    raw_phone = "+7 900 111-22-33"
+    raw_email = "private@example.ru"
+    router = CapturingRouter(
+        RouterVerdict(RouteDecision(("faq",), False, "llm", 0.8), ())
+    )
+    gateway = CapturingGateway(
+        response("ALLOW", purpose="security"),
+        response("Безопасный ответ"),
+    )
+    context = [
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": f"history-{index}-" + "x" * 450,
+        }
+        for index in range(8)
+    ]
+    context.append({"role": "user", "content": f"Почта {raw_email}"})
+
+    await pipeline(gateway, router=router).respond(
+        f"Свяжитесь со мной по {raw_phone}, пожалуйста",
+        context,
+    )
+
+    assert len(router.calls) == 1
+    router_text, router_context = router.calls[0]
+    security_payload = gateway.requests[0].messages[1]["content"]
+    assert security_payload == build_untrusted_input(router_text, router_context)
+    assert raw_phone not in repr(router.calls)
+    assert raw_email not in repr(router.calls)
+    assert raw_phone not in security_payload
+    assert raw_email not in security_payload
+    assert "OWNED SYSTEM PROMPT" not in security_payload
+    transcript = security_payload.split("UNTRUSTED_CURRENT_MESSAGE:", 1)[0]
+    assert len(transcript.removeprefix("UNTRUSTED_RECENT_CONTEXT:\n")) <= 2001
+    assert security_payload.count("user:") + security_payload.count("assistant:") <= 6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "security_event,router_event,expected_text",
+    [
+        (
+            response("ALLOW", purpose="security"),
+            RouterVerdict(
+                RouteDecision(
+                    ("unknown",),
+                    False,
+                    "fallback",
+                    None,
+                    "router_unavailable",
+                ),
+                (),
+            ),
+            "answer",
+        ),
+        (
+            response("BLOCK", purpose="security"),
+            RouterVerdict(
+                RouteDecision(
+                    ("unknown",),
+                    False,
+                    "fallback",
+                    None,
+                    "router_unavailable",
+                ),
+                (),
+            ),
+            INPUT_BLOCK_REPLY,
+        ),
+        (
+            LLMUnavailable(),
+            RouterVerdict(RouteDecision(("faq",), False, "llm", 0.9)),
+            INPUT_BLOCK_REPLY,
+        ),
+        (
+            LLMUnavailable(),
+            RouterVerdict(
+                RouteDecision(
+                    ("unknown",),
+                    False,
+                    "fallback",
+                    None,
+                    "router_unavailable",
+                ),
+                (),
+            ),
+            INPUT_BLOCK_REPLY,
+        ),
+    ],
+)
+async def test_parallel_failure_matrix_is_fail_closed_for_security(
+    security_event,
+    router_event,
+    expected_text,
+):
+    gateway = CapturingGateway(security_event, response("answer"))
+    router = CapturingRouter(router_event)
+
+    result = await pipeline(gateway, router=router).respond("Да, завтра", [])
+
+    assert result.text == expected_text
+    if expected_text == INPUT_BLOCK_REPLY:
+        assert all(request.purpose != "answer" for request in gateway.requests)
+
+
+@pytest.mark.asyncio
+async def test_router_error_after_allow_uses_safe_unknown_answer_path():
+    gateway = CapturingGateway(
+        response("ALLOW", purpose="security"),
+        response("answer"),
+    )
+    router = CapturingRouter(ValueError("router-response-sentinel"))
+
+    result = await pipeline(gateway, router=router).respond("Да, завтра", [])
+
+    assert result.text == "answer"
+    assert "intents=unknown" in gateway.requests[-1].messages[0]["content"]
+    assert "router-response-sentinel" not in repr(gateway.requests)
+
+
+@pytest.mark.asyncio
+async def test_offtopic_waits_for_allow_and_skips_answer_with_consumed_usage_only():
+    gateway = CapturingGateway(response("ALLOW", purpose="security"))
+    router_usage = LLMUsage("router", 4, 2, 0, 6, "router-model")
+    router = CapturingRouter(
+        RouterVerdict(
+            RouteDecision(("offtopic",), False, "llm", 0.9),
+            (router_usage,),
+        )
+    )
+
+    result = await pipeline(gateway, router=router).respond("Курс доллара?", [])
+
+    assert result.text == OFFTOPIC_REPLY
+    assert [request.purpose for request in gateway.requests] == ["security"]
+    assert [item.purpose for item in result.usage] == ["security", "router"]
+    assert result.total_tokens == 11
+
+
+@pytest.mark.asyncio
+async def test_route_metadata_is_allowlisted_and_confidence_is_bucketed():
+    gateway = CapturingGateway(
+        response("ALLOW", purpose="security"),
+        response("answer-provider-sentinel"),
+    )
+    router = CapturingRouter(
+        RouterVerdict(RouteDecision(("faq",), False, "llm", 0.83), ())
+    )
+
+    await pipeline(gateway, router=router).respond("input-sentinel", [])
+
+    metadata = gateway.requests[-1].messages[0]["content"]
+    assert "intents=faq" in metadata
+    assert "requires_clarification=0" in metadata
+    assert "source=llm" in metadata
+    assert "confidence=high" in metadata
+    assert "0.83" not in metadata
+    assert "input-sentinel" not in metadata
+    assert "answer-provider-sentinel" not in metadata
+
+
+@pytest.mark.asyncio
+async def test_parallel_usage_is_aggregated_in_consumption_order():
+    gateway = CapturingGateway(
+        response(
+            "ALLOW",
+            purpose="security",
+            prompt_tokens=2,
+            completion_tokens=1,
+            cached_tokens=0,
+            total_tokens=3,
+            model="security-model",
+        ),
+        response(
+            "answer",
+            prompt_tokens=5,
+            completion_tokens=2,
+            cached_tokens=1,
+            total_tokens=7,
+            model="answer-model",
+        ),
+    )
+    router_usage = LLMUsage("router", 3, 1, 0, 4, "router-model")
+    router = CapturingRouter(
+        RouterVerdict(
+            RouteDecision(("faq",), False, "llm", 0.8),
+            (router_usage,),
+        )
+    )
+
+    result = await pipeline(gateway, router=router).respond("Да, завтра", [])
+
+    assert result.total_tokens == 14
+    assert [item.purpose for item in result.usage] == [
+        "security",
+        "router",
+        "answer",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_outer_cancellation_cancels_and_drains_both_tasks():
+    security = NeverFinishingGateway()
+    router = NeverFinishingRouter()
+    task = asyncio.create_task(
+        pipeline(security, router=router).respond("Да, завтра", [])
+    )
+    await asyncio.gather(security.started.wait(), router.started.wait())
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert security.cancelled is True
+    assert router.cancelled is True
 
 
 def catalog(
@@ -277,7 +662,8 @@ async def test_local_allow_skips_guard_and_uses_machine_owned_route_metadata() -
 
     assert [request.purpose for request in gateway.requests] == ["answer"]
     assert gateway.requests[0].messages[0]["content"].endswith(
-        "ROUTE intents=unknown; requires_clarification=0"
+        "ROUTE intents=unknown; requires_clarification=0; "
+        "source=fallback; confidence=none"
     )
 
 
@@ -285,7 +671,13 @@ async def test_local_allow_skips_guard_and_uses_machine_owned_route_metadata() -
 async def test_review_makes_one_masked_guard_call_then_answer() -> None:
     raw_email = "review@example.ru"
     gateway = CapturingGateway(
-        response("  ALLOW  ", prompt_tokens=2, completion_tokens=1, total_tokens=3),
+        response(
+            "  ALLOW  ",
+            purpose="security",
+            prompt_tokens=2,
+            completion_tokens=1,
+            total_tokens=3,
+        ),
         "Безопасный ответ",
     )
 
@@ -295,7 +687,7 @@ async def test_review_makes_one_masked_guard_call_then_answer() -> None:
     )
 
     assert [request.purpose for request in gateway.requests] == [
-        "guard",
+        "security",
         "answer",
     ]
     guard_request = gateway.requests[0]
@@ -303,6 +695,7 @@ async def test_review_makes_one_masked_guard_call_then_answer() -> None:
     assert "history@example.ru" not in repr(guard_request)
     assert "<PII_EMAIL_" in repr(guard_request)
     assert result.total_tokens == 8
+    assert [item.purpose for item in result.usage] == ["security", "answer"]
 
 
 @pytest.mark.asyncio
@@ -311,7 +704,13 @@ async def test_guard_block_or_malformed_output_fails_closed(
     guard_output: str,
 ) -> None:
     gateway = CapturingGateway(
-        response(guard_output, prompt_tokens=2, completion_tokens=1, total_tokens=3)
+        response(
+            guard_output,
+            purpose="security",
+            prompt_tokens=2,
+            completion_tokens=1,
+            total_tokens=3,
+        )
     )
 
     result = await pipeline(gateway).respond(
@@ -319,10 +718,11 @@ async def test_guard_block_or_malformed_output_fails_closed(
         [],
     )
 
-    assert [request.purpose for request in gateway.requests] == ["guard"]
+    assert [request.purpose for request in gateway.requests] == ["security"]
     assert result.text == INPUT_BLOCK_REPLY
     assert result.model == "security-fallback"
     assert result.total_tokens == 3
+    assert [item.purpose for item in result.usage] == ["security"]
 
 
 @pytest.mark.asyncio
@@ -372,6 +772,10 @@ async def test_invalid_output_retries_once_then_returns_safe_fallback() -> None:
         2,
         16,
         "security-fallback",
+        (
+            LLMUsage("answer", 4, 3, 1, 7, "test-model"),
+            LLMUsage("answer", 5, 4, 1, 9, "test-model"),
+        ),
     )
 
 
@@ -473,6 +877,10 @@ async def test_retry_success_preserves_final_model_and_aggregates_usage_once() -
         3,
         16,
         "final-model",
+        (
+            LLMUsage("answer", 3, 2, 1, 5, "first"),
+            LLMUsage("answer", 7, 4, 2, 11, "final-model"),
+        ),
     )
 
 
