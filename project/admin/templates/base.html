@@ -33,6 +33,11 @@
             <a href="{{ request.scope.get('root_path', '') }}/eval/" class="{% if path.startswith('/eval') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg></span>Evaluations
             </a>
+            {% if user.role == 'owner' %}
+            <a href="{{ request.scope.get('root_path', '') }}/eval/router/" class="{% if path.startswith('/eval/router') %}active{% endif %}">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4"/></svg></span>Router Evaluation
+            </a>
+            {% endif %}
             <a href="{{ request.scope.get('root_path', '') }}/escalations/" class="{% if path.startswith('/escalations') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg></span>Эскалации
             </a>

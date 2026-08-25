@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Прогон #{{ run.id }} — Admin{% endblock %}
 {% block content %}
-<a href="{{ request.scope.get('root_path', '') }}/eval/" class="back">← К списку эвалов</a>
+<a href="{{ request.scope.get('root_path', '') }}/eval/{% if run.suite == 'router' %}router/{% endif %}" class="back">← К списку эвалов</a>
 
-<h1>Прогон эвалюэйшенов #{{ run.id }}</h1>
+<h1>{% if run.suite == 'router' %}Router Evaluation{% else %}Прогон эвалюэйшенов{% endif %} #{{ run.id }}</h1>
 <div class="meta">
     Запущен: {{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}
     {% if run.finished_at %} · Завершён: {{ run.finished_at.strftime('%H:%M:%S') }}{% endif %}
-    · Judge-модель: <code>{{ run.judge_model }}</code>
+    · {% if run.suite == 'router' %}Router-модель{% else %}Judge-модель{% endif %}: <code>{{ run.judge_model }}</code>
 </div>
 
 <div class="run-status" id="run-status">
@@ -36,6 +36,7 @@
         <span class="log-layer">
             {% if r.check_layer == 'regex' %}<span class="chip">regex</span>
             {% elif r.check_layer == 'judge' %}<span class="chip chip-judge">judge {{ "%.2f"|format(r.score or 0) }}</span>
+            {% elif r.check_layer == 'router' %}<span class="chip">router</span>
             {% endif %}
         </span>
         <span class="log-question">{{ r.question[:120] }}{% if r.question|length > 120 %}…{% endif %}</span>
@@ -56,10 +57,30 @@
         </div>
         <div class="result-body">
             <div><strong>Вопрос:</strong><div class="quoted">{{ r.question }}</div></div>
+            {% if run.suite == 'router' %}
+            {% set expected = r.expected_data or {} %}
+            {% set actual = r.actual_data or {} %}
+            <div><strong>Ожидалось:</strong><div class="quoted">
+                intents: {{ expected.get('intents', [])|join(', ') or '—' }}<br>
+                clarification: {{ 'да' if expected.get('requires_clarification') else 'нет' }}<br>
+                source: {{ expected.get('source', '—') }}
+            </div></div>
+            <div><strong>Фактически:</strong><div class="quoted quoted-actual">
+                intents: {{ actual.get('intents', [])|join(', ') or '—' }}<br>
+                clarification: {{ 'да' if actual.get('requires_clarification') else 'нет' }}<br>
+                source: {{ actual.get('source', '—') }}<br>
+                confidence: {{ actual.get('confidence') if actual.get('confidence') is not none else '—' }}
+                {% if actual.get('reason_code') %}<br>reason: {{ actual.get('reason_code') }}{% endif %}
+            </div></div>
+            {% if r.judge_reasoning %}
+            <div><strong>Сравнение:</strong><div class="quoted reasoning">{{ r.judge_reasoning }}</div></div>
+            {% endif %}
+            {% else %}
             <div><strong>Эталон:</strong><div class="quoted">{{ r.expected_answer }}</div></div>
             <div><strong>Ответ бота:</strong><div class="quoted quoted-actual">{{ r.actual_answer or '(нет ответа)' }}</div></div>
             {% if r.judge_reasoning %}
             <div><strong>Обоснование judge:</strong><div class="quoted reasoning">{{ r.judge_reasoning }}</div></div>
+            {% endif %}
             {% endif %}
             {% if r.error_message %}
             <div class="error">Ошибка: {{ r.error_message }}</div>

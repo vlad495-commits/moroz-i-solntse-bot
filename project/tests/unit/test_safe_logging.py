@@ -222,3 +222,72 @@ def test_invalid_regex_log_does_not_include_pattern(monkeypatch, caplog):
     assert "invalid_eval_regex" in caplog.text
     assert f"pattern_length={len(pattern) - 2}" in caplog.text
     assert pattern not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_router_eval_gate_log_contains_counts_but_no_case_data(
+    monkeypatch,
+    caplog,
+):
+    case_sentinel = "router-case-private-sentinel"
+
+    async def run_case(case, _run_id, *, router):
+        assert router is not None
+        assert case["question"] == case_sentinel
+        return {"verdict": "pass"}
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(eval_runner, "run_router_case", run_case)
+    monkeypatch.setattr(eval_runner.evdb, "update_run_progress", noop)
+    monkeypatch.setattr(eval_runner.evdb, "finish_run", noop)
+
+    with caplog.at_level(logging.INFO, logger=eval_runner.logger.name):
+        await eval_runner.run_router_eval_set(
+            61,
+            cases=[
+                {
+                    "id": 41,
+                    "category": "context",
+                    "critical": False,
+                    "question": case_sentinel,
+                }
+            ],
+            router=object(),
+        )
+
+    assert (
+        "router_eval_security_gate run_id=61 total=1 passed=1 failed=0 "
+        "critical_total=0 critical_failed=0 pass_rate=1.0000 status=finished"
+        in caplog.text
+    )
+    assert case_sentinel not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_router_eval_run_failure_logs_and_persists_only_error_type(
+    monkeypatch,
+    caplog,
+):
+    sentinel = "https://router:password@provider.invalid raw-user-input"
+    finished = []
+
+    async def fail_cases(*_args, **_kwargs):
+        raise EvalRunError(sentinel)
+
+    async def finish_run(*args, **kwargs):
+        finished.append((args, kwargs))
+
+    monkeypatch.setattr(eval_runner.evdb, "list_cases", fail_cases)
+    monkeypatch.setattr(eval_runner.evdb, "finish_run", finish_run)
+
+    with caplog.at_level(logging.ERROR, logger=eval_runner.logger.name):
+        await eval_runner.run_router_eval_set(62, cases=None, router=object())
+
+    assert finished == [
+        ((62, 0, 0), {"status": "error", "error_message": "EvalRunError"})
+    ]
+    assert "router_eval_run_failed run_id=62 error_type=EvalRunError" in caplog.text
+    assert sentinel not in caplog.text
+    assert sentinel not in repr(finished)

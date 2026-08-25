@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from moroz.messaging.router import INTENTS
+import pytest
+
+from moroz.messaging.router import INTENTS, deterministic_route
+from moroz.security.pii import PiiSession
 
 
 DATASET = Path("/workspace/llm/eval/router_dataset.json")
@@ -50,3 +53,23 @@ def test_router_dataset_has_stable_unique_contract():
         assert set(case["expected_intents"]) <= set(INTENTS)
         assert case["expected_source"] in {"deterministic", "llm"}
         assert type(case["critical"]) is bool
+
+
+@pytest.mark.parametrize(
+    "case",
+    json.loads(DATASET.read_text(encoding="utf-8")),
+    ids=lambda case: case["case_key"],
+)
+def test_router_dataset_source_matches_runtime_deterministic_boundary(case):
+    masked_input = PiiSession().mask(case["input"]).text
+    decision = deterministic_route(masked_input)
+
+    if case["expected_source"] == "llm":
+        assert decision is None
+    else:
+        assert decision is not None
+        assert set(decision.intents) == set(case["expected_intents"])
+        assert (
+            decision.requires_clarification
+            == case["expected_clarification"]
+        )

@@ -267,7 +267,8 @@ async def test_run_eval_set_derives_critical_from_persisted_category(
         for index in range(1, 21)
     ]
 
-    async def list_cases():
+    async def list_cases(suite):
+        assert suite == "answer"
         return cases
 
     async def run_case(case, _run_id):
@@ -505,7 +506,8 @@ async def test_eval_route_owns_and_retrieves_background_task(monkeypatch, caplog
 
     monkeypatch.setattr(eval_routes, "get_current_user", current_user)
 
-    async def list_cases():
+    async def list_cases(*, suite):
+        assert suite == "answer"
         return [{"id": 1}]
 
     async def create_run(**_kwargs):
@@ -545,6 +547,70 @@ async def test_eval_route_owns_and_retrieves_background_task(monkeypatch, caplog
     assert "eval_background_failed run_id=53 error_type=EvalBackgroundError" in caplog.text
     assert sentinel not in caplog.text
     assert exception_contexts == []
+
+
+@pytest.mark.asyncio
+async def test_router_eval_stream_exposes_only_safe_summary_fields(monkeypatch):
+    provider_sentinel = "provider-response-private-sentinel"
+    exception_sentinel = "provider-exception-private-sentinel"
+    question_tail = "question-private-tail-sentinel"
+    display_prefix = "Q" * 120
+
+    class StreamRequest:
+        async def is_disconnected(self):
+            return False
+
+    async def current_user(_request):
+        return AuthenticatedUser(
+            id=7,
+            username="owner",
+            role="owner",
+            csrf_token="csrf-token",
+            session_id="session-id",
+        )
+
+    async def get_run(_run_id):
+        return {
+            "id": 81,
+            "suite": "router",
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "status": "failed",
+        }
+
+    async def get_results(_run_id, _last_id):
+        return [
+            {
+                "id": 901,
+                "case_id": 41,
+                "question": display_prefix + question_tail,
+                "verdict": "error",
+                "check_layer": "router",
+                "score": None,
+                "actual_data": {"raw": provider_sentinel},
+                "error_message": exception_sentinel,
+            }
+        ]
+
+    monkeypatch.setattr(eval_routes, "get_current_user", current_user)
+    monkeypatch.setattr(eval_routes.evdb, "get_run", get_run)
+    monkeypatch.setattr(
+        eval_routes.evdb,
+        "get_run_results_since",
+        get_results,
+    )
+
+    response = await eval_routes.eval_run_stream(StreamRequest(), 81)
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+    body = "".join(chunks)
+
+    assert display_prefix in body
+    assert question_tail not in body
+    assert provider_sentinel not in body
+    assert exception_sentinel not in body
 
 
 @pytest.mark.asyncio

@@ -138,7 +138,7 @@ _INTENT_RULES: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
         (
             re.compile(
                 r"\b(?:хочу|можно|нужно|как|давайте)?\s*"
-                r"(?:записат\w*|запиш\w*|book)\b",
+                r"(?:записат\w*|запиш\w*|book(?:ing)?)\b",
                 re.IGNORECASE,
             ),
             re.compile(
@@ -156,7 +156,7 @@ _INTENT_RULES: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
                 r"крио\w*|соляри\w*|коллари\w*|коллагенари\w*|"
                 r"прессотерап\w*|массаж\w*|водородотерап\w*|"
                 r"сертификат\w*|депозит\w*|адрес\w*|график\w*|"
-                r"контакт\w*|телефон\w*|подготов\w*|"
+                r"подготов\w*|"
                 r"противопоказан\w*|faq|price|hours|address)\b",
                 re.IGNORECASE,
             ),
@@ -167,7 +167,8 @@ _INTENT_RULES: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
         (
             re.compile(
                 r"\b(?:позовите|позвать|соедините|переведите)\s+"
-                r"(?:с\s+)?(?:администратор\w*|человек\w*|оператор\w*)\b",
+                r"(?:с\s+)?(?:жив\w*\s+)?(?:администратор\w*|"
+                r"человек\w*|оператор\w*|руководител\w*)\b",
                 re.IGNORECASE,
             ),
         ),

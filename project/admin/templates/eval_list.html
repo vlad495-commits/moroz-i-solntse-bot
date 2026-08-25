@@ -1,26 +1,31 @@
 {% extends "base.html" %}
-{% block title %}Эвалюэйшены — Admin{% endblock %}
+{% set is_router = suite == 'router' %}
+{% block title %}{% if is_router %}Router Evaluation{% else %}Эвалюэйшены{% endif %} — Admin{% endblock %}
 {% block content %}
 <div class="row-between">
-    <h1>Эвалюэйшены <span class="muted">({{ cases|length }} кейсов)</span></h1>
+    <h1>{% if is_router %}Router Evaluation{% else %}Эвалюэйшены{% endif %} <span class="muted">({{ cases|length }} кейсов)</span></h1>
     <div class="actions">
-<form method="post" action="{{ request.scope.get('root_path', '') }}/eval/runs" style="display: inline">
+        <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% endif %}/runs" style="display: inline">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn btn-primary" {% if not cases %}disabled{% endif %}>
-                ▶ Запустить эвалюэйшены
+                ▶ {% if is_router %}Проверить Router{% else %}Запустить эвалюэйшены{% endif %}
             </button>
         </form>
-<form method="post" action="{{ request.scope.get('root_path', '') }}/eval/runs/problematic" style="display: inline">
+        <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% endif %}/runs/problematic" style="display: inline">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn" {% if not problem_cases %}disabled{% endif %}>
                 ⚠ Прогнать проблемные{% if problem_cases %} ({{ problem_cases|length }}){% endif %}
             </button>
         </form>
-<a href="{{ request.scope.get('root_path', '') }}/eval/cases/new" class="btn">+ Новый кейс</a>
+        {% if not is_router %}
+        <a href="{{ request.scope.get('root_path', '') }}/eval/cases/new" class="btn">+ Новый кейс</a>
+        {% endif %}
     </div>
 </div>
 
-{% if request.query_params.get('error') == 'no_problem_cases' %}
+{% if request.query_params.get('error') == 'no_cases' %}
+<div class="empty">Кейсов для этого набора пока нет.</div>
+{% elif request.query_params.get('error') == 'no_problem_cases' %}
 <div class="empty">Проблемных кейсов сейчас нет: последние результаты всех кейсов зелёные.</div>
 {% endif %}
 
@@ -37,13 +42,13 @@
             <th>Статус</th>
             <th>Прошло / всего</th>
             <th>Pass rate</th>
-            <th>Judge-модель</th>
+            <th>{% if is_router %}Router-модель{% else %}Judge-модель{% endif %}</th>
         </tr>
     </thead>
     <tbody>
         {% for r in runs %}
         <tr>
-                    <td><a href="{{ request.scope.get('root_path', '') }}/eval/runs/{{ r.id }}">#{{ r.id }}</a></td>
+            <td><a href="{{ request.scope.get('root_path', '') }}/eval/runs/{{ r.id }}">#{{ r.id }}</a></td>
             <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
             <td><span class="badge badge-status-{{ r.status }}">{{ r.status }}</span></td>
             <td>{{ r.passed }} / {{ r.total }}{% if r.failed %} <span class="failed">(✗ {{ r.failed }}){% endif %}</span></td>
@@ -56,37 +61,51 @@
 </div>
 {% endif %}
 
-<h2>Тест-кейсы</h2>
+<h2>{% if is_router %}Router-кейсы (read-only){% else %}Тест-кейсы{% endif %}</h2>
 {% if not cases %}
 <div class="empty">
+    {% if is_router %}
+    Router-кейсы не загружены. Этот набор версионируется в Git и миграциях.
+    {% else %}
     Кейсов ещё нет. Нажми <strong>«+ Новый кейс»</strong> чтобы добавить первый.
+    {% endif %}
 </div>
 {% else %}
 <table class="data-table">
     <thead>
         <tr>
             <th>#</th>
+            {% if is_router %}<th>Ключ</th>{% endif %}
             <th>Категория</th>
-            <th>Вопрос</th>
-            <th>Эталон</th>
-            <th></th>
+            <th>{% if is_router %}Вход{% else %}Вопрос{% endif %}</th>
+            <th>{% if is_router %}Ожидалось{% else %}Эталон{% endif %}</th>
+            {% if is_router %}<th>Critical</th>{% else %}<th></th>{% endif %}
         </tr>
     </thead>
     <tbody>
         {% for c in cases %}
         <tr>
             <td>{{ c.id }}</td>
+            {% if is_router %}<td><code>{{ c.case_key }}</code></td>{% endif %}
             <td><span class="chip">{{ c.category }}</span></td>
             <td class="cell-trunc">{{ c.question }}</td>
+            {% if is_router %}
+            <td>
+                <strong>{{ c.expected_data.intents|join(', ') }}</strong><br>
+                <span class="muted">clarification: {{ 'да' if c.expected_data.requires_clarification else 'нет' }} · source: {{ c.expected_data.source }}</span>
+            </td>
+            <td>{{ 'да' if c.critical else 'нет' }}</td>
+            {% else %}
             <td class="cell-trunc">{{ c.expected_answer }}</td>
             <td>
-                    <a href="{{ request.scope.get('root_path', '') }}/eval/cases/{{ c.id }}" class="btn-sm">✎</a>
-                    <form method="post" action="{{ request.scope.get('root_path', '') }}/eval/cases/{{ c.id }}/delete" style="display: inline"
+                <a href="{{ request.scope.get('root_path', '') }}/eval/cases/{{ c.id }}" class="btn-sm">✎</a>
+                <form method="post" action="{{ request.scope.get('root_path', '') }}/eval/cases/{{ c.id }}/delete" style="display: inline"
                       onsubmit="return confirm('Удалить кейс #{{ c.id }}?')">
                     <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
                     <button type="submit" class="btn-sm btn-danger">🗑</button>
                 </form>
             </td>
+            {% endif %}
         </tr>
         {% endfor %}
     </tbody>

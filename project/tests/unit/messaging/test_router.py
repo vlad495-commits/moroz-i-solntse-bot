@@ -76,6 +76,19 @@ def test_deterministic_route_returns_none_for_context_or_multi_intent(
     assert route_message(text).intents == ("unknown",)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Мой телефон <PII_PHONE_1>, а сколько это?",
+        "Мой телефон +7 900 111-22-33, а сколько это?",
+    ],
+)
+def test_deterministic_route_does_not_guess_intent_from_contact_metadata(
+    text: str,
+) -> None:
+    assert deterministic_route(text) is None
+
+
 @pytest.mark.asyncio
 async def test_llm_router_accepts_strict_multi_intent_and_derives_conflict() -> None:
     provider = ScriptedProvider(

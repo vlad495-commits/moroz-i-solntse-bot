@@ -14,7 +14,7 @@ import eval_runner
 from auth import get_current_user
 from paths import admin_url
 from audit_repository import record_audit, request_ip_address, request_user_agent
-from rbac import validate_csrf
+from rbac import require_role, validate_csrf
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +58,36 @@ def _split_keywords(text: str) -> list[str]:
 @router.get("/", response_class=HTMLResponse)
 async def eval_index(request: Request):
     user = await get_current_user(request)
-    cases = await evdb.list_cases()
-    problem_cases = await evdb.list_problem_cases()
-    runs = await evdb.list_runs(limit=10)
+    cases = await evdb.list_cases(suite="answer")
+    problem_cases = await evdb.list_problem_cases(suite="answer")
+    runs = await evdb.list_runs(limit=10, suite="answer")
     return templates.TemplateResponse(
         request,
         "eval_list.html",
-        {"user": user, "cases": cases, "problem_cases": problem_cases, "runs": runs},
+        {
+            "user": user,
+            "suite": "answer",
+            "cases": cases,
+            "problem_cases": problem_cases,
+            "runs": runs,
+        },
+    )
+
+
+@router.get("/router/", response_class=HTMLResponse)
+async def router_eval_index(request: Request):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    return templates.TemplateResponse(
+        request,
+        "eval_list.html",
+        {
+            "user": user,
+            "suite": "router",
+            "cases": await evdb.list_cases("router"),
+            "problem_cases": await evdb.list_problem_cases("router"),
+            "runs": await evdb.list_runs(10, "router"),
+        },
     )
 
 
@@ -187,7 +210,7 @@ async def eval_run_start(
 ):
     user = await get_current_user(request)
     validate_csrf(user, csrf_token)
-    cases = await evdb.list_cases()
+    cases = await evdb.list_cases(suite="answer")
     if not cases:
         return RedirectResponse(
             url=admin_url(request, "/eval/?error=no_cases"), status_code=302
@@ -196,6 +219,7 @@ async def eval_run_start(
     run_id = await evdb.create_run(
         total=len(cases),
         judge_model=eval_runner.JUDGE_MODEL,
+        suite="answer",
     )
     _start_eval_task(run_id, eval_runner.run_eval_set(run_id))
     await record_audit(
@@ -220,7 +244,7 @@ async def eval_problem_run_start(
 ):
     user = await get_current_user(request)
     validate_csrf(user, csrf_token)
-    cases = await evdb.list_problem_cases()
+    cases = await evdb.list_problem_cases(suite="answer")
     if not cases:
         return RedirectResponse(
             url=admin_url(request, "/eval/?error=no_problem_cases"), status_code=302
@@ -229,6 +253,7 @@ async def eval_problem_run_start(
     run_id = await evdb.create_run(
         total=len(cases),
         judge_model=eval_runner.JUDGE_MODEL,
+        suite="answer",
     )
     _start_eval_task(run_id, eval_runner.run_eval_set(run_id, cases=cases))
     await record_audit(
@@ -246,12 +271,97 @@ async def eval_problem_run_start(
     )
 
 
+@router.post("/router/runs")
+async def router_eval_run_start(
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    validate_csrf(user, csrf_token)
+    cases = await evdb.list_cases("router")
+    if not cases:
+        return RedirectResponse(
+            url=admin_url(request, "/eval/router/?error=no_cases"),
+            status_code=302,
+        )
+
+    run_id = await evdb.create_run(
+        len(cases),
+        eval_runner.ROUTER_MODEL,
+        "router",
+    )
+    _start_eval_task(
+        run_id,
+        eval_runner.run_router_eval_set(run_id, cases=cases),
+    )
+    await record_audit(
+        actor_id=user.id,
+        action="eval.router_run_start",
+        object_type="eval_run",
+        object_id=str(run_id),
+        before=None,
+        after={"total": len(cases), "suite": "router"},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
+    return RedirectResponse(
+        url=admin_url(request, f"/eval/runs/{run_id}"),
+        status_code=302,
+    )
+
+
+@router.post("/router/runs/problematic")
+async def router_eval_problem_run_start(
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    validate_csrf(user, csrf_token)
+    cases = await evdb.list_problem_cases("router")
+    if not cases:
+        return RedirectResponse(
+            url=admin_url(
+                request,
+                "/eval/router/?error=no_problem_cases",
+            ),
+            status_code=302,
+        )
+
+    run_id = await evdb.create_run(
+        len(cases),
+        eval_runner.ROUTER_MODEL,
+        "router",
+    )
+    _start_eval_task(
+        run_id,
+        eval_runner.run_router_eval_set(run_id, cases=cases),
+    )
+    await record_audit(
+        actor_id=user.id,
+        action="eval.router_problem_run_start",
+        object_type="eval_run",
+        object_id=str(run_id),
+        before=None,
+        after={"total": len(cases), "suite": "router"},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
+    return RedirectResponse(
+        url=admin_url(request, f"/eval/runs/{run_id}"),
+        status_code=302,
+    )
+
+
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
 async def eval_run_detail(request: Request, run_id: int):
     user = await get_current_user(request)
     run = await evdb.get_run(run_id)
     if not run:
         return RedirectResponse(url=admin_url(request, "/eval/"), status_code=302)
+    if run.get("suite") == "router":
+        require_role(user, {"owner"})
     results = await evdb.get_run_results(run_id)
     return templates.TemplateResponse(
         request,
@@ -263,7 +373,10 @@ async def eval_run_detail(request: Request, run_id: int):
 @router.get("/runs/{run_id}/stream")
 async def eval_run_stream(request: Request, run_id: int):
     """SSE-стрим для прогресс-бара. Шлёт обновления статуса прогона + новые результаты."""
-    await get_current_user(request)
+    user = await get_current_user(request)
+    initial_run = await evdb.get_run(run_id)
+    if initial_run and initial_run.get("suite") == "router":
+        require_role(user, {"owner"})
 
     async def _gen():
         last_id = 0

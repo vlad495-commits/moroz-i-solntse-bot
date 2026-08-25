@@ -29,6 +29,11 @@ from moroz.security.llm_gateway import PrimaryReserveGateway, SDKProvider
 from moroz.security.pii import PiiSession
 from moroz.security.pipeline import SecurityPipeline
 from moroz.security.validator import extract_structured_facts
+from moroz.messaging.router import (
+    LLMIntentRouter,
+    RouteDecision,
+    deterministic_route,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,11 @@ JUDGE_PASS_THRESHOLD = float(os.getenv("JUDGE_PASS_THRESHOLD", "0.8"))
 
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2000"))
+
+ROUTER_MODEL = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
+ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "") or LLM_API_KEY
+ROUTER_BASE_URL = os.getenv("ROUTER_BASE_URL", "") or LLM_BASE_URL
+ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
 
 PROMPT_PATH = Path("/app/prompts/system.md")
 
@@ -69,6 +79,14 @@ def _create_client(api_key: str, base_url: str | None, kind: str):
     if base_url:
         kwargs["base_url"] = base_url
     return AsyncOpenAI(**kwargs)
+
+
+def _build_router() -> LLMIntentRouter:
+    kind = _detect_kind(ROUTER_MODEL, ROUTER_BASE_URL)
+    client = _create_client(ROUTER_API_KEY, ROUTER_BASE_URL, kind)
+    return LLMIntentRouter(
+        SDKProvider(client, kind, ROUTER_MODEL, 0.0, ROUTER_MAX_TOKENS)
+    )
 
 
 _primary = None
@@ -395,6 +413,82 @@ async def run_case(case: dict, run_id: int, *, catalog=None) -> dict:
     }
 
 
+def router_case_diff(
+    expected: dict,
+    actual: RouteDecision,
+) -> tuple[bool, str]:
+    if set(expected["intents"]) != set(actual.intents):
+        return False, "intent_mismatch"
+    if (
+        bool(expected["requires_clarification"])
+        != actual.requires_clarification
+    ):
+        return False, "clarification_mismatch"
+    if expected["source"] != actual.source:
+        return False, "source_mismatch"
+    return True, "matched"
+
+
+async def run_router_case(
+    case: dict,
+    run_id: int,
+    *,
+    router: LLMIntentRouter,
+) -> dict:
+    started = time.monotonic()
+    try:
+        session = PiiSession()
+        input_data = case["input_data"]
+        masked_input = session.mask(input_data["input"]).text
+        masked_context = [
+            {
+                "role": item["role"],
+                "content": session.mask(item["content"]).text,
+            }
+            for item in input_data["context"]
+        ]
+        decision = deterministic_route(masked_input)
+        if decision is None:
+            decision = (await router.route(masked_input, masked_context)).decision
+        ok, reason = router_case_diff(case["expected_data"], decision)
+        actual_data = {
+            "intents": list(decision.intents),
+            "requires_clarification": decision.requires_clarification,
+            "source": decision.source,
+            "confidence": decision.confidence,
+            "reason_code": decision.reason_code,
+        }
+        verdict = "pass" if ok else "fail"
+        error_message = None
+    except Exception as error:
+        verdict = "error"
+        reason = type(error).__name__
+        actual_data = {}
+        error_message = type(error).__name__
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    result_id = await evdb.save_result(
+        run_id=run_id,
+        case_id=case.get("id"),
+        question=case["question"],
+        expected_answer="",
+        actual_answer="",
+        verdict=verdict,
+        check_layer="router",
+        score=None,
+        judge_reasoning=reason,
+        duration_ms=duration_ms,
+        error_message=error_message,
+        actual_data=actual_data,
+    )
+    return {
+        "id": result_id,
+        "case_id": case.get("id"),
+        "verdict": verdict,
+        "check_layer": "router",
+    }
+
+
 # --- Главный прогон ---
 
 async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
@@ -411,7 +505,7 @@ async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
     try:
         _init_clients()
         if cases is None:
-            cases = await evdb.list_cases()
+            cases = await evdb.list_cases("answer")
 
         for case in cases:
             res = await run_case(case, run_id)
@@ -464,6 +558,76 @@ async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
         except Exception as finalize_error:
             logger.error(
                 "eval_run_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )
+
+
+async def run_router_eval_set(
+    run_id: int,
+    cases: list[dict] | None = None,
+    *,
+    router: LLMIntentRouter | None = None,
+) -> None:
+    passed = 0
+    failed = 0
+    results: list[SecurityEvalResult] = []
+    safe_run_id = (
+        run_id
+        if isinstance(run_id, int) and not isinstance(run_id, bool)
+        else "unknown"
+    )
+
+    try:
+        cases = await evdb.list_cases("router") if cases is None else cases
+        active_router = router or _build_router()
+        for case in cases:
+            result = await run_router_case(case, run_id, router=active_router)
+            case_passed = result["verdict"] == "pass"
+            results.append(
+                SecurityEvalResult(
+                    passed=case_passed,
+                    category=str(case["category"]),
+                    critical=bool(case["critical"]),
+                )
+            )
+            passed += int(case_passed)
+            failed += int(not case_passed)
+            await evdb.update_run_progress(run_id, passed, failed)
+
+        gate = security_gate(results)
+        status = "finished" if gate.ok else "failed"
+        logger.info(
+            "router_eval_security_gate run_id=%s total=%s passed=%s failed=%s "
+            "critical_total=%s critical_failed=%s pass_rate=%.4f status=%s",
+            safe_run_id,
+            gate.total,
+            gate.passed,
+            gate.failed,
+            gate.critical_total,
+            gate.critical_failed,
+            gate.pass_rate,
+            status,
+        )
+        await evdb.finish_run(run_id, passed, failed, status=status)
+    except Exception as error:
+        error_message = type(error).__name__
+        logger.error(
+            "router_eval_run_failed run_id=%s error_type=%s",
+            safe_run_id,
+            error_message,
+        )
+        try:
+            await evdb.finish_run(
+                run_id,
+                passed,
+                failed,
+                status="error",
+                error_message=error_message,
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "router_eval_run_finalize_failed run_id=%s error_type=%s",
                 safe_run_id,
                 type(finalize_error).__name__,
             )
