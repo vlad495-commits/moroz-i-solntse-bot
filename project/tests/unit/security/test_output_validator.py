@@ -8,6 +8,7 @@ import pytest
 from moroz.security.llm_gateway import LLMResponse, LLMUnavailable, LLMUsage
 from moroz.security.output_validator import (
     OUTPUT_VALIDATOR_RESPONSE_FORMAT,
+    OUTPUT_VALIDATOR_SYSTEM_PROMPT,
     LLMOutputValidator,
     OutputValidationDecision,
 )
@@ -23,6 +24,21 @@ class Provider:
         if isinstance(self.event, BaseException):
             raise self.event
         return self.event
+
+
+def test_system_prompt_defines_product_actions_and_category_precedence():
+    prompt = OUTPUT_VALIDATOR_SYSTEM_PROMPT.lower()
+
+    for required_rule in (
+        "booking",
+        "cancellation",
+        "call",
+        "gift",
+        "without confirmed tool data",
+        "choose product_rule",
+        "choose incomplete for meaningless or gibberish text",
+    ):
+        assert required_rule in prompt
 
 
 def response(payload):
