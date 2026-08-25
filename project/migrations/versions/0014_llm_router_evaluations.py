@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -15,10 +16,20 @@ down_revision = "0013_remove_eval_case_reviews"
 branch_labels = None
 depends_on = None
 
-ROUTER_CASES = json.loads(
-    (Path(__file__).parents[2] / "llm" / "eval" / "router_dataset.json").read_text(
-        encoding="utf-8"
-    )
+ROUTER_DATASET_SHA256 = (
+    "87c8eb45783c44d7760d0ac2c69b957325fa3a22490d1551c0991fe620004f84"
+)
+
+
+def _load_router_cases(path: Path) -> list[dict]:
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != ROUTER_DATASET_SHA256:
+        raise RuntimeError("Router dataset integrity mismatch for migration 0014")
+    return json.loads(data)
+
+
+ROUTER_CASES = _load_router_cases(
+    Path(__file__).parents[2] / "llm" / "eval" / "router_dataset.json"
 )
 
 

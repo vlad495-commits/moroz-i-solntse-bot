@@ -1,10 +1,14 @@
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 
 MIGRATION = Path("/workspace/migrations/versions/0014_llm_router_evaluations.py")
 DATASET = Path("/workspace/llm/eval/router_dataset.json")
+DATASET_SHA256 = "87c8eb45783c44d7760d0ac2c69b957325fa3a22490d1551c0991fe620004f84"
 
 
 def test_migration_is_additive_and_uses_common_eval_tables():
@@ -29,3 +33,18 @@ def test_migration_seed_matches_versioned_dataset():
     spec.loader.exec_module(module)
 
     assert module.ROUTER_CASES == json.loads(DATASET.read_text(encoding="utf-8"))
+
+
+def test_migration_pins_dataset_bytes_and_rejects_tampering(tmp_path):
+    spec = importlib.util.spec_from_file_location("migration_0014_hash", MIGRATION)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    assert hashlib.sha256(DATASET.read_bytes()).hexdigest() == DATASET_SHA256
+    assert module.ROUTER_DATASET_SHA256 == DATASET_SHA256
+
+    tampered = tmp_path / "router_dataset.json"
+    tampered.write_bytes(DATASET.read_bytes() + b" ")
+    with pytest.raises(RuntimeError, match="Router dataset integrity mismatch"):
+        module._load_router_cases(tampered)
