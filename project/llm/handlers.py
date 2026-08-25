@@ -104,15 +104,7 @@ async def handle_text(message: Message, bot: Bot) -> None:
 
     # Отправка пользователю
     await message.answer(result.text)
-    await db.save_token_usage(
-        chat_id=chat_id,
-        user_id=user_id,
-        prompt_tokens=result.prompt_tokens,
-        completion_tokens=result.completion_tokens,
-        cached_tokens=result.cached_tokens,
-        total_tokens=result.total_tokens,
-        model=result.model,
-    )
+    await db.save_response_usage(chat_id, user_id, result)
 
 
 @router.message()

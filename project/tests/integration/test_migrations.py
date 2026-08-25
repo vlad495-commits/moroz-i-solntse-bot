@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from uuid import uuid4
@@ -461,7 +462,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0013_remove_eval_case_reviews"
+            "0014_llm_router_evaluations"
         )
     finally:
         await conn.close()
@@ -600,7 +601,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0013_remove_eval_case_reviews"
+        assert current_revision == "0014_llm_router_evaluations"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -763,7 +764,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0013_remove_eval_case_reviews"
+        assert current_revision == "0014_llm_router_evaluations"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -860,7 +861,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0013_remove_eval_case_reviews"
+        assert current_revision == "0014_llm_router_evaluations"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
@@ -933,7 +934,7 @@ async def test_yclients_booking_projection_migration_creates_bounded_schema(
     finally:
         await conn.close()
 
-    assert current_revision == "0013_remove_eval_case_reviews"
+    assert current_revision == "0014_llm_router_evaluations"
     assert columns == [
         "external_id",
         "booking_key",
@@ -1015,6 +1016,122 @@ async def test_review_cases_table_is_removed(disposable_database_url):
         assert await conn.fetchval(
             "SELECT to_regclass('public.eval_case_reviews')"
         ) is None
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0014_llm_router_evaluations"
+        )
+    finally:
+        await conn.close()
+
+
+async def test_router_eval_migration_preserves_answer_rows_and_downgrades_only_router(
+    disposable_database_url,
+):
+    run_alembic(
+        disposable_database_url,
+        "upgrade",
+        "0013_remove_eval_case_reviews",
+    )
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        legacy_case = await conn.fetchval(
+            "INSERT INTO eval_cases (question, expected_answer) "
+            "VALUES ('legacy', 'answer') RETURNING id"
+        )
+        legacy_run = await conn.fetchval(
+            "INSERT INTO eval_runs DEFAULT VALUES RETURNING id"
+        )
+        legacy_result = await conn.fetchval(
+            """
+            INSERT INTO eval_results
+                (run_id, case_id, question, expected_answer, verdict)
+            VALUES ($1, $2, 'legacy', 'answer', 'passed')
+            RETURNING id
+            """,
+            legacy_run,
+            legacy_case,
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        legacy = await conn.fetchrow(
+            "SELECT suite, input_data, expected_data, critical "
+            "FROM eval_cases WHERE id = $1",
+            legacy_case,
+        )
+        assert (
+            legacy["suite"],
+            json.loads(legacy["input_data"]),
+            json.loads(legacy["expected_data"]),
+            legacy["critical"],
+        ) == ("answer", {}, {}, False)
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE suite = 'router'"
+        ) == 20
+        assert await conn.fetchval(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name = 'token_usage' AND column_name = 'purpose'"
+        ) is not None
+        assert await conn.fetchval(
+            "SELECT to_regclass('public.router_eval_cases')"
+        ) is None
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0014_llm_router_evaluations"
+        )
+
+        router_case = await conn.fetchval(
+            "SELECT id FROM eval_cases WHERE suite = 'router' ORDER BY id LIMIT 1"
+        )
+        router_run = await conn.fetchval(
+            "INSERT INTO eval_runs (suite) VALUES ('router') RETURNING id"
+        )
+        router_result = await conn.fetchval(
+            """
+            INSERT INTO eval_results
+                (run_id, case_id, question, expected_answer, verdict, actual_data)
+            VALUES ($1, $2, 'router', '', 'passed', '{"intents":["faq"]}'::jsonb)
+            RETURNING id
+            """,
+            router_run,
+            router_case,
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(
+        disposable_database_url,
+        "downgrade",
+        "0013_remove_eval_case_reviews",
+    )
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert tuple(
+            await conn.fetchrow(
+                "SELECT question, expected_answer FROM eval_cases WHERE id = $1",
+                legacy_case,
+            )
+        ) == ("legacy", "answer")
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_runs WHERE id = $1", legacy_run
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_results WHERE id = $1", legacy_result
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE id = $1", router_case
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_runs WHERE id = $1", router_run
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_results WHERE id = $1", router_result
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM information_schema.columns "
+            "WHERE table_name = 'token_usage' AND column_name = 'purpose'"
+        ) == 0
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
             "0013_remove_eval_case_reviews"
         )
@@ -1211,7 +1328,7 @@ async def test_yclients_service_catalog_migration_creates_only_bounded_columns(
     finally:
         await conn.close()
 
-    assert current_revision == "0013_remove_eval_case_reviews"
+    assert current_revision == "0014_llm_router_evaluations"
     assert columns == [
         "service_id",
         "staff_id",
@@ -1268,7 +1385,7 @@ async def test_yclients_projection_suppression_migration_is_metadata_only(
     finally:
         await conn.close()
 
-    assert current_revision == "0013_remove_eval_case_reviews"
+    assert current_revision == "0014_llm_router_evaluations"
     assert columns == [
         ("external_id", "text", "NO", None),
         ("created_at", "timestamp with time zone", "NO", "now()"),

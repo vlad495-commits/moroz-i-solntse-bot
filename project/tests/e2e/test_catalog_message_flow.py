@@ -152,7 +152,7 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
     assert [row["role"] for row in messages] == ["user", "assistant"]
     assert "1 230 ₽" in messages[-1]["content"]
     assert len(outbound) == 1
-    assert tuple(usage.values()) == (0, 0, 0, "catalog-local")
+    assert usage is None
     assert len(catalog_repository.calls) == 1
     assert gateway.calls == 0
     assert router.calls == 0

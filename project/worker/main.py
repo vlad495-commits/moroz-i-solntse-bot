@@ -50,6 +50,7 @@ from moroz.retention import (
     RetentionCleanupError,
     RetentionCleanupCoordinator,
 )
+from moroz.security.llm_gateway import LLMUsage
 
 
 logging.basicConfig(
@@ -120,6 +121,40 @@ def _build_alert_router(redis_client, telegram: Bot):
         technical_chat_id=technical_chat_id,
         business_chat_id=os.environ.get("BUSINESS_ALERT_CHAT_ID", "").strip(),
     )
+
+
+async def _persist_token_usage(connection, chat_id: int, user_id: int, result) -> None:
+    usages = getattr(result, "usage", ())
+    if not usages and result.total_tokens > 0:
+        usages = (
+            LLMUsage(
+                "answer",
+                result.prompt_tokens,
+                result.completion_tokens,
+                result.cached_tokens,
+                result.total_tokens,
+                result.model,
+            ),
+        )
+    for usage in usages:
+        if usage.total_tokens <= 0:
+            continue
+        await connection.execute(
+            """
+            INSERT INTO token_usage
+                (chat_id, user_id, purpose, prompt_tokens, completion_tokens,
+                 cached_tokens, total_tokens, model)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            chat_id,
+            user_id,
+            usage.purpose,
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.cached_tokens,
+            usage.total_tokens,
+            usage.model,
+        )
 
 
 class MessageTaskHandler:
@@ -485,20 +520,11 @@ class MessageTaskHandler:
                     persisted_text,
                     result.text,
                 )
-                await connection.execute(
-                    """
-                    INSERT INTO token_usage
-                        (chat_id, user_id, prompt_tokens, completion_tokens,
-                         cached_tokens, total_tokens, model)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    """,
+                await _persist_token_usage(
+                    connection,
                     numeric_chat_id,
                     user_id,
-                    result.prompt_tokens,
-                    result.completion_tokens,
-                    result.cached_tokens,
-                    result.total_tokens,
-                    result.model,
+                    result,
                 )
                 await self._repository.enqueue_outbound_in_transaction(
                     connection,

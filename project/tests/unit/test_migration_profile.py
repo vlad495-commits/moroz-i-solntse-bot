@@ -61,6 +61,10 @@ def test_migration_image_is_minimal_and_non_root():
     assert "COPY migrate/requirements.txt" in dockerfile
     assert "COPY alembic.ini" in dockerfile
     assert "COPY migrations" in dockerfile
+    assert (
+        "COPY llm/eval/router_dataset.json /app/llm/eval/router_dataset.json"
+        in dockerfile
+    )
     assert "requirements-dev" not in dockerfile
     assert "COPY src" not in dockerfile
     assert requirements.splitlines() == [

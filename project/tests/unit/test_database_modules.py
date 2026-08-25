@@ -3,6 +3,8 @@ import importlib
 
 import pytest
 
+from moroz.security.llm_gateway import LLMResponse, LLMUsage
+
 
 bot_database = importlib.import_module("db")
 admin_database = importlib.import_module("database")
@@ -24,6 +26,79 @@ class SpyDatabase:
 
     async def close(self):
         self.closed = True
+
+
+class UsageConnection:
+    def __init__(self):
+        self.executions = []
+
+    async def execute(self, query, *args):
+        self.executions.append((query, args))
+
+
+class Acquire:
+    def __init__(self, connection):
+        self.connection = connection
+
+    async def __aenter__(self):
+        return self.connection
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+class Pool:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def acquire(self):
+        return Acquire(self.connection)
+
+
+async def test_bot_database_persists_consumed_usages_as_separate_rows(monkeypatch):
+    connection = UsageConnection()
+    monkeypatch.setattr(bot_database, "_pool", Pool(connection))
+    result = LLMResponse(
+        "Ответ",
+        12,
+        5,
+        1,
+        17,
+        "answer-model",
+        (
+            LLMUsage("router", 3, 1, 0, 4, "router-model"),
+            LLMUsage("answer", 9, 4, 1, 13, "answer-model"),
+        ),
+    )
+
+    await bot_database.save_response_usage(81, 82, result)
+
+    persisted_usage = [args[2:] for _query, args in connection.executions]
+    assert persisted_usage == [
+        ("router", 3, 1, 0, 4, "router-model"),
+        ("answer", 9, 4, 1, 13, "answer-model"),
+    ]
+    assert all("purpose" in query for query, _args in connection.executions)
+
+
+async def test_bot_database_legacy_fallback_skips_zero_aggregate(monkeypatch):
+    connection = UsageConnection()
+    monkeypatch.setattr(bot_database, "_pool", Pool(connection))
+
+    await bot_database.save_response_usage(
+        81,
+        82,
+        LLMResponse("Ответ", 8, 5, 1, 13, "legacy-model"),
+    )
+    await bot_database.save_response_usage(
+        81,
+        82,
+        LLMResponse("Локально", 0, 0, 0, 0, "security-local"),
+    )
+
+    assert [args[2:] for _query, args in connection.executions] == [
+        ("answer", 8, 5, 1, 13, "legacy-model"),
+    ]
 
 
 async def test_bot_init_preserves_pool_sizes(monkeypatch):

@@ -6,6 +6,7 @@ import logging
 from config import DATABASE_URL, CONTEXT_MESSAGES_LIMIT, DATA_RETENTION_DAYS
 from moroz.common.db import Database
 from moroz.retention import delete_expired_records
+from moroz.security.llm_gateway import LLMUsage
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ async def get_context(chat_id: int) -> list[dict[str, str]]:
 async def save_token_usage(
     chat_id: int,
     user_id: int | None,
+    purpose: str,
     prompt_tokens: int,
     completion_tokens: int,
     cached_tokens: int,
@@ -105,15 +107,43 @@ async def save_token_usage(
         async with _pool.acquire() as conn:
             await conn.execute(
                 """INSERT INTO token_usage
-                   (chat_id, user_id, prompt_tokens, completion_tokens,
-                    cached_tokens, total_tokens, model)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-                chat_id, user_id, prompt_tokens, completion_tokens,
-                cached_tokens, total_tokens, model,
+                   (chat_id, user_id, purpose, prompt_tokens,
+                    completion_tokens, cached_tokens, total_tokens, model)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+                chat_id, user_id, purpose, prompt_tokens,
+                completion_tokens, cached_tokens, total_tokens, model,
             )
     except Exception as error:
         logger.error(
             "db_token_usage_save_failed error_type=%s", type(error).__name__
+        )
+
+
+async def save_response_usage(chat_id: int, user_id: int | None, result) -> None:
+    usages = getattr(result, "usage", ())
+    if not usages and result.total_tokens > 0:
+        usages = (
+            LLMUsage(
+                "answer",
+                result.prompt_tokens,
+                result.completion_tokens,
+                result.cached_tokens,
+                result.total_tokens,
+                result.model,
+            ),
+        )
+    for usage in usages:
+        if usage.total_tokens <= 0:
+            continue
+        await save_token_usage(
+            chat_id=chat_id,
+            user_id=user_id,
+            purpose=usage.purpose,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            cached_tokens=usage.cached_tokens,
+            total_tokens=usage.total_tokens,
+            model=usage.model,
         )
 
 

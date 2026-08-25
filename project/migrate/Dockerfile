@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
+COPY llm/eval/router_dataset.json /app/llm/eval/router_dataset.json
 
 RUN groupadd --system appuser && \
     useradd --system --gid appuser --no-create-home appuser && \

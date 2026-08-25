@@ -13,6 +13,7 @@ from moroz.booking.yclients_catalog import YclientsCatalogError
 from moroz.booking.yclients_records import YclientsProjectionError
 from moroz.common.queue import MAX_RETRIES, QueueTask
 from moroz.notifications.models import JobResult, SchedulerJob
+from moroz.security.llm_gateway import LLMResponse, LLMUsage
 from moroz.retention import (
     RETENTION_CLEANUP_KIND,
     RetentionCleanupError,
@@ -42,6 +43,62 @@ class NoopRetentionCleanup:
 
     async def ensure_current(self, _now):
         pass
+
+
+class UsageConnection:
+    def __init__(self):
+        self.executions = []
+
+    async def execute(self, query, *args):
+        self.executions.append((query, args))
+
+
+@pytest.mark.asyncio
+async def test_worker_persists_each_consumed_usage_as_its_own_row():
+    connection = UsageConnection()
+    result = LLMResponse(
+        "Ответ",
+        12,
+        5,
+        1,
+        17,
+        "answer-model",
+        (
+            LLMUsage("router", 3, 1, 0, 4, "router-model"),
+            LLMUsage("answer", 9, 4, 1, 13, "answer-model"),
+        ),
+    )
+
+    await worker_main._persist_token_usage(connection, 81, 82, result)
+
+    persisted_usage = [args[2:] for _query, args in connection.executions]
+    assert persisted_usage == [
+        ("router", 3, 1, 0, 4, "router-model"),
+        ("answer", 9, 4, 1, 13, "answer-model"),
+    ]
+    assert all("purpose" in query for query, _args in connection.executions)
+
+
+@pytest.mark.asyncio
+async def test_worker_persistence_falls_back_only_for_non_zero_legacy_answer():
+    connection = UsageConnection()
+
+    await worker_main._persist_token_usage(
+        connection,
+        81,
+        82,
+        LLMResponse("Ответ", 8, 5, 1, 13, "legacy-model"),
+    )
+    await worker_main._persist_token_usage(
+        connection,
+        81,
+        82,
+        LLMResponse("Локально", 0, 0, 0, 0, "security-local"),
+    )
+
+    assert [args[2:] for _query, args in connection.executions] == [
+        ("answer", 8, 5, 1, 13, "legacy-model"),
+    ]
 
 
 def test_worker_reads_explicit_pipeline_settings_without_aggregate_settings():
