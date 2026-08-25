@@ -42,6 +42,17 @@ class ForbiddenGateway:
         raise AssertionError("simple catalog answer must not call LLM")
 
 
+class SecurityOnlyGateway(ForbiddenGateway):
+    async def complete(self, request):
+        self.calls += 1
+        if request.purpose != "security":
+            raise AssertionError("stale catalog must not call answer LLM")
+        return LLMResponse(
+            '{"action":"allow","category":"safe"}',
+            1, 1, 0, 2, "security-test",
+        )
+
+
 class ForbiddenRouter:
     def __init__(self):
         self.calls = 0
@@ -316,7 +327,7 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
             """
         )
     stale = CatalogGrounding("stale", (), "price", False)
-    gateway = ForbiddenGateway()
+    gateway = SecurityOnlyGateway()
     pipeline = SecurityPipeline(gateway, "", extract_structured_facts(""))
 
     async def llm(text, context, *, recent_message_count, catalog):
@@ -344,4 +355,4 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
         )
     assert "9999" not in answer
     assert "администратор" in answer.lower()
-    assert gateway.calls == 0
+    assert gateway.calls == 1
