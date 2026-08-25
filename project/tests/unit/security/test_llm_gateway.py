@@ -12,6 +12,7 @@ from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
     LLMUnavailable,
+    LLMUsage,
     NonRetryableLLMError,
     PrimaryReserveGateway,
     RetryableLLMError,
@@ -209,6 +210,43 @@ async def test_provider_owns_generation_settings_and_request_retains_purpose(
     if kind == "anthropic":
         expected["system"] = ""
     assert client.calls == [expected]
+
+
+@pytest.mark.asyncio
+async def test_openai_receives_response_format_and_usage_keeps_purpose():
+    schema = {
+        "type": "json_schema",
+        "json_schema": {"name": "route", "schema": {}},
+    }
+    client = OpenAIClient(openai_response())
+
+    result = await provider(client, "openai").complete(
+        LLMRequest(
+            messages=({"role": "user", "content": "safe"},),
+            purpose="router",
+            response_format=schema,
+        )
+    )
+
+    assert client.calls[0]["response_format"] == schema
+    assert result.usage == (
+        LLMUsage("router", 7, 4, 3, 11, "openai-model"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_ignores_provider_schema_but_keeps_local_contract():
+    client = AnthropicClient(anthropic_response())
+    result = await provider(client, "anthropic").complete(
+        LLMRequest(
+            messages=({"role": "user", "content": "safe"},),
+            purpose="router",
+            response_format={"type": "json_schema"},
+        )
+    )
+
+    assert "response_format" not in client.calls[0]
+    assert result.usage[0].purpose == "router"
 
 
 def _status_error(kind, status):
@@ -457,6 +495,7 @@ async def test_openai_response_is_adapted_without_raw_response_storage():
         cached_tokens=3,
         total_tokens=11,
         model="openai-model",
+        usage=(LLMUsage("answer", 7, 4, 3, 11, "openai-model"),),
     )
     assert "raw-response-sentinel" not in repr(adapted)
 
@@ -489,6 +528,7 @@ async def test_anthropic_response_is_adapted_without_raw_response_storage():
         cached_tokens=2,
         total_tokens=15,
         model="anthropic-model",
+        usage=(LLMUsage("answer", 9, 6, 2, 15, "anthropic-model"),),
     )
     assert "raw-response-sentinel" not in repr(adapted)
 

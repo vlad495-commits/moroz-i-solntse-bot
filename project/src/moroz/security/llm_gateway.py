@@ -30,9 +30,20 @@ class LLMUnavailable(_SafeLLMError):
 
 
 @dataclass(frozen=True, slots=True)
+class LLMUsage:
+    purpose: str
+    prompt_tokens: int
+    completion_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
 class LLMRequest:
     messages: tuple[dict[str, str], ...]
     purpose: str
+    response_format: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +54,7 @@ class LLMResponse:
     cached_tokens: int
     total_tokens: int
     model: str
+    usage: tuple[LLMUsage, ...] = ()
 
     def with_text(
         self,
@@ -172,12 +184,15 @@ class SDKProvider:
                     temperature=self.temperature,
                 )
             else:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=list(request.messages),
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
+                arguments = {
+                    "model": self.model,
+                    "messages": list(request.messages),
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                }
+                if request.response_format is not None:
+                    arguments["response_format"] = request.response_format
+                response = await self.client.chat.completions.create(**arguments)
         except (
             openai.APITimeoutError,
             openai.APIConnectionError,
@@ -197,8 +212,22 @@ class SDKProvider:
         if translated_error is not None:
             raise translated_error
         if self.kind == "anthropic":
-            return _anthropic_response(response, self.model)
-        return _openai_response(response, self.model)
+            adapted = _anthropic_response(response, self.model)
+        else:
+            adapted = _openai_response(response, self.model)
+        return replace(
+            adapted,
+            usage=(
+                LLMUsage(
+                    request.purpose,
+                    adapted.prompt_tokens,
+                    adapted.completion_tokens,
+                    adapted.cached_tokens,
+                    adapted.total_tokens,
+                    adapted.model,
+                ),
+            ),
+        )
 
 
 class PrimaryReserveGateway:

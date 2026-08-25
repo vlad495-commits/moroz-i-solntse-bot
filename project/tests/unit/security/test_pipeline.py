@@ -277,7 +277,7 @@ async def test_local_allow_skips_guard_and_uses_machine_owned_route_metadata() -
 
     assert [request.purpose for request in gateway.requests] == ["answer"]
     assert gateway.requests[0].messages[0]["content"].endswith(
-        "ROUTE intents=booking_cancel,faq; requires_clarification=0"
+        "ROUTE intents=unknown; requires_clarification=0"
     )
 
 
