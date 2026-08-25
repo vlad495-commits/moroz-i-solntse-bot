@@ -17,7 +17,7 @@
 - Router только классифицирует и не выполняет workflow, handoff, outbound или другой side effect.
 - Router-result запрещено читать или применять до `Security=ALLOW`; `BLOCK` и security error полностью отбрасывают route.
 - Cancellation router task не считается доказательством отмены внешнего HTTP-запроса.
-- Fallback не использует `consultation + confidence=1.0`; после deterministic fallback остаётся безопасный `unknown`.
+- Fallback не использует `consultation + confidence=1.0`; после deterministic fallback остаётся безопасный `unknown` с обязательным уточнением.
 - Не создавать `router_eval_cases` или отдельный eval-runner; расширять `eval_cases/eval_runs/eval_results` и текущую admin task supervision.
 - Не изменять `.env`, judge settings, `project/llm/eval/dataset.json` или `adversarial_dataset.json`.
 - Каждый логический task завершать обновлением `changelog.md` и отдельным локальным commit; push/deploy не выполнять.
@@ -48,13 +48,13 @@
 **Interfaces:**
 - Produces: `deterministic_route(text: str) -> RouteDecision | None`.
 - Produces: `build_untrusted_input(text, context) -> str` shared by Input Security and Router so both receive the same bounded masked data.
-- Preserves: `route_message(text: str) -> RouteDecision` as deterministic fallback returning `unknown` when unresolved.
+- Preserves: `route_message(text: str) -> RouteDecision` as deterministic fallback returning `unknown` with `requires_clarification=True` when unresolved.
 - Produces: `LLMIntentRouter(provider: Provider).route(masked_text: str, masked_context: list[dict[str, str]]) -> RouterVerdict`.
 - Produces: `RouterVerdict(decision, usage)` with read-only `source`, `confidence` and `reason_code` properties delegated to `decision`.
 - Extends: `LLMRequest.response_format: dict[str, object] | None`.
 - Extends: `LLMResponse.usage: tuple[LLMUsage, ...]` and `LLMUsage(purpose, prompt_tokens, completion_tokens, cached_tokens, total_tokens, model)`.
 
-- [ ] **Step 1: Write RED tests for deterministic resolution and strict Router output**
+- [x] **Step 1: Write RED tests for deterministic resolution and strict Router output**
 
 Extend `project/tests/unit/messaging/test_router.py` with exact tests shaped as follows:
 
@@ -129,6 +129,7 @@ def test_deterministic_route_resolves_only_single_explicit_intent(text, expected
 def test_deterministic_route_returns_none_for_context_or_multi_intent(text):
     assert deterministic_route(text) is None
     assert route_message(text).intents == ("unknown",)
+    assert route_message(text).requires_clarification is True
 
 
 @pytest.mark.asyncio
@@ -196,6 +197,7 @@ async def test_invalid_router_output_uses_unknown_without_false_confidence(raw):
     ).route("Неоднозначный текст", [])
 
     assert verdict.decision.intents == ("unknown",)
+    assert verdict.decision.requires_clarification is True
     assert verdict.source == "fallback"
     assert verdict.confidence is None
     assert verdict.reason_code == "invalid_router_output"
@@ -208,6 +210,7 @@ async def test_provider_failure_is_sanitized_and_cancellation_propagates(caplog)
         ScriptedProvider(LLMUnavailable(secret))
     ).route("Неоднозначный текст", [])
     assert failed.decision.intents == ("unknown",)
+    assert failed.decision.requires_clarification is True
     assert failed.reason_code == "router_unavailable"
     assert secret not in caplog.text
 
@@ -253,7 +256,7 @@ async def test_anthropic_ignores_provider_schema_but_keeps_local_contract():
     assert result.usage[0].purpose == "router"
 ```
 
-- [ ] **Step 2: Run Task 1 RED in Docker**
+- [x] **Step 2: Run Task 1 RED in Docker**
 
 ```powershell
 Set-Location project
@@ -262,7 +265,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/t
 
 Expected: FAIL because `deterministic_route`, `LLMIntentRouter`, `LLMUsage`, `response_format` and the extended `RouteDecision` do not exist.
 
-- [ ] **Step 3: Implement the minimal router and provider contract**
+- [x] **Step 3: Implement the minimal router and provider contract**
 
 In `project/src/moroz/messaging/router.py`:
 
@@ -360,7 +363,7 @@ def deterministic_route(text: str) -> RouteDecision | None:
 
 def route_message(text: str) -> RouteDecision:
     return deterministic_route(text) or RouteDecision(
-        ("unknown",), False, source="fallback", reason_code="unresolved"
+        ("unknown",), True, source="fallback", reason_code="unresolved"
     )
 
 
@@ -482,7 +485,7 @@ class LLMResponse:
 
 Pass `request.response_format` only to the OpenAI-compatible SDK when non-`None`. After adapting an SDK response, attach exactly one `LLMUsage` using `request.purpose` and the actual response model. Preserve sanitized exception behavior and existing six-argument `LLMResponse(...)` call sites through the default `usage=()`.
 
-- [ ] **Step 4: Run Task 1 GREEN and regressions**
+- [x] **Step 4: Run Task 1 GREEN and regressions**
 
 ```powershell
 Set-Location project
@@ -491,7 +494,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/t
 
 Expected: PASS; no network calls.
 
-- [ ] **Step 5: Log and commit Task 1**
+- [x] **Step 5: Log and commit Task 1**
 
 Append the exact Docker result to `changelog.md`, then:
 
@@ -521,7 +524,7 @@ git commit -m "feat: добавить strict intent router contract"
 - `LLMResponse.usage` concatenates only consumed provider calls.
 - `offtopic` returns a short local reply after `Security=ALLOW`, without the answer LLM.
 
-- [ ] **Step 1: Write RED concurrency, privacy, fallback and usage tests**
+- [x] **Step 1: Write RED concurrency, privacy, fallback and usage tests**
 
 Add controlled providers to `project/tests/unit/security/test_pipeline.py`:
 
@@ -707,7 +710,7 @@ async def test_router_receives_only_masked_current_and_bounded_masked_context():
             response("ALLOW", purpose="security"),
             RouterVerdict(
                 RouteDecision(
-                    ("unknown",), False, "fallback", None, "router_unavailable"
+                    ("unknown",), True, "fallback", None, "router_unavailable"
                 ),
                 (),
             ),
@@ -717,7 +720,7 @@ async def test_router_receives_only_masked_current_and_bounded_masked_context():
             response("BLOCK", purpose="security"),
             RouterVerdict(
                 RouteDecision(
-                    ("unknown",), False, "fallback", None, "router_unavailable"
+                    ("unknown",), True, "fallback", None, "router_unavailable"
                 ),
                 (),
             ),
@@ -728,7 +731,7 @@ async def test_router_receives_only_masked_current_and_bounded_masked_context():
             LLMUnavailable(),
             RouterVerdict(
                 RouteDecision(
-                    ("unknown",), False, "fallback", None, "router_unavailable"
+                    ("unknown",), True, "fallback", None, "router_unavailable"
                 ),
                 (),
             ),
@@ -765,7 +768,7 @@ Use actual helper names defined in the test file; keep provider events determini
 
 Add a focused test for `offtopic`: Security must first return `ALLOW`, then the pipeline returns `OFFTOPIC_REPLY`; the captured gateway requests contain `security` but no `answer`, and no workflow/handoff/outbound spy is touched.
 
-- [ ] **Step 2: Run Task 2 RED in Docker**
+- [x] **Step 2: Run Task 2 RED in Docker**
 
 ```powershell
 Set-Location project
@@ -774,7 +777,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: FAIL because router injection, parallel supervision, router config and local off-topic handling do not exist.
 
-- [ ] **Step 3: Implement parallel orchestration with Security as the gate**
+- [x] **Step 3: Implement parallel orchestration with Security as the gate**
 
 In `project/src/moroz/security/pipeline.py`, preserve local block/stop/medical returns before PII/provider work. After masking, use this supervision shape:
 
@@ -860,7 +863,7 @@ try:
             router_verdict = await router_task
         except Exception:
             local_route = RouteDecision(
-                ("unknown",), False, "fallback", None, "router_internal_error"
+                ("unknown",), True, "fallback", None, "router_internal_error"
             )
         else:
             local_route = router_verdict.decision
@@ -895,7 +898,7 @@ In `project/llm/llm.py`, construct a dedicated `SDKProvider` and inject `LLMInte
 
 In `project/docker-compose.yml`, pass only `ROUTER_MODEL`, `ROUTER_API_KEY`, `ROUTER_BASE_URL`, `ROUTER_MAX_TOKENS` to `worker` and `admin`. Do not add them to `test`, `migrate`, `cutover`, scheduler or infrastructure services.
 
-- [ ] **Step 4: Run Task 2 GREEN and security regressions**
+- [x] **Step 4: Run Task 2 GREEN and security regressions**
 
 ```powershell
 Set-Location project
@@ -904,7 +907,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: PASS; tests prove concurrent start, Security-first consumption, BLOCK discard, PII boundary, no pre-ALLOW side effects and cancellation drainage.
 
-- [ ] **Step 5: Log and commit Task 2**
+- [x] **Step 5: Log and commit Task 2**
 
 ```powershell
 git add project/src/moroz/security/pipeline.py project/llm/config.py project/llm/llm.py project/docker-compose.yml project/tests/unit/security/test_pipeline.py project/tests/e2e/test_security_pipeline.py project/tests/unit/test_llm_providers.py project/tests/e2e/test_catalog_message_flow.py changelog.md
@@ -923,7 +926,7 @@ git commit -m "feat: встроить параллельный security router g
 - Create: `project/tests/unit/messaging/test_router_dataset.py`
 - Modify: `project/tests/integration/test_migrations.py`
 - Modify: `project/tests/unit/test_migration_profile.py`
-- Modify: `project/migrations/audit_existing_schema.py`
+- Inspect only: `project/migrations/audit_existing_schema.py` intentionally remains at `0001_existing_schema`; it audits and stamps the exact pre-Alembic baseline, not the current migration head.
 - Modify: `project/worker/main.py`
 - Modify: `project/llm/db.py`
 - Modify: `project/llm/handlers.py`
@@ -940,7 +943,7 @@ git commit -m "feat: встроить параллельный security router g
 - Seeds: immutable suite `router` cases into `eval_cases`; no separate router table.
 - Worker and prototype handler persist one non-zero `token_usage` row per consumed `LLMUsage`.
 
-- [ ] **Step 1: Write RED dataset and migration contracts**
+- [x] **Step 1: Write RED dataset and migration contracts**
 
 Create `project/tests/unit/messaging/test_router_dataset.py`:
 
@@ -1060,7 +1063,7 @@ assert persisted_usage == [
 ]
 ```
 
-- [ ] **Step 2: Run Task 3 RED in Docker**
+- [x] **Step 2: Run Task 3 RED in Docker**
 
 ```powershell
 Set-Location project
@@ -1069,7 +1072,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/t
 
 Expected: FAIL because migration `0014` and `router_dataset.json` do not exist.
 
-- [ ] **Step 3: Create the exact 20-case synthetic dataset**
+- [x] **Step 3: Create the exact 20-case synthetic dataset**
 
 Create `project/llm/eval/router_dataset.json` with these cases. Every context omitted in the table is `[]`; every clarification omitted is `false`.
 
@@ -1098,7 +1101,7 @@ Create `project/llm/eval/router_dataset.json` with these cases. Every context om
 
 Represent each row with the exact JSON keys asserted in Step 1. Use only synthetic data; do not copy client messages.
 
-- [ ] **Step 4: Implement additive migration and seed**
+- [x] **Step 4: Implement additive migration and seed**
 
 Create `project/migrations/versions/0014_llm_router_evaluations.py`:
 
@@ -1252,7 +1255,7 @@ for usage in usages:
 
 Persist only consumed usage tuples. A blocked Router result is never read, so its usage is intentionally absent from the database; provider billing remains the source of truth for a request that may already have reached the provider.
 
-- [ ] **Step 5: Run Task 3 GREEN and real disposable migration cycle**
+- [x] **Step 5: Run Task 3 GREEN and real disposable migration cycle**
 
 ```powershell
 Set-Location project
@@ -1261,10 +1264,10 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/t
 
 Expected: PASS; head is `0014_llm_router_evaluations`, legacy answer row survives, exactly 20 router cases exist, and no `router_eval_cases` table exists.
 
-- [ ] **Step 6: Log and commit Task 3**
+- [x] **Step 6: Log and commit Task 3**
 
 ```powershell
-git add project/migrations/versions/0014_llm_router_evaluations.py project/llm/eval/router_dataset.json project/migrate/Dockerfile project/tests/unit/admin/test_migration_0014.py project/tests/unit/messaging/test_router_dataset.py project/tests/integration/test_migrations.py project/tests/unit/test_migration_profile.py project/migrations/audit_existing_schema.py project/worker/main.py project/llm/db.py project/llm/handlers.py project/tests/unit/test_worker.py project/tests/unit/test_database_modules.py changelog.md
+git add project/migrations/versions/0014_llm_router_evaluations.py project/llm/eval/router_dataset.json project/migrate/Dockerfile project/tests/unit/admin/test_migration_0014.py project/tests/unit/messaging/test_router_dataset.py project/tests/integration/test_migrations.py project/tests/unit/test_migration_profile.py project/worker/main.py project/llm/db.py project/llm/handlers.py project/tests/unit/test_worker.py project/tests/unit/test_database_modules.py changelog.md
 git commit -m "feat: добавить общую схему router evaluations"
 ```
 
@@ -1294,7 +1297,7 @@ git commit -m "feat: добавить общую схему router evaluations"
 - `run_router_eval_set(run_id, cases=None, router=None)` invokes no answer LLM and no judge.
 - `/eval/router/`, `/eval/router/runs`, `/eval/router/runs/problematic` reuse current supervision, CSRF, audit and detail/SSE routes.
 
-- [ ] **Step 1: Write RED database and comparator tests**
+- [x] **Step 1: Write RED database and comparator tests**
 
 Create `project/tests/unit/admin/test_router_eval_database.py`:
 
@@ -1466,7 +1469,7 @@ async def test_quality_case_masks_pii_and_never_calls_answer_or_judge(monkeypatc
 
 Add route tests proving owner authentication, CSRF, root-path-safe URLs, router-only counts, `eval.router_run_start` audit and problem-only rerun. Add privacy tests proving raw `question`, provider response and exception text do not enter logs/SSE beyond the already-safe 120-character synthetic display field.
 
-- [ ] **Step 2: Run Task 4 RED in Docker**
+- [x] **Step 2: Run Task 4 RED in Docker**
 
 ```powershell
 Set-Location project
@@ -1475,7 +1478,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/admin/test_
 
 Expected: FAIL because suite-aware queries, router runner and router routes do not exist.
 
-- [ ] **Step 3: Make eval database functions suite-aware without breaking answer defaults**
+- [x] **Step 3: Make eval database functions suite-aware without breaking answer defaults**
 
 Use these query contracts in `project/admin/eval_database.py`:
 
@@ -1513,7 +1516,7 @@ Keep the current answer-case CRUD routes locked to answer rows even for a crafte
 
 Make `get_run_results` join `eval_cases` by `case_id` and return `expected_data` together with `eval_results.actual_data`; apply the same suite-safe structured projection wherever the detail page reads incremental results. This gives Router detail rendering its expected and actual payload without changing answer-page behavior.
 
-- [ ] **Step 4: Implement deterministic router comparator and runner**
+- [x] **Step 4: Implement deterministic router comparator and runner**
 
 In `project/admin/eval_runner.py`, reuse the runtime `deterministic_route`, `LLMIntentRouter`, `PiiSession`, progress updates and security gate. Add:
 
@@ -1626,7 +1629,7 @@ async def run_router_eval_set(
 
 `run_router_eval_set` runs sequentially, updates progress after every case, applies the current critical/pass-rate gate, stores terminal `finished/failed/error`, and logs only run ID/counts/error types.
 
-- [ ] **Step 5: Reuse the existing templates and task supervision**
+- [x] **Step 5: Reuse the existing templates and task supervision**
 
 In `project/admin/eval_routes.py` add router routes using the existing `_start_eval_task`:
 
@@ -1675,7 +1678,7 @@ Add the analogous `/eval/router/runs/problematic` route using `list_problem_case
 
 Modify `eval_list.html` with `suite == 'router'` conditionals for title, form URLs, model label, structured expected intents and read-only cases. Do not add Router CRUD; versioned Git dataset owns router cases. Modify `eval_run_detail.html` so the back link follows `run.suite`, Router details render `expected_data/actual_data`, and answer details remain unchanged. Add one navigation link to `/eval/router/` using `root_path`.
 
-- [ ] **Step 6: Run Task 4 GREEN and answer-eval regressions**
+- [x] **Step 6: Run Task 4 GREEN and answer-eval regressions**
 
 ```powershell
 Set-Location project
@@ -1684,7 +1687,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/admin/test_
 
 Expected: PASS; answer suite remains compatible, router suite has isolated history/statistics/problem rerun, no judge/answer call occurs.
 
-- [ ] **Step 7: Log and commit Task 4**
+- [x] **Step 7: Log and commit Task 4**
 
 ```powershell
 git add project/admin/eval_database.py project/admin/eval_runner.py project/admin/eval_routes.py project/admin/templates/eval_list.html project/admin/templates/eval_run_detail.html project/admin/templates/base.html project/tests/unit/admin/test_router_eval_database.py project/tests/unit/admin/test_router_eval_runner.py project/tests/e2e/admin/test_router_eval_routes.py project/tests/unit/test_eval_privacy.py project/tests/unit/test_safe_logging.py project/tests/e2e/admin/test_public_prefix.py changelog.md
@@ -1704,7 +1707,7 @@ git commit -m "feat: добавить router evaluation в общую админ
 - Roadmap marks the pair complete only after runtime, suite, Docker evidence and review are all complete.
 - No deploy/push/staging/production action is part of this task.
 
-- [ ] **Step 1: Run focused combined Docker gate**
+- [x] **Step 1: Run focused combined Docker gate**
 
 ```powershell
 Set-Location project
@@ -1713,7 +1716,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/t
 
 Expected: all selected tests PASS with zero external calls.
 
-- [ ] **Step 2: Run migration, config and compile gates**
+- [x] **Step 2: Run migration, config and compile gates**
 
 ```powershell
 Set-Location project
@@ -1724,7 +1727,7 @@ docker compose --env-file ../.env config --quiet
 
 Expected: migration reaches `0014_llm_router_evaluations`; compile and Compose config exit `0`. Use only disposable/local project DB for the migration gate, never staging or production.
 
-- [ ] **Step 3: Run fresh full Docker suite**
+- [x] **Step 3: Run fresh full Docker suite**
 
 ```powershell
 Set-Location project
@@ -1734,7 +1737,7 @@ docker compose --env-file ../.env run --rm test pytest -q
 
 Expected: exit `0`, zero failures and zero unexpected skips. Record exact count and duration.
 
-- [ ] **Step 4: Run security/static checks**
+- [x] **Step 4: Run security/static checks**
 
 ```powershell
 git diff --check
@@ -1745,7 +1748,9 @@ git status --short
 
 Expected: `git diff --check` exit `0`; forbidden router table and fallback patterns absent; placeholder scan absent; status contains only intended task files.
 
-- [ ] **Step 5: Perform independent review and fix loop**
+Evidence (2026-08-25): `git diff --check` exit `0`; placeholder scan returned no matches. The raw forbidden-pattern scan matched only two negative test assertions that prohibit `router_eval_cases`; the production-only scan returned no matches. Focused Docker gate: `328 passed in 109.78s`. Disposable migration head: `0014_llm_router_evaluations`; compile and Compose config exit `0`. Fresh no-cache full Docker suite before review fixes: `1357 passed in 654.10s`, with zero failures and skips. Post-review combined gate: `183 passed in 19.67s`; final unchanged-image rerun after one documented unrelated advisory-lock timeout: `1363 passed in 812.35s`, exit `0`.
+
+- [x] **Step 5: Perform independent review and fix loop**
 
 Use `requesting-code-review` against the exact diff from the pre-router baseline commit. Required review questions:
 
@@ -1757,17 +1762,21 @@ Use `requesting-code-review` against the exact diff from the pre-router baseline
 
 Expected: no remaining Critical/Important findings. Apply every confirmed finding with TDD and rerun the affected focused gate.
 
+Evidence (2026-08-25): whole-branch review initially found `0 Critical / 3 Important / 0 Minor`. TDD fixes made fallback `unknown` require clarification, pinned the Router dataset to LF checkout bytes, and made admin shutdown cancel/drain both eval suites into a safe terminal status before closing the database. Combined Docker gate: `183 passed`; re-review: `0 Critical / 0 Important / 0 Minor`, Ready.
+
 - [ ] **Step 6: Run the real-provider Router quality acceptance only with explicit authorization**
 
 Ask the user for explicit permission immediately before this paid external call. If authorized, use the local admin Router Evaluation action for the exact 20-case versioned suite, confirm the selected Router model/provider, and record pass rate, critical-case result, model and run ID without copying raw provider payloads into logs or docs. Do not send Telegram/YCLIENTS messages and do not deploy.
 
 Expected: all critical cases pass and the configured quality threshold passes. If the user does not authorize the real-provider run, do not mark the roadmap item complete: record `awaiting authorized real-provider Router Evaluation` as the exact remaining acceptance blocker. Fake-provider Docker tests prove orchestration and safety, but do not prove model classification quality.
 
-- [ ] **Step 7: Close documentation with exact evidence**
+Current blocker: `awaiting authorized real-provider Router Evaluation`. No paid provider call was made during local Task 5 verification.
+
+- [x] **Step 7: Close documentation with exact evidence**
 
 Check completed boxes in this plan. In `Дорожная карта.md`, mark `LLM Router + Router Evaluation` complete only if Tasks 1–5 and the review gate are complete; otherwise record the exact remaining blocker without checking the item. Append exact test counts, migration head, review outcome and the explicit statement that push/deploy/staging/production/Telegram/YCLIENTS/real provider calls were not performed to `changelog.md`.
 
-- [ ] **Step 8: Commit final documentation**
+- [x] **Step 8: Commit final documentation**
 
 ```powershell
 git add docs/superpowers/plans/2026-08-25-llm-router-and-router-evaluation.md 'Дорожная карта.md' changelog.md
