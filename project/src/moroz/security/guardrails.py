@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
@@ -120,6 +121,45 @@ _REVIEW_RULES = (
         re.IGNORECASE | re.DOTALL,
     ),
 )
+_THIRD_PARTY_PII_RULES = (
+    re.compile(
+        r"\b(?:телефон\w*|номер\w*|адрес\w*|имя|фио|"
+        r"медицинск\w*\s+истори\w*|истори\w*\s+посещен\w*|"
+        r"запис\w*)\b.{0,60}\b(?:друг\w*\s+клиент\w*|чуж\w*)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:друг\w*\s+клиент\w*|чуж\w*)\b.{0,60}\b"
+        r"(?:телефон\w*|номер\w*|адрес\w*|имя|фио|данн\w*|"
+        r"медицинск\w*\s+истори\w*|истори\w*\s+посещен\w*|"
+        r"запис\w*)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+)
+_DANGEROUS_CONTENT_RULES = (
+    re.compile(
+        r"\b(?:напиши|создай|сгенерируй|сделай)\w*\b.{0,50}\b"
+        r"(?:вирус\w*|вредонос\w*|фишинг\w*|эксплойт\w*)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:как|инструкц\w*)\b.{0,50}\b"
+        r"(?:взлом\w*|отрав\w*|уби(?:ть|йств)\w*|"
+        r"изготов\w*\s+(?:оружи\w*|бомб\w*))\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+)
+_OBFUSCATED_INSTRUCTION_RULES = (
+    re.compile(
+        r"\bbase64\b.{0,60}\b(?:выполн\w*|инструкц\w*|execute|instruction)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b1gn0r3\b.{0,60}\b(?:rul3s|pr0mpt)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+)
+_ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\ufeff\u2060]")
 
 
 def _matches(rules: tuple[re.Pattern[str], ...], text: str) -> bool:
@@ -139,17 +179,27 @@ def check_input(
         return GuardDecision("block", "input_too_long")
     if recent_message_count > rate_limit:
         return GuardDecision("block", "rate_limit")
-    if _matches(_STOP_RULES, text):
+    check_text = _ZERO_WIDTH_RE.sub(
+        "",
+        unicodedata.normalize("NFKC", text),
+    ).casefold()
+    if _matches(_STOP_RULES, check_text):
         return GuardDecision("stop", "user_stop")
-    if _matches(_PROMPT_ATTACK_RULES, text):
+    if _matches(_PROMPT_ATTACK_RULES, check_text):
         return GuardDecision("block", "prompt_injection")
-    if _matches(_PRIVILEGED_CONTEXT_RULES, text) and _matches(
+    if _matches(_PRIVILEGED_CONTEXT_RULES, check_text) and _matches(
         _PROTECTED_TARGET_RULES,
-        text,
+        check_text,
     ):
         return GuardDecision("block", "prompt_injection")
-    if _matches(_MEDICAL_RISK_RULES, text):
+    if _matches(_THIRD_PARTY_PII_RULES, check_text):
+        return GuardDecision("block", "third_party_pii")
+    if _matches(_DANGEROUS_CONTENT_RULES, check_text):
+        return GuardDecision("block", "dangerous_content")
+    if _matches(_MEDICAL_RISK_RULES, check_text):
         return GuardDecision("escalate", "medical_risk")
-    if _matches(_REVIEW_RULES, text):
+    if _matches(_OBFUSCATED_INSTRUCTION_RULES, check_text):
+        return GuardDecision("review", "obfuscated_instruction")
+    if _matches(_REVIEW_RULES, check_text):
         return GuardDecision("review", "instruction_review")
     return GuardDecision("allow", "input_allowed")

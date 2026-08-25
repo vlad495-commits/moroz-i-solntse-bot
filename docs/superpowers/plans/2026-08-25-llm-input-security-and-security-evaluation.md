@@ -279,7 +279,7 @@ Expected: selected tests PASS; commit succeeds.
 - Preserves: `check_input(text, recent_message_count, max_length=4000, rate_limit=10) -> GuardDecision`.
 - Adds safe codes: `third_party_pii`, `dangerous_content`, `obfuscated_instruction`.
 
-- [ ] **Step 1: Write RED normalization, block, review and false-positive tests**
+- [x] **Step 1: Write RED normalization, block, review and false-positive tests**
 
 Add parameterized tests that assert:
 
@@ -315,7 +315,7 @@ def test_business_false_positives_are_not_blocked(text):
     assert check_input(text, recent_message_count=1).action in {"allow", "stop", "escalate"}
 ```
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 ```powershell
 Set-Location project
@@ -324,7 +324,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: new cases FAIL with `input_allowed` or wrong code.
 
-- [ ] **Step 3: Implement NFKC/zero-width classification copy and narrow rules**
+- [x] **Step 3: Implement NFKC/zero-width classification copy and narrow rules**
 
 In `guardrails.py`, import `unicodedata`, add `_ZERO_WIDTH_RE`, and evaluate rules against:
 
@@ -335,7 +335,7 @@ normalized = _ZERO_WIDTH_RE.sub("", normalized).casefold()
 
 Keep raw length check first. Add narrow regex tuples for explicit third-party possessors plus PII targets, explicit dangerous verbs plus targets, and obfuscation hints. Apply order: empty/length/rate → stop → direct prompt → privileged prompt → third-party PII → dangerous content → medical → review/obfuscation → allow. Do not add profanity, language or generic toxicity rules.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 Set-Location project
