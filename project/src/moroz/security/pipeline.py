@@ -217,7 +217,7 @@ class SecurityPipeline:
                 except Exception:
                     local_route = RouteDecision(
                         ("unknown",),
-                        False,
+                        True,
                         "fallback",
                         None,
                         "router_internal_error",

@@ -48,3 +48,11 @@ def test_migration_pins_dataset_bytes_and_rejects_tampering(tmp_path):
     tampered.write_bytes(DATASET.read_bytes() + b" ")
     with pytest.raises(RuntimeError, match="Router dataset integrity mismatch"):
         module._load_router_cases(tampered)
+
+
+def test_migration_dataset_hash_requires_lf_checkout_bytes():
+    data = DATASET.read_bytes()
+
+    assert b"\r\n" not in data
+    assert hashlib.sha256(data).hexdigest() == DATASET_SHA256
+    assert hashlib.sha256(data.replace(b"\n", b"\r\n")).hexdigest() != DATASET_SHA256

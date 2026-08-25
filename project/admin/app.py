@@ -36,7 +36,7 @@ from auth import (  # noqa: E402
 )
 from pricing import calculate_cost  # noqa: E402
 from prompt_routes import router as prompt_router  # noqa: E402
-from eval_routes import router as eval_router  # noqa: E402
+from eval_routes import cancel_eval_tasks, router as eval_router  # noqa: E402
 from bot_control_routes import router as bot_control_router  # noqa: E402
 from logs_routes import router as logs_router  # noqa: E402
 from metrics_routes import router as metrics_router  # noqa: E402
@@ -58,8 +58,11 @@ _BASE_DIR = Path(__file__).resolve().parent
 async def lifespan(app: FastAPI):
     await database.init_db()
     logger.info("Админ-панель готова")
-    yield
-    await database.close_db()
+    try:
+        yield
+    finally:
+        await cancel_eval_tasks()
+        await database.close_db()
 
 
 app = FastAPI(

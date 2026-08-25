@@ -7,6 +7,7 @@
 - Двухступенчатая проверка: regex/keywords → если не прошёл → LLM-judge.
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -544,6 +545,22 @@ async def run_eval_set(run_id: int, cases: list[dict] | None = None) -> None:
             status,
         )
         await evdb.finish_run(run_id, passed, failed, status=status)
+    except asyncio.CancelledError:
+        try:
+            await evdb.finish_run(
+                run_id,
+                passed,
+                failed,
+                status="error",
+                error_message="CancelledError",
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "eval_run_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )
+        raise
     except Exception as error:
         error_message = type(error).__name__
         logger.error(
@@ -610,6 +627,22 @@ async def run_router_eval_set(
             status,
         )
         await evdb.finish_run(run_id, passed, failed, status=status)
+    except asyncio.CancelledError:
+        try:
+            await evdb.finish_run(
+                run_id,
+                passed,
+                failed,
+                status="error",
+                error_message="CancelledError",
+            )
+        except Exception as finalize_error:
+            logger.error(
+                "router_eval_run_finalize_failed run_id=%s error_type=%s",
+                safe_run_id,
+                type(finalize_error).__name__,
+            )
+        raise
     except Exception as error:
         error_message = type(error).__name__
         logger.error(

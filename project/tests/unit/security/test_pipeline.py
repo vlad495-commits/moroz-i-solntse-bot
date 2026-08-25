@@ -361,6 +361,7 @@ async def test_router_error_after_allow_uses_safe_unknown_answer_path():
 
     assert result.text == "answer"
     assert "intents=unknown" in gateway.requests[-1].messages[0]["content"]
+    assert "requires_clarification=1" in gateway.requests[-1].messages[0]["content"]
     assert "router-response-sentinel" not in repr(gateway.requests)
 
 
@@ -662,7 +663,7 @@ async def test_local_allow_skips_guard_and_uses_machine_owned_route_metadata() -
 
     assert [request.purpose for request in gateway.requests] == ["answer"]
     assert gateway.requests[0].messages[0]["content"].endswith(
-        "ROUTE intents=unknown; requires_clarification=0; "
+        "ROUTE intents=unknown; requires_clarification=1; "
         "source=fallback; confidence=none"
     )
 

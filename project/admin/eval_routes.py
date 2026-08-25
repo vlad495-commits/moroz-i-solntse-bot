@@ -50,6 +50,15 @@ def _start_eval_task(run_id: int, coroutine) -> None:
     task.add_done_callback(lambda done: _eval_task_done(done, run_id))
 
 
+async def cancel_eval_tasks() -> None:
+    """Cancel and retrieve all admin-owned eval tasks before DB shutdown."""
+    tasks = tuple(_eval_tasks)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 def _split_keywords(text: str) -> list[str]:
     """Парсинг textarea с keywords: одна строка = одно слово/regex."""
     return [line.strip() for line in (text or "").splitlines() if line.strip()]

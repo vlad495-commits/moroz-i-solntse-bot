@@ -73,7 +73,12 @@ def test_deterministic_route_returns_none_for_context_or_multi_intent(
     text: str,
 ) -> None:
     assert deterministic_route(text) is None
-    assert route_message(text).intents == ("unknown",)
+    assert route_message(text) == RouteDecision(
+        ("unknown",),
+        True,
+        source="fallback",
+        reason_code="unresolved",
+    )
 
 
 @pytest.mark.parametrize(
@@ -177,6 +182,7 @@ async def test_invalid_router_output_uses_unknown_without_false_confidence(
     ).route("Неоднозначный текст", [])
 
     assert verdict.decision.intents == ("unknown",)
+    assert verdict.decision.requires_clarification is True
     assert verdict.source == "fallback"
     assert verdict.confidence is None
     assert verdict.reason_code == "invalid_router_output"
@@ -191,6 +197,7 @@ async def test_provider_failure_is_sanitized_and_cancellation_propagates(
         ScriptedProvider(LLMUnavailable(secret))
     ).route("Неоднозначный текст", [])
     assert failed.decision.intents == ("unknown",)
+    assert failed.decision.requires_clarification is True
     assert failed.reason_code == "router_unavailable"
     assert secret not in caplog.text
 
@@ -198,6 +205,20 @@ async def test_provider_failure_is_sanitized_and_cancellation_propagates(
     with pytest.raises(asyncio.CancelledError) as raised:
         await LLMIntentRouter(ScriptedProvider(cancellation)).route("текст", [])
     assert raised.value is cancellation
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_keeps_deterministic_route_resolved() -> None:
+    verdict = await LLMIntentRouter(
+        ScriptedProvider(LLMUnavailable())
+    ).route("Сколько стоит криотерапия?", [])
+
+    assert verdict.decision == RouteDecision(
+        ("faq",),
+        False,
+        source="fallback",
+        reason_code="router_unavailable",
+    )
 
 
 def test_router_verdict_is_immutable_and_does_not_echo_input() -> None:

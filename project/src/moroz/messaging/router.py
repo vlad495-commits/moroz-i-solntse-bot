@@ -208,7 +208,7 @@ def deterministic_route(text: str) -> RouteDecision | None:
 def route_message(text: str) -> RouteDecision:
     return deterministic_route(text) or RouteDecision(
         ("unknown",),
-        False,
+        True,
         source="fallback",
         reason_code="unresolved",
     )
