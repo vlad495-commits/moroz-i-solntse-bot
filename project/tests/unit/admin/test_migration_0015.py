@@ -45,7 +45,9 @@ def test_migration_seed_matches_versioned_dataset():
 
 def test_migration_pins_dataset_bytes_and_rejects_tampering(tmp_path):
     module = _load_migration()
-    digest = hashlib.sha256(DATASET.read_bytes()).hexdigest()
+    digest = hashlib.sha256(
+        DATASET.read_bytes().replace(b"\r\n", b"\n")
+    ).hexdigest()
 
     assert module.SECURITY_DATASET_SHA256 == digest
     tampered = tmp_path / "security_dataset.json"
@@ -54,15 +56,14 @@ def test_migration_pins_dataset_bytes_and_rejects_tampering(tmp_path):
         module._load_security_cases(tampered)
 
 
-def test_migration_dataset_hash_requires_lf_checkout_bytes():
+def test_migration_dataset_hash_accepts_git_line_ending_conversion(tmp_path):
     module = _load_migration()
-    data = DATASET.read_bytes()
+    canonical = DATASET.read_bytes().replace(b"\r\n", b"\n")
+    crlf_dataset = tmp_path / "security_dataset.json"
+    crlf_dataset.write_bytes(canonical.replace(b"\n", b"\r\n"))
 
-    assert b"\r\n" not in data
-    assert hashlib.sha256(data).hexdigest() == module.SECURITY_DATASET_SHA256
-    assert hashlib.sha256(data.replace(b"\n", b"\r\n")).hexdigest() != (
-        module.SECURITY_DATASET_SHA256
-    )
+    assert hashlib.sha256(canonical).hexdigest() == module.SECURITY_DATASET_SHA256
+    assert module._load_security_cases(crlf_dataset) == json.loads(canonical)
 
 
 def test_downgrade_targets_only_security_owned_rows():

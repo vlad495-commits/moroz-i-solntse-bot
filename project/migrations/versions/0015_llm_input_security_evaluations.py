@@ -22,7 +22,7 @@ SECURITY_DATASET_SHA256 = (
 
 
 def _load_security_cases(path: Path) -> list[dict]:
-    data = path.read_bytes()
+    data = path.read_bytes().replace(b"\r\n", b"\n")
     if hashlib.sha256(data).hexdigest() != SECURITY_DATASET_SHA256:
         raise RuntimeError("Security dataset integrity mismatch for migration 0015")
     return json.loads(data)
