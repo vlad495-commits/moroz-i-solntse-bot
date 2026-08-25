@@ -1764,17 +1764,17 @@ Expected: no remaining Critical/Important findings. Apply every confirmed findin
 
 Evidence (2026-08-25): whole-branch review initially found `0 Critical / 3 Important / 0 Minor`. TDD fixes made fallback `unknown` require clarification, pinned the Router dataset to LF checkout bytes, and made admin shutdown cancel/drain both eval suites into a safe terminal status before closing the database. Combined Docker gate: `183 passed`; re-review: `0 Critical / 0 Important / 0 Minor`, Ready.
 
-- [ ] **Step 6: Run the real-provider Router quality acceptance only with explicit authorization**
+- [x] **Step 6: Run the real-provider Router quality acceptance only with explicit authorization**
 
 Ask the user for explicit permission immediately before this paid external call. If authorized, use the local admin Router Evaluation action for the exact 20-case versioned suite, confirm the selected Router model/provider, and record pass rate, critical-case result, model and run ID without copying raw provider payloads into logs or docs. Do not send Telegram/YCLIENTS messages and do not deploy.
 
 Expected: all critical cases pass and the configured quality threshold passes. If the user does not authorize the real-provider run, do not mark the roadmap item complete: record `awaiting authorized real-provider Router Evaluation` as the exact remaining acceptance blocker. Fake-provider Docker tests prove orchestration and safety, but do not prove model classification quality.
 
-Current blocker: `awaiting authorized real-provider Router Evaluation`. No paid provider call was made during local Task 5 verification.
+Acceptance evidence (2026-08-25, explicitly authorized): OpenAI `gpt-4o-mini`, run ID `1`, exact versioned suite of 20 cases, `19 passed / 1 failed` (`95%`), all `14/14` critical cases passed, status `finished`. The only non-critical mismatch was `router-other-001`: expected `other`, actual `offtopic`. The configured `0.95` gate passed. No answer LLM, judge, Telegram, YCLIENTS, staging, production or deploy action was involved.
 
 - [x] **Step 7: Close documentation with exact evidence**
 
-Check completed boxes in this plan. In `Дорожная карта.md`, mark `LLM Router + Router Evaluation` complete only if Tasks 1–5 and the review gate are complete; otherwise record the exact remaining blocker without checking the item. Append exact test counts, migration head, review outcome and the explicit statement that push/deploy/staging/production/Telegram/YCLIENTS/real provider calls were not performed to `changelog.md`.
+Check completed boxes in this plan. In `Дорожная карта.md`, mark `LLM Router + Router Evaluation` complete only if Tasks 1–5 and the review gate are complete; otherwise record the exact remaining blocker without checking the item. Append exact test counts, migration head, review outcome, authorized real-provider acceptance evidence, and the explicit statement that push/deploy/staging/production/Telegram/YCLIENTS actions were not performed to `changelog.md`.
 
 - [x] **Step 8: Commit final documentation**
 
