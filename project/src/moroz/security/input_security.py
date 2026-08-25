@@ -92,7 +92,11 @@ class LLMInputSecurityClassifier:
         self._provider = provider
         self._alert = alert
 
-    async def _fallback(self, code: str) -> InputSecurityVerdict:
+    async def _fallback(
+        self,
+        code: str,
+        usage: tuple[LLMUsage, ...] = (),
+    ) -> InputSecurityVerdict:
         logger.warning("input_security_classifier_failed code=%s", code)
         if self._alert is not None:
             try:
@@ -105,7 +109,8 @@ class LLMInputSecurityClassifier:
                     type(error).__name__,
                 )
         return InputSecurityVerdict(
-            InputSecurityDecision("block", "fallback", code)
+            InputSecurityDecision("block", "fallback", code),
+            usage,
         )
 
     async def classify(
@@ -141,5 +146,8 @@ class LLMInputSecurityClassifier:
         try:
             decision = _parse(response.text)
         except (json.JSONDecodeError, TypeError, ValueError):
-            return await self._fallback("security_invalid_output")
+            return await self._fallback(
+                "security_invalid_output",
+                response.usage,
+            )
         return InputSecurityVerdict(decision, response.usage)

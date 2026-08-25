@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from openai import AsyncOpenAI
 import redis.asyncio as aioredis
 from moroz.messaging.router import LLMIntentRouter
+from moroz.security.input_security import LLMInputSecurityClassifier
 from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
@@ -123,6 +124,7 @@ def _load_prompt(expected_sha256: str | None = None) -> None:
             candidate,
             facts,
             router=getattr(_pipeline, "router", None),
+            input_security=getattr(_pipeline, "input_security", None),
         )
 
     _system_prompt = candidate
@@ -189,7 +191,7 @@ async def _process_prompt_reload(client, payload: str) -> bool:
     return True
 
 
-def init_llm() -> None:
+def init_llm(security_alert=None) -> None:
     """Инициализировать LLM-клиент. Один раз при старте."""
     global _primary_client, _primary_kind, _pipeline, _pipeline_client
 
@@ -230,11 +232,16 @@ def init_llm() -> None:
         0.0,
         ROUTER_MAX_TOKENS,
     )
+    gateway = PrimaryReserveGateway(primary, reserve)
     _pipeline = SecurityPipeline(
-        PrimaryReserveGateway(primary, reserve),
+        gateway,
         _system_prompt,
         extract_structured_facts(_system_prompt),
         router=LLMIntentRouter(router_provider),
+        input_security=LLMInputSecurityClassifier(
+            gateway,
+            security_alert,
+        ),
     )
     _pipeline_client = _primary_client
     logger.info(

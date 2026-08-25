@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -95,7 +96,9 @@ class BlockingSecurityGateway:
         if request.purpose == "security":
             self.started.set()
             await self.release.wait()
-            return _response("ALLOW")
+            return _response(
+                json.dumps({"action": "allow", "category": "safe"})
+            )
         return _response("Безопасный ответ.")
 
 

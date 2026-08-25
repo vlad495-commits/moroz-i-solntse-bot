@@ -123,6 +123,18 @@ def _build_alert_router(redis_client, telegram: Bot):
     )
 
 
+def build_input_security_alert(alert_router):
+    async def alert(code: str) -> None:
+        await alert_router.emit(
+            code=code,
+            subject="input_security",
+            severity="CRITICAL",
+            text="Input Security classifier unavailable or invalid",
+        )
+
+    return alert
+
+
 async def _persist_token_usage(connection, chat_id: int, user_id: int, result) -> None:
     usages = getattr(result, "usage", ())
     if not usages and result.total_tokens > 0:
@@ -893,7 +905,11 @@ async def run() -> None:
                 "stale_outbound_deliveries_terminalized count=%d", reconciled
             )
         await queue.connect()
-        init_llm()
+        alert_router = _build_alert_router(redis_client, telegram)
+        if alert_router is None:
+            init_llm()
+        else:
+            init_llm(build_input_security_alert(alert_router))
         task_handler = MessageTaskHandler(
             database,
             generate_response,
@@ -910,8 +926,6 @@ async def run() -> None:
             retention_cleanup=retention_cleanup,
             catalog_repository=catalog_repository,
         )
-        alert_router = _build_alert_router(redis_client, telegram)
-
         async def runtime_handler(task: QueueTask) -> None:
             if alert_router is None:
                 await task_handler.handle(task)

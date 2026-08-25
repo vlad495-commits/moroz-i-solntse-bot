@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
+import json
 
 import pytest
 
@@ -23,6 +24,7 @@ from moroz.security.llm_gateway import (
     LLMUsage,
     NonRetryableLLMError,
 )
+from moroz.security.input_security import INPUT_SECURITY_RESPONSE_FORMAT
 from moroz.security.pipeline import (
     INPUT_BLOCK_REPLY,
     MEDICAL_ESCALATION_REPLY,
@@ -80,6 +82,18 @@ def response(
         total_tokens=total_tokens,
         model=model,
         usage=usage,
+    )
+
+
+def security_response(
+    action: str = "allow",
+    category: str = "safe",
+    **usage,
+) -> LLMResponse:
+    return response(
+        json.dumps({"action": action, "category": category}),
+        purpose="security",
+        **usage,
     )
 
 
@@ -187,7 +201,7 @@ async def test_unresolved_security_and_router_start_in_parallel_but_route_waits_
     gateway = ControlledGateway(
         security_started,
         security_release,
-        response("ALLOW", purpose="security"),
+        security_response(),
     )
     router = BlockingRouter(
         router_started,
@@ -200,6 +214,7 @@ async def test_unresolved_security_and_router_start_in_parallel_but_route_waits_
 
     await asyncio.wait_for(security_started.wait(), 1)
     await asyncio.wait_for(router_started.wait(), 1)
+    assert gateway.requests[0].response_format == INPUT_SECURITY_RESPONSE_FORMAT
     router_release.set()
     await asyncio.sleep(0)
     assert not task.done()
@@ -218,7 +233,7 @@ async def test_security_block_discards_router_without_answer_or_route_usage():
     gateway = ControlledGateway(
         security_started,
         security_release,
-        response("BLOCK", purpose="security"),
+        security_response("block", "prompt_attack"),
     )
     router = BlockingRouter(
         router_started,
@@ -250,7 +265,7 @@ async def test_router_and_security_receive_the_same_bounded_masked_payload():
         RouterVerdict(RouteDecision(("faq",), False, "llm", 0.8), ())
     )
     gateway = CapturingGateway(
-        response("ALLOW", purpose="security"),
+        security_response(),
         response("Безопасный ответ"),
     )
     context = [
@@ -286,7 +301,7 @@ async def test_router_and_security_receive_the_same_bounded_masked_payload():
     "security_event,router_event,expected_text",
     [
         (
-            response("ALLOW", purpose="security"),
+            security_response(),
             RouterVerdict(
                 RouteDecision(
                     ("unknown",),
@@ -300,7 +315,7 @@ async def test_router_and_security_receive_the_same_bounded_masked_payload():
             "answer",
         ),
         (
-            response("BLOCK", purpose="security"),
+            security_response("block", "prompt_attack"),
             RouterVerdict(
                 RouteDecision(
                     ("unknown",),
@@ -352,7 +367,7 @@ async def test_parallel_failure_matrix_is_fail_closed_for_security(
 @pytest.mark.asyncio
 async def test_router_error_after_allow_uses_safe_unknown_answer_path():
     gateway = CapturingGateway(
-        response("ALLOW", purpose="security"),
+        security_response(),
         response("answer"),
     )
     router = CapturingRouter(ValueError("router-response-sentinel"))
@@ -367,7 +382,7 @@ async def test_router_error_after_allow_uses_safe_unknown_answer_path():
 
 @pytest.mark.asyncio
 async def test_offtopic_waits_for_allow_and_skips_answer_with_consumed_usage_only():
-    gateway = CapturingGateway(response("ALLOW", purpose="security"))
+    gateway = CapturingGateway(security_response())
     router_usage = LLMUsage("router", 4, 2, 0, 6, "router-model")
     router = CapturingRouter(
         RouterVerdict(
@@ -387,7 +402,7 @@ async def test_offtopic_waits_for_allow_and_skips_answer_with_consumed_usage_onl
 @pytest.mark.asyncio
 async def test_route_metadata_is_allowlisted_and_confidence_is_bucketed():
     gateway = CapturingGateway(
-        response("ALLOW", purpose="security"),
+        security_response(),
         response("answer-provider-sentinel"),
     )
     router = CapturingRouter(
@@ -409,9 +424,7 @@ async def test_route_metadata_is_allowlisted_and_confidence_is_bucketed():
 @pytest.mark.asyncio
 async def test_parallel_usage_is_aggregated_in_consumption_order():
     gateway = CapturingGateway(
-        response(
-            "ALLOW",
-            purpose="security",
+        security_response(
             prompt_tokens=2,
             completion_tokens=1,
             cached_tokens=0,
@@ -672,9 +685,7 @@ async def test_local_allow_skips_guard_and_uses_machine_owned_route_metadata() -
 async def test_review_makes_one_masked_guard_call_then_answer() -> None:
     raw_email = "review@example.ru"
     gateway = CapturingGateway(
-        response(
-            "  ALLOW  ",
-            purpose="security",
+        security_response(
             prompt_tokens=2,
             completion_tokens=1,
             total_tokens=3,

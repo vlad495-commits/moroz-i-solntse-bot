@@ -365,7 +365,7 @@ Expected: selected tests PASS without broad false positives.
 - `init_llm(security_alert=None)` wires runtime callback without requiring it in compatibility paths.
 - Worker callback emits `AlertRouter.emit(code, subject="input_security", ...)` using static text only.
 
-- [ ] **Step 1: Write RED pipeline tests**
+- [x] **Step 1: Write RED pipeline tests**
 
 Add tests proving exact JSON classifier request, masked current/context, local zero-call, one classifier call for review/unresolved, accumulated `security` usage, block/fallback cancellation and alert failure safety. Replace old fixtures returning plain `ALLOW/BLOCK` with strict JSON responses.
 
@@ -385,7 +385,7 @@ async def test_input_security_alert_uses_only_static_allowlisted_fields():
     }]
 ```
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 ```powershell
 Set-Location project
@@ -394,7 +394,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: FAIL because pipeline still parses plain `ALLOW`, and alert wiring does not exist.
 
-- [ ] **Step 3: Integrate classifier without changing ordering**
+- [x] **Step 3: Integrate classifier without changing ordering**
 
 Replace `SecurityPipeline._security_verdict` with classifier task. Construct default classifier from `gateway`; accept an injected classifier for controlled tests. Convert `InputSecurityVerdict.usage` through existing `_usage_only`. On decision other than `allow`, cancel+drain Router and return `INPUT_BLOCK_REPLY` with model `security-fallback` only for fallback source, otherwise `security-local`. Preserve `CancelledError` propagation and existing Router-before-side-effect contract.
 
@@ -416,7 +416,7 @@ def build_input_security_alert(alert_router):
 
 Build `AlertRouter` before `init_llm` and pass the callback when available. Do not include chat/user/input/provider/error data.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 Set-Location project

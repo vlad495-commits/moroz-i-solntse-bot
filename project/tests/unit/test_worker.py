@@ -168,6 +168,21 @@ async def test_worker_alert_failure_does_not_mask_original_error(caplog):
     assert "private provider details" not in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_input_security_alert_uses_only_static_allowlisted_fields():
+    router = SimpleNamespace(emit=AsyncMock(return_value=True))
+
+    callback = worker_main.build_input_security_alert(router)
+    await callback("security_unavailable")
+
+    router.emit.assert_awaited_once_with(
+        code="security_unavailable",
+        subject="input_security",
+        severity="CRITICAL",
+        text="Input Security classifier unavailable or invalid",
+    )
+
+
 class FakeQueue:
     def __init__(self, result, *, close_error=None):
         self.result = result

@@ -5,11 +5,11 @@ from collections.abc import Iterable
 
 from moroz.messaging.router import (
     RouteDecision,
-    build_untrusted_input,
     deterministic_route,
     route_message,
 )
 from moroz.security.guardrails import check_input
+from moroz.security.input_security import LLMInputSecurityClassifier
 from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
@@ -50,11 +50,6 @@ SLOT_OUTPUT_FALLBACK = (
 OFFTOPIC_REPLY = (
     "Я могу помочь по услугам, подготовке, контактам и записи в центр."
 )
-
-_GUARD_PROMPT = (
-    "Classify the masked user text. Reply with exactly ALLOW or BLOCK."
-)
-
 
 def _zero(text: str, model: str = "security-local") -> LLMResponse:
     return LLMResponse(text, 0, 0, 0, 0, model)
@@ -115,31 +110,14 @@ class SecurityPipeline:
         system_prompt: str,
         facts: StructuredFacts,
         router: object | None = None,
+        input_security: object | None = None,
     ) -> None:
         self.gateway = gateway
         self.system_prompt = system_prompt
         self.facts = facts
         self.router = router
-
-    async def _security_verdict(
-        self,
-        masked_text: str,
-        masked_context: list[dict[str, str]],
-    ) -> LLMResponse:
-        return await self.gateway.complete(
-            LLMRequest(
-                messages=(
-                    {"role": "system", "content": _GUARD_PROMPT},
-                    {
-                        "role": "user",
-                        "content": build_untrusted_input(
-                            masked_text,
-                            masked_context,
-                        ),
-                    },
-                ),
-                purpose="security",
-            )
+        self.input_security = input_security or LLMInputSecurityClassifier(
+            gateway
         )
 
     async def respond(
@@ -179,7 +157,10 @@ class SecurityPipeline:
         needs_security_llm = decision.action == "review" or needs_router
         security_task = (
             asyncio.create_task(
-                self._security_verdict(masked_current.text, masked_context)
+                self.input_security.classify(
+                    masked_current.text,
+                    masked_context,
+                )
             )
             if needs_security_llm
             else None
@@ -194,7 +175,7 @@ class SecurityPipeline:
         try:
             if security_task is not None:
                 try:
-                    security_response = await security_task
+                    security_verdict = await security_task
                 except Exception:
                     await _cancel_and_drain(router_task)
                     return _aggregate(
@@ -202,13 +183,18 @@ class SecurityPipeline:
                         INPUT_BLOCK_REPLY,
                         "security-fallback",
                     )
-                accumulated.append(security_response)
-                if security_response.text.strip() != "ALLOW":
+                if security_verdict.usage:
+                    accumulated.append(_usage_only(security_verdict.usage))
+                if security_verdict.decision.action != "allow":
                     await _cancel_and_drain(router_task)
                     return _aggregate(
                         accumulated,
                         INPUT_BLOCK_REPLY,
-                        "security-fallback",
+                        (
+                            "security-fallback"
+                            if security_verdict.decision.source == "fallback"
+                            else "security-llm"
+                        ),
                     )
 
             if router_task is not None:
