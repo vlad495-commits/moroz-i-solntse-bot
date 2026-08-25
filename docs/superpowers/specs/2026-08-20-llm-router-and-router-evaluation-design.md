@@ -224,14 +224,14 @@ Fallback не возвращает `consultation + confidence=1.0`, не зап�
 ## Downstream mapping
 
 - `faq`, `smalltalk`, `other` и допустимый `unknown` передают route metadata основной answer LLM;
-- `booking`, `booking_change`, `booking_cancel` выбирают существующий workflow, но не обходят его проверки/подтверждения;
-- `complaint` и `human_handoff` выбирают существующий durable handoff;
+- `booking`, `booking_change`, `booking_cancel` выбирают существующий workflow только если текущий message pipeline уже владеет требуемым durable scenario state; Router не создаёт scenario автоматически;
+- `complaint` и `human_handoff` передают allowlisted route metadata существующему ответному контуру; автоматическое создание новой generic escalation не входит в эту пару, потому что текущий durable handoff создаётся только из явно поддержанных источников;
 - `offtopic` получает короткий безопасный ответ без основной answer LLM;
 - `requires_clarification=True` запрещает запуск конфликтующего workflow до уточнения.
 
 ## Usage и наблюдаемость
 
-Каждый внешний вызов сохраняет собственную usage-запись с purpose `security`, `router` или `answer`, фактической моделью и token counts. Локальные deterministic решения не создают нулевых provider-usage строк.
+Каждый успешно потреблённый внешний вызов сохраняет собственную usage-запись с purpose `security`, `router` или `answer`, фактической моделью и token counts. Для этого additive migration добавляет `token_usage.purpose VARCHAR(32) NOT NULL DEFAULT 'answer'`. Локальные deterministic решения не создают нулевых provider-usage строк. При `Security=BLOCK` router task дренируется без чтения verdict/usage: возможный provider-вызов учитывается по provider billing, но намеренно не попадает в локальную message usage, потому что router-result полностью отброшен.
 
 Allowlisted trace содержит только:
 
@@ -307,7 +307,7 @@ Quality categories:
 - prompt-injection-like input как недоверенные данные;
 - provider invalid output и unavailable fallback.
 
-Structural categories используют controlled fake providers и проверяют:
+Structural Router Evaluation выполняется focused Docker-тестами runtime orchestration с controlled fake providers, а не production admin-runner и не DB-кейсами. Эти проверки входят в общий acceptance gate пары и проверяют:
 
 - реальный параллельный старт Security и Router на `unresolved`;
 - запрет чтения/использования route до завершения Security;
@@ -320,6 +320,8 @@ Structural categories используют controlled fake providers и пров
 - одновременный сбой обоих вызовов;
 - корректную cancellation и дренирование task;
 - отсутствие raw input/output/errors в logs и reports.
+
+В `eval_cases/eval_runs/eval_results` сохраняются только quality-кейсы, которые действительно измеряют поведение выбранной Router LLM. Тестовый fake-provider harness в production admin не встраивается.
 
 Отдельная статистика фильтруется по `eval_runs.suite='router'`. «Прогнать проблемные» выбирает только активные router-кейсы, у которых последний result внутри suite имеет `fail` или `error`; answer suite не смешивается с router suite.
 
@@ -337,7 +339,7 @@ Structural categories используют controlled fake providers и пров
 Пара Router + Router Evaluation считается завершённой только после одновременного выполнения:
 
 1. Runtime router и suite `router` реализованы.
-2. Quality и structural cases проходят в общем admin eval-runner.
+2. Quality cases проходят в общем admin eval-runner, а structural cases — в focused Docker runtime tests с controlled fake providers.
 3. Отдельная router statistics и problem-only rerun подтверждены.
 4. PII/secrets/raw provider data отсутствуют в requests, traces и reports согласно контракту.
 5. Parallel Security/Router ordering и side-effect gate доказаны controlled tests.
