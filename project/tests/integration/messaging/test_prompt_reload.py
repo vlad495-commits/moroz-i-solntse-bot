@@ -80,5 +80,13 @@ async def test_reload_listener_changes_prompt_used_by_generate_response(
         await asyncio.gather(listener, return_exceptions=True)
         await client.aclose()
 
-    assert captured[0][0] == {"role": "system", "content": "Первый prompt"}
-    assert captured[1][0] == {"role": "system", "content": "Второй prompt"}
+    answer_calls = [
+        messages
+        for messages in captured
+        if messages[0]["content"] in {"Первый prompt", "Второй prompt"}
+    ]
+    assert [messages[0] for messages in answer_calls] == [
+        {"role": "system", "content": "Первый prompt"},
+        {"role": "system", "content": "Второй prompt"},
+    ]
+    assert len(captured) == 4
