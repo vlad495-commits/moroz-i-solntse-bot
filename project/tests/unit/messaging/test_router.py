@@ -89,6 +89,19 @@ def test_deterministic_route_does_not_guess_intent_from_contact_metadata(
     assert deterministic_route(text) is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Какой у вас телефон?",
+        "Подскажите контакты центра",
+    ],
+)
+def test_deterministic_route_resolves_explicit_center_contact_questions(
+    text: str,
+) -> None:
+    assert deterministic_route(text) == RouteDecision(("faq",), False)
+
+
 @pytest.mark.asyncio
 async def test_llm_router_accepts_strict_multi_intent_and_derives_conflict() -> None:
     provider = ScriptedProvider(
