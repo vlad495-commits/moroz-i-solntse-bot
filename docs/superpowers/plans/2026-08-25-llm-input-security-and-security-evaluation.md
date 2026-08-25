@@ -47,7 +47,7 @@
 - Produces: `LLMInputSecurityClassifier(provider, alert=None).classify(masked_text, masked_context)`.
 - Consumes: existing `Provider`, `LLMRequest`, `LLMUsage`, `build_untrusted_input`.
 
-- [ ] **Step 1: Write failing classifier tests**
+- [x] **Step 1: Write failing classifier tests**
 
 Create `project/tests/unit/security/test_input_security.py`:
 
@@ -137,7 +137,7 @@ async def test_cancellation_propagates():
         await LLMInputSecurityClassifier(Provider(asyncio.CancelledError())).classify("masked", [])
 ```
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 ```powershell
 Set-Location project
@@ -146,7 +146,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: collection FAIL because `moroz.security.input_security` does not exist.
 
-- [ ] **Step 3: Implement minimal classifier**
+- [x] **Step 3: Implement minimal classifier**
 
 Create `project/src/moroz/security/input_security.py` with:
 
@@ -254,7 +254,7 @@ class LLMInputSecurityClassifier:
         return InputSecurityVerdict(decision, response.usage)
 ```
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 Set-Location project
