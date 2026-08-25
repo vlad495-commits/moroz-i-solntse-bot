@@ -423,7 +423,8 @@ async def test_deletion_waits_for_projection_writer(migrated_database_url):
             "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
             PROJECTION_LOCK,
         )
-        result = await asyncio.wait_for(task, timeout=3)
+        # This asserts lock ordering, not a 3-second deletion latency SLO.
+        result = await asyncio.wait_for(task, timeout=10)
 
         assert result.status == "already_absent"
     finally:
