@@ -28,6 +28,7 @@ from moroz.security.llm_gateway import (
     SDKProvider,
 )
 from moroz.security.pipeline import SecurityPipeline
+from moroz.security.output_validator import LLMOutputValidator
 from moroz.security.validator import extract_structured_facts
 
 from config import (
@@ -125,6 +126,7 @@ def _load_prompt(expected_sha256: str | None = None) -> None:
             facts,
             router=getattr(_pipeline, "router", None),
             input_security=getattr(_pipeline, "input_security", None),
+            output_validator=getattr(_pipeline, "output_validator", None),
         )
 
     _system_prompt = candidate
@@ -191,7 +193,7 @@ async def _process_prompt_reload(client, payload: str) -> bool:
     return True
 
 
-def init_llm(security_alert=None) -> None:
+def init_llm(security_alert=None, output_alert=None) -> None:
     """Инициализировать LLM-клиент. Один раз при старте."""
     global _primary_client, _primary_kind, _pipeline, _pipeline_client
 
@@ -242,6 +244,7 @@ def init_llm(security_alert=None) -> None:
             gateway,
             security_alert,
         ),
+        output_validator=LLMOutputValidator(gateway, output_alert),
     )
     _pipeline_client = _primary_client
     logger.info(

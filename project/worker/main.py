@@ -135,6 +135,18 @@ def build_input_security_alert(alert_router):
     return alert
 
 
+def build_output_validator_alert(alert_router):
+    async def alert(code: str) -> None:
+        await alert_router.emit(
+            code=code,
+            subject="output_validator",
+            severity="ERROR",
+            text="Output validator unavailable or invalid",
+        )
+
+    return alert
+
+
 async def _persist_token_usage(connection, chat_id: int, user_id: int, result) -> None:
     usages = getattr(result, "usage", ())
     if not usages and result.total_tokens > 0:
@@ -909,7 +921,10 @@ async def run() -> None:
         if alert_router is None:
             init_llm()
         else:
-            init_llm(build_input_security_alert(alert_router))
+            init_llm(
+                build_input_security_alert(alert_router),
+                build_output_validator_alert(alert_router),
+            )
         task_handler = MessageTaskHandler(
             database,
             generate_response,

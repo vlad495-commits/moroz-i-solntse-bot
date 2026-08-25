@@ -18,7 +18,10 @@ async def test_advertised_native_claude_provider_can_create_client():
         await client.close()
 
 
-def test_init_llm_builds_a_dedicated_toolless_router_provider(monkeypatch, tmp_path):
+def test_init_llm_builds_dedicated_router_and_shared_output_validator(
+    monkeypatch,
+    tmp_path,
+):
     prompt_path = tmp_path / "system.md"
     prompt_path.write_text("safe owned prompt", encoding="utf-8")
     clients = []
@@ -53,7 +56,9 @@ def test_init_llm_builds_a_dedicated_toolless_router_provider(monkeypatch, tmp_p
     monkeypatch.setattr(llm_module, "_pipeline_client", None)
     monkeypatch.setattr(llm_module, "_pipeline", None)
 
-    llm_module.init_llm()
+    security_alert = object()
+    output_alert = object()
+    llm_module.init_llm(security_alert, output_alert)
 
     assert [(item.api_key, item.base_url) for item in clients] == [
         ("answer-key", "https://answer.invalid/v1"),
@@ -67,24 +72,36 @@ def test_init_llm_builds_a_dedicated_toolless_router_provider(monkeypatch, tmp_p
     assert router_provider.temperature == 0.0
     assert router_provider.max_tokens == 120
     assert llm_module._pipeline.router is not answer_provider
+    assert llm_module._pipeline.input_security._alert is security_alert
+    assert llm_module._pipeline.output_validator._provider is llm_module._pipeline.gateway
+    assert llm_module._pipeline.output_validator._alert is output_alert
 
 
-def test_prompt_reload_preserves_the_configured_router_instance(monkeypatch, tmp_path):
+def test_prompt_reload_preserves_configured_classifier_instances(monkeypatch, tmp_path):
     prompt_path = tmp_path / "system.md"
     prompt_path.write_text("new safe prompt", encoding="utf-8")
     router = object()
+    input_security = object()
+    output_validator = object()
     gateway = object()
     monkeypatch.setattr(llm_module, "SYSTEM_PROMPT_PATH", prompt_path)
     monkeypatch.setattr(
         llm_module,
         "_pipeline",
-        SimpleNamespace(gateway=gateway, router=router),
+        SimpleNamespace(
+            gateway=gateway,
+            router=router,
+            input_security=input_security,
+            output_validator=output_validator,
+        ),
     )
 
     llm_module._load_prompt()
 
     assert llm_module._pipeline.gateway is gateway
     assert llm_module._pipeline.router is router
+    assert llm_module._pipeline.input_security is input_security
+    assert llm_module._pipeline.output_validator is output_validator
 
 
 def _service_block(compose: str, service: str) -> str:

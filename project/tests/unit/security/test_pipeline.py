@@ -25,6 +25,10 @@ from moroz.security.llm_gateway import (
     NonRetryableLLMError,
 )
 from moroz.security.input_security import INPUT_SECURITY_RESPONSE_FORMAT
+from moroz.security.output_validator import (
+    OutputValidationDecision,
+    OutputValidationVerdict,
+)
 from moroz.security.pipeline import (
     INPUT_BLOCK_REPLY,
     MEDICAL_ESCALATION_REPLY,
@@ -102,13 +106,32 @@ def pipeline(
     *,
     prices: frozenset[str] = frozenset({"2400"}),
     router: object | None = None,
+    output_validator: object | None = None,
 ) -> SecurityPipeline:
     return SecurityPipeline(
         gateway,
         "OWNED SYSTEM PROMPT",
         StructuredFacts(prices, frozenset(), frozenset()),
         router=router,
+        output_validator=output_validator or RecordingOutputValidator(
+            OutputValidationVerdict(
+                OutputValidationDecision("allow", "llm", "safe")
+            )
+        ),
     )
+
+
+class RecordingOutputValidator:
+    def __init__(self, *verdicts):
+        self.verdicts = list(verdicts)
+        self.calls = []
+
+    async def validate(self, **kwargs):
+        self.calls.append(kwargs)
+        verdict = self.verdicts.pop(0)
+        if isinstance(verdict, BaseException):
+            raise verdict
+        return verdict
 
 
 class BlockingRouter:
@@ -832,6 +855,120 @@ async def test_invalid_output_retries_once_then_returns_safe_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generated_answer_runs_semantic_validator_before_restore() -> None:
+    raw_name = "Анна Иванова"
+    semantic = RecordingOutputValidator(
+        OutputValidationVerdict(
+            OutputValidationDecision("allow", "llm", "safe"),
+            (LLMUsage("validator", 2, 1, 0, 3, "validator-model"),),
+        )
+    )
+    gateway = CapturingGateway("Здравствуйте, <PII_NAME_1>")
+
+    result = await pipeline(gateway, output_validator=semantic).respond(
+        f"Меня зовут {raw_name}",
+        [],
+    )
+
+    assert result.text == f"Здравствуйте, {raw_name}"
+    assert len(semantic.calls) == 1
+    assert semantic.calls[0]["candidate"] == "Здравствуйте, <PII_NAME_1>"
+    assert raw_name not in repr(semantic.calls)
+    assert [item.purpose for item in result.usage] == ["answer", "validator"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_reject_informs_one_retry_and_revalidates_second() -> None:
+    semantic = RecordingOutputValidator(
+        OutputValidationVerdict(
+            OutputValidationDecision("regenerate", "llm", "unprofessional")
+        ),
+        OutputValidationVerdict(
+            OutputValidationDecision("allow", "llm", "safe")
+        ),
+    )
+    gateway = CapturingGateway(
+        "Читайте прайс сами.",
+        "Конечно, помогу уточнить стоимость.",
+    )
+
+    result = await pipeline(gateway, output_validator=semantic).respond(
+        "Сколько стоит услуга?",
+        [],
+    )
+
+    assert result.text == "Конечно, помогу уточнить стоимость."
+    assert len(gateway.requests) == 2
+    assert len(semantic.calls) == 2
+    assert "VALIDATOR_RETRY code=unprofessional" in repr(gateway.requests[1])
+    assert "Читайте прайс сами." not in repr(gateway.requests[1])
+
+
+@pytest.mark.asyncio
+async def test_second_semantic_reject_returns_fallback_without_bad_candidates() -> None:
+    semantic = RecordingOutputValidator(
+        *(
+            OutputValidationVerdict(
+                OutputValidationDecision("regenerate", "llm", "non_russian")
+            )
+            for _ in range(2)
+        )
+    )
+    gateway = CapturingGateway("First bad answer", "Second bad answer")
+
+    result = await pipeline(gateway, output_validator=semantic).respond(
+        "Ответьте по-русски",
+        [],
+    )
+
+    assert result.text == SAFE_OUTPUT_FALLBACK
+    assert "First bad answer" not in result.text
+    assert "Second bad answer" not in result.text
+    assert len(semantic.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_semantic_fallback_allows_locally_safe_candidate_with_usage() -> None:
+    usage = LLMUsage("validator", 2, 1, 0, 3, "validator-model")
+    semantic = RecordingOutputValidator(
+        OutputValidationVerdict(
+            OutputValidationDecision(
+                "allow", "fallback", "validator_unavailable"
+            ),
+            (usage,),
+        )
+    )
+    gateway = CapturingGateway("Локально безопасный ответ")
+
+    result = await pipeline(gateway, output_validator=semantic).respond(
+        "Расскажите об услуге",
+        [],
+    )
+
+    assert result.text == "Локально безопасный ответ"
+    assert [item.purpose for item in result.usage] == ["answer", "validator"]
+
+
+@pytest.mark.asyncio
+async def test_local_reject_skips_semantic_until_retry_passes_local_checks() -> None:
+    semantic = RecordingOutputValidator(
+        OutputValidationVerdict(
+            OutputValidationDecision("allow", "llm", "safe")
+        )
+    )
+    gateway = CapturingGateway("Цена 9999 руб.", "Цена 2400 руб.")
+
+    result = await pipeline(gateway, output_validator=semantic).respond(
+        "Сколько стоит крио?",
+        [],
+    )
+
+    assert result.text == "Цена 2400 руб."
+    assert len(semantic.calls) == 1
+    assert semantic.calls[0]["candidate"] == "Цена 2400 руб."
+
+
+@pytest.mark.asyncio
 async def test_medical_guarantee_fallback_denies_guarantee_and_routes_to_specialist():
     gateway = CapturingGateway(
         "Гарантированно вылечит",
@@ -902,6 +1039,11 @@ async def test_source_owned_center_address_passes_output_validation() -> None:
         gateway,
         "OWNED SYSTEM PROMPT",
         facts,
+        output_validator=RecordingOutputValidator(
+            OutputValidationVerdict(
+                OutputValidationDecision("allow", "llm", "safe")
+            )
+        ),
     ).respond("Где находится центр?", [])
 
     assert result.text == f"Адрес: {address}"

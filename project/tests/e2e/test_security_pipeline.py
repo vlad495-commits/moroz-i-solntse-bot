@@ -24,6 +24,10 @@ from moroz.security.llm_gateway import (
     PrimaryReserveGateway,
     RetryableLLMError,
 )
+from moroz.security.output_validator import (
+    OutputValidationDecision,
+    OutputValidationVerdict,
+)
 from moroz.security.pipeline import (
     INPUT_BLOCK_REPLY,
     MEDICAL_ESCALATION_REPLY,
@@ -99,7 +103,18 @@ class BlockingSecurityGateway:
             return _response(
                 json.dumps({"action": "allow", "category": "safe"})
             )
+        if request.purpose == "validator":
+            return _response(
+                json.dumps({"action": "allow", "category": "safe"})
+            )
         return _response("Безопасный ответ.")
+
+
+class AllowingOutputValidator:
+    async def validate(self, **_kwargs):
+        return OutputValidationVerdict(
+            OutputValidationDecision("allow", "llm", "safe")
+        )
 
 
 class ImmediateRouter:
@@ -355,7 +370,10 @@ async def test_no_downstream_state_before_allow_and_no_synthetic_route_state(dat
             """
         )
     assert tuple(after_allow.values()) == (0, 0, 1)
-    answer_system = gateway.requests[-1].messages[0]["content"]
+    answer_request = next(
+        request for request in gateway.requests if request.purpose == "answer"
+    )
+    answer_system = answer_request.messages[0]["content"]
     assert "intents=booking,human_handoff" in answer_system
 
 
@@ -390,7 +408,10 @@ async def test_security_pipeline_masks_each_critical_pii_class(
     user_message,
     placeholder,
 ):
-    primary = ScriptedProvider([_response()])
+    primary = ScriptedProvider([
+        _response(),
+        _response(json.dumps({"action": "allow", "category": "safe"})),
+    ])
     result = await SecurityPipeline(
         PrimaryReserveGateway(primary),
         "",
@@ -398,7 +419,7 @@ async def test_security_pipeline_masks_each_critical_pii_class(
     ).respond(user_message, [])
 
     assert result.text == "Безопасный ответ."
-    assert primary.calls == 1
+    assert primary.calls == 2
     sent = repr(primary.requests)
     assert placeholder in sent
     assert user_message not in sent
@@ -424,6 +445,7 @@ async def test_security_pipeline_enforces_provider_fallback_matrix(
         PrimaryReserveGateway(primary, reserve),
         "",
         extract_structured_facts(""),
+        output_validator=AllowingOutputValidator(),
     ).respond("Сколько стоит криокапсула?", [])
 
     assert primary.calls == primary_calls

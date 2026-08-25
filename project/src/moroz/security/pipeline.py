@@ -21,6 +21,7 @@ from moroz.security.llm_gateway import (
     LLMUnavailable,
     NonRetryableLLMError,
 )
+from moroz.security.output_validator import LLMOutputValidator
 from moroz.security.pii import PiiSession, UnknownPlaceholder
 from moroz.security.validator import (
     StructuredFacts,
@@ -115,6 +116,7 @@ class SecurityPipeline:
         facts: StructuredFacts,
         router: object | None = None,
         input_security: object | None = None,
+        output_validator: object | None = None,
     ) -> None:
         self.gateway = gateway
         self.system_prompt = system_prompt
@@ -123,6 +125,7 @@ class SecurityPipeline:
         self.input_security = input_security or LLMInputSecurityClassifier(
             gateway
         )
+        self.output_validator = output_validator or LLMOutputValidator(gateway)
 
     async def respond(
         self,
@@ -300,16 +303,28 @@ class SecurityPipeline:
                 forbidden_raw=forbidden_raw,
             )
             if verdict.ok:
-                try:
-                    restored = session.restore_validated(
-                        answer.text,
-                        masked_current.placeholders,
-                    )
-                except UnknownPlaceholder:
-                    validator_code = "unknown_placeholder"
-                    continue
-                return _aggregate(accumulated, restored, answer.model)
-            validator_code = verdict.code
+                semantic = await self.output_validator.validate(
+                    masked_input=masked_current.text,
+                    masked_context=masked_context,
+                    route_metadata=route_metadata,
+                    candidate=answer.text,
+                )
+                if semantic.usage:
+                    accumulated.append(_usage_only(semantic.usage))
+                if semantic.decision.action == "allow":
+                    try:
+                        restored = session.restore_validated(
+                            answer.text,
+                            masked_current.placeholders,
+                        )
+                    except UnknownPlaceholder:
+                        validator_code = "unknown_placeholder"
+                    else:
+                        return _aggregate(accumulated, restored, answer.model)
+                else:
+                    validator_code = semantic.decision.reason_code
+            else:
+                validator_code = verdict.code
             if initial_validator_code is None:
                 initial_validator_code = validator_code
 

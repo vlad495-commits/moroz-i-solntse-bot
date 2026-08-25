@@ -183,6 +183,21 @@ async def test_input_security_alert_uses_only_static_allowlisted_fields():
     )
 
 
+@pytest.mark.asyncio
+async def test_output_validator_alert_uses_only_static_allowlisted_fields():
+    router = SimpleNamespace(emit=AsyncMock(return_value=True))
+
+    callback = worker_main.build_output_validator_alert(router)
+    await callback("validator_unavailable")
+
+    router.emit.assert_awaited_once_with(
+        code="validator_unavailable",
+        subject="output_validator",
+        severity="ERROR",
+        text="Output validator unavailable or invalid",
+    )
+
+
 class FakeQueue:
     def __init__(self, result, *, close_error=None):
         self.result = result

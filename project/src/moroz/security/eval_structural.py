@@ -67,9 +67,15 @@ async def evaluate_structural_case(
         expected_calls = (1, 1)
         expected_text = SAFE_OUTPUT_FALLBACK
     else:
-        primary = _ScriptedProvider(RetryableLLMError())
+        primary = _ScriptedProvider(
+            RetryableLLMError(),
+            _local_response(
+                '{"action":"allow","category":"safe"}',
+                "validator",
+            ),
+        )
         reserve = _ScriptedProvider(_local_response(reserve_reply, "reserve"))
-        expected_calls = (1, 1)
+        expected_calls = (2, 1)
         expected_text = reserve_reply
 
     result = await SecurityPipeline(

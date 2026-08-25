@@ -244,7 +244,7 @@ git commit -m "feat: блокировать технические артефа�
 - Consumes: `LLMOutputValidator.validate(...)` and existing `SecurityPipeline` dependencies.
 - Produces: two-attempt local+semantic validation, output alert wiring, preserved prompt reload object, usage purpose `validator`.
 
-- [ ] **Step 1: Write failing pipeline contract tests**
+- [x] **Step 1: Write failing pipeline contract tests**
 
 Add a recording semantic validator and prove:
 
@@ -271,7 +271,7 @@ class RecordingOutputValidator:
         return self.verdicts.pop(0)
 ```
 
-- [ ] **Step 2: Run RED focused pipeline tests**
+- [x] **Step 2: Run RED focused pipeline tests**
 
 Run:
 
@@ -281,7 +281,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: new tests fail because `SecurityPipeline` has no `output_validator` dependency/calls.
 
-- [ ] **Step 3: Refactor the two-attempt loop minimally**
+- [x] **Step 3: Refactor the two-attempt loop minimally**
 
 Add `output_validator` to `SecurityPipeline.__init__`, defaulting to `LLMOutputValidator(gateway)`. For each generated candidate:
 
@@ -305,7 +305,7 @@ else:
 
 Keep exactly two answer attempts. A second failure selects existing reason-specific fallback; semantic categories use `SAFE_OUTPUT_FALLBACK`. Do not restore or send rejected candidates.
 
-- [ ] **Step 4: Wire lifecycle and separate alert subject**
+- [x] **Step 4: Wire lifecycle and separate alert subject**
 
 In `llm.py`, construct one `LLMOutputValidator(gateway, output_alert)` and preserve it in `_load_prompt`. Extend `init_llm` with backward-compatible optional `output_alert=None`; legacy seam gets default validator on the legacy gateway.
 
@@ -325,7 +325,7 @@ def build_output_validator_alert(alert_router):
 
 Pass both callbacks only when `AlertRouter` exists; retain zero-arg `init_llm()` compatibility for tests/startup without alert configuration.
 
-- [ ] **Step 5: Run runtime and privacy regression**
+- [x] **Step 5: Run runtime and privacy regression**
 
 Run:
 
@@ -342,7 +342,7 @@ docker compose --env-file ../.env run --rm test pytest -q \
 
 Expected: all pass; assertions prove raw PII/candidates/errors are absent from logs/alerts.
 
-- [ ] **Step 6: Log and commit Task 3**
+- [x] **Step 6: Log and commit Task 3**
 
 ```powershell
 git add project/src/moroz/security/pipeline.py project/llm/llm.py project/worker/main.py \
