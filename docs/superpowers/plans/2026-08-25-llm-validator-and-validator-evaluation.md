@@ -53,7 +53,7 @@
 - Consumes: `Provider.complete(LLMRequest) -> LLMResponse`, `LLMUsage`, bounded masked input/context, route metadata and candidate.
 - Produces: `OutputValidationDecision`, `OutputValidationVerdict`, `LLMOutputValidator.validate(...)`.
 
-- [ ] **Step 1: Write strict-contract failing tests**
+- [x] **Step 1: Write strict-contract failing tests**
 
 Create tests that import the missing module and assert exact allow/regenerate decisions:
 
@@ -92,7 +92,7 @@ assert alerts == ["validator_invalid_output"]
 
 Assert provider errors produce `validator_unavailable`, cancellation propagates, alert failures do not leak exception/input, request purpose is `validator`, response format is strict schema, and request contains masked bounded data but not system prompt/raw PII.
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 Run:
 
@@ -104,7 +104,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: collection fails with `ModuleNotFoundError: moroz.security.output_validator`.
 
-- [ ] **Step 3: Implement the minimal typed component**
+- [x] **Step 3: Implement the minimal typed component**
 
 Implement strict categories/schema and parser:
 
@@ -139,7 +139,7 @@ def _parse(text: str) -> OutputValidationDecision:
 
 Build the untrusted user block with `json.dumps(..., ensure_ascii=False, separators=(",", ":"))`; do not include owned system prompt/catalog/facts. Mirror the audited cancellation/fallback/alert mechanics of `input_security.py`, but fallback decision is `allow` because deterministic validation already passed.
 
-- [ ] **Step 4: Run GREEN and adjacent gateway tests**
+- [x] **Step 4: Run GREEN and adjacent gateway tests**
 
 Run:
 
@@ -149,7 +149,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/te
 
 Expected: all pass; no external API call.
 
-- [ ] **Step 5: Log and commit Task 1**
+- [x] **Step 5: Log and commit Task 1**
 
 Append the RED/GREEN evidence to `changelog.md`, then:
 
