@@ -159,6 +159,13 @@ _OBFUSCATED_INSTRUCTION_RULES = (
         re.IGNORECASE | re.DOTALL,
     ),
 )
+_REPORT_OR_HANDOFF_RULES = (
+    re.compile(
+        r"\b(?:жалоб\w*|пожаловат\w*|мне\s+(?:прислал\w*|показал\w*)|"
+        r"соедините|позовите|попытк\w*)\b",
+        re.IGNORECASE,
+    ),
+)
 _ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\ufeff\u2060]")
 
 
@@ -192,6 +199,12 @@ def check_input(
         check_text,
     ):
         return GuardDecision("block", "prompt_injection")
+    reports_problem = _matches(_REPORT_OR_HANDOFF_RULES, check_text)
+    if reports_problem and (
+        _matches(_THIRD_PARTY_PII_RULES, check_text)
+        or _matches(_DANGEROUS_CONTENT_RULES, check_text)
+    ):
+        return GuardDecision("review", "reported_security_issue")
     if _matches(_THIRD_PARTY_PII_RULES, check_text):
         return GuardDecision("block", "third_party_pii")
     if _matches(_DANGEROUS_CONTENT_RULES, check_text):

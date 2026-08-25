@@ -171,4 +171,3 @@ async def test_security_detail_and_stream_require_owner(monkeypatch):
     assert 'href="/admin/eval/security/"' in body
     assert "Input Security Evaluation" in body
     assert "prompt_attack" in body
-

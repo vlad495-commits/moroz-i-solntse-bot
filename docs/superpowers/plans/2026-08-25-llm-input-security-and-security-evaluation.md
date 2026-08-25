@@ -538,7 +538,7 @@ Expected: security, router and answer paths remain isolated and PASS.
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`
 
-- [ ] **Step 1: Run focused Docker gate**
+- [x] **Step 1: Run focused Docker gate**
 
 ```powershell
 Set-Location project
@@ -547,7 +547,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/security te
 
 Expected: all selected tests PASS with zero external calls.
 
-- [ ] **Step 2: Run compile, migration and Compose gates**
+- [x] **Step 2: Run compile, migration and Compose gates**
 
 ```powershell
 Set-Location project
@@ -556,9 +556,9 @@ docker compose --env-file ../.env run --rm test python -m compileall -q /app
 docker compose --env-file ../.env config --quiet
 ```
 
-Expected: head `0015_llm_input_security_evaluations`; compile/config exit `0`.
+Expected: head `0015_llm_input_security`; compile/config exit `0`.
 
-- [ ] **Step 3: Run fresh full Docker suite**
+- [x] **Step 3: Run fresh full Docker suite**
 
 ```powershell
 Set-Location project
@@ -568,7 +568,7 @@ docker compose --env-file ../.env run --rm test pytest -q
 
 Expected: exit `0`, zero failures and unexpected skips; record exact count/duration.
 
-- [ ] **Step 4: Run static/privacy checks**
+- [x] **Step 4: Run static/privacy checks**
 
 ```powershell
 Set-Location ..
@@ -580,7 +580,7 @@ git status --short
 
 Expected: forbidden production patterns absent; matches in negative tests are reviewed, not treated as production findings.
 
-- [ ] **Step 5: Perform independent review and TDD fix loop**
+- [x] **Step 5: Perform independent review and TDD fix loop**
 
 Use `requesting-code-review` against baseline `963b79e`. Reviewer must answer:
 
@@ -609,4 +609,3 @@ git commit -m "docs: завершить LLM Input Security"
 ```
 
 Expected: clean feature worktree; no push/deploy.
-

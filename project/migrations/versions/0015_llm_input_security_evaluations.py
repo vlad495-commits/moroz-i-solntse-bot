@@ -72,8 +72,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute(
         "DELETE FROM eval_results WHERE run_id IN "
-        "(SELECT id FROM eval_runs WHERE suite = 'security') OR case_id IN "
-        "(SELECT id FROM eval_cases WHERE suite = 'security')"
+        "(SELECT id FROM eval_runs WHERE suite = 'security')"
     )
     op.execute("DELETE FROM eval_runs WHERE suite = 'security'")
     op.execute("DELETE FROM eval_cases WHERE suite = 'security'")

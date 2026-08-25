@@ -125,6 +125,31 @@ async def test_quality_case_masks_current_and_context_before_classifier(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_history_forces_classifier_even_for_deterministic_route(monkeypatch):
+    classifier = CapturingClassifier(
+        InputSecurityVerdict(InputSecurityDecision("allow", "llm", "safe"))
+    )
+    case = security_case(
+        question="Хочу записаться",
+        input_data={
+            "input": "Хочу записаться",
+            "context": [{"role": "user", "content": "Ранее обсуждали услуги"}],
+        },
+        expected_data={"action": "allow", "source": "llm"},
+    )
+
+    async def save_result(**_kwargs):
+        return 704
+
+    monkeypatch.setattr(eval_runner.evdb, "save_result", save_result)
+
+    result = await eval_runner.run_security_case(case, 84, classifier=classifier)
+
+    assert result["verdict"] == "pass"
+    assert len(classifier.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_security_errors_store_and_log_only_error_type(monkeypatch, caplog):
     sentinel = "https://secret:password@provider.invalid raw-provider-payload"
     classifier = CapturingClassifier(RuntimeError(sentinel))
@@ -188,3 +213,23 @@ async def test_security_eval_set_is_sequential_and_uses_existing_gate(monkeypatc
     ]
     assert finished == [((83, 1, 1), {"status": "failed"})]
 
+
+def test_security_classifier_uses_runtime_provider_settings(monkeypatch):
+    captured = []
+
+    class Provider:
+        def __init__(self, client, kind, model, temperature, max_tokens):
+            captured.append((client, kind, model, temperature, max_tokens))
+
+    monkeypatch.setattr(eval_runner, "_init_clients", lambda: None)
+    monkeypatch.setattr(eval_runner, "_primary", object())
+    monkeypatch.setattr(eval_runner, "_primary_kind", "openai")
+    monkeypatch.setattr(eval_runner, "_reserve", None)
+    monkeypatch.setattr(eval_runner, "SDKProvider", Provider)
+
+    eval_runner._build_security_classifier()
+
+    assert captured[0][3:] == (
+        eval_runner.LLM_TEMPERATURE,
+        eval_runner.LLM_MAX_TOKENS,
+    )

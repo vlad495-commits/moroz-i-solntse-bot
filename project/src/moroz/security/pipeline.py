@@ -5,11 +5,15 @@ from collections.abc import Iterable
 
 from moroz.messaging.router import (
     RouteDecision,
+    bound_untrusted_context,
     deterministic_route,
     route_message,
 )
 from moroz.security.guardrails import check_input
-from moroz.security.input_security import LLMInputSecurityClassifier
+from moroz.security.input_security import (
+    LLMInputSecurityClassifier,
+    needs_input_security_review,
+)
 from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
@@ -140,21 +144,25 @@ class SecurityPipeline:
             return _zero(MEDICAL_ESCALATION_REPLY)
 
         session = PiiSession()
-        masked_context = [
+        masked_context = bound_untrusted_context([
             {
                 "role": message["role"],
                 "content": session.mask(message.get("content", "")).text,
             }
             for message in context
             if message.get("role") in {"user", "assistant"}
-        ]
+        ])
         masked_current = session.mask(user_message)
         forbidden_raw = session.raw_values()
         accumulated: list[LLMResponse] = []
 
         local_route = deterministic_route(masked_current.text)
         needs_router = local_route is None and self.router is not None
-        needs_security_llm = decision.action == "review" or needs_router
+        needs_security_llm = needs_input_security_review(
+            decision.action,
+            route_unresolved=needs_router,
+            has_context=bool(masked_context),
+        )
         security_task = (
             asyncio.create_task(
                 self.input_security.classify(
@@ -165,13 +173,7 @@ class SecurityPipeline:
             if needs_security_llm
             else None
         )
-        router_task = (
-            asyncio.create_task(
-                self.router.route(masked_current.text, masked_context)
-            )
-            if needs_router
-            else None
-        )
+        router_task = None
         try:
             if security_task is not None:
                 try:
@@ -186,7 +188,6 @@ class SecurityPipeline:
                 if security_verdict.usage:
                     accumulated.append(_usage_only(security_verdict.usage))
                 if security_verdict.decision.action != "allow":
-                    await _cancel_and_drain(router_task)
                     return _aggregate(
                         accumulated,
                         INPUT_BLOCK_REPLY,
@@ -197,7 +198,10 @@ class SecurityPipeline:
                         ),
                     )
 
-            if router_task is not None:
+            if needs_router:
+                router_task = asyncio.create_task(
+                    self.router.route(masked_current.text, masked_context)
+                )
                 try:
                     router_verdict = await router_task
                 except Exception:

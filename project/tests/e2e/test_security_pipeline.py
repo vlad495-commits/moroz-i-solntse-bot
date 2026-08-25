@@ -328,7 +328,7 @@ async def test_no_downstream_state_before_allow_and_no_synthetic_route_state(dat
         )
     )
     await asyncio.wait_for(gateway.started.wait(), 1)
-    await asyncio.wait_for(router.started.wait(), 1)
+    assert not router.started.is_set()
 
     async with database.acquire() as connection:
         before_allow = await connection.fetchrow(
@@ -342,6 +342,7 @@ async def test_no_downstream_state_before_allow_and_no_synthetic_route_state(dat
     assert tuple(before_allow.values()) == (0, 0, 0)
 
     gateway.release.set()
+    await asyncio.wait_for(router.started.wait(), 1)
     await task
 
     async with database.acquire() as connection:

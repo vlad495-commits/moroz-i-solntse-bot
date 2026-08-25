@@ -244,14 +244,30 @@ def _parse_router_output(text: str) -> tuple[tuple[str, ...], float]:
     return tuple(intents), float(confidence)
 
 
-def build_untrusted_input(text: str, context: list[dict[str, str]]) -> str:
-    lines = []
-    for message in context[-6:]:
+def bound_untrusted_context(
+    context: list[dict[str, str]],
+    *,
+    max_chars: int = 2000,
+) -> list[dict[str, str]]:
+    selected = []
+    remaining = max_chars
+    for message in reversed(context[-6:]):
         role = message.get("role")
         content = str(message.get("content") or "").strip()
-        if role in {"user", "assistant"} and content:
-            lines.append(f"{role}: {content}")
-    transcript = "\n".join(lines)[-2000:]
+        overhead = len(str(role)) + 3
+        if role not in {"user", "assistant"} or not content or remaining <= overhead:
+            continue
+        content = content[-(remaining - overhead):]
+        selected.append({"role": role, "content": content})
+        remaining -= overhead + len(content)
+    return list(reversed(selected))
+
+
+def build_untrusted_input(text: str, context: list[dict[str, str]]) -> str:
+    bounded = bound_untrusted_context(context)
+    transcript = "\n".join(
+        f"{message['role']}: {message['content']}" for message in bounded
+    )
     prefix = f"UNTRUSTED_RECENT_CONTEXT:\n{transcript}\n" if transcript else ""
     return f"{prefix}UNTRUSTED_CURRENT_MESSAGE:\n{text}"
 

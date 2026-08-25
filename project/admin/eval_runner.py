@@ -31,6 +31,7 @@ from moroz.security.guardrails import check_input
 from moroz.security.input_security import (
     InputSecurityDecision,
     LLMInputSecurityClassifier,
+    needs_input_security_review,
 )
 from moroz.security.llm_gateway import PrimaryReserveGateway, SDKProvider
 from moroz.security.pii import PiiSession
@@ -103,16 +104,16 @@ def _build_security_classifier() -> LLMInputSecurityClassifier:
         _primary,
         _primary_kind,
         LLM_MODEL,
-        0.0,
-        ROUTER_MAX_TOKENS,
+        LLM_TEMPERATURE,
+        LLM_MAX_TOKENS,
     )
     reserve = (
         SDKProvider(
             _reserve,
             _reserve_kind,
             RESERVE_MODEL,
-            0.0,
-            ROUTER_MAX_TOKENS,
+            LLM_TEMPERATURE,
+            LLM_MAX_TOKENS,
         )
         if _reserve is not None
         else None
@@ -564,7 +565,11 @@ async def run_security_case(
                 for item in input_data["context"]
             ]
             route = deterministic_route(masked_input)
-            if guard.action == "review" or route is None:
+            if needs_input_security_review(
+                guard.action,
+                route_unresolved=route is None,
+                has_context=bool(masked_context),
+            ):
                 decision = (
                     await classifier.classify(masked_input, masked_context)
                 ).decision

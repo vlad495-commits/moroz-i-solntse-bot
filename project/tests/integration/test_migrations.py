@@ -1185,6 +1185,16 @@ async def test_security_eval_migration_preserves_other_suites_on_downgrade(
             security_run,
             security_case,
         )
+        cross_suite_result = await conn.fetchval(
+            """
+            INSERT INTO eval_results
+                (run_id, case_id, question, expected_answer, verdict)
+            VALUES ($1, $2, 'answer-cross-suite', '', 'passed')
+            RETURNING id
+            """,
+            answer_run,
+            security_case,
+        )
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
             "0015_llm_input_security"
         )
@@ -1216,6 +1226,9 @@ async def test_security_eval_migration_preserves_other_suites_on_downgrade(
         assert await conn.fetchval(
             "SELECT count(*) FROM eval_results WHERE id = $1", security_result
         ) == 0
+        assert await conn.fetchval(
+            "SELECT case_id FROM eval_results WHERE id = $1", cross_suite_result
+        ) is None
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
             "0014_llm_router_evaluations"
         )

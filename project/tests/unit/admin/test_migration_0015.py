@@ -72,6 +72,7 @@ def test_downgrade_targets_only_security_owned_rows():
     assert "suite = 'security'" in downgrade
     assert "suite = 'router'" not in downgrade
     assert "suite = 'answer'" not in downgrade
+    assert "OR case_id IN" not in downgrade
 
 
 def test_migrate_image_copies_versioned_security_dataset():

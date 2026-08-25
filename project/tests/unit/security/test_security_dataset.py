@@ -8,6 +8,7 @@ import pytest
 
 from moroz.messaging.router import deterministic_route
 from moroz.security.guardrails import check_input
+from moroz.security.input_security import needs_input_security_review
 from moroz.security.pii import PiiSession
 
 
@@ -78,9 +79,12 @@ def test_security_dataset_covers_provider_quality_both_ways():
 def test_security_dataset_source_matches_runtime_boundary(case):
     guard = check_input(case["input"], recent_message_count=0)
     masked_input = PiiSession().mask(case["input"]).text
-    needs_llm = guard.action == "review" or (
-        guard.action == "allow" and deterministic_route(masked_input) is None
+    needs_llm = needs_input_security_review(
+        guard.action,
+        route_unresolved=(
+            guard.action == "allow" and deterministic_route(masked_input) is None
+        ),
+        has_context=bool(case["context"]),
     )
 
     assert case["expected_source"] == ("llm" if needs_llm else "local")
-
