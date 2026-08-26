@@ -30,7 +30,7 @@
 - Consumes: `SDKProvider.complete(LLMRequest) -> LLMResponse`, `LLMUsage`.
 - Produces: `CompactSummary`, `CompactResult`, `ContextCompactor.compact(masked_context)`.
 
-- [ ] **Step 1: Write parser/threshold/tail RED tests**
+- [x] **Step 1: Write parser/threshold/tail RED tests**
 
 ```python
 @pytest.mark.asyncio
@@ -50,13 +50,13 @@ async def test_long_context_returns_summary_and_exact_tail():
     assert result.messages[0]["content"].startswith("UNTRUSTED_COMPACT_CONTEXT_V1")
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/test_context_compactor.py`
 
 Expected: collection/import failure because `moroz.security.context_compactor` does not exist.
 
-- [ ] **Step 3: Implement minimal strict component**
+- [x] **Step 3: Implement minimal strict component**
 
 Implement frozen dataclasses, exact-key JSON parser with `parse_constant` rejection, item/count/length bounds, deterministic renderer, role/content filtering, message-boundary 24k serialization, threshold 30/tail 10, purpose `compact` request and usage propagation.
 
@@ -82,11 +82,11 @@ async def compact(self, masked_context: list[dict[str, str]]) -> CompactResult:
         return CompactResult(tail, "fallback", _safe_reason(error))
 ```
 
-- [ ] **Step 4: Add focused RED cases, then GREEN one behavior at a time**
+- [x] **Step 4: Add focused RED cases, then GREEN one behavior at a time**
 
 Cover exact keys/version, non-array/bool/constants, empty/oversized items, markdown wrapper, empty summary, latest conflict rendering, invalid roles/content, char bound, provider error, invalid output, alert failure, cancellation, usage and request-capture proving no raw values beyond supplied masked context.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 Run the focused Docker command from Step 2; expected all focused tests pass.
 
