@@ -304,7 +304,7 @@ Commit: `feat: Compact Evaluation добавлен в админку`
 - Modify: `changelog.md`
 - Modify only if assertions require it: architecture HTML tests/docs.
 
-- [ ] **Step 1: Run focused Docker gate**
+- [x] **Step 1: Run focused Docker gate**
 
 Run one fresh focused gate:
 
@@ -330,23 +330,23 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Record exact pass/fail/duration.
 
-- [ ] **Step 2: Run migration upgrade/downgrade/upgrade in disposable namespace**
+- [x] **Step 2: Run migration upgrade/downgrade/upgrade in disposable namespace**
 
 Confirm one head, 40 compact cases, suite-only downgrade and restoration without changing other suites. Clean only the exact owned Compose namespace and verify zero leftovers.
 
-- [ ] **Step 3: Run full Docker suite**
+- [x] **Step 3: Run full Docker suite**
 
 Use the established full-suite command with all required read-only architecture path overrides. Record exact output and cleanup.
 
-- [ ] **Step 4: Invoke requesting-code-review and fix findings test-first**
+- [x] **Step 4: Invoke requesting-code-review and fix findings test-first**
 
 Review the whole feature diff against the design/plan. Every accepted finding gets RED→GREEN verification; rerun affected gates.
 
-- [ ] **Step 5: Run final fresh focused/full verification**
+- [x] **Step 5: Run final fresh focused/full verification**
 
 No completion claim before current output proves zero failures, single Alembic head and clean owned Docker resources.
 
-- [ ] **Step 6: Update docs and commit local candidate**
+- [x] **Step 6: Update docs and commit local candidate**
 
 Record actual tests/review/limitations. Keep roadmap checkbox open until explicit paid real-provider Compact Evaluation passes.
 
