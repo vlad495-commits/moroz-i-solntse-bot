@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import config as llm_config
 import llm as llm_module
 
 
@@ -18,7 +19,7 @@ async def test_advertised_native_claude_provider_can_create_client():
         await client.close()
 
 
-def test_init_llm_builds_dedicated_router_and_shared_output_validator(
+def test_init_llm_builds_dedicated_router_compactor_and_shared_validators(
     monkeypatch,
     tmp_path,
 ):
@@ -51,6 +52,15 @@ def test_init_llm_builds_dedicated_router_and_shared_output_validator(
     )
     monkeypatch.setattr(llm_module, "ROUTER_MODEL", "router-model", raising=False)
     monkeypatch.setattr(llm_module, "ROUTER_MAX_TOKENS", 120, raising=False)
+    monkeypatch.setattr(llm_module, "COMPACT_API_KEY", "compact-key", raising=False)
+    monkeypatch.setattr(
+        llm_module,
+        "COMPACT_BASE_URL",
+        "https://compact.invalid/v1",
+        raising=False,
+    )
+    monkeypatch.setattr(llm_module, "COMPACT_MODEL", "compact-model", raising=False)
+    monkeypatch.setattr(llm_module, "COMPACT_MAX_TOKENS", 400, raising=False)
     monkeypatch.setattr(llm_module, "_create_client", create_client)
     monkeypatch.setattr(llm_module, "_primary_client", None)
     monkeypatch.setattr(llm_module, "_pipeline_client", None)
@@ -58,20 +68,28 @@ def test_init_llm_builds_dedicated_router_and_shared_output_validator(
 
     security_alert = object()
     output_alert = object()
-    llm_module.init_llm(security_alert, output_alert)
+    compact_alert = object()
+    llm_module.init_llm(security_alert, output_alert, compact_alert)
 
     assert [(item.api_key, item.base_url) for item in clients] == [
         ("answer-key", "https://answer.invalid/v1"),
         ("router-key", "https://router.invalid/v1"),
+        ("compact-key", "https://compact.invalid/v1"),
     ]
     answer_provider = llm_module._pipeline.gateway.primary
     router_provider = llm_module._pipeline.router._provider
+    compact_provider = llm_module._pipeline.context_compactor._provider
     assert answer_provider.client is clients[0]
     assert router_provider.client is clients[1]
     assert router_provider.model == "router-model"
     assert router_provider.temperature == 0.0
     assert router_provider.max_tokens == 120
     assert llm_module._pipeline.router is not answer_provider
+    assert compact_provider.client is clients[2]
+    assert compact_provider.model == "compact-model"
+    assert compact_provider.temperature == 0.0
+    assert compact_provider.max_tokens == 400
+    assert llm_module._pipeline.context_compactor._alert is compact_alert
     assert llm_module._pipeline.input_security._alert is security_alert
     assert llm_module._pipeline.output_validator._provider is llm_module._pipeline.gateway
     assert llm_module._pipeline.output_validator._alert is output_alert
@@ -83,6 +101,7 @@ def test_prompt_reload_preserves_configured_classifier_instances(monkeypatch, tm
     router = object()
     input_security = object()
     output_validator = object()
+    context_compactor = object()
     gateway = object()
     monkeypatch.setattr(llm_module, "SYSTEM_PROMPT_PATH", prompt_path)
     monkeypatch.setattr(
@@ -93,6 +112,7 @@ def test_prompt_reload_preserves_configured_classifier_instances(monkeypatch, tm
             router=router,
             input_security=input_security,
             output_validator=output_validator,
+            context_compactor=context_compactor,
         ),
     )
 
@@ -102,6 +122,7 @@ def test_prompt_reload_preserves_configured_classifier_instances(monkeypatch, tm
     assert llm_module._pipeline.router is router
     assert llm_module._pipeline.input_security is input_security
     assert llm_module._pipeline.output_validator is output_validator
+    assert llm_module._pipeline.context_compactor is context_compactor
 
 
 def _service_block(compose: str, service: str) -> str:
@@ -138,3 +159,57 @@ def test_router_environment_is_scoped_to_worker_and_admin_only():
     ):
         block = _service_block(compose, service)
         assert all(f"      {variable}:" not in block for variable in variables)
+
+
+def test_compact_environment_is_scoped_to_worker_and_admin_only():
+    compose = Path("/workspace/docker-compose.yml").read_text(encoding="utf-8")
+    variables = {
+        "COMPACT_MODEL",
+        "COMPACT_API_KEY",
+        "COMPACT_BASE_URL",
+        "COMPACT_MAX_TOKENS",
+        "COMPACT_THRESHOLD",
+        "COMPACT_KEEP_RECENT",
+    }
+
+    for service in ("worker", "admin"):
+        block = _service_block(compose, service)
+        assert all(f"      {variable}:" in block for variable in variables)
+
+    for service in (
+        "test",
+        "migrate",
+        "cutover",
+        "scheduler",
+        "bot",
+        "redis",
+        "postgres",
+        "rabbitmq",
+    ):
+        block = _service_block(compose, service)
+        assert all(f"      {variable}:" not in block for variable in variables)
+
+
+@pytest.mark.parametrize(
+    "context_limit,threshold,keep_recent",
+    [(30, 30, 10), (40, 30, 31), (40, 0, 0), (40, 30, 0)],
+)
+def test_invalid_compact_limits_are_rejected(
+    context_limit,
+    threshold,
+    keep_recent,
+):
+    with pytest.raises(ValueError, match="invalid compact context limits"):
+        llm_config._validate_context_limits(
+            context_limit,
+            threshold,
+            keep_recent,
+        )
+
+
+def test_default_compact_limits_are_valid():
+    assert (
+        llm_config.CONTEXT_MESSAGES_LIMIT,
+        llm_config.COMPACT_THRESHOLD,
+        llm_config.COMPACT_KEEP_RECENT,
+    ) == (40, 30, 10)

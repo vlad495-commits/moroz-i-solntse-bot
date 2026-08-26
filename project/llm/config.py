@@ -6,6 +6,17 @@ from pathlib import Path
 from dotenv import load_dotenv
 from moroz.common.config import database_url_from_env
 
+
+def _validate_context_limits(
+    context_limit: int,
+    compact_threshold: int,
+    compact_keep_recent: int,
+) -> None:
+    if not (
+        0 < compact_keep_recent <= compact_threshold < context_limit
+    ):
+        raise ValueError("invalid compact context limits")
+
 # Корневой .env (на 2 уровня выше: project/llm/ → project/ → корень)
 _ROOT_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
 if _ROOT_ENV.exists():
@@ -37,11 +48,22 @@ ROUTER_MODEL = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
 ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "") or LLM_API_KEY
 ROUTER_BASE_URL = os.getenv("ROUTER_BASE_URL", "") or LLM_BASE_URL
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
+COMPACT_MODEL = os.getenv("COMPACT_MODEL", ROUTER_MODEL)
+COMPACT_API_KEY = os.getenv("COMPACT_API_KEY", "") or ROUTER_API_KEY
+COMPACT_BASE_URL = os.getenv("COMPACT_BASE_URL", "") or ROUTER_BASE_URL
+COMPACT_MAX_TOKENS = int(os.getenv("COMPACT_MAX_TOKENS", "400"))
 
 # --- Хранилища ---
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 DATABASE_URL = database_url_from_env(os.environ, required=False)
-CONTEXT_MESSAGES_LIMIT = int(os.getenv("CONTEXT_MESSAGES_LIMIT", "20"))
+CONTEXT_MESSAGES_LIMIT = int(os.getenv("CONTEXT_MESSAGES_LIMIT", "40"))
+COMPACT_THRESHOLD = int(os.getenv("COMPACT_THRESHOLD", "30"))
+COMPACT_KEEP_RECENT = int(os.getenv("COMPACT_KEEP_RECENT", "10"))
+_validate_context_limits(
+    CONTEXT_MESSAGES_LIMIT,
+    COMPACT_THRESHOLD,
+    COMPACT_KEEP_RECENT,
+)
 
 # --- Промпт ---
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"

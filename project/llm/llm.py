@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from openai import AsyncOpenAI
 import redis.asyncio as aioredis
 from moroz.messaging.router import LLMIntentRouter
+from moroz.security.context_compactor import ContextCompactor
 from moroz.security.input_security import LLMInputSecurityClassifier
 from moroz.security.llm_gateway import (
     LLMRequest,
@@ -32,6 +33,12 @@ from moroz.security.output_validator import LLMOutputValidator
 from moroz.security.validator import extract_structured_facts
 
 from config import (
+    COMPACT_API_KEY,
+    COMPACT_BASE_URL,
+    COMPACT_KEEP_RECENT,
+    COMPACT_MAX_TOKENS,
+    COMPACT_MODEL,
+    COMPACT_THRESHOLD,
     LLM_API_KEY,
     LLM_BASE_URL,
     LLM_MODEL,
@@ -127,6 +134,7 @@ def _load_prompt(expected_sha256: str | None = None) -> None:
             router=getattr(_pipeline, "router", None),
             input_security=getattr(_pipeline, "input_security", None),
             output_validator=getattr(_pipeline, "output_validator", None),
+            context_compactor=getattr(_pipeline, "context_compactor", None),
         )
 
     _system_prompt = candidate
@@ -193,7 +201,11 @@ async def _process_prompt_reload(client, payload: str) -> bool:
     return True
 
 
-def init_llm(security_alert=None, output_alert=None) -> None:
+def init_llm(
+    security_alert=None,
+    output_alert=None,
+    compact_alert=None,
+) -> None:
     """Инициализировать LLM-клиент. Один раз при старте."""
     global _primary_client, _primary_kind, _pipeline, _pipeline_client
 
@@ -234,6 +246,14 @@ def init_llm(security_alert=None, output_alert=None) -> None:
         0.0,
         ROUTER_MAX_TOKENS,
     )
+    compact_kind = _detect_kind(COMPACT_MODEL, COMPACT_BASE_URL)
+    compact_provider = SDKProvider(
+        _create_client(COMPACT_API_KEY, COMPACT_BASE_URL, compact_kind),
+        compact_kind,
+        COMPACT_MODEL,
+        0.0,
+        COMPACT_MAX_TOKENS,
+    )
     gateway = PrimaryReserveGateway(primary, reserve)
     _pipeline = SecurityPipeline(
         gateway,
@@ -245,6 +265,12 @@ def init_llm(security_alert=None, output_alert=None) -> None:
             security_alert,
         ),
         output_validator=LLMOutputValidator(gateway, output_alert),
+        context_compactor=ContextCompactor(
+            compact_provider,
+            compact_alert,
+            threshold=COMPACT_THRESHOLD,
+            keep_recent=COMPACT_KEEP_RECENT,
+        ),
     )
     _pipeline_client = _primary_client
     logger.info(

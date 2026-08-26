@@ -52,6 +52,7 @@ async def test_message_transaction_persists_physical_usage_once(database):
             "answer-model",
             (
                 LLMUsage("router", 3, 1, 0, 4, "router-model"),
+                LLMUsage("compact", 2, 1, 0, 3, "compact-model"),
                 LLMUsage("answer", 9, 4, 1, 13, "answer-model"),
             ),
         )
@@ -75,5 +76,6 @@ async def test_message_transaction_persists_physical_usage_once(database):
     assert calls == 1
     assert [tuple(row.values()) for row in rows] == [
         ("router", 3, 1, 0, 4, "router-model"),
+        ("compact", 2, 1, 0, 3, "compact-model"),
         ("answer", 9, 4, 1, 13, "answer-model"),
     ]

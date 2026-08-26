@@ -198,6 +198,21 @@ async def test_output_validator_alert_uses_only_static_allowlisted_fields():
     )
 
 
+@pytest.mark.asyncio
+async def test_context_compactor_alert_uses_only_static_allowlisted_fields():
+    router = SimpleNamespace(emit=AsyncMock(return_value=True))
+
+    callback = worker_main.build_context_compactor_alert(router)
+    await callback("compact_unavailable")
+
+    router.emit.assert_awaited_once_with(
+        code="compact_unavailable",
+        subject="context_compactor",
+        severity="ERROR",
+        text="Context compactor unavailable or invalid",
+    )
+
+
 class FakeQueue:
     def __init__(self, result, *, close_error=None):
         self.result = result

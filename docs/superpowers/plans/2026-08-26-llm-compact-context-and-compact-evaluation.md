@@ -107,26 +107,28 @@ Commit: `feat: добавлен ContextCompactor`
 - Modify: `project/tests/unit/test_migration_profile.py`
 - Modify: `project/tests/unit/security/test_pipeline.py`
 - Modify: `project/tests/integration/test_worker_usage_postgres.py`
+- Modify: `project/tests/unit/test_worker.py`
+- Modify: `project/tests/ops/verify_compose_db_fallback.ps1`
 
 **Interfaces:**
 - Consumes: Task 1 `ContextCompactor`, `CompactResult`.
 - Produces: config validated at import, injected compactor, compact usage aggregation and 40-message worker query.
 
-- [ ] **Step 1: Write configuration RED tests**
+- [x] **Step 1: Write configuration RED tests**
 
 Assert Compose/default config exports `CONTEXT_MESSAGES_LIMIT=40`, `COMPACT_THRESHOLD=30`, `COMPACT_KEEP_RECENT=10`, compact provider variables, and rejects `KEEP_RECENT > THRESHOLD` or `THRESHOLD >= CONTEXT_MESSAGES_LIMIT`.
 
-- [ ] **Step 2: Verify RED through Docker**
+- [x] **Step 2: Verify RED through Docker**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/test_migration_profile.py tests/unit/test_llm_providers.py`
 
 Expected: assertions show old context limit/missing compact config and dependency.
 
-- [ ] **Step 3: Implement minimal config/provider wiring**
+- [x] **Step 3: Implement minimal config/provider wiring**
 
 Add config values defaulted from Router, validate the three limits in one helper, create one compact `SDKProvider`, inject `ContextCompactor` into `SecurityPipeline`, preserve it during prompt reload, and add Compose/env example variables for worker/admin/bot where their imports require them.
 
-- [ ] **Step 4: Write pipeline RED tests**
+- [x] **Step 4: Write pipeline RED tests**
 
 Tests must prove:
 
@@ -140,17 +142,17 @@ assert [u.purpose for u in result.usage].count("compact") == 1
 
 Also prove local block/offtopic/direct catalog branches never call compactor and cancellation propagates.
 
-- [ ] **Step 5: Verify pipeline RED**
+- [x] **Step 5: Verify pipeline RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/test_pipeline.py`
 
 Expected: missing `context_compactor` injection/calls.
 
-- [ ] **Step 6: Implement pipeline/worker GREEN**
+- [x] **Step 6: Implement pipeline/worker GREEN**
 
 Mask full 40-message window first; derive existing bounded recent context for Security/Router; compact only immediately before provider answer; aggregate compact usage; pass compacted context to answer and semantic Validator. Change worker query limit default to 40 without adding summary persistence.
 
-- [ ] **Step 7: Add worker usage RED/GREEN and regression**
+- [x] **Step 7: Add worker usage RED/GREEN and regression**
 
 Assert SQL receives limit 40, current buffered input is not duplicated, and `token_usage.purpose='compact'` is stored with answer/validator usages.
 
@@ -167,7 +169,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass.
 
-- [ ] **Step 8: Update changelog/roadmap and commit**
+- [x] **Step 8: Update changelog/roadmap and commit**
 
 Commit: `feat: Compact Context встроен в runtime`
 

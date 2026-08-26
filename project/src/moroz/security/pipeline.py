@@ -11,6 +11,7 @@ from moroz.messaging.router import (
     route_message,
 )
 from moroz.security.guardrails import check_input
+from moroz.security.context_compactor import ContextCompactor
 from moroz.security.input_security import (
     LLMInputSecurityClassifier,
     needs_input_security_review,
@@ -121,6 +122,7 @@ class SecurityPipeline:
         router: object | None = None,
         input_security: object | None = None,
         output_validator: object | None = None,
+        context_compactor: ContextCompactor | None = None,
     ) -> None:
         self.gateway = gateway
         self.system_prompt = system_prompt
@@ -130,6 +132,7 @@ class SecurityPipeline:
             gateway
         )
         self.output_validator = output_validator or LLMOutputValidator(gateway)
+        self.context_compactor = context_compactor
 
     async def respond(
         self,
@@ -151,14 +154,15 @@ class SecurityPipeline:
             return _zero(MEDICAL_ESCALATION_REPLY)
 
         session = PiiSession()
-        masked_context = bound_untrusted_context([
+        masked_history = [
             {
                 "role": message["role"],
                 "content": session.mask(message.get("content", "")).text,
             }
             for message in context
             if message.get("role") in {"user", "assistant"}
-        ])
+        ]
+        masked_context = bound_untrusted_context(masked_history)
         masked_current = session.mask(user_message)
         forbidden_raw = session.raw_values()
         accumulated: list[LLMResponse] = []
@@ -268,9 +272,24 @@ class SecurityPipeline:
             for part in (self.system_prompt, route_metadata, catalog_block)
             if part
         )
+        answer_context = masked_context
+        if self.context_compactor is not None:
+            compact = await self.context_compactor.compact(masked_history)
+            answer_context = list(compact.messages)
+            if compact.usage:
+                accumulated.append(_usage_only(compact.usage))
+            logger.info(
+                "context_compactor_decision source=%s reason_code=%s "
+                "input_messages=%s output_messages=%s total_tokens=%s",
+                compact.source,
+                compact.reason_code,
+                len(masked_history),
+                len(answer_context),
+                sum(item.total_tokens for item in compact.usage),
+            )
         base_messages = (
             {"role": "system", "content": owned_system},
-            *masked_context,
+            *answer_context,
             {"role": "user", "content": masked_current.text},
         )
         validator_code: str | None = None
@@ -309,7 +328,7 @@ class SecurityPipeline:
             if verdict.ok:
                 semantic = await self.output_validator.validate(
                     masked_input=masked_current.text,
-                    masked_context=masked_context,
+                    masked_context=answer_context,
                     route_metadata=route_metadata,
                     candidate=answer.text,
                 )

@@ -25,7 +25,12 @@ from moroz.security.llm_gateway import (
     LLMUsage,
     NonRetryableLLMError,
 )
-from moroz.security.input_security import INPUT_SECURITY_RESPONSE_FORMAT
+from moroz.security.context_compactor import CompactResult
+from moroz.security.input_security import (
+    INPUT_SECURITY_RESPONSE_FORMAT,
+    InputSecurityDecision,
+    InputSecurityVerdict,
+)
 from moroz.security.output_validator import (
     OutputValidationDecision,
     OutputValidationVerdict,
@@ -107,18 +112,22 @@ def pipeline(
     *,
     prices: frozenset[str] = frozenset({"2400"}),
     router: object | None = None,
+    input_security: object | None = None,
     output_validator: object | None = None,
+    context_compactor: object | None = None,
 ) -> SecurityPipeline:
     return SecurityPipeline(
         gateway,
         "OWNED SYSTEM PROMPT",
         StructuredFacts(prices, frozenset(), frozenset()),
         router=router,
+        input_security=input_security,
         output_validator=output_validator or RecordingOutputValidator(
             OutputValidationVerdict(
                 OutputValidationDecision("allow", "llm", "safe")
             )
         ),
+        context_compactor=context_compactor,
     )
 
 
@@ -133,6 +142,28 @@ class RecordingOutputValidator:
         if isinstance(verdict, BaseException):
             raise verdict
         return verdict
+
+
+class RecordingInputSecurity:
+    def __init__(self, verdict):
+        self.verdict = verdict
+        self.calls = []
+
+    async def classify(self, masked_text, masked_context):
+        self.calls.append((masked_text, masked_context))
+        return self.verdict
+
+
+class RecordingCompactor:
+    def __init__(self, event):
+        self.event = event
+        self.calls = []
+
+    async def compact(self, masked_context):
+        self.calls.append(masked_context)
+        if isinstance(self.event, BaseException):
+            raise self.event
+        return self.event
 
 
 class BlockingRouter:
@@ -1186,3 +1217,102 @@ async def test_pipeline_does_not_retain_or_expose_raw_invocation_pii() -> None:
         assert current not in repr(request)
         assert history not in repr(request)
     assert external.count("<PII_EMAIL_") >= 2
+
+
+@pytest.mark.asyncio
+async def test_compactor_receives_full_masked_history_after_router_and_security():
+    compact_usage = LLMUsage("compact", 7, 3, 0, 10, "compact-model")
+    source = [
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": f"history-{index}",
+        }
+        for index in range(31)
+    ]
+    source[0]["content"] = "Почта privacy@example.ru"
+    compacted = (
+        {"role": "user", "content": "UNTRUSTED_COMPACT_CONTEXT_V1\nФакты:\n- факт"},
+        *source[-10:],
+    )
+    compactor = RecordingCompactor(
+        CompactResult(compacted, "llm", "compacted", (compact_usage,))
+    )
+    security = RecordingInputSecurity(
+        InputSecurityVerdict(
+            InputSecurityDecision("allow", "llm", "safe"),
+        )
+    )
+    router = CapturingRouter(
+        RouterVerdict(RouteDecision(("booking",), False, "llm", 0.9), ())
+    )
+    semantic = RecordingOutputValidator(
+        OutputValidationVerdict(
+            OutputValidationDecision("allow", "llm", "safe")
+        )
+    )
+    gateway = CapturingGateway(response())
+
+    result = await pipeline(
+        gateway,
+        router=router,
+        input_security=security,
+        output_validator=semantic,
+        context_compactor=compactor,
+    ).respond("Да, завтра", source)
+
+    assert len(compactor.calls) == 1
+    assert len(compactor.calls[0]) == 31
+    assert "privacy@example.ru" not in repr(compactor.calls)
+    assert "<PII_EMAIL_1>" in compactor.calls[0][0]["content"]
+    assert security.calls[0][1] == router.calls[0][1]
+    assert len(security.calls[0][1]) <= 6
+    answer_request = next(
+        request for request in gateway.requests if request.purpose == "answer"
+    )
+    assert answer_request.messages[1:-1] == compacted
+    assert semantic.calls[0]["masked_context"] == list(compacted)
+    assert [usage.purpose for usage in result.usage] == ["compact", "answer"]
+
+
+@pytest.mark.asyncio
+async def test_trusted_local_reply_does_not_call_compactor():
+    compactor = RecordingCompactor(AssertionError("must not compact"))
+    gateway = CapturingGateway(security_response())
+    router = CapturingRouter(
+        RouterVerdict(RouteDecision(("offtopic",), False, "llm", 0.9), ())
+    )
+
+    result = await pipeline(
+        gateway,
+        router=router,
+        context_compactor=compactor,
+    ).respond("Курс доллара?", [])
+
+    assert result.text == OFFTOPIC_REPLY
+    assert compactor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_compactor_cancellation_propagates():
+    compactor = RecordingCompactor(asyncio.CancelledError())
+    security = RecordingInputSecurity(
+        InputSecurityVerdict(
+            InputSecurityDecision("allow", "llm", "safe"),
+        )
+    )
+    router = CapturingRouter(
+        RouterVerdict(RouteDecision(("booking",), False, "llm", 0.9), ())
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await pipeline(
+            CapturingGateway(),
+            router=router,
+            input_security=security,
+            context_compactor=compactor,
+        ).respond("Да, завтра", dialog := [
+            {"role": "user", "content": f"message-{index}"}
+            for index in range(31)
+        ])
+
+    assert len(dialog) == 31
