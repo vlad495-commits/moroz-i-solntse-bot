@@ -109,7 +109,9 @@ def _valid_messages(context: list[dict[str, str]]) -> list[dict[str, str]]:
     ]
 
 
-def _bounded_data(messages: list[dict[str, str]]) -> str:
+def _bounded_data(
+    messages: list[dict[str, str]],
+) -> tuple[str, list[dict[str, str]]]:
     selected: list[dict[str, str]] = []
     for message in reversed(messages):
         candidate = [message, *selected]
@@ -119,12 +121,15 @@ def _bounded_data(messages: list[dict[str, str]]) -> str:
             separators=(",", ":"),
         )
         if len(encoded) > COMPACT_MAX_INPUT_CHARS:
-            continue
+            break
         selected = candidate
-    return json.dumps(
-        {"history": selected},
-        ensure_ascii=False,
-        separators=(",", ":"),
+    return (
+        json.dumps(
+            {"history": selected},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        selected,
     )
 
 
@@ -213,9 +218,10 @@ class ContextCompactor:
 
         tail = tuple(context[-self._keep_recent:])
         old = context[:-self._keep_recent]
+        bounded_data, bounded_old = _bounded_data(old)
         allowed_placeholders = frozenset(
             placeholder
-            for message in context
+            for message in bounded_old
             for placeholder in PLACEHOLDER_RE.findall(message["content"])
         )
         try:
@@ -223,7 +229,7 @@ class ContextCompactor:
                 LLMRequest(
                     messages=(
                         {"role": "system", "content": COMPACT_SYSTEM_PROMPT},
-                        {"role": "user", "content": _bounded_data(old)},
+                        {"role": "user", "content": bounded_data},
                     ),
                     purpose="compact",
                     response_format=COMPACT_RESPONSE_FORMAT,

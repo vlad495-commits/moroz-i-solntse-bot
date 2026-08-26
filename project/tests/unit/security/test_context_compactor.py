@@ -150,6 +150,19 @@ async def test_existing_masked_placeholder_is_allowed_in_summary():
 
 
 @pytest.mark.asyncio
+async def test_summary_rejects_placeholder_that_exists_only_in_exact_tail():
+    provider = Provider(response(payload(facts=["Телефон <PII_PHONE_1>"])))
+    source = dialog(31)
+    source[-1]["content"] = "Телефон <PII_PHONE_1>"
+
+    result = await ContextCompactor(provider).compact(source)
+
+    assert result.source == "fallback"
+    assert result.reason_code == "compact_invalid_output"
+    assert result.messages == tuple(source[-10:])
+
+
+@pytest.mark.asyncio
 async def test_provider_failure_and_alert_failure_are_safe(caplog):
     async def broken_alert(_code):
         raise RuntimeError("alert-secret")
@@ -212,3 +225,17 @@ async def test_old_history_is_bounded_at_message_boundaries():
     assert len(encoded) <= 24_000
     assert "marker-29-" in encoded
     assert "marker-0-" not in encoded
+
+
+@pytest.mark.asyncio
+async def test_bounded_old_history_never_skips_a_large_recent_message():
+    provider = Provider(response(payload()))
+    source = dialog(31)
+    source[0]["content"] = "older-marker"
+    source[20]["content"] = "recent-oversized-marker-" + ("я" * 25_000)
+
+    await ContextCompactor(provider).compact(source)
+
+    data = json.loads(provider.requests[0].messages[1]["content"])
+    assert data == {"history": []}
+    assert "older-marker" not in provider.requests[0].messages[1]["content"]

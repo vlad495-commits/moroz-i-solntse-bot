@@ -17,7 +17,7 @@ branch_labels = None
 depends_on = None
 
 COMPACT_DATASET_SHA256 = (
-    "ad214fddac499c586d7dd08c67c19dce31fe9f4b0da54e5f8a86a1597ab7b442"
+    "2d561b4f2e32f2f9cd0715adffe2762c6992e04773335feadcc8135498f62bf7"
 )
 
 

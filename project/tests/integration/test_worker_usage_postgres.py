@@ -79,3 +79,50 @@ async def test_message_transaction_persists_physical_usage_once(database):
         ("compact", 2, 1, 0, 3, "compact-model"),
         ("answer", 9, 4, 1, 13, "answer-model"),
     ]
+
+
+async def test_worker_passes_only_40_previous_messages_without_current_input(database):
+    async with database.acquire() as connection:
+        await connection.executemany(
+            "INSERT INTO messages (chat_id, user_id, role, content) "
+            "VALUES ($1, $2, $3, $4)",
+            [
+                (91, 92, "user" if index % 2 == 0 else "assistant", f"old-{index}")
+                for index in range(45)
+            ],
+        )
+    await MessageRepository(database).accept(
+        IncomingMessage(
+            update_id="context-1",
+            message_id="message-context-1",
+            channel="telegram",
+            chat_id="91",
+            user_id="92",
+            text="CURRENT-BUFFERED-INPUT",
+            received_at=datetime(2026, 8, 26, tzinfo=UTC),
+            correlation_id=uuid4(),
+        )
+    )
+    captured = {}
+
+    async def llm(text, context, **_options):
+        captured["text"] = text
+        captured["context"] = context
+        return LLMResponse("Ответ", 0, 0, 0, 0, "local")
+
+    await MessageTaskHandler(database, llm, telegram=None).handle(
+        QueueTask(
+            kind="process_message",
+            payload={"update_ids": ["context-1"]},
+            idempotency_key="process_message:context-1",
+        )
+    )
+
+    assert captured["text"] == "CURRENT-BUFFERED-INPUT"
+    assert [item["content"] for item in captured["context"]] == [
+        f"old-{index}" for index in range(5, 45)
+    ]
+    assert all(
+        item["content"] != "CURRENT-BUFFERED-INPUT"
+        for item in captured["context"]
+    )
