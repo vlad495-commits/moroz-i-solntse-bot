@@ -225,21 +225,21 @@ Commit: `eval: добавлен dataset Compact Evaluation`
 **Interfaces:**
 - Produces: `_build_context_compactor`, `run_compact_case`, `run_compact_eval_set`, safe `actual_data`.
 
-- [ ] **Step 1: Write runner RED tests**
+- [x] **Step 1: Write runner RED tests**
 
 Cover masked request, threshold structural pass, exact tail, semantic judge pass/fail, hallucination/forbidden fact, exception→error, safe result metadata, gate `100% critical + >=95%`, progress/finalize/cancel and suite-filtered problem rerun.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/admin/test_compact_eval_runner.py`
 
 Expected: missing runner functions.
 
-- [ ] **Step 3: Implement production-component runner**
+- [x] **Step 3: Implement production-component runner**
 
 Instantiate the same `ContextCompactor` settings as runtime. Structural check is authoritative; semantic judge receives only masked source/summary/required/forbidden data and returns strict score/reasoning. Persist only source/reason/counts/dimensions, never transcript/full summary.
 
-- [ ] **Step 4: Run GREEN and common eval regression**
+- [x] **Step 4: Run GREEN and common eval regression**
 
 Run:
 
@@ -255,7 +255,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Update changelog and commit**
+- [x] **Step 5: Update changelog and commit**
 
 Commit: `eval: Compact runner встроен в общий контур`
 

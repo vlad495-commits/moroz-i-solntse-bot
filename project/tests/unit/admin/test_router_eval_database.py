@@ -62,6 +62,19 @@ async def test_all_eval_queries_are_filtered_by_requested_suite(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_compact_problem_rerun_uses_only_compact_suite(monkeypatch):
+    connection = Connection()
+    monkeypatch.setattr(database, "_pool", Pool(connection))
+
+    await evdb.list_problem_cases(suite="compact")
+
+    query, args = connection.calls[0]
+    assert "run.suite = $1" in query
+    assert "c.suite = $1" in query
+    assert args == ("compact",)
+
+
+@pytest.mark.asyncio
 async def test_answer_crud_cannot_read_update_or_delete_router_cases(monkeypatch):
     connection = Connection(fetchrow=None)
     monkeypatch.setattr(database, "_pool", Pool(connection))
