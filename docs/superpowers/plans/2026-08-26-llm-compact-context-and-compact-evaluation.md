@@ -187,21 +187,21 @@ Commit: `feat: Compact Context встроен в runtime`
 **Interfaces:**
 - Produces: 40 `suite="compact"` cases in common schema; checksum-pinned LF dataset.
 
-- [ ] **Step 1: Write dataset/migration RED contracts**
+- [x] **Step 1: Write dataset/migration RED contracts**
 
 Assert exact total/category/critical counts `40/28`, unique keys, `30/31` boundary cases, allowed exact fields, synthetic-only privacy rules, checksum load, down revision `0016_llm_validator`, no new tables, suite-only downgrade and migrate image copy.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/test_compact_dataset.py tests/unit/admin/test_migration_0017.py`
 
 Expected: missing dataset/migration.
 
-- [ ] **Step 3: Add minimal 40-case dataset and migration**
+- [x] **Step 3: Add minimal 40-case dataset and migration**
 
 Use the design counts. Quality contexts are padded to 31 messages with neutral synthetic turns; `input_data` stores context/mode, `expected_data` stores required/forbidden facts. Migration normalizes CRLF before SHA-256 and bulk inserts into `eval_cases` only.
 
-- [ ] **Step 4: Run GREEN, Alembic head check, commit**
+- [x] **Step 4: Run GREEN, Alembic head check, commit**
 
 Run focused tests plus:
 
