@@ -134,6 +134,23 @@ async def validator_eval_index(request: Request):
     )
 
 
+@router.get("/compact/", response_class=HTMLResponse)
+async def compact_eval_index(request: Request):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    return templates.TemplateResponse(
+        request,
+        "eval_list.html",
+        {
+            "user": user,
+            "suite": "compact",
+            "cases": await evdb.list_cases("compact"),
+            "problem_cases": await evdb.list_problem_cases("compact"),
+            "runs": await evdb.list_runs(10, "compact"),
+        },
+    )
+
+
 @router.get("/cases/new", response_class=HTMLResponse)
 async def eval_case_new(request: Request):
     user = await get_current_user(request)
@@ -554,6 +571,89 @@ async def validator_eval_problem_run_start(
         object_id=str(run_id),
         before=None,
         after={"total": len(cases), "suite": "validator"},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
+    return RedirectResponse(
+        url=admin_url(request, f"/eval/runs/{run_id}"),
+        status_code=302,
+    )
+
+
+@router.post("/compact/runs")
+async def compact_eval_run_start(
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    validate_csrf(user, csrf_token)
+    cases = await evdb.list_cases("compact")
+    if not cases:
+        return RedirectResponse(
+            url=admin_url(request, "/eval/compact/?error=no_cases"),
+            status_code=302,
+        )
+
+    run_id = await evdb.create_run(
+        len(cases),
+        eval_runner.COMPACT_MODEL,
+        "compact",
+    )
+    _start_eval_task(
+        run_id,
+        eval_runner.run_compact_eval_set(run_id, cases=cases),
+    )
+    await record_audit(
+        actor_id=user.id,
+        action="eval.compact_run_start",
+        object_type="eval_run",
+        object_id=str(run_id),
+        before=None,
+        after={"total": len(cases), "suite": "compact"},
+        ip_address=request_ip_address(request),
+        user_agent=request_user_agent(request),
+    )
+    return RedirectResponse(
+        url=admin_url(request, f"/eval/runs/{run_id}"),
+        status_code=302,
+    )
+
+
+@router.post("/compact/runs/problematic")
+async def compact_eval_problem_run_start(
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    user = await get_current_user(request)
+    require_role(user, {"owner"})
+    validate_csrf(user, csrf_token)
+    cases = await evdb.list_problem_cases("compact")
+    if not cases:
+        return RedirectResponse(
+            url=admin_url(
+                request,
+                "/eval/compact/?error=no_problem_cases",
+            ),
+            status_code=302,
+        )
+
+    run_id = await evdb.create_run(
+        len(cases),
+        eval_runner.COMPACT_MODEL,
+        "compact",
+    )
+    _start_eval_task(
+        run_id,
+        eval_runner.run_compact_eval_set(run_id, cases=cases),
+    )
+    await record_audit(
+        actor_id=user.id,
+        action="eval.compact_problem_run_start",
+        object_type="eval_run",
+        object_id=str(run_id),
+        before=None,
+        after={"total": len(cases), "suite": "compact"},
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )

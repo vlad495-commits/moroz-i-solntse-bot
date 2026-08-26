@@ -273,25 +273,25 @@ Commit: `eval: Compact runner встроен в общий контур`
 **Interfaces:**
 - Produces: `/eval/compact/`, full/problem POST routes, common detail/SSE projection.
 
-- [ ] **Step 1: Write route/template RED tests**
+- [x] **Step 1: Write route/template RED tests**
 
 Prove owner-only GET, CSRF POST, root-path URLs, read-only 40-case list, safe expected/actual metadata, no create/edit/delete, full run, problem rerun and common detail/SSE labels.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/e2e/admin/test_compact_eval_routes.py`
 
 Expected: route 404/missing template branches.
 
-- [ ] **Step 3: Implement minimal shared UI branches**
+- [x] **Step 3: Implement minimal shared UI branches**
 
 Mirror Router/Security/Validator route lifecycle with `suite="compact"`; reuse `eval_list.html` and `eval_run_detail.html`, adding only compact-specific labels and safe fields. Do not create a new template or editable controls.
 
-- [ ] **Step 4: Run GREEN and admin regression**
+- [x] **Step 4: Run GREEN and admin regression**
 
 Run all four component route suites and `tests/e2e/admin/test_public_prefix.py`; expected all pass.
 
-- [ ] **Step 5: Update changelog/roadmap and commit**
+- [x] **Step 5: Update changelog/roadmap and commit**
 
 Commit: `feat: Compact Evaluation добавлен в админку`
 

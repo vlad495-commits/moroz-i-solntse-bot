@@ -2,16 +2,17 @@
 {% set is_router = suite == 'router' %}
 {% set is_security = suite == 'security' %}
 {% set is_validator = suite == 'validator' %}
-{% set is_component = is_router or is_security or is_validator %}
-{% block title %}{% if is_router %}Router Evaluation{% elif is_security %}Input Security Evaluation{% elif is_validator %}Validator Evaluation{% else %}Эвалюэйшены{% endif %} — Admin{% endblock %}
+{% set is_compact = suite == 'compact' %}
+{% set is_component = is_router or is_security or is_validator or is_compact %}
+{% block title %}{% if is_router %}Router Evaluation{% elif is_security %}Input Security Evaluation{% elif is_validator %}Validator Evaluation{% elif is_compact %}Compact Evaluation{% else %}Эвалюэйшены{% endif %} — Admin{% endblock %}
 {% block content %}
 <div class="row-between">
-    <h1>{% if is_router %}Router Evaluation{% elif is_security %}Input Security Evaluation{% elif is_validator %}Validator Evaluation{% else %}Эвалюэйшены{% endif %} <span class="muted">({{ cases|length }} кейсов)</span></h1>
+    <h1>{% if is_router %}Router Evaluation{% elif is_security %}Input Security Evaluation{% elif is_validator %}Validator Evaluation{% elif is_compact %}Compact Evaluation{% else %}Эвалюэйшены{% endif %} <span class="muted">({{ cases|length }} кейсов)</span></h1>
     <div class="actions">
         <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_component %}/{{ suite }}{% endif %}/runs" style="display: inline">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn btn-primary" {% if not cases %}disabled{% endif %}>
-                ▶ {% if is_router %}Проверить Router{% elif is_security %}Проверить Input Security{% elif is_validator %}Проверить Validator{% else %}Запустить эвалюэйшены{% endif %}
+                ▶ {% if is_router %}Проверить Router{% elif is_security %}Проверить Input Security{% elif is_validator %}Проверить Validator{% elif is_compact %}Проверить Compact Context{% else %}Запустить эвалюэйшены{% endif %}
             </button>
         </form>
         <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_component %}/{{ suite }}{% endif %}/runs/problematic" style="display: inline">
@@ -45,7 +46,7 @@
             <th>Статус</th>
             <th>Прошло / всего</th>
             <th>Pass rate</th>
-            <th>{% if is_router %}Router-модель{% elif is_security %}Security-модель{% elif is_validator %}Validator-модель{% else %}Judge-модель{% endif %}</th>
+            <th>{% if is_router %}Router-модель{% elif is_security %}Security-модель{% elif is_validator %}Validator-модель{% elif is_compact %}Compact-модель{% else %}Judge-модель{% endif %}</th>
         </tr>
     </thead>
     <tbody>
@@ -64,11 +65,11 @@
 </div>
 {% endif %}
 
-<h2>{% if is_router %}Router-кейсы (read-only){% elif is_security %}Input Security кейсы (read-only){% elif is_validator %}Validator-кейсы (read-only){% else %}Тест-кейсы{% endif %}</h2>
+<h2>{% if is_router %}Router-кейсы (read-only){% elif is_security %}Input Security кейсы (read-only){% elif is_validator %}Validator-кейсы (read-only){% elif is_compact %}Compact-кейсы (read-only){% else %}Тест-кейсы{% endif %}</h2>
 {% if not cases %}
 <div class="empty">
     {% if is_component %}
-    {% if is_router %}Router{% elif is_security %}Input Security{% else %}Validator{% endif %}-кейсы не загружены. Этот набор версионируется в Git и миграциях.
+    {% if is_router %}Router{% elif is_security %}Input Security{% elif is_validator %}Validator{% else %}Compact{% endif %}-кейсы не загружены. Этот набор версионируется в Git и миграциях.
     {% else %}
     Кейсов ещё нет. Нажми <strong>«+ Новый кейс»</strong> чтобы добавить первый.
     {% endif %}
@@ -94,6 +95,7 @@
             <td class="cell-trunc">
                 {{ c.question }}
                 {% if is_validator %}<br><span class="muted">candidate: {{ c.input_data.candidate }}</span>{% endif %}
+                {% if is_compact %}<br><span class="muted">mode: {{ c.input_data.expected_mode }} · messages: {{ c.input_data.context|length }}</span>{% endif %}
             </td>
             {% if is_router %}
             <td>
@@ -111,6 +113,12 @@
             <td>
                 <strong>{{ c.expected_data.action }}</strong><br>
                 <span class="muted">source: {{ c.expected_data.source }} · reason: {{ c.expected_data.reason_code }}</span>
+            </td>
+            <td>{{ 'да' if c.critical else 'нет' }}</td>
+            {% elif is_compact %}
+            <td>
+                <strong>required: {{ c.expected_data.required_facts|length }}</strong><br>
+                <span class="muted">forbidden: {{ c.expected_data.forbidden_facts|length }}</span>
             </td>
             <td>{{ 'да' if c.critical else 'нет' }}</td>
             {% else %}
