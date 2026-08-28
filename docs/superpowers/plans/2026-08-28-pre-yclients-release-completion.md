@@ -321,7 +321,7 @@ Present the exact candidate SHA, local gate results, expected affected services 
 
 Owner authorization received on 2026-08-28 for exact candidate `d18f67e40e0751ef04f0455e00bd778ffa57365c`. Later local status-only commits are excluded from the deployment bundle.
 
-- [ ] **Step 2: Invoke the deploy skill and perform read-only inventory**
+- [x] **Step 2: Invoke the deploy skill and perform read-only inventory**
 
 Verify SSH identity, clean `/opt/moroz-staging` checkout, `/opt/moroz-staging/.env` mode/owner without values, current tag/schema, running health, free space, current webhook and non-staging containers. Any drift is a blocker.
 
