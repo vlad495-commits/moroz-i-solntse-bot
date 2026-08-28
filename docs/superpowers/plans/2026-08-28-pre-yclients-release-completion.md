@@ -376,23 +376,23 @@ git commit -m "deploy: обновлён pre-YCLIENTS staging candidate"
 - Consumes: exact Task 4 staging candidate.
 - Produces: evidence-backed statuses for all 36 scenarios, admin/log reconciliation and a release verdict.
 
-- [ ] **Step 1: Invoke manual-qa-bot-testing and browser control skills**
+- [x] **Step 1: Invoke manual-qa-bot-testing and browser control skills**
 
 Use Full run type because Router, Input Security, Validator and Compact Context changed after the last staging baseline.
 
-- [ ] **Step 2: Confirm safe starting state**
+- [x] **Step 2: Confirm safe starting state**
 
 Record Moscow start time and candidate SHA; verify admin URL, bot unpaused, webhook/container health and absence of pre-run fresh errors. Use only synthetic data.
 
-- [ ] **Step 3: Execute all 36 scenarios**
+- [x] **Step 3: Execute all 36 scenarios**
 
 Follow the canonical checklist exactly: first impression; services/prices; booking honesty; medical boundaries; prompt security; fake PII; buffering/context; non-text/long input; stop and pause/resume. Prefer Telegram Web; use synthetic webhook only where the real surface cannot reliably send payloads.
 
-- [ ] **Step 4: Verify admin and logs**
+- [x] **Step 4: Verify admin and logs**
 
 Confirm dialog/message order, stats deltas, pause audit, component Evaluation pages and no fresh `Traceback`, `Exception`, `ERROR` or `CRITICAL` after run start. Leave the bot unpaused.
 
-- [ ] **Step 5: Capture human-only gaps honestly**
+- [x] **Step 5: Capture human-only gaps honestly**
 
 If a second Telegram account, microphone, sticker picker or subjective owner sign-off is unavailable, mark it `Не проверено`; never convert technical evidence into human approval. Ask the owner only for the exact remaining manual action.
 
@@ -418,7 +418,7 @@ git commit -m "test: проведена полная приёмка staging-бо
 - Consumes: Task 5 defects with reproducible steps and evidence.
 - Produces: test-first root-cause fixes and a clean targeted re-acceptance; produces no code change when no defect is confirmed.
 
-- [ ] **Step 1: Classify findings**
+- [x] **Step 1: Classify findings**
 
 Critical/Important defects block release. Nuances are tracked with an explicit workaround and do not trigger speculative code changes.
 
