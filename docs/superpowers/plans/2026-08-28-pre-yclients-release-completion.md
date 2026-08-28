@@ -36,11 +36,11 @@
 - Consumes: existing immutable Compact dataset, migration `0017`, `run_compact_eval_set` and external `.env` provider configuration.
 - Produces: fresh disposable PostgreSQL at `0017_llm_compact`, exactly `40` Compact cases, fresh admin/migrate images and a safe authorization handoff with no provider call.
 
-- [ ] **Step 1: Mark Task 1 active**
+- [x] **Step 1: Mark Task 1 active**
 
 Replace the active roadmap wording with `Compact acceptance preflight`, keep the Compact checkbox open and append a timestamped changelog entry saying no provider call has started.
 
-- [ ] **Step 2: Verify local and Docker baseline**
+- [x] **Step 2: Verify local and Docker baseline**
 
 Run from repository root:
 
@@ -54,7 +54,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/test_projec
 
 Expected: only the Task 1 roadmap/changelog edits are present, Docker server responds, governance tests pass.
 
-- [ ] **Step 3: Build exact migration and admin images**
+- [x] **Step 3: Build exact migration and admin images**
 
 ```powershell
 docker compose --env-file ../.env --profile migration build --no-cache migrate
@@ -67,7 +67,7 @@ docker compose --env-file ../.env run --rm --no-deps migrate alembic -c /app/ale
 
 Expected: `0017_llm_compact (head)` is the only current/head revision.
 
-- [ ] **Step 4: Verify exact dataset and safe provider readiness**
+- [x] **Step 4: Verify exact dataset and safe provider readiness**
 
 ```powershell
 docker compose --env-file ../.env exec -T postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT suite, count(*), count(*) FILTER (WHERE critical) FROM eval_cases WHERE suite = ''compact'' GROUP BY suite"'
@@ -76,7 +76,7 @@ docker compose --env-file ../.env run --rm --no-deps -e COMPACT_MODEL=gpt-4.1-mi
 
 Expected: `compact|40|28` and only safe presence markers; no key values.
 
-- [ ] **Step 5: Clean only the owned preflight namespace**
+- [x] **Step 5: Clean only the owned preflight namespace**
 
 ```powershell
 docker compose --env-file ../.env down --volumes --remove-orphans
@@ -86,7 +86,7 @@ Set-Location ..
 
 Verify with Docker labels that `moroz-preyclients-compact-preflight` has zero containers, volumes and networks. Do not prune global Docker resources.
 
-- [ ] **Step 6: Record evidence and commit**
+- [x] **Step 6: Record evidence and commit**
 
 Update roadmap/changelog with exact head, case counts and test results. Run `git diff --check`, then:
 
@@ -95,7 +95,7 @@ git add -A
 git commit -m "test: подготовлена приёмка Compact Evaluation"
 ```
 
-- [ ] **Step 7: Ask for the paid-run gate**
+- [x] **Step 7: Ask for the paid-run gate**
 
 Ask the owner to authorize exactly one 40-case `gpt-4.1-mini` Compact Evaluation. Stop before any external provider call.
 
