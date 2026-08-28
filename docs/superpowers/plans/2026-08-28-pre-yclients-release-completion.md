@@ -270,7 +270,7 @@ docker compose --env-file ../.env --profile test run --rm `
 
 Expected: zero failures/errors/skips not explicitly documented.
 
-- [ ] **Step 4: Run migration and static/privacy gates**
+- [x] **Step 4: Run migration and static/privacy gates**
 
 ```powershell
 docker compose --env-file ../.env --profile migration build --no-cache migrate
@@ -284,11 +284,11 @@ docker compose --env-file ../.env run --rm --no-deps --entrypoint python test -m
 
 Run the existing secret/PII scanners referenced by the Compact plan. Expected: one head `0017_llm_compact`, all exits `0`, no forbidden additions.
 
-- [ ] **Step 5: Review the full post-staging delta**
+- [x] **Step 5: Review the full post-staging delta**
 
 Invoke `requesting-code-review` against `220d03e5880f3645586c63090766671a3e8e9eaa..HEAD`. Review correctness, privacy, migration compatibility, provider ordering, eval isolation, Compose allowlists and rollback compatibility. Accepted findings use systematic-debugging and TDD; speculative refactors are rejected.
 
-- [ ] **Step 6: Repeat affected and full gates after any fix**
+- [x] **Step 6: Repeat affected and full gates after any fix**
 
 Do not reuse pre-fix output. If code changes, create `codex/pre-yclients-release-fixes` in an isolated worktree before implementation, then merge only after a fresh green verification.
 

@@ -8,6 +8,11 @@
 
 **Tech Stack:** Python 3.12, FastAPI, Jinja2, Alembic, PostgreSQL, pytest, Docker Compose.
 
+> Release-коррекция 2026-08-28: Task 2 superseded для совместимости image-only
+> rollback. Revision `0013` сохраняет неиспользуемую таблицу и её строки; удалить
+> storage можно отдельной contract migration только после истечения rollback-window
+> предыдущего admin image. Runtime/UI-код модуля остаётся удалённым.
+
 ## Global Constraints
 
 - Менять только модуль «Review кейсов» и его таблицу `eval_case_reviews`.

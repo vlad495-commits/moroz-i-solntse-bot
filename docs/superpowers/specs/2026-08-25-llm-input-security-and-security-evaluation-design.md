@@ -302,4 +302,3 @@ Controlled fake-provider tests отдельно доказывают:
 9. Независимый review не оставляет Critical/Important findings.
 10. Реальный quality run выполняется только после отдельного разрешения владельца на внешний provider/cost.
 11. `changelog.md` и `Дорожная карта.md` обновляются фактическими evidence; галочка не ставится до закрытия всех обязательных gate.
-

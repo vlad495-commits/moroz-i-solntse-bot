@@ -1,6 +1,6 @@
 # Customer-owned YCLIENTS Production App Design
 
-Дата: 2026-08-20  
+Дата: 2026-08-20
 Статус: одобрено владельцем проекта
 
 ## Цель
@@ -122,4 +122,3 @@
 - Доступ приложения к API и системный пользователь: `https://support.yclients.com/67-68-199--dostup-k-api/`.
 - Подключение интеграции через marketplace: `https://support.yclients.com/67-68-191--podklyuchenie-integracii-cherez-marketplejs/`.
 - Монетизация приложения: `https://support.yclients.com/67-68-198--monetizaciya/`.
-

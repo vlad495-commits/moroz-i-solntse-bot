@@ -5,6 +5,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from moroz.common.config import database_url_from_env
+from moroz.security.provider_config import resolve_provider_tuple
 
 
 def _validate_context_limits(
@@ -44,13 +45,17 @@ LLM_REQUEST_TIMEOUT_SEC = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "30"))
 RESERVE_API_KEY = os.getenv("RESERVE_API_KEY", "")
 RESERVE_BASE_URL = os.getenv("RESERVE_BASE_URL", "") or None
 RESERVE_MODEL = os.getenv("RESERVE_MODEL", "")
-ROUTER_MODEL = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
-ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "") or LLM_API_KEY
-ROUTER_BASE_URL = os.getenv("ROUTER_BASE_URL", "") or LLM_BASE_URL
+ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL = resolve_provider_tuple(
+    os.environ,
+    "ROUTER",
+    (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
+)
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
-COMPACT_MODEL = os.getenv("COMPACT_MODEL", ROUTER_MODEL)
-COMPACT_API_KEY = os.getenv("COMPACT_API_KEY", "") or ROUTER_API_KEY
-COMPACT_BASE_URL = os.getenv("COMPACT_BASE_URL", "") or ROUTER_BASE_URL
+COMPACT_MODEL, COMPACT_API_KEY, COMPACT_BASE_URL = resolve_provider_tuple(
+    os.environ,
+    "COMPACT",
+    (ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL),
+)
 COMPACT_MAX_TOKENS = int(os.getenv("COMPACT_MAX_TOKENS", "400"))
 
 # --- Хранилища ---

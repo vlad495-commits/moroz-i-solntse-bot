@@ -41,6 +41,7 @@ from moroz.security.output_validator import (
 )
 from moroz.security.pii import PiiSession, find_raw_pii
 from moroz.security.pipeline import SecurityPipeline
+from moroz.security.provider_config import resolve_provider_tuple
 from moroz.security.validator import (
     StructuredFacts,
     extract_structured_facts,
@@ -63,24 +64,31 @@ RESERVE_API_KEY = os.getenv("RESERVE_API_KEY", "")
 RESERVE_BASE_URL = os.getenv("RESERVE_BASE_URL", "") or None
 RESERVE_MODEL = os.getenv("RESERVE_MODEL", "")
 
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gpt-4.1-mini")
-JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", "") or LLM_API_KEY
-JUDGE_BASE_URL = os.getenv("JUDGE_BASE_URL", "") or None
+JUDGE_MODEL, JUDGE_API_KEY, JUDGE_BASE_URL = resolve_provider_tuple(
+    os.environ,
+    "JUDGE",
+    (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
+)
 JUDGE_PASS_THRESHOLD = float(os.getenv("JUDGE_PASS_THRESHOLD", "0.8"))
 
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2000"))
+LLM_REQUEST_TIMEOUT_SEC = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "30"))
 
-ROUTER_MODEL = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
-ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "") or LLM_API_KEY
-ROUTER_BASE_URL = os.getenv("ROUTER_BASE_URL", "") or LLM_BASE_URL
+ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL = resolve_provider_tuple(
+    os.environ,
+    "ROUTER",
+    (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
+)
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
 SECURITY_MODEL = LLM_MODEL
 VALIDATOR_MODEL = LLM_MODEL
 
-COMPACT_MODEL = os.getenv("COMPACT_MODEL", "") or ROUTER_MODEL
-COMPACT_API_KEY = os.getenv("COMPACT_API_KEY", "") or ROUTER_API_KEY
-COMPACT_BASE_URL = os.getenv("COMPACT_BASE_URL", "") or ROUTER_BASE_URL
+COMPACT_MODEL, COMPACT_API_KEY, COMPACT_BASE_URL = resolve_provider_tuple(
+    os.environ,
+    "COMPACT",
+    (ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL),
+)
 COMPACT_MAX_TOKENS = int(os.getenv("COMPACT_MAX_TOKENS", "400"))
 COMPACT_THRESHOLD = int(os.getenv("COMPACT_THRESHOLD", "30"))
 COMPACT_KEEP_RECENT = int(os.getenv("COMPACT_KEEP_RECENT", "10"))
@@ -100,8 +108,16 @@ def _detect_kind(model: str, base_url: str | None) -> str:
 def _create_client(api_key: str, base_url: str | None, kind: str):
     if kind == "anthropic":
         from anthropic import AsyncAnthropic
-        return AsyncAnthropic(api_key=api_key, max_retries=0)
-    kwargs = {"api_key": api_key, "max_retries": 0}
+        return AsyncAnthropic(
+            api_key=api_key,
+            timeout=LLM_REQUEST_TIMEOUT_SEC,
+            max_retries=0,
+        )
+    kwargs = {
+        "api_key": api_key,
+        "timeout": LLM_REQUEST_TIMEOUT_SEC,
+        "max_retries": 0,
+    }
     if base_url:
         kwargs["base_url"] = base_url
     return AsyncOpenAI(**kwargs)

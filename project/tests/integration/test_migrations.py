@@ -1002,11 +1002,15 @@ async def test_cutover_is_idempotent_for_versioned_baseline(baseline_database_ur
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-async def test_review_cases_table_is_removed(disposable_database_url):
+async def test_review_cases_table_and_rows_survive_forward_upgrade_for_rollback(
+    disposable_database_url,
+):
     run_alembic(disposable_database_url, "upgrade", "0012_projection_suppression")
     conn = await asyncpg.connect(disposable_database_url)
     try:
-        await conn.execute("INSERT INTO eval_case_reviews DEFAULT VALUES")
+        review_id = await conn.fetchval(
+            "INSERT INTO eval_case_reviews DEFAULT VALUES RETURNING id"
+        )
     finally:
         await conn.close()
 
@@ -1014,8 +1018,8 @@ async def test_review_cases_table_is_removed(disposable_database_url):
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval(
-            "SELECT to_regclass('public.eval_case_reviews')"
-        ) is None
+            "SELECT id FROM eval_case_reviews WHERE id = $1", review_id
+        ) == review_id
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
             "0017_llm_compact"
         )
