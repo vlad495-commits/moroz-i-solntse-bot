@@ -325,7 +325,7 @@ Owner authorization received on 2026-08-28 for exact candidate `d18f67e40e0751ef
 
 Verify SSH identity, clean `/opt/moroz-staging` checkout, `/opt/moroz-staging/.env` mode/owner without values, current tag/schema, running health, free space, current webhook and non-staging containers. Any drift is a blocker.
 
-- [ ] **Step 3: Create and verify a Git bundle without push**
+- [x] **Step 3: Create and verify a Git bundle without push**
 
 From repository root:
 
