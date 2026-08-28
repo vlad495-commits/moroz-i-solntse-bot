@@ -239,11 +239,11 @@ Use a failure-specific commit message if the gate did not pass; never mark the r
 - Consumes: green Compact acceptance commit.
 - Produces: one exact clean candidate commit with fresh full Docker, migration, static/privacy and review evidence.
 
-- [ ] **Step 1: Mark final local gate active and capture exact commit**
+- [x] **Step 1: Mark final local gate active and capture exact commit**
 
 Require a clean tracked tree, record `git rev-parse HEAD`, and set an owned namespace `moroz-preyclients-final-local`.
 
-- [ ] **Step 2: Run focused release regression**
+- [x] **Step 2: Run focused release regression**
 
 From `project/` run the Compact focused list already fixed in `docs/superpowers/plans/2026-08-26-llm-compact-context-and-compact-evaluation.md`, plus:
 
@@ -257,7 +257,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass.
 
-- [ ] **Step 3: Run fresh no-cache full Docker suite**
+- [x] **Step 3: Run fresh no-cache full Docker suite**
 
 ```powershell
 $repo = (Resolve-Path '..').Path
