@@ -292,7 +292,7 @@ Invoke `requesting-code-review` against `220d03e5880f3645586c63090766671a3e8e9ea
 
 Do not reuse pre-fix output. If code changes, create `codex/pre-yclients-release-fixes` in an isolated worktree before implementation, then merge only after a fresh green verification.
 
-- [ ] **Step 7: Record candidate and commit**
+- [x] **Step 7: Record candidate and commit**
 
 Update roadmap/changelog with exact commit and evidence, clean the owned namespace, verify zero leftovers and commit:
 
