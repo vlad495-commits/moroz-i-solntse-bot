@@ -315,9 +315,11 @@ git commit -m "test: подтверждён pre-YCLIENTS release candidate"
 - Consumes: Task 3 exact candidate and explicit owner authorization to modify staging.
 - Produces: the same commit running on staging with schema `0017_llm_compact`, protected rollback state and exact image manifests.
 
-- [ ] **Step 1: Ask for staging mutation authorization**
+- [x] **Step 1: Ask for staging mutation authorization**
 
 Present the exact candidate SHA, local gate results, expected affected services and explicit exclusions. Stop until approved.
+
+Owner authorization received on 2026-08-28 for exact candidate `d18f67e40e0751ef04f0455e00bd778ffa57365c`. Later local status-only commits are excluded from the deployment bundle.
 
 - [ ] **Step 2: Invoke the deploy skill and perform read-only inventory**
 
