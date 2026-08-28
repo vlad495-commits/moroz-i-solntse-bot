@@ -340,17 +340,19 @@ Get-FileHash -Algorithm SHA256 $bundle
 
 Transfer quietly through the established protected SSH/SCP channel, recheck SHA-256 and `git bundle verify` on the VPS, then checkout the exact SHA. Do not print credentials or raw `.env`.
 
-- [ ] **Step 4: Execute staging runbook sections 1–8 exactly**
+- [x] **Step 4: Execute staging runbook sections 1–8 exactly**
 
 Follow fail-closed prerequisites, inventory, protected secrets, rollback capture, config/build/image evidence, backward compatibility, persistent image pin, migration, apps/health/HTTPS and webhook lifecycle. Use `/opt/moroz-staging/.env`; do not run YCLIENTS smoke or production Compose.
 
 Expected: exact candidate images for bot/worker/scheduler/admin/migrate, schema `0017_llm_compact`, healthy runtime, HTTPS/webhook safe checks and preserved rollback manifests.
 
-- [ ] **Step 5: Run immediate safe-log scan**
+- [x] **Step 5: Run immediate safe-log scan**
 
 Use runbook section 12 over logs since rollout start. Expected allowlisted counters are zero; do not paste raw logs into tracked files or chat.
 
-- [ ] **Step 6: Record rollout evidence and commit**
+Completed for exact candidate `d18f67e40e0751ef04f0455e00bd778ffa57365c`: schema `0017_llm_compact`, four app runtimes healthy on exact manifests, Caddy/HTTPS/webhook checks green, safe log counters `0/0/0/0`, compatibility namespace cleanup `0/0/0`.
+
+- [x] **Step 6: Record rollout evidence and commit**
 
 Record only SHA, image IDs/digests, schema, health booleans, webhook booleans, aggregate log counters and rollback directory identifier. Delete only the owned local bundle after verified delivery, update roadmap/changelog and commit:
 
