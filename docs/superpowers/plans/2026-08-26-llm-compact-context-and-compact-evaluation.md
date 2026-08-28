@@ -352,6 +352,8 @@ Record actual tests/review/limitations. Keep roadmap checkbox open until explici
 
 Commit: `feat: завершена локальная реализация Compact Context`
 
-- [ ] **Step 7: Ask separate permission for paid real-provider acceptance**
+- [x] **Step 7: Ask separate permission for paid real-provider acceptance**
 
 Do not call external provider until the owner explicitly approves model/cost. After approval, run the immutable 40-case suite, independently verify SQL aggregates, fix failures test-first if needed, and only then mark the pair complete.
+
+Acceptance 2026-08-28: владелец явно разрешил один полный прогон на `gpt-4.1-mini`; run ID `1` завершён `40/40` (`100%`), critical `28/28`, `0` errors. Независимая SQL-сверка подтвердила `1|finished|gpt-4.1-mini|40|40|0|40|28|0|0`. Telegram, YCLIENTS, staging и production не вызывались.

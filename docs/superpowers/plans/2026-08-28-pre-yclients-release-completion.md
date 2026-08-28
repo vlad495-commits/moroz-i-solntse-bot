@@ -113,17 +113,20 @@ Ask the owner to authorize exactly one 40-case `gpt-4.1-mini` Compact Evaluation
 - Consumes: Task 1 preflight evidence and explicit owner authorization.
 - Produces: one persisted Compact eval run plus safe aggregate evidence; closes the Compact runtime/evaluation pair only when the gate passes.
 
-- [ ] **Step 1: Record authorization before the call**
+- [x] **Step 1: Record authorization before the call**
 
 Append the exact approved model, case count and boundaries to changelog. Do not include price estimates as guarantees or reveal keys.
 
-- [ ] **Step 2: Create the ignored one-shot runner**
+- [x] **Step 2: Create the ignored one-shot runner**
 
 Use `apply_patch` to create `tmp/run_compact_acceptance.py` with this complete content:
 
 ```python
 import asyncio
 import json
+import sys
+
+sys.path.insert(0, "/app")
 
 import database
 import eval_database as evdb
@@ -178,7 +181,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-- [ ] **Step 3: Start a clean acceptance database and run exactly once**
+- [x] **Step 3: Start a clean acceptance database and run exactly once**
 
 From `project/`:
 
@@ -197,7 +200,7 @@ docker compose --env-file ../.env run --rm --no-deps `
 
 Expected: exactly one safe summary for a single run. Never rerun this command automatically after failure.
 
-- [ ] **Step 4: Independently verify persisted aggregates**
+- [x] **Step 4: Independently verify persisted aggregates**
 
 Use the printed `run_id` as `$runId`:
 
@@ -208,11 +211,11 @@ docker compose --env-file ../.env exec -T postgres sh -lc "psql -U \"`$POSTGRES_
 
 Expected: the database independently reports `finished`, `40` total/results, at least `38` passed, `28` critical, `0` critical failed and `0` errors.
 
-- [ ] **Step 5: Branch on the evidence**
+- [x] **Step 5: Branch on the evidence**
 
 If green, mark both Compact checkboxes complete and move roadmap active state to final local candidate gates. If red, keep them open, record only safe category/result metadata, invoke systematic-debugging and do not start another paid run.
 
-- [ ] **Step 6: Clean exact temporary resources and commit evidence**
+- [x] **Step 6: Clean exact temporary resources and commit evidence**
 
 Use `apply_patch` to delete only `tmp/run_compact_acceptance.py`; bring down only `moroz-preyclients-compact-acceptance` with volumes and verify zero owned leftovers. Run `git diff --check`, then:
 
