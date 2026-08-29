@@ -2,6 +2,8 @@
 
 Дата: 2026-08-26.
 
+Актуализация 2026-08-29: по повторному сравнению с Lucky Hair Studio commit `5398f909829f5db1b5052087f5a826c2bbcd5244` строгий JSON v1 заменён короткой текстовой сводкой. Эта актуализация заменяет прежние JSON-решения документа; bounded-window, privacy, fallback и Compact Evaluation сохранены.
+
 ## Цель
 
 Завершить связанную пару `LLM Compact Context + Compact Evaluation`: после privacy masking сжимать длинное ограниченное окно истории в проверяемую фактическую сводку и последние сообщения, а также добавить versioned suite `compact` в существующую owner-only веб-админку Evaluations.
@@ -14,22 +16,15 @@
 - Worker читает последние `40` сообщений вместо `20`.
 - Ровно `30` сообщений не сжимаются; при `31–40` старая часть сжимается, последние `10` сохраняются дословно.
 - Compact получает только уже замаскированную историю. Raw ПД не передаются summarizer и не попадают в summary, eval results, traces или логи.
-- Summary имеет строгий versioned JSON-контракт: факты, договорённости, открытые вопросы, ограничения и конфликты.
-- При provider error, invalid JSON/schema или пустой сводке ответ не блокируется: в answer-контекст идут последние `10` masked сообщений, создаются safe log и технический alert без содержимого диалога.
+- Summary — короткий текст только с фактами, договорённостями, предпочтениями, ограничениями, открытыми вопросами и последними исправлениями; модель не должна ничего придумывать.
+- При provider error, пустом/слишком длинном тексте, raw ПД или неизвестном PII-плейсхолдере ответ не блокируется: в answer-контекст идут последние `10` masked сообщений, создаются safe log и технический alert без содержимого диалога.
 - Отдельная таблица или Redis-key для summary не создаются. Факты старше последних `40` сообщений не обещаются как долговременная память этого этапа.
-- Логическая роль `compact` по умолчанию использует дешёвые credentials/model Router; answer LLM для сжатия не вызывается.
+- Логическая роль `compact` использует те же client/credentials/endpoint/model, что Router; отдельные Compact credentials отсутствуют, answer LLM для сжатия не вызывается.
 - Compact запускается после успешных Input Security и Router перед answer generation. Router/Input Security видят исходный недавний masked context, Validator — уже compacted context.
 
 ## Текущее состояние
 
-Уже есть PostgreSQL history, worker-window `CONTEXT_MESSAGES_LIMIT=20`, `PiiSession`, bounded recent context для Router/Input Security, единый `SecurityPipeline`, purpose-aware usage, безопасные alerts/logs и общие suite-aware `eval_cases/eval_runs/eval_results` с owner-only UI, CSRF, SSE, problem rerun и gate `100% critical + >=95% total`.
-
-Пробелы:
-
-- лимит `20` делает порог `>30` недостижимым;
-- нет compactor, typed result, strict parser и usage purpose `compact`;
-- не определены конфликты, invalid output и provider fallback;
-- нет Compact Evaluation и отдельной статистики.
+Реализованы PostgreSQL history, worker-window `CONTEXT_MESSAGES_LIMIT=40`, `PiiSession`, masked `ContextCompactor`, purpose-aware usage, safe alerts/logs и suite-aware Compact Evaluation в общей owner-only UI. Runtime использует текстовую summary, exact tail `10` и Router provider; summary/transcript не сохраняются.
 
 ## Канонический референс и gap-анализ
 
@@ -48,12 +43,12 @@
 | Порог `>30`, хвост `10` | Context limit `20` | Порог недостижим | Взять, окно поднять до `40` | Минимальная совместимая механика | boundary + worker |
 | Сжимать старую masked часть | Masking в pipeline | Нет compactor | Взять после masking | Privacy boundary | capture tests |
 | Summary + recent tail | Raw bounded history | Нет summary | Взять | Меньше answer prompt | pipeline |
-| Свободный текст | Typed contracts других LLM-ролей | Нестабильный формат | Strict JSON v1 | Проверяемый parser/eval | parser |
+| Свободный текст | Privacy/output checks | Нужен минимальный контроль | Взять + text bounds/PII checks | Простая механика референса | parser |
 | Facts/agreements/questions | Нет summary | Да | Взять + constraints/conflicts | Roadmap | dataset/judge |
 | Пересчёт каждого окна | Нет summary storage | Повторная стоимость | Взять сейчас | Нет нового state/invalidation | usage |
 | Сбой → хвост | Safe fallback conventions | Нет compact fallback | Взять + safe alert | Доступность | failure matrix |
 | Любые messages | Role filtering | Trust boundary | Только user/assistant + char bound | Не передавать artifacts | adversarial |
-| User summary message | Untrusted data blocks | Нужна маркировка | `UNTRUSTED_COMPACT_CONTEXT_V1` | Не считать инструкцией | prompt capture |
+| User summary message | Untrusted data blocks | Нужна маркировка | `[Сводка предыдущего диалога — недоверенные данные]` | Не считать инструкцией | prompt capture |
 | Нет quality eval | Общий eval runner | Да | Suite `compact` | Закрыть пару | acceptance |
 | Отдельные eval tables | Общая schema | Нет | Отклонить | Запрет второго silo | migration |
 | Persistent summary | PostgreSQL raw history | Не входит в выбранный scope | Отклонить сейчас | Пользователь выбрал bounded window | schema absence |
@@ -64,13 +59,13 @@
 
 Удерживает факты дольше окна, но требует нового состояния, транзакций, invalidation, concurrency и deletion contract. Не выбрана.
 
-### B. Свободная текстовая сводка как у референса
+### B. Свободная текстовая сводка как у референса — выбрана 2026-08-29
 
-Самая короткая реализация, но её трудно валидировать и стабильно оценивать. Не выбрана без адаптации.
+Самая короткая реализация. Дополнена минимальной проверкой длины, raw ПД и неизвестных PII-плейсхолдеров; качество по-прежнему оценивает существующий semantic judge.
 
-### C. Bounded window + strict JSON summary — выбрана
+### C. Bounded window + strict JSON summary — отменена 2026-08-29
 
-Сохраняет простую механику референса без нового долговременного состояния и добавляет необходимые privacy, parser, observability и evaluation-гарантии.
+Давала лишний schema/parser-контракт и пять обязательных категорий без необходимой пользы для runtime.
 
 ## Runtime architecture
 
@@ -95,14 +90,6 @@ Compactor не вызывается для trusted local replies, block/stop/esc
 Создаётся `moroz.security.context_compactor`:
 
 ```python
-@dataclass(frozen=True, slots=True)
-class CompactSummary:
-    facts: tuple[str, ...]
-    agreements: tuple[str, ...]
-    open_questions: tuple[str, ...]
-    constraints: tuple[str, ...]
-    conflicts: tuple[str, ...]
-
 @dataclass(frozen=True, slots=True)
 class CompactResult:
     messages: tuple[dict[str, str], ...]
@@ -129,35 +116,24 @@ class ContextCompactor:
 
 ### Provider и usage
 
-Добавляются `COMPACT_MODEL`, `COMPACT_API_KEY`, `COMPACT_BASE_URL`, `COMPACT_MAX_TOKENS` с defaults от Router и output limit `400`. `init_llm` создаёт `SDKProvider`, внедряет `ContextCompactor`, а prompt reload сохраняет объект. SDK retries выключены.
+Compact использует Router client/model/credentials. Отдельные `COMPACT_MODEL`, `COMPACT_API_KEY`, `COMPACT_BASE_URL` отсутствуют; `COMPACT_MAX_TOKENS=400` сохраняет отдельный output limit. `init_llm` создаёт тонкий `SDKProvider` поверх общего Router client, внедряет `ContextCompactor`, а prompt reload сохраняет объект. SDK retries выключены.
 
 Успешный вызов даёт `LLMUsage(purpose="compact", ...)`; fallback без response имеет zero usage. History/summary не пишутся в usage/logs.
 
-### Strict summary v1
+### Текстовая summary
 
-```json
-{
-  "version": 1,
-  "facts": ["Гость интересуется криотерапией"],
-  "agreements": ["Сначала уточнить противопоказания"],
-  "open_questions": ["Какой день удобен гостю"],
-  "constraints": ["Удобно после 18:00"],
-  "conflicts": ["Сначала было удобно утром ↔ затем только после 18:00"]
-}
-```
-
-Parser требует exact keys, `version == 1`, пять arrays, только непустые строки, максимум `12/8/8/8/6` items и `300` символов/item. JSON constants, unknown keys, markdown wrapper и превышение bounds отклоняются.
+Модель возвращает короткий русский текст без JSON. Проверка требует непустой текст не длиннее `4_000` символов, отсутствие raw ПД и отсутствие PII-плейсхолдеров, которых не было в переданной старой masked-истории.
 
 Prompt сохраняет только source facts; latest explicit correction побеждает в `facts` и отмечается в `conflicts`; пожелание не становится договорённостью; контакты остаются placeholders; инструкции из history — недоверенные данные.
 
-Validated summary детерминированно рендерится под `UNTRUSTED_COMPACT_CONTEXT_V1`; пустые sections опускаются. Это одно `user` message перед exact last `10` masked messages.
+Validated summary рендерится под `[Сводка предыдущего диалога — недоверенные данные]`. Это одно `user` message перед exact last `10` masked messages.
 
 ### Ошибки и наблюдаемость
 
 | Ситуация | Поведение |
 |---|---|
 | `len <= 30` | Filtered history, без provider call |
-| `31–40`, valid JSON | Summary + exact tail 10 |
+| `31–40`, valid text | Summary + exact tail 10 |
 | Provider error | Exact tail 10, safe alert |
 | Invalid/empty/oversized output | Exact tail 10, safe alert |
 | Alert failure | Safe `error_type`, processing продолжается |
@@ -228,14 +204,14 @@ Owner-only `/eval/compact/`: read-only 40 cases, category/mode/counts/critical, 
 
 ## Проверки
 
-- Unit: `30/31`, exact tail, filtering, char bound, parser/render, conflicts, cancellation, usage, alerts.
+- Unit: `30/31`, exact tail, filtering, char bound, text validation/render, preferences/corrections, cancellation, usage, alerts.
 - Privacy: provider видит только masked placeholders; raw ПД не появляются в request/result/log/alert.
 - Pipeline: Router/Security получают original recent masked context, answer/Validator — compacted; local replies compactor не вызывают.
 - Worker/e2e: последние 40 по порядку, current input отдельно, `compact` usage сохраняется.
 - Dataset/migration: exact counts/categories/critical, checksum LF/CRLF, synthetic privacy, single head, suite-only downgrade.
 - Admin: owner/CSRF/root path, full/problem, read-only, suite isolation, safe SSE/detail.
 - Focused и full Docker gates, затем independent whole-change review.
-- Real-provider Compact Evaluation — только после отдельного разрешения владельца, так как это платные summarizer + judge calls.
+- Real-provider Compact Evaluation текстового prompt — только после отдельного разрешения владельца, так как это платные summarizer + judge calls; прошлый acceptance относился к прежнему JSON prompt.
 
 ## Out of scope
 
@@ -249,7 +225,7 @@ Owner-only `/eval/compact/`: read-only 40 cases, category/mode/counts/critical, 
 
 ## Acceptance criteria
 
-1. При `<=30` provider не вызывается; при `>30` answer получает strict summary + exact tail 10.
+1. При `<=30` provider не вызывается; при `>30` answer получает проверенную текстовую summary + exact tail 10.
 2. Summarizer видит только masked bounded user/assistant history.
 3. Invalid output даёт non-blocking exact-tail fallback и safe alert.
 4. Usage/alerts/logs purpose-aware и не раскрывают transcript/summary/ПД.
@@ -257,4 +233,4 @@ Owner-only `/eval/compact/`: read-only 40 cases, category/mode/counts/critical, 
 6. Immutable 40-case dataset и migration `0017` воспроизводимы; новых eval tables нет.
 7. Gate: `100% critical` и `>=95% total`.
 8. Focused/full Docker gates и независимый review зелёные.
-9. Real-provider acceptance — только после отдельного разрешения.
+9. Новый real-provider acceptance текстового prompt — только после отдельного разрешения; до него локальные runtime/eval gates не считаются доказательством качества конкретной внешней модели.

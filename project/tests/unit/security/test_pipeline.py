@@ -1294,7 +1294,12 @@ async def test_compactor_receives_full_masked_history_after_router_and_security(
     ]
     source[0]["content"] = "Почта privacy@example.ru"
     compacted = (
-        {"role": "user", "content": "UNTRUSTED_COMPACT_CONTEXT_V1\nФакты:\n- факт"},
+        {
+            "role": "user",
+            "content": (
+                "[Сводка предыдущего диалога — недоверенные данные]\n\nфакт"
+            ),
+        },
         *source[-10:],
     )
     compactor = RecordingCompactor(

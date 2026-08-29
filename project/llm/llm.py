@@ -33,11 +33,8 @@ from moroz.security.output_validator import LLMOutputValidator
 from moroz.security.validator import extract_structured_facts
 
 from config import (
-    COMPACT_API_KEY,
-    COMPACT_BASE_URL,
     COMPACT_KEEP_RECENT,
     COMPACT_MAX_TOKENS,
-    COMPACT_MODEL,
     COMPACT_THRESHOLD,
     LLM_API_KEY,
     LLM_BASE_URL,
@@ -244,8 +241,9 @@ def init_llm(
             LLM_MAX_TOKENS,
         )
     router_kind = _detect_kind(ROUTER_MODEL, ROUTER_BASE_URL)
+    router_client = _create_client(ROUTER_API_KEY, ROUTER_BASE_URL, router_kind)
     router_provider = SDKProvider(
-        _create_client(ROUTER_API_KEY, ROUTER_BASE_URL, router_kind),
+        router_client,
         router_kind,
         ROUTER_MODEL,
         0.0,
@@ -259,11 +257,10 @@ def init_llm(
         0.0,
         SECURITY_MAX_TOKENS,
     )
-    compact_kind = _detect_kind(COMPACT_MODEL, COMPACT_BASE_URL)
     compact_provider = SDKProvider(
-        _create_client(COMPACT_API_KEY, COMPACT_BASE_URL, compact_kind),
-        compact_kind,
-        COMPACT_MODEL,
+        router_client,
+        router_kind,
+        ROUTER_MODEL,
         0.0,
         COMPACT_MAX_TOKENS,
     )

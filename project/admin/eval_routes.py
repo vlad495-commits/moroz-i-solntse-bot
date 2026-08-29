@@ -597,7 +597,7 @@ async def compact_eval_run_start(
 
     run_id = await evdb.create_run(
         len(cases),
-        eval_runner.COMPACT_MODEL,
+        eval_runner.ROUTER_MODEL,
         "compact",
     )
     _start_eval_task(
@@ -640,7 +640,7 @@ async def compact_eval_problem_run_start(
 
     run_id = await evdb.create_run(
         len(cases),
-        eval_runner.COMPACT_MODEL,
+        eval_runner.ROUTER_MODEL,
         "compact",
     )
     _start_eval_task(

@@ -88,11 +88,6 @@ SECURITY_MODEL, SECURITY_API_KEY, SECURITY_BASE_URL = resolve_provider_tuple(
 SECURITY_MAX_TOKENS = int(os.getenv("SECURITY_MAX_TOKENS", "10"))
 VALIDATOR_MODEL = LLM_MODEL
 
-COMPACT_MODEL, COMPACT_API_KEY, COMPACT_BASE_URL = resolve_provider_tuple(
-    os.environ,
-    "COMPACT",
-    (ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL),
-)
 COMPACT_MAX_TOKENS = int(os.getenv("COMPACT_MAX_TOKENS", "400"))
 COMPACT_THRESHOLD = int(os.getenv("COMPACT_THRESHOLD", "30"))
 COMPACT_KEEP_RECENT = int(os.getenv("COMPACT_KEEP_RECENT", "10"))
@@ -183,12 +178,12 @@ def _build_output_validator() -> LLMOutputValidator:
 
 
 def _build_context_compactor() -> ContextCompactor:
-    kind = _detect_kind(COMPACT_MODEL, COMPACT_BASE_URL)
-    client = _create_client(COMPACT_API_KEY, COMPACT_BASE_URL, kind)
+    kind = _detect_kind(ROUTER_MODEL, ROUTER_BASE_URL)
+    client = _create_client(ROUTER_API_KEY, ROUTER_BASE_URL, kind)
     provider = SDKProvider(
         client,
         kind,
-        COMPACT_MODEL,
+        ROUTER_MODEL,
         0.0,
         COMPACT_MAX_TOKENS,
     )
@@ -877,7 +872,7 @@ def _compact_structural_check(
     if (
         marker.get("role") != "user"
         or not marker.get("content", "").startswith(
-            "UNTRUSTED_COMPACT_CONTEXT_V1"
+            "[Сводка предыдущего диалога — недоверенные данные]\n\n"
         )
     ):
         return False, "summary_marker_mismatch", tail_count

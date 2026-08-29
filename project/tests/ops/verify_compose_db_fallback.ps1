@@ -22,11 +22,8 @@ $services = ($renderedConfig -join "`n" | ConvertFrom-Json).services
 $expectedEnvironment = @{
     worker = @(
         "BUSINESS_ALERT_CHAT_ID",
-        "COMPACT_API_KEY",
-        "COMPACT_BASE_URL",
         "COMPACT_KEEP_RECENT",
         "COMPACT_MAX_TOKENS",
-        "COMPACT_MODEL",
         "COMPACT_THRESHOLD",
         "CONTEXT_MESSAGES_LIMIT",
         "DATA_RETENTION_DAYS",

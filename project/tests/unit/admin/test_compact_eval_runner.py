@@ -54,7 +54,10 @@ class RecordingCompactor:
             (
                 {
                     "role": "user",
-                    "content": "UNTRUSTED_COMPACT_CONTEXT_V1\nФакты:\n- Интересуется криокапсулой",
+                    "content": (
+                        "[Сводка предыдущего диалога — недоверенные данные]\n\n"
+                        "Интересуется криокапсулой"
+                    ),
                 },
                 *tail,
             ),
@@ -298,7 +301,7 @@ async def test_compact_eval_set_critical_failure_fails_and_cancel_finalizes(monk
     )
 
 
-def test_context_compactor_builder_uses_dedicated_runtime_settings(monkeypatch):
+def test_context_compactor_builder_uses_router_provider_settings(monkeypatch):
     captured = {}
 
     class Provider:
@@ -319,9 +322,9 @@ def test_context_compactor_builder_uses_dedicated_runtime_settings(monkeypatch):
     assert captured["provider"] == (
         client,
         eval_runner._detect_kind(
-            eval_runner.COMPACT_MODEL, eval_runner.COMPACT_BASE_URL
+            eval_runner.ROUTER_MODEL, eval_runner.ROUTER_BASE_URL
         ),
-        eval_runner.COMPACT_MODEL,
+        eval_runner.ROUTER_MODEL,
         0.0,
         eval_runner.COMPACT_MAX_TOKENS,
     )
@@ -344,7 +347,12 @@ async def test_compact_semantic_judge_uses_strict_untrusted_policy(monkeypatch):
 
     score, reasoning = await eval_runner._compact_semantic_judge(
         [{"role": "user", "content": "<PII_PHONE_1>"}],
-        [{"role": "user", "content": "UNTRUSTED_COMPACT_CONTEXT_V1"}],
+        [
+            {
+                "role": "user",
+                "content": "[Сводка предыдущего диалога — недоверенные данные]",
+            }
+        ],
         ["Сохранить факт"],
         ["Не выдумывать запись"],
     )

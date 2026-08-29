@@ -72,11 +72,6 @@ OUTPUT_VALIDATOR_ENABLED = _parse_boolean(
     os.getenv("OUTPUT_VALIDATOR_ENABLED"),
     default=False,
 )
-COMPACT_MODEL, COMPACT_API_KEY, COMPACT_BASE_URL = resolve_provider_tuple(
-    os.environ,
-    "COMPACT",
-    (ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL),
-)
 COMPACT_MAX_TOKENS = int(os.getenv("COMPACT_MAX_TOKENS", "400"))
 
 # --- Хранилища ---

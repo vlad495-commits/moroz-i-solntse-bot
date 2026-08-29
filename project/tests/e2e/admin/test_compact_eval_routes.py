@@ -131,7 +131,7 @@ async def test_compact_start_requires_csrf_and_uses_compact_suite(monkeypatch):
     )
 
     assert captured[:3] == [
-        ("create", (1, eval_routes.eval_runner.COMPACT_MODEL, "compact")),
+        ("create", (1, eval_routes.eval_runner.ROUTER_MODEL, "compact")),
         ("runner", 203, cases), ("task", 203),
     ]
     assert response.headers["location"] == "/admin/eval/runs/203"
@@ -168,7 +168,7 @@ async def test_compact_problem_rerun_and_empty_redirect_are_suite_isolated(
     )
     assert captured[:4] == [
         ("problems", "compact"),
-        ("create", (1, eval_routes.eval_runner.COMPACT_MODEL, "compact")),
+        ("create", (1, eval_routes.eval_runner.ROUTER_MODEL, "compact")),
         ("runner", 204, cases), ("task", 204),
     ]
 

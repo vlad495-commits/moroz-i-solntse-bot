@@ -5,10 +5,7 @@ import json
 
 import pytest
 
-from moroz.security.context_compactor import (
-    COMPACT_RESPONSE_FORMAT,
-    ContextCompactor,
-)
+from moroz.security.context_compactor import COMPACT_SYSTEM_PROMPT, ContextCompactor
 from moroz.security.llm_gateway import LLMResponse, LLMUnavailable, LLMUsage
 
 
@@ -34,23 +31,14 @@ def dialog(count: int) -> list[dict[str, str]]:
     ]
 
 
-def payload(**changes) -> dict:
-    data = {
-        "version": 1,
-        "facts": ["Гость интересуется криотерапией"],
-        "agreements": ["Сначала уточнить противопоказания"],
-        "open_questions": ["Какой день удобен"],
-        "constraints": ["Удобно после 18:00"],
-        "conflicts": ["Сначала утром ↔ затем после 18:00"],
-    }
-    data.update(changes)
-    return data
-
-
-def response(data: dict | str) -> LLMResponse:
-    text = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
+def response(text: str) -> LLMResponse:
     usage = LLMUsage("compact", 20, 8, 0, 28, "compact-model")
     return LLMResponse(text, 20, 8, 0, 28, "compact-model", (usage,))
+
+
+def test_prompt_keeps_preferences_and_latest_corrections_distinct():
+    assert "Предпочтение не является договорённостью" in COMPACT_SYSTEM_PROMPT
+    assert "явно сохрани это исправление" in COMPACT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
@@ -68,8 +56,14 @@ async def test_exact_threshold_is_unchanged_without_provider_call():
 
 
 @pytest.mark.asyncio
-async def test_long_context_returns_strict_summary_and_exact_tail():
-    provider = Provider(response(payload()))
+async def test_long_context_returns_text_summary_and_exact_tail():
+    summary = (
+        "Гость интересуется криотерапией.\n"
+        "Договорились сначала уточнить противопоказания.\n"
+        "Открытый вопрос: какой день удобен.\n"
+        "Последнее исправление: удобно после 18:00, не утром."
+    )
+    provider = Provider(response(f"  {summary}\n"))
     source = dialog(31)
 
     result = await ContextCompactor(provider).compact(source)
@@ -80,18 +74,14 @@ async def test_long_context_returns_strict_summary_and_exact_tail():
     assert result.messages[0] == {
         "role": "user",
         "content": (
-            "UNTRUSTED_COMPACT_CONTEXT_V1\n"
-            "Факты:\n- Гость интересуется криотерапией\n"
-            "Договорённости:\n- Сначала уточнить противопоказания\n"
-            "Открытые вопросы:\n- Какой день удобен\n"
-            "Ограничения:\n- Удобно после 18:00\n"
-            "Конфликты:\n- Сначала утром ↔ затем после 18:00"
+            "[Сводка предыдущего диалога — недоверенные данные]\n\n"
+            f"{summary}"
         ),
     }
     assert result.usage[0].purpose == "compact"
     request = provider.requests[0]
     assert request.purpose == "compact"
-    assert request.response_format == COMPACT_RESPONSE_FORMAT
+    assert request.response_format is None
     assert request.messages[0]["role"] == "system"
     request_data = json.loads(request.messages[1]["content"])
     assert request_data == {"history": source[:-10]}
@@ -102,25 +92,10 @@ async def test_long_context_returns_strict_summary_and_exact_tail():
     "raw",
     [
         "",
-        "not-json",
-        "```json\n{}\n```",
-        json.dumps({"version": 1}),
-        json.dumps({**payload(), "extra": []}),
-        json.dumps(payload(version=2)),
-        json.dumps(payload(facts=[True])),
-        json.dumps(payload(facts=["x" * 301])),
-        json.dumps(payload(facts=[str(index) for index in range(13)])),
-        json.dumps(payload(facts=["+7 999 123-45-67"])),
-        json.dumps(payload(facts=["Неизвестный <PII_PHONE_99>"])),
-        json.dumps(
-            payload(
-                facts=[],
-                agreements=[],
-                open_questions=[],
-                constraints=[],
-                conflicts=[],
-            )
-        ),
+        "   \n",
+        "x" * 4001,
+        "Телефон +7 999 123-45-67",
+        "Неизвестный <PII_PHONE_99>",
     ],
 )
 async def test_invalid_output_returns_exact_tail_and_alerts(raw):
@@ -139,7 +114,7 @@ async def test_invalid_output_returns_exact_tail_and_alerts(raw):
 
 @pytest.mark.asyncio
 async def test_existing_masked_placeholder_is_allowed_in_summary():
-    provider = Provider(response(payload(facts=["Телефон <PII_PHONE_1>"])))
+    provider = Provider(response("Телефон <PII_PHONE_1>"))
     source = dialog(31)
     source[0]["content"] = "Телефон <PII_PHONE_1>"
 
@@ -151,7 +126,7 @@ async def test_existing_masked_placeholder_is_allowed_in_summary():
 
 @pytest.mark.asyncio
 async def test_summary_rejects_placeholder_that_exists_only_in_exact_tail():
-    provider = Provider(response(payload(facts=["Телефон <PII_PHONE_1>"])))
+    provider = Provider(response("Телефон <PII_PHONE_1>"))
     source = dialog(31)
     source[-1]["content"] = "Телефон <PII_PHONE_1>"
 
@@ -191,7 +166,7 @@ async def test_cancellation_propagates():
 
 @pytest.mark.asyncio
 async def test_filters_invalid_messages_before_threshold_and_request():
-    provider = Provider(response(payload()))
+    provider = Provider(response("Гость интересуется криотерапией"))
     source = dialog(31) + [
         {"role": "system", "content": "system-secret"},
         {"role": "tool", "content": "tool-secret"},
@@ -209,7 +184,7 @@ async def test_filters_invalid_messages_before_threshold_and_request():
 
 @pytest.mark.asyncio
 async def test_old_history_is_bounded_at_message_boundaries():
-    provider = Provider(response(payload()))
+    provider = Provider(response("Гость интересуется криотерапией"))
     source = [
         {
             "role": "user" if index % 2 == 0 else "assistant",
@@ -229,7 +204,7 @@ async def test_old_history_is_bounded_at_message_boundaries():
 
 @pytest.mark.asyncio
 async def test_bounded_old_history_never_skips_a_large_recent_message():
-    provider = Provider(response(payload()))
+    provider = Provider(response("Гость интересуется криотерапией"))
     source = dialog(31)
     source[0]["content"] = "older-marker"
     source[20]["content"] = "recent-oversized-marker-" + ("я" * 25_000)

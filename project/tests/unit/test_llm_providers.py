@@ -19,7 +19,7 @@ async def test_advertised_native_claude_provider_can_create_client():
         await client.close()
 
 
-def test_init_llm_builds_dedicated_router_security_and_compactor(
+def test_init_llm_shares_router_client_with_compactor(
     monkeypatch,
     tmp_path,
 ):
@@ -63,14 +63,6 @@ def test_init_llm_builds_dedicated_router_security_and_compactor(
     monkeypatch.setattr(llm_module, "SECURITY_MODEL", "security-model", raising=False)
     monkeypatch.setattr(llm_module, "SECURITY_MAX_TOKENS", 10, raising=False)
     monkeypatch.setattr(llm_module, "OUTPUT_VALIDATOR_ENABLED", True, raising=False)
-    monkeypatch.setattr(llm_module, "COMPACT_API_KEY", "compact-key", raising=False)
-    monkeypatch.setattr(
-        llm_module,
-        "COMPACT_BASE_URL",
-        "https://compact.invalid/v1",
-        raising=False,
-    )
-    monkeypatch.setattr(llm_module, "COMPACT_MODEL", "compact-model", raising=False)
     monkeypatch.setattr(llm_module, "COMPACT_MAX_TOKENS", 400, raising=False)
     monkeypatch.setattr(llm_module, "_create_client", create_client)
     monkeypatch.setattr(llm_module, "_primary_client", None)
@@ -87,7 +79,6 @@ def test_init_llm_builds_dedicated_router_security_and_compactor(
         ("reserve-key", "https://reserve.invalid/v1"),
         ("router-key", "https://router.invalid/v1"),
         ("security-key", "https://security.invalid/v1"),
-        ("compact-key", "https://compact.invalid/v1"),
     ]
     answer_provider = llm_module._pipeline.gateway.primary
     router_provider = llm_module._pipeline.router._provider
@@ -104,8 +95,8 @@ def test_init_llm_builds_dedicated_router_security_and_compactor(
     assert security_provider.temperature == 0.0
     assert security_provider.max_tokens == 10
     assert llm_module._pipeline.input_security._reserve.client is clients[1]
-    assert compact_provider.client is clients[4]
-    assert compact_provider.model == "compact-model"
+    assert compact_provider.client is clients[2]
+    assert compact_provider.model == "router-model"
     assert compact_provider.temperature == 0.0
     assert compact_provider.max_tokens == 400
     assert llm_module._pipeline.context_compactor._alert is compact_alert
@@ -227,16 +218,20 @@ def test_output_validator_flag_is_scoped_to_worker_only():
         assert "      OUTPUT_VALIDATOR_ENABLED:" not in _service_block(compose, service)
 
 
-def test_compact_environment_is_scoped_to_worker_and_admin_only():
+def test_compact_uses_router_provider_and_scopes_only_runtime_limits():
     compose = Path("/workspace/docker-compose.yml").read_text(encoding="utf-8")
-    variables = {
+    removed = {
         "COMPACT_MODEL",
         "COMPACT_API_KEY",
         "COMPACT_BASE_URL",
+    }
+    variables = {
         "COMPACT_MAX_TOKENS",
         "COMPACT_THRESHOLD",
         "COMPACT_KEEP_RECENT",
     }
+
+    assert all(f"      {variable}:" not in compose for variable in removed)
 
     for service in ("worker", "admin"):
         block = _service_block(compose, service)

@@ -494,6 +494,52 @@ async def test_process_message_materializes_reply_and_history_once(database):
     assert [tuple(row.values()) for row in tasks] == [("send_outbound", "pending")]
 
 
+async def test_process_message_passes_last_40_and_never_persists_compact_summary(
+    database,
+):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming())
+    async with database.acquire() as connection:
+        await connection.executemany(
+            "INSERT INTO messages (chat_id, user_id, role, content) "
+            "VALUES (42, 7, $1, $2)",
+            [
+                (
+                    "user" if index % 2 == 0 else "assistant",
+                    f"История {index}",
+                )
+                for index in range(45)
+            ],
+        )
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="process_message",
+            payload={"chat_id": "42", "update_ids": ["100"]},
+            idempotency_key="process_message:100",
+        )
+    )
+
+    current, context = llm.calls[0]
+    assert current == "Новый вопрос"
+    assert [item["content"] for item in context] == [
+        f"История {index}" for index in range(5, 45)
+    ]
+    async with database.acquire() as connection:
+        stored = await connection.fetch(
+            "SELECT content FROM messages WHERE chat_id = 42 ORDER BY id"
+        )
+    contents = [row["content"] for row in stored]
+    assert contents[-2:] == ["Новый вопрос", "Готовый ответ"]
+    assert all("Сводка предыдущего диалога" not in text for text in contents)
+
+
 async def test_human_mode_materializes_user_history_without_llm_or_reply(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming())

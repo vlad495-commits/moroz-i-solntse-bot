@@ -16,9 +16,6 @@ PROVIDER_ENV_KEYS = (
     "ROUTER_API_KEY",
     "ROUTER_BASE_URL",
     "ROUTER_MODEL",
-    "COMPACT_API_KEY",
-    "COMPACT_BASE_URL",
-    "COMPACT_MODEL",
     "JUDGE_API_KEY",
     "JUDGE_BASE_URL",
     "JUDGE_MODEL",
@@ -83,11 +80,9 @@ def test_runtime_and_eval_defaults_inherit_primary_provider_atomically(monkeypat
             llm_config.ROUTER_API_KEY,
             llm_config.ROUTER_BASE_URL,
         ) == primary
-        assert (
-            llm_config.COMPACT_MODEL,
-            llm_config.COMPACT_API_KEY,
-            llm_config.COMPACT_BASE_URL,
-        ) == primary
+        assert not hasattr(llm_config, "COMPACT_MODEL")
+        assert not hasattr(llm_config, "COMPACT_API_KEY")
+        assert not hasattr(llm_config, "COMPACT_BASE_URL")
         assert (
             eval_runner.JUDGE_MODEL,
             eval_runner.JUDGE_API_KEY,

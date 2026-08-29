@@ -1,5 +1,7 @@
 # LLM Compact Context + Compact Evaluation Implementation Plan
 
+> Исторический план исходной реализации. Формат strict JSON v1 отменён актуализацией design от 2026-08-29; runtime теперь использует проверенную текстовую сводку и Router provider без отдельных Compact credentials.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Реализовать masked bounded-window Compact Context и immutable 40-case Compact Evaluation в существующем runtime/admin eval-контуре.
