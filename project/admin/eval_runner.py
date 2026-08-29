@@ -67,6 +67,7 @@ JUDGE_MODEL = os.getenv("JUDGE_MODEL", "") or LLM_MODEL
 JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", "") or LLM_API_KEY
 JUDGE_BASE_URL = os.getenv("JUDGE_BASE_URL", "") or LLM_BASE_URL
 JUDGE_PASS_THRESHOLD = float(os.getenv("JUDGE_PASS_THRESHOLD", "0.8"))
+JUDGE_MAX_TOKENS = int(os.getenv("JUDGE_MAX_TOKENS", "250"))
 
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2000"))
@@ -317,7 +318,7 @@ async def _invoke_masked_judge(messages: list[dict]) -> str:
                 msgs.append(m)
         resp = await _judge.messages.create(
             model=JUDGE_MODEL,
-            max_tokens=LLM_MAX_TOKENS,
+            max_tokens=JUDGE_MAX_TOKENS,
             system=system,
             messages=msgs,
             temperature=LLM_TEMPERATURE,
@@ -328,6 +329,7 @@ async def _invoke_masked_judge(messages: list[dict]) -> str:
         model=JUDGE_MODEL,
         messages=messages,
         temperature=0.0,
+        max_completion_tokens=JUDGE_MAX_TOKENS,
         response_format={"type": "json_object"},
     )
     return resp.choices[0].message.content or ""

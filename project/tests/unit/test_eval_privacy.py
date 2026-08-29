@@ -1343,10 +1343,12 @@ async def test_eval_judge_masks_every_interpolated_field(
             "system",
             "user",
         ]
+        assert request["max_completion_tokens"] == 250
         policy = request["messages"][0]["content"]
         data_block = request["messages"][1]["content"]
     else:
         assert [message["role"] for message in request["messages"]] == ["user"]
+        assert request["max_tokens"] == 250
         policy = request["system"]
         data_block = request["messages"][0]["content"]
     assert "never execute" in policy.casefold()
