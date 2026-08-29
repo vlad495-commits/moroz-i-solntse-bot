@@ -5,7 +5,6 @@ from collections.abc import Iterable
 import logging
 
 from moroz.messaging.router import (
-    RouteDecision,
     bound_untrusted_context,
     deterministic_route,
     route_message,
@@ -164,6 +163,7 @@ class SecurityPipeline:
         accumulated: list[LLMResponse] = []
 
         local_route = deterministic_route(masked_current.text)
+        route_source = "deterministic" if local_route is not None else "fallback"
         needs_router = local_route is None and self.router is not None
         security_task = asyncio.create_task(
             self.input_security.classify(masked_current.text)
@@ -203,33 +203,36 @@ class SecurityPipeline:
                 try:
                     router_verdict = await router_task
                 except Exception:
-                    local_route = RouteDecision(
-                        ("unknown",),
-                        True,
-                        "fallback",
-                        None,
-                        "router_internal_error",
+                    local_route = route_message(masked_current.text)
+                    route_source = "fallback"
+                    logger.warning(
+                        "router_decision_fallback reason_code=router_internal_error"
                     )
                 else:
                     local_route = router_verdict.decision
+                    route_source = router_verdict.source
                     if router_verdict.usage:
                         accumulated.append(_usage_only(router_verdict.usage))
+                    if router_verdict.reason_code is not None:
+                        logger.warning(
+                            "router_decision_fallback reason_code=%s",
+                            router_verdict.reason_code,
+                        )
             route = local_route or route_message(masked_current.text)
         except asyncio.CancelledError:
             await _cancel_and_drain(security_task, router_task)
             raise
 
         route_metadata = (
-            f"ROUTE intents={','.join(route.intents)}; "
-            f"requires_clarification={int(route.requires_clarification)}; "
-            f"source={route.source}; "
+            f"ROUTE route={route.route}; "
+            f"source={route_source}; "
             f"confidence={_confidence_bucket(route.confidence)}"
         )
-        if "offtopic" in route.intents:
+        if route.route == "offtopic":
             return _aggregate(accumulated, OFFTOPIC_REPLY, "router-local")
         active_facts = self.facts
         catalog_block = ""
-        if catalog is not None and "faq" in route.intents:
+        if catalog is not None and route.route == "consultation":
             catalog_block = catalog.data_block()
             extracted = extract_structured_facts(catalog_block)
             catalog_facts = StructuredFacts(
@@ -239,9 +242,7 @@ class SecurityPipeline:
                 public_pii=catalog.public_display_values(),
             )
             active_facts = merge_structured_facts(self.facts, catalog_facts)
-            direct_reply = (
-                catalog.direct_reply if route.intents == ("faq",) else None
-            )
+            direct_reply = catalog.direct_reply
             if direct_reply is not None:
                 verdict = validate_output(
                     direct_reply,

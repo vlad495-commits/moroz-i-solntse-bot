@@ -281,7 +281,7 @@ async def test_unresolved_router_starts_in_parallel_with_security():
     router = BlockingRouter(
         router_started,
         router_release,
-        RouterVerdict(RouteDecision(("faq",), False, "llm", 0.9), ()),
+        RouterVerdict(RouteDecision("consultation", 0.9), ()),
     )
     task = asyncio.create_task(
         pipeline(gateway, router=router).respond("Да, завтра", [])
@@ -311,7 +311,7 @@ async def test_security_block_cancels_and_drains_router_without_using_route():
         router_started,
         router_release,
         RouterVerdict(
-            RouteDecision(("booking",), False, "llm", 0.99),
+            RouteDecision("booking", 0.99),
             (LLMUsage("router", 4, 2, 0, 6, "router-model"),),
         ),
     )
@@ -376,7 +376,7 @@ async def test_router_gets_bounded_history_and_security_gets_only_masked_current
     raw_phone = "+7 900 111-22-33"
     raw_email = "private@example.ru"
     router = CapturingRouter(
-        RouterVerdict(RouteDecision(("faq",), False, "llm", 0.8), ())
+        RouterVerdict(RouteDecision("consultation", 0.8), ())
     )
     gateway = CapturingGateway(
         security_response(),
@@ -416,28 +416,20 @@ async def test_router_gets_bounded_history_and_security_gets_only_masked_current
         (
             security_response(),
             RouterVerdict(
-                RouteDecision(
-                    ("unknown",),
-                    False,
-                    "fallback",
-                    None,
-                    "router_unavailable",
-                ),
+                RouteDecision("consultation", 0.0),
                 (),
+                source="fallback",
+                reason_code="router_unavailable",
             ),
             "answer",
         ),
         (
             security_response("block", "prompt_attack"),
             RouterVerdict(
-                RouteDecision(
-                    ("unknown",),
-                    False,
-                    "fallback",
-                    None,
-                    "router_unavailable",
-                ),
+                RouteDecision("consultation", 0.0),
                 (),
+                source="fallback",
+                reason_code="router_unavailable",
             ),
             INPUT_BLOCK_REPLY,
         ),
@@ -459,7 +451,7 @@ async def test_parallel_allow_or_block_matrix(
 
 
 @pytest.mark.asyncio
-async def test_router_error_after_allow_uses_safe_unknown_answer_path():
+async def test_router_error_after_allow_uses_safe_general_answer_path():
     gateway = CapturingGateway(
         security_response(),
         response("answer"),
@@ -469,8 +461,10 @@ async def test_router_error_after_allow_uses_safe_unknown_answer_path():
     result = await pipeline(gateway, router=router).respond("Да, завтра", [])
 
     assert result.text == "answer"
-    assert "intents=unknown" in gateway.requests[-1].messages[0]["content"]
-    assert "requires_clarification=1" in gateway.requests[-1].messages[0]["content"]
+    metadata = gateway.requests[-1].messages[0]["content"]
+    assert "route=consultation" in metadata
+    assert "source=fallback" in metadata
+    assert "confidence=low" in metadata
     assert "router-response-sentinel" not in repr(gateway.requests)
 
 
@@ -480,7 +474,7 @@ async def test_offtopic_waits_for_allow_and_skips_answer_with_consumed_usage_onl
     router_usage = LLMUsage("router", 4, 2, 0, 6, "router-model")
     router = CapturingRouter(
         RouterVerdict(
-            RouteDecision(("offtopic",), False, "llm", 0.9),
+            RouteDecision("offtopic", 0.9),
             (router_usage,),
         )
     )
@@ -500,19 +494,45 @@ async def test_route_metadata_is_allowlisted_and_confidence_is_bucketed():
         response("answer-provider-sentinel"),
     )
     router = CapturingRouter(
-        RouterVerdict(RouteDecision(("faq",), False, "llm", 0.83), ())
+        RouterVerdict(RouteDecision("consultation", 0.83), ())
     )
 
     await pipeline(gateway, router=router).respond("input-sentinel", [])
 
     metadata = gateway.requests[-1].messages[0]["content"]
-    assert "intents=faq" in metadata
-    assert "requires_clarification=0" in metadata
+    assert "route=consultation" in metadata
     assert "source=llm" in metadata
     assert "confidence=high" in metadata
     assert "0.83" not in metadata
     assert "input-sentinel" not in metadata
     assert "answer-provider-sentinel" not in metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route",
+    [
+        "booking",
+        "booking_management",
+        "escalation",
+        "smalltalk",
+        "other",
+    ],
+)
+async def test_non_offtopic_single_routes_continue_the_answer_path(
+    route: str,
+) -> None:
+    gateway = CapturingGateway(security_response(), response("answer"))
+    router = CapturingRouter(
+        RouterVerdict(RouteDecision(route, 0.9), (), source="llm")
+    )
+
+    result = await pipeline(gateway, router=router).respond("Да, завтра", [])
+
+    assert result.text == "answer"
+    metadata = gateway.requests[-1].messages[0]["content"]
+    assert f"ROUTE route={route};" in metadata
+    assert "source=llm" in metadata
 
 
 @pytest.mark.asyncio
@@ -537,7 +557,7 @@ async def test_parallel_usage_is_aggregated_in_consumption_order():
     router_usage = LLMUsage("router", 3, 1, 0, 4, "router-model")
     router = CapturingRouter(
         RouterVerdict(
-            RouteDecision(("faq",), False, "llm", 0.8),
+            RouteDecision("consultation", 0.8),
             (router_usage,),
         )
     )
@@ -806,8 +826,7 @@ async def test_local_allow_still_runs_security_and_uses_owned_route_metadata() -
 
     assert [request.purpose for request in gateway.requests] == ["security", "answer"]
     assert gateway.requests[1].messages[0]["content"].endswith(
-        "ROUTE intents=unknown; requires_clarification=1; "
-        "source=fallback; confidence=none"
+        "ROUTE route=consultation; source=fallback; confidence=low"
     )
 
 
@@ -1311,7 +1330,7 @@ async def test_compactor_receives_full_masked_history_after_router_and_security(
         )
     )
     router = CapturingRouter(
-        RouterVerdict(RouteDecision(("booking",), False, "llm", 0.9), ())
+        RouterVerdict(RouteDecision("booking", 0.9), ())
     )
     semantic = RecordingOutputValidator(
         OutputValidationVerdict(
@@ -1346,7 +1365,7 @@ async def test_trusted_local_reply_does_not_call_compactor():
     compactor = RecordingCompactor(AssertionError("must not compact"))
     gateway = CapturingGateway(security_response())
     router = CapturingRouter(
-        RouterVerdict(RouteDecision(("offtopic",), False, "llm", 0.9), ())
+        RouterVerdict(RouteDecision("offtopic", 0.9), ())
     )
 
     result = await pipeline(
@@ -1368,7 +1387,7 @@ async def test_compactor_cancellation_propagates():
         )
     )
     router = CapturingRouter(
-        RouterVerdict(RouteDecision(("booking",), False, "llm", 0.9), ())
+        RouterVerdict(RouteDecision("booking", 0.9), ())
     )
 
     with pytest.raises(asyncio.CancelledError):

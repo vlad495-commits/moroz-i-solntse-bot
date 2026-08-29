@@ -339,7 +339,7 @@ class _LegacyInvokeGateway:
         messages = [dict(message) for message in request.messages]
         if messages and messages[0]["role"] == "system":
             messages[0]["content"] = messages[0]["content"].split(
-                "\n\nROUTE intents=",
+                "\n\nROUTE route=",
                 1,
             )[0]
         response = await _invoke(messages)

@@ -319,9 +319,7 @@ async def test_no_downstream_state_before_allow_and_no_synthetic_route_state(dat
     update_id = "router-gate"
     assert await repository.accept(_incoming(update_id))
     gateway = BlockingSecurityGateway()
-    router = ImmediateRouter(
-        RouteDecision(("booking", "human_handoff"), False, "llm", 0.91)
-    )
+    router = ImmediateRouter(RouteDecision("escalation", 0.91))
     pipeline = SecurityPipeline(
         gateway,
         "",
@@ -381,7 +379,8 @@ async def test_no_downstream_state_before_allow_and_no_synthetic_route_state(dat
         request for request in gateway.requests if request.purpose == "answer"
     )
     answer_system = answer_request.messages[0]["content"]
-    assert "intents=booking,human_handoff" in answer_system
+    assert "route=escalation" in answer_system
+    assert "source=llm" in answer_system
 
 
 async def test_medical_risk_is_authoritative_and_never_calls_router():
