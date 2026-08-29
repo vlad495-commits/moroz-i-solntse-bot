@@ -53,8 +53,8 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2000"))
 # Таймаут одного запроса к LLM (сек): зависший провайдер рвётся за это время,
 # а не за дефолтные ~600с SDK.
 LLM_REQUEST_TIMEOUT_SEC = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "30"))
-RESERVE_API_KEY = os.getenv("RESERVE_API_KEY", "")
-RESERVE_BASE_URL = os.getenv("RESERVE_BASE_URL", "") or None
+RESERVE_API_KEY = os.getenv("RESERVE_API_KEY", "") or LLM_API_KEY
+RESERVE_BASE_URL = os.getenv("RESERVE_BASE_URL", "") or LLM_BASE_URL
 RESERVE_MODEL = os.getenv("RESERVE_MODEL", "")
 ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL = resolve_provider_tuple(
     os.environ,
@@ -164,6 +164,9 @@ PRICING_PER_1M_TOKENS = {
     "gpt-4.1": {"prompt": 2.00, "completion": 8.00, "cache_discount": 0.75},
     "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60, "cache_discount": 0.50},
     "gpt-4o": {"prompt": 2.50, "completion": 10.00, "cache_discount": 0.50},
+    "gpt-5-mini": {"prompt": 0.25, "completion": 2.00, "cache_discount": 0.90},
+    "gpt-5.4-nano-2026-03-17": {"prompt": 0.20, "completion": 1.25, "cache_discount": 0.90},
+    "gpt-5.6-luna": {"prompt": 0.20, "completion": 1.20, "cache_discount": 0.90},
     "claude-haiku-4-5": {"prompt": 1.00, "completion": 5.00, "cache_discount": 0.90},
     "claude-sonnet-4-6": {"prompt": 3.00, "completion": 15.00, "cache_discount": 0.90},
 }

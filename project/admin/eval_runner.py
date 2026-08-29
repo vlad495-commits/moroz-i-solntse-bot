@@ -59,15 +59,13 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "") or None
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
 
-RESERVE_API_KEY = os.getenv("RESERVE_API_KEY", "")
-RESERVE_BASE_URL = os.getenv("RESERVE_BASE_URL", "") or None
+RESERVE_API_KEY = os.getenv("RESERVE_API_KEY", "") or LLM_API_KEY
+RESERVE_BASE_URL = os.getenv("RESERVE_BASE_URL", "") or LLM_BASE_URL
 RESERVE_MODEL = os.getenv("RESERVE_MODEL", "")
 
-JUDGE_MODEL, JUDGE_API_KEY, JUDGE_BASE_URL = resolve_provider_tuple(
-    os.environ,
-    "JUDGE",
-    (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
-)
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "") or LLM_MODEL
+JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", "") or LLM_API_KEY
+JUDGE_BASE_URL = os.getenv("JUDGE_BASE_URL", "") or LLM_BASE_URL
 JUDGE_PASS_THRESHOLD = float(os.getenv("JUDGE_PASS_THRESHOLD", "0.8"))
 
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))

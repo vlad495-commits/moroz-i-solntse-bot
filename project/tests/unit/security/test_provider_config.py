@@ -13,6 +13,9 @@ PROVIDER_ENV_KEYS = (
     "OPENAI_API_KEY",
     "LLM_BASE_URL",
     "LLM_MODEL",
+    "RESERVE_API_KEY",
+    "RESERVE_BASE_URL",
+    "RESERVE_MODEL",
     "ROUTER_API_KEY",
     "ROUTER_BASE_URL",
     "ROUTER_MODEL",
@@ -95,6 +98,54 @@ def test_runtime_and_eval_defaults_inherit_primary_provider_atomically(monkeypat
             else:
                 os.environ[key] = value
         importlib.reload(llm_config)
+        importlib.reload(eval_runner)
+
+
+def test_reserve_model_uses_primary_provider_credentials(monkeypatch):
+    original = {key: os.environ.get(key) for key in PROVIDER_ENV_KEYS}
+    try:
+        for key in PROVIDER_ENV_KEYS:
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("LLM_API_KEY", "primary-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://primary.invalid/v1")
+        monkeypatch.setenv("RESERVE_MODEL", "gpt-5.4-nano-2026-03-17")
+
+        importlib.reload(llm_config)
+        importlib.reload(eval_runner)
+
+        assert llm_config.RESERVE_API_KEY == "primary-key"
+        assert llm_config.RESERVE_BASE_URL == "https://primary.invalid/v1"
+        assert eval_runner.RESERVE_API_KEY == "primary-key"
+        assert eval_runner.RESERVE_BASE_URL == "https://primary.invalid/v1"
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        importlib.reload(llm_config)
+        importlib.reload(eval_runner)
+
+
+def test_judge_model_uses_primary_provider_credentials(monkeypatch):
+    original = {key: os.environ.get(key) for key in PROVIDER_ENV_KEYS}
+    try:
+        for key in PROVIDER_ENV_KEYS:
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("LLM_API_KEY", "primary-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://primary.invalid/v1")
+        monkeypatch.setenv("JUDGE_MODEL", "gpt-5-mini")
+
+        importlib.reload(eval_runner)
+
+        assert eval_runner.JUDGE_API_KEY == "primary-key"
+        assert eval_runner.JUDGE_BASE_URL == "https://primary.invalid/v1"
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         importlib.reload(eval_runner)
 
 
