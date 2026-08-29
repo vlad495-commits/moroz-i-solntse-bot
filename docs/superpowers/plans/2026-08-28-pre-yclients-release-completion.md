@@ -438,6 +438,8 @@ Run RED → GREEN, related regression set and `git diff --check`; update roadmap
 
 Any code change requires a fresh full local gate and new commit-pinned staging image. Repeat affected manual scenarios; repeat the full manual suite only if the change affects shared pipeline behavior.
 
+Fresh full local gate and exact staging rollout `17a78921b401912070a0f49f8c20548b9cd723c2` are complete. Targeted scenarios `5/23/26/27` remain pending only because Browser reported no connected session; no API substitute was accepted as human evidence.
+
 - [ ] **Step 6: Close the conditional task**
 
 If no confirmed defects exist, record `0 blocking defects` and mark the roadmap item complete without creating production code.
@@ -463,13 +465,15 @@ Require clean server checkout, exact candidate SHA/tag, schema `0017_llm_compact
 
 Execute runbook technical smoke, scheduler synthetic `skipped` job, Telegram webhook/live canary, worker recovery, Redis recovery and safe-log scan. Do not call YCLIENTS or send real client notifications.
 
-- [ ] **Step 3: Execute image-only rollback**
+- [x] **Step 3: Execute image-only rollback**
 
 Run section 13 unchanged with the protected previous/candidate manifests. Confirm `candidate → previous → candidate`, healthy services and webhook status at both checkpoints; never downgrade the database.
 
-- [ ] **Step 4: Verify restored candidate**
+- [x] **Step 4: Verify restored candidate**
 
 Confirm candidate image IDs, schema, health, HTTPS, webhook, scheduler safe result and log counters. The trap/restore path must leave the candidate running even if previous verification fails.
+
+Completed for `17a78921b401912070a0f49f8c20548b9cd723c2`: previous images `4/4` healthy with webhook safe, then candidate images `4/4` restored healthy; schema was not downgraded. Worker and Redis recovery returned exact `1/1/1` deltas, final log scan `0/0/0/0` and grounding flag `false` were reconfirmed. Step 2 remains open only for the targeted human Telegram recheck/live surface.
 
 - [ ] **Step 5: Update roadmap and changelog**
 
