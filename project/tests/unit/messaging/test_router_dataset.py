@@ -5,62 +5,61 @@ from pathlib import Path
 
 import pytest
 
-from moroz.messaging.router import INTENTS, deterministic_route
+from moroz.messaging.router import ROUTES, deterministic_route
 from moroz.security.pii import PiiSession
 
 
-DATASET = Path("/workspace/llm/eval/router_dataset.json")
-QUALITY = {
-    "simple",
-    "context",
-    "multi_intent",
-    "conflict",
-    "complaint",
-    "handoff",
+DATASET = Path("/workspace/llm/eval/router_dataset_v2.json")
+CATEGORIES = {
+    "consultation",
+    "booking",
+    "booking_management",
+    "escalation",
     "smalltalk",
     "offtopic",
     "other",
-    "unknown",
     "prompt_safety",
+    "pii",
 }
 
 
-def test_router_dataset_has_stable_unique_contract():
-    cases = json.loads(DATASET.read_text(encoding="utf-8"))
-    keys = [case["case_key"] for case in cases]
-    categories = {case["category"] for case in cases}
+def _cases() -> list[dict]:
+    return json.loads(DATASET.read_text(encoding="utf-8"))
 
-    assert len(cases) == 20
+
+def test_router_v2_dataset_has_stable_unique_contract():
+    cases = _cases()
+    keys = [case["case_key"] for case in cases]
+
+    assert len(cases) == 24
+    assert sum(case["critical"] for case in cases) == 16
     assert len(keys) == len(set(keys))
-    assert QUALITY <= categories
+    assert all(key.startswith("router-v2-") for key in keys)
+    assert {case["category"] for case in cases} == CATEGORIES
     for case in cases:
         assert set(case) == {
             "case_key",
             "category",
             "input",
             "context",
-            "expected_intents",
-            "expected_clarification",
+            "expected_route",
             "expected_source",
             "critical",
         }
         assert isinstance(case["input"], str) and case["input"].strip()
         assert all(
-            message["role"] in {"user", "assistant"}
+            set(message) == {"role", "content"}
+            and message["role"] in {"user", "assistant"}
+            and isinstance(message["content"], str)
             for message in case["context"]
         )
-        assert 1 <= len(case["expected_intents"]) <= 3
-        assert set(case["expected_intents"]) <= set(INTENTS)
+        assert case["expected_route"] in ROUTES
         assert case["expected_source"] in {"deterministic", "llm"}
         assert type(case["critical"]) is bool
 
 
-@pytest.mark.parametrize(
-    "case",
-    json.loads(DATASET.read_text(encoding="utf-8")),
-    ids=lambda case: case["case_key"],
-)
-def test_router_dataset_source_matches_runtime_deterministic_boundary(case):
+@pytest.mark.parametrize("case", _cases(), ids=lambda case: case["case_key"])
+def test_router_v2_source_matches_runtime_deterministic_boundary(case):
     masked_input = PiiSession().mask(case["input"]).text
     decision = deterministic_route(masked_input)
 
@@ -68,8 +67,4 @@ def test_router_dataset_source_matches_runtime_deterministic_boundary(case):
         assert decision is None
     else:
         assert decision is not None
-        assert set(decision.intents) == set(case["expected_intents"])
-        assert (
-            decision.requires_clarification
-            == case["expected_clarification"]
-        )
+        assert decision.route == case["expected_route"]

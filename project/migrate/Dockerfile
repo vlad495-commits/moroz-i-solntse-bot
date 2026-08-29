@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
 COPY llm/eval/router_dataset.json /app/llm/eval/router_dataset.json
+COPY llm/eval/router_dataset_v2.json /app/llm/eval/router_dataset_v2.json
 COPY llm/eval/security_dataset.json /app/llm/eval/security_dataset.json
 COPY llm/eval/validator_dataset.json /app/llm/eval/validator_dataset.json
 COPY llm/eval/compact_dataset.json /app/llm/eval/compact_dataset.json
