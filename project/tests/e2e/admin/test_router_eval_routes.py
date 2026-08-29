@@ -87,14 +87,10 @@ async def test_router_index_uses_router_only_counts_and_read_only_root_urls(
     calls = []
     case = {
         "id": 41,
-        "case_key": "router-case-001",
+        "case_key": "router-v2-case-001",
         "category": "context",
         "question": "Синтетический вопрос",
-        "expected_data": {
-            "intents": ["faq", "booking"],
-            "requires_clarification": False,
-            "source": "llm",
-        },
+        "expected_data": {"route": "booking"},
         "critical": True,
     }
 
@@ -118,14 +114,14 @@ async def test_router_index_uses_router_only_counts_and_read_only_root_urls(
     body = response.body.decode("utf-8")
 
     assert calls == [
-        ("cases", "router"),
-        ("problems", "router"),
-        ("runs", 10, "router"),
+        ("cases", "router_v2"),
+        ("problems", "router_v2"),
+        ("runs", 10, "router_v2"),
     ]
     assert 'action="/admin/eval/router/runs"' in body
     assert 'action="/admin/eval/router/runs/problematic"' in body
-    assert "router-case-001" in body
-    assert "faq, booking" in body
+    assert "router-v2-case-001" in body
+    assert "booking" in body
     assert "/eval/cases/new" not in body
     assert "/delete" not in body
 
@@ -139,7 +135,7 @@ async def test_router_run_start_reuses_supervision_and_audits(monkeypatch):
     audited = []
 
     async def list_cases(suite):
-        assert suite == "router"
+        assert suite == "router_v2"
         return cases
 
     async def create_run(*args, **kwargs):
@@ -176,14 +172,14 @@ async def test_router_run_start_reuses_supervision_and_audits(monkeypatch):
     )
 
     assert created == [
-        ((1, eval_routes.eval_runner.ROUTER_MODEL, "router"), {})
+        ((1, eval_routes.eval_runner.ROUTER_MODEL, "router_v2"), {})
     ]
     assert started == [
         ("runner", 91, cases),
         ("task", 91),
     ]
     assert audited[0]["action"] == "eval.router_run_start"
-    assert audited[0]["after"] == {"total": 1, "suite": "router"}
+    assert audited[0]["after"] == {"total": 1, "suite": "router_v2"}
     assert response.status_code == 302
     assert response.headers["location"] == "/admin/eval/runs/91"
 
@@ -234,8 +230,8 @@ async def test_router_problem_rerun_uses_only_router_problem_cases(monkeypatch):
     )
 
     assert captured[:4] == [
-        ("problems", "router"),
-        ("create", (1, eval_routes.eval_runner.ROUTER_MODEL, "router")),
+        ("problems", "router_v2"),
+        ("create", (1, eval_routes.eval_runner.ROUTER_MODEL, "router_v2")),
         ("runner", 92, cases),
         ("task", 92),
     ]
@@ -249,7 +245,7 @@ async def test_router_detail_requires_owner_and_renders_structured_payload(
     now = datetime.now(timezone.utc)
     run = {
         "id": 91,
-        "suite": "router",
+        "suite": "router_v2",
         "started_at": now,
         "finished_at": now,
         "total": 1,
@@ -272,14 +268,9 @@ async def test_router_detail_requires_owner_and_renders_structured_payload(
                 "check_layer": "router",
                 "score": None,
                 "duration_ms": 3,
-                "expected_data": {
-                    "intents": ["faq"],
-                    "requires_clarification": False,
-                    "source": "llm",
-                },
+                "expected_data": {"route": "consultation"},
                 "actual_data": {
-                    "intents": ["faq"],
-                    "requires_clarification": False,
+                    "route": "consultation",
                     "source": "llm",
                     "confidence": 0.9,
                     "reason_code": None,
@@ -307,7 +298,7 @@ async def test_router_detail_requires_owner_and_renders_structured_payload(
     assert 'href="/admin/eval/router/"' in body
     assert "Ожидалось" in body
     assert "Фактически" in body
-    assert "faq" in body
+    assert "consultation" in body
     assert "0.9" in body
 
 
@@ -327,6 +318,56 @@ async def test_router_stream_requires_owner_before_streaming(monkeypatch):
         )
 
     assert denied.value.status_code == 403
+
+
+def test_historical_router_detail_still_renders_v1_contract():
+    now = datetime.now(timezone.utc)
+    response = eval_routes.templates.TemplateResponse(
+        request(path="/eval/runs/90"),
+        "eval_run_detail.html",
+        {
+            "user": user(),
+            "run": {
+                "id": 90,
+                "suite": "router",
+                "started_at": now,
+                "finished_at": now,
+                "total": 1,
+                "passed": 1,
+                "failed": 0,
+                "status": "finished",
+                "judge_model": "legacy-router",
+                "error_message": None,
+            },
+            "results": [
+                {
+                    "case_id": 1,
+                    "question": "legacy",
+                    "verdict": "pass",
+                    "check_layer": "router",
+                    "score": None,
+                    "duration_ms": 1,
+                    "expected_data": {
+                        "intents": ["faq"],
+                        "requires_clarification": False,
+                        "source": "llm",
+                    },
+                    "actual_data": {
+                        "intents": ["faq"],
+                        "requires_clarification": False,
+                        "source": "llm",
+                        "confidence": 0.9,
+                    },
+                    "judge_reasoning": "matched",
+                }
+            ],
+        },
+    )
+
+    body = response.body.decode("utf-8")
+    assert 'href="/admin/eval/router/"' in body
+    assert "intents: faq" in body
+    assert "clarification: нет" in body
 
 
 def test_answer_template_keeps_crud_and_answer_urls():

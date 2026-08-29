@@ -92,10 +92,12 @@ async def router_eval_index(request: Request):
         "eval_list.html",
         {
             "user": user,
-            "suite": "router",
-            "cases": await evdb.list_cases("router"),
-            "problem_cases": await evdb.list_problem_cases("router"),
-            "runs": await evdb.list_runs(10, "router"),
+            "suite": eval_runner.ROUTER_EVAL_SUITE,
+            "cases": await evdb.list_cases(eval_runner.ROUTER_EVAL_SUITE),
+            "problem_cases": await evdb.list_problem_cases(
+                eval_runner.ROUTER_EVAL_SUITE
+            ),
+            "runs": await evdb.list_runs(10, eval_runner.ROUTER_EVAL_SUITE),
         },
     )
 
@@ -339,7 +341,7 @@ async def router_eval_run_start(
     user = await get_current_user(request)
     require_role(user, {"owner"})
     validate_csrf(user, csrf_token)
-    cases = await evdb.list_cases("router")
+    cases = await evdb.list_cases(eval_runner.ROUTER_EVAL_SUITE)
     if not cases:
         return RedirectResponse(
             url=admin_url(request, "/eval/router/?error=no_cases"),
@@ -349,7 +351,7 @@ async def router_eval_run_start(
     run_id = await evdb.create_run(
         len(cases),
         eval_runner.ROUTER_MODEL,
-        "router",
+        eval_runner.ROUTER_EVAL_SUITE,
     )
     _start_eval_task(
         run_id,
@@ -361,7 +363,7 @@ async def router_eval_run_start(
         object_type="eval_run",
         object_id=str(run_id),
         before=None,
-        after={"total": len(cases), "suite": "router"},
+        after={"total": len(cases), "suite": eval_runner.ROUTER_EVAL_SUITE},
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )
@@ -379,7 +381,7 @@ async def router_eval_problem_run_start(
     user = await get_current_user(request)
     require_role(user, {"owner"})
     validate_csrf(user, csrf_token)
-    cases = await evdb.list_problem_cases("router")
+    cases = await evdb.list_problem_cases(eval_runner.ROUTER_EVAL_SUITE)
     if not cases:
         return RedirectResponse(
             url=admin_url(
@@ -392,7 +394,7 @@ async def router_eval_problem_run_start(
     run_id = await evdb.create_run(
         len(cases),
         eval_runner.ROUTER_MODEL,
-        "router",
+        eval_runner.ROUTER_EVAL_SUITE,
     )
     _start_eval_task(
         run_id,
@@ -404,7 +406,7 @@ async def router_eval_problem_run_start(
         object_type="eval_run",
         object_id=str(run_id),
         before=None,
-        after={"total": len(cases), "suite": "router"},
+        after={"total": len(cases), "suite": eval_runner.ROUTER_EVAL_SUITE},
         ip_address=request_ip_address(request),
         user_agent=request_user_agent(request),
     )

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% set is_router = suite == 'router' %}
+{% set is_router = suite in ('router', 'router_v2') %}
 {% set is_security = suite == 'security' %}
 {% set is_validator = suite == 'validator' %}
 {% set is_compact = suite == 'compact' %}
@@ -9,13 +9,13 @@
 <div class="row-between">
     <h1>{% if is_router %}Router Evaluation{% elif is_security %}Input Security Evaluation{% elif is_validator %}Validator Evaluation{% elif is_compact %}Compact Evaluation{% else %}Эвалюэйшены{% endif %} <span class="muted">({{ cases|length }} кейсов)</span></h1>
     <div class="actions">
-        <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_component %}/{{ suite }}{% endif %}/runs" style="display: inline">
+        <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% elif is_component %}/{{ suite }}{% endif %}/runs" style="display: inline">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn btn-primary" {% if not cases %}disabled{% endif %}>
                 ▶ {% if is_router %}Проверить Router{% elif is_security %}Проверить Input Security{% elif is_validator %}Проверить Validator{% elif is_compact %}Проверить Compact Context{% else %}Запустить эвалюэйшены{% endif %}
             </button>
         </form>
-        <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_component %}/{{ suite }}{% endif %}/runs/problematic" style="display: inline">
+        <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% elif is_component %}/{{ suite }}{% endif %}/runs/problematic" style="display: inline">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn" {% if not problem_cases %}disabled{% endif %}>
                 ⚠ Прогнать проблемные{% if problem_cases %} ({{ problem_cases|length }}){% endif %}
@@ -99,8 +99,7 @@
             </td>
             {% if is_router %}
             <td>
-                <strong>{{ c.expected_data.intents|join(', ') }}</strong><br>
-                <span class="muted">clarification: {{ 'да' if c.expected_data.requires_clarification else 'нет' }} · source: {{ c.expected_data.source }}</span>
+                <strong>{{ c.expected_data.route }}</strong>
             </td>
             <td>{{ 'да' if c.critical else 'нет' }}</td>
             {% elif is_security %}

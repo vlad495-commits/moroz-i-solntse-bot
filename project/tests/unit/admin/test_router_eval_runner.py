@@ -21,45 +21,31 @@ class CapturingRouter:
 def router_case(**overrides):
     value = {
         "id": 7,
-        "suite": "router",
-        "case_key": "router-test-001",
+        "suite": "router_v2",
+        "case_key": "router-v2-test-001",
         "category": "context",
         "question": "А сколько это?",
         "input_data": {"input": "А сколько это?", "context": []},
-        "expected_data": {
-            "intents": ["faq"],
-            "requires_clarification": False,
-            "source": "llm",
-        },
+        "expected_data": {"route": "consultation"},
         "critical": False,
     }
     value.update(overrides)
     return value
 
 
-def test_router_case_diff_compares_intent_set_clarification_and_source():
-    expected = {
-        "intents": ["faq", "booking"],
-        "requires_clarification": False,
-        "source": "llm",
-    }
-    actual = RouteDecision(("booking", "faq"), False, "llm", 0.83)
+def test_router_case_diff_compares_only_single_route():
+    expected = {"route": "booking"}
+    actual = RouteDecision("booking", 0.83)
     assert eval_runner.router_case_diff(expected, actual) == (True, "matched")
     assert eval_runner.router_case_diff(
-        expected, RouteDecision(("faq",), False, "llm", 0.9)
-    ) == (False, "intent_mismatch")
-    assert eval_runner.router_case_diff(
-        expected, RouteDecision(("faq", "booking"), True, "llm", 0.9)
-    ) == (False, "clarification_mismatch")
-    assert eval_runner.router_case_diff(
-        expected, RouteDecision(("faq", "booking"), False, "fallback")
-    ) == (False, "source_mismatch")
+        expected, RouteDecision("consultation", 0.9)
+    ) == (False, "route_mismatch")
 
 
 @pytest.mark.asyncio
 async def test_quality_case_masks_pii_and_never_calls_answer_or_judge(monkeypatch):
     router = CapturingRouter(
-        RouterVerdict(RouteDecision(("faq",), False, "llm", 0.9), ())
+        RouterVerdict(RouteDecision("consultation", 0.9), (), source="llm")
     )
     case = router_case(
         question="Мой телефон +7 900 111-22-33, а сколько это?",
@@ -94,7 +80,8 @@ async def test_quality_case_masks_pii_and_never_calls_answer_or_judge(monkeypatc
         "verdict": "pass",
         "check_layer": "router",
     }
-    assert saved["kwargs"]["actual_data"]["intents"] == ["faq"]
+    assert saved["kwargs"]["actual_data"]["route"] == "consultation"
+    assert saved["kwargs"]["actual_data"]["source"] == "llm"
     assert saved["kwargs"]["judge_reasoning"] == "matched"
 
 
@@ -104,11 +91,7 @@ async def test_deterministic_case_never_calls_llm_router(monkeypatch):
     case = router_case(
         question="Хочу записаться",
         input_data={"input": "Хочу записаться", "context": []},
-        expected_data={
-            "intents": ["booking"],
-            "requires_clarification": False,
-            "source": "deterministic",
-        },
+        expected_data={"route": "booking"},
     )
     saved = {}
 
@@ -163,6 +146,25 @@ async def test_router_eval_set_is_sequential_and_uses_existing_gate(monkeypatch)
         ("progress", 15, 1, 1),
     ]
     assert finished == [((15, 1, 1), {"status": "failed"})]
+
+
+@pytest.mark.asyncio
+async def test_router_eval_set_loads_only_v2_cases(monkeypatch):
+    loaded = []
+
+    async def list_cases(suite):
+        loaded.append(suite)
+        return []
+
+    async def finish(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(eval_runner.evdb, "list_cases", list_cases)
+    monkeypatch.setattr(eval_runner.evdb, "finish_run", finish)
+
+    await eval_runner.run_router_eval_set(17, router=object())
+
+    assert loaded == ["router_v2"]
 
 
 @pytest.mark.asyncio

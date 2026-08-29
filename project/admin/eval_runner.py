@@ -79,6 +79,7 @@ ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL = resolve_provider_tuple(
     (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
 )
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
+ROUTER_EVAL_SUITE = "router_v2"
 SECURITY_MODEL, SECURITY_API_KEY, SECURITY_BASE_URL = resolve_provider_tuple(
     os.environ,
     "SECURITY",
@@ -585,15 +586,8 @@ def router_case_diff(
     expected: dict,
     actual: RouteDecision,
 ) -> tuple[bool, str]:
-    if set(expected["intents"]) != set(actual.intents):
-        return False, "intent_mismatch"
-    if (
-        bool(expected["requires_clarification"])
-        != actual.requires_clarification
-    ):
-        return False, "clarification_mismatch"
-    if expected["source"] != actual.source:
-        return False, "source_mismatch"
+    if expected["route"] != actual.route:
+        return False, "route_mismatch"
     return True, "matched"
 
 
@@ -616,15 +610,19 @@ async def run_router_case(
             for item in input_data["context"]
         ]
         decision = deterministic_route(masked_input)
+        source = "deterministic"
+        reason_code = None
         if decision is None:
-            decision = (await router.route(masked_input, masked_context)).decision
+            router_verdict = await router.route(masked_input, masked_context)
+            decision = router_verdict.decision
+            source = router_verdict.source
+            reason_code = router_verdict.reason_code
         ok, reason = router_case_diff(case["expected_data"], decision)
         actual_data = {
-            "intents": list(decision.intents),
-            "requires_clarification": decision.requires_clarification,
-            "source": decision.source,
+            "route": decision.route,
+            "source": source,
             "confidence": decision.confidence,
-            "reason_code": decision.reason_code,
+            "reason_code": reason_code,
         }
         verdict = "pass" if ok else "fail"
         error_message = None
@@ -1085,7 +1083,11 @@ async def run_router_eval_set(
     )
 
     try:
-        cases = await evdb.list_cases("router") if cases is None else cases
+        cases = (
+            await evdb.list_cases(ROUTER_EVAL_SUITE)
+            if cases is None
+            else cases
+        )
         active_router = router or _build_router()
         for case in cases:
             result = await run_router_case(case, run_id, router=active_router)
