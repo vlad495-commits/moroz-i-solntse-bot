@@ -1298,9 +1298,9 @@
 
           <article class="node node-security" id="guardrails">
             <span class="node-kind">14B · Безопасность</span>
-            <h3>Guardrails</h3>
-            <p>Блокирует jailbreak и попытки раскрытия системного промпта.</p>
-            <small>scripts-first · fail closed · critical eval gate</small>
+            <h3>Local guards + Security LLM</h3>
+            <p>Каждый current masked input получает точный OK/BLOCK; Router стартует параллельно, но закрыт до allow.</p>
+            <small>cheap → reserve → local-only fail-open + critical alert</small>
           </article>
 
           <article class="node node-external" id="llm-gateway">
@@ -1312,9 +1312,9 @@
 
           <article class="node node-security" id="output-validator">
             <span class="node-kind">15 · Контроль ответа</span>
-            <h3>Output validator</h3>
-            <p>Проверяет утечки, формат и безопасность результата.</p>
-            <small>одна повторная генерация, затем fallback</small>
+            <h3>Local output validation</h3>
+            <p>Обязательно проверяет canary, утечки, ПД, placeholders и факты.</p>
+            <small>semantic LLM validator опционален; одна регенерация, затем fallback</small>
           </article>
 
           <article class="node node-step" id="durable-outbound">

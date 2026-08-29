@@ -1,131 +1,136 @@
 import asyncio
-import json
 
 import pytest
 
 from moroz.security.input_security import (
-    INPUT_SECURITY_RESPONSE_FORMAT,
     InputSecurityDecision,
     LLMInputSecurityClassifier,
 )
-from moroz.security.llm_gateway import LLMResponse, LLMUnavailable, LLMUsage
+from moroz.security.llm_gateway import LLMResponse, LLMUsage
 
 
 class Provider:
-    def __init__(self, event):
-        self.event = event
+    def __init__(self, *events):
+        self.events = list(events)
         self.requests = []
 
     async def complete(self, request):
         self.requests.append(request)
-        if isinstance(self.event, BaseException):
-            raise self.event
-        return self.event
+        event = self.events.pop(0)
+        if isinstance(event, BaseException):
+            raise event
+        return event
 
 
-def response(payload):
-    usage = LLMUsage("security", 10, 3, 0, 13, "security-model")
-    return LLMResponse(
-        json.dumps(payload),
-        10,
-        3,
-        0,
-        13,
-        "security-model",
-        (usage,),
-    )
+def response(text: str, model: str = "security-model") -> LLMResponse:
+    usage = LLMUsage("security", 10, 1, 0, 11, model)
+    return LLMResponse(text, 10, 1, 0, 11, model, (usage,))
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "payload,expected",
+    "raw,expected",
     [
-        (
-            {"action": "allow", "category": "safe"},
-            InputSecurityDecision("allow", "llm", "safe"),
-        ),
-        (
-            {"action": "block", "category": "prompt_attack"},
-            InputSecurityDecision("block", "llm", "prompt_attack"),
-        ),
-        (
-            {"action": "block", "category": "secret_request"},
-            InputSecurityDecision("block", "llm", "secret_request"),
-        ),
-        (
-            {"action": "block", "category": "third_party_pii"},
-            InputSecurityDecision("block", "llm", "third_party_pii"),
-        ),
-        (
-            {"action": "block", "category": "dangerous_content"},
-            InputSecurityDecision("block", "llm", "dangerous_content"),
-        ),
+        ("OK", InputSecurityDecision("allow", "llm", "ok")),
+        (" block\n", InputSecurityDecision("block", "llm", "block")),
     ],
 )
-async def test_strict_valid_verdict(payload, expected):
-    provider = Provider(response(payload))
+async def test_accepts_only_ok_or_block_words(raw, expected):
+    primary = Provider(response(raw))
 
-    verdict = await LLMInputSecurityClassifier(provider).classify("masked", [])
+    verdict = await LLMInputSecurityClassifier(primary).classify("masked-current")
 
     assert verdict.decision == expected
     assert verdict.usage[0].purpose == "security"
-    assert provider.requests[0].purpose == "security"
-    assert provider.requests[0].response_format == INPUT_SECURITY_RESPONSE_FORMAT
+    request = primary.requests[0]
+    assert request.purpose == "security"
+    assert request.response_format is None
+    assert request.messages[1] == {"role": "user", "content": "masked-current"}
+    assert "CONTEXT" not in request.messages[1]["content"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "",
-        "ALLOW",
-        "{}",
-        '{"action":"allow","category":"prompt_attack"}',
-        '{"action":"block","category":"safe"}',
-        '{"action":"block","category":"unknown"}',
-        '{"action":"block","category":"prompt_attack","extra":1}',
-    ],
-)
-async def test_invalid_output_fails_closed_and_alerts(raw):
+@pytest.mark.parametrize("primary_event", [RuntimeError("down"), response("MAYBE")])
+async def test_primary_error_or_invalid_output_uses_reserve(primary_event):
+    primary = Provider(primary_event)
+    reserve = Provider(response("OK", "reserve-model"))
+
+    verdict = await LLMInputSecurityClassifier(primary, reserve).classify("masked")
+
+    assert verdict.decision == InputSecurityDecision("allow", "llm", "ok")
+    assert len(primary.requests) == 1
+    assert len(reserve.requests) == 1
+    assert verdict.usage[-1].model == "reserve-model"
+
+
+@pytest.mark.asyncio
+async def test_both_models_down_fail_open_and_alert_without_private_data(caplog):
     alerts = []
-    provider = Provider(LLMResponse(raw, 1, 1, 0, 2, "model"))
+    primary = Provider(RuntimeError("primary-secret"))
+    reserve = Provider(RuntimeError("reserve-secret"))
 
     verdict = await LLMInputSecurityClassifier(
-        provider,
+        primary,
+        reserve,
         alerts.append,
-    ).classify("masked", [])
+    ).classify("private-input-sentinel")
 
     assert verdict.decision == InputSecurityDecision(
-        "block",
+        "allow",
         "fallback",
-        "security_invalid_output",
+        "security_down",
     )
-    assert alerts == ["security_invalid_output"]
+    assert alerts == ["security_down"]
+    assert "private-input-sentinel" not in caplog.text
+    assert "primary-secret" not in caplog.text
+    assert "reserve-secret" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_unavailable_and_alert_failure_still_fail_closed(caplog):
+async def test_invalid_outputs_from_both_models_fail_open_and_alert():
+    alerts = []
+    classifier = LLMInputSecurityClassifier(
+        Provider(response("ALLOW")),
+        Provider(response("BLOCK because")),
+        alerts.append,
+    )
+
+    verdict = await classifier.classify("masked")
+
+    assert verdict.decision.reason_code == "security_down"
+    assert verdict.decision.action == "allow"
+    assert alerts == ["security_down"]
+    assert [item.model for item in verdict.usage] == [
+        "security-model",
+        "security-model",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_alert_failure_still_fails_open_and_logs_only_error_type(caplog):
     async def broken_alert(_code):
         raise RuntimeError("alert-secret")
 
     verdict = await LLMInputSecurityClassifier(
-        Provider(LLMUnavailable("provider-secret")),
+        Provider(RuntimeError("primary-secret")),
+        Provider(RuntimeError("reserve-secret")),
         broken_alert,
-    ).classify("private-input", [])
+    ).classify("private-input")
 
-    assert verdict.decision == InputSecurityDecision(
-        "block",
-        "fallback",
-        "security_unavailable",
-    )
-    assert "provider-secret" not in caplog.text
-    assert "private-input" not in caplog.text
+    assert verdict.decision.action == "allow"
     assert "alert-secret" not in caplog.text
+    assert "private-input" not in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_cancellation_propagates():
+async def test_cancellation_propagates_without_calling_reserve():
+    reserve = Provider(response("OK"))
+
     with pytest.raises(asyncio.CancelledError):
         await LLMInputSecurityClassifier(
-            Provider(asyncio.CancelledError())
-        ).classify("masked", [])
+            Provider(asyncio.CancelledError()),
+            reserve,
+        ).classify("masked")
+
+    assert reserve.requests == []

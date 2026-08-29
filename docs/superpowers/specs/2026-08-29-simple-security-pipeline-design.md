@@ -2,6 +2,9 @@
 
 Дата: 2026-08-29.
 
+Статус: реализовано и проверено локально 2026-08-29; reference commit —
+`5398f909829f5db1b5052087f5a826c2bbcd5244`.
+
 ## Цель
 
 Упростить input-security по философии Lucky Hair Studio commit
@@ -54,4 +57,3 @@ runtime-состояний.
 - Отменённый Router HTTP-запрос может уже быть принят и оплачен провайдером.
 - При выключенном semantic validator снижается контроль тона/связности, но не
   локальные canary, leak, PII, placeholder и fact checks.
-

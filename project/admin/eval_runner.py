@@ -32,7 +32,6 @@ from moroz.security.guardrails import check_input
 from moroz.security.input_security import (
     InputSecurityDecision,
     LLMInputSecurityClassifier,
-    needs_input_security_review,
 )
 from moroz.security.llm_gateway import PrimaryReserveGateway, SDKProvider
 from moroz.security.output_validator import (
@@ -81,7 +80,12 @@ ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL = resolve_provider_tuple(
     (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
 )
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
-SECURITY_MODEL = LLM_MODEL
+SECURITY_MODEL, SECURITY_API_KEY, SECURITY_BASE_URL = resolve_provider_tuple(
+    os.environ,
+    "SECURITY",
+    (ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL),
+)
+SECURITY_MAX_TOKENS = int(os.getenv("SECURITY_MAX_TOKENS", "10"))
 VALIDATOR_MODEL = LLM_MODEL
 
 COMPACT_MODEL, COMPACT_API_KEY, COMPACT_BASE_URL = resolve_provider_tuple(
@@ -133,12 +137,13 @@ def _build_router() -> LLMIntentRouter:
 
 def _build_security_classifier() -> LLMInputSecurityClassifier:
     _init_clients()
+    security_kind = _detect_kind(SECURITY_MODEL, SECURITY_BASE_URL)
     primary = SDKProvider(
-        _primary,
-        _primary_kind,
-        LLM_MODEL,
-        LLM_TEMPERATURE,
-        LLM_MAX_TOKENS,
+        _create_client(SECURITY_API_KEY, SECURITY_BASE_URL, security_kind),
+        security_kind,
+        SECURITY_MODEL,
+        0.0,
+        SECURITY_MAX_TOKENS,
     )
     reserve = (
         SDKProvider(
@@ -151,7 +156,7 @@ def _build_security_classifier() -> LLMInputSecurityClassifier:
         if _reserve is not None
         else None
     )
-    return LLMInputSecurityClassifier(PrimaryReserveGateway(primary, reserve))
+    return LLMInputSecurityClassifier(primary, reserve)
 
 
 def _build_output_validator() -> LLMOutputValidator:
@@ -693,28 +698,7 @@ async def run_security_case(
         else:
             session = PiiSession()
             masked_input = session.mask(raw_input).text
-            masked_context = [
-                {
-                    "role": item["role"],
-                    "content": session.mask(item["content"]).text,
-                }
-                for item in input_data["context"]
-            ]
-            route = deterministic_route(masked_input)
-            if needs_input_security_review(
-                guard.action,
-                route_unresolved=route is None,
-                has_context=bool(masked_context),
-            ):
-                decision = (
-                    await classifier.classify(masked_input, masked_context)
-                ).decision
-            else:
-                decision = _SecurityEvalDecision(
-                    "allow",
-                    "local",
-                    guard.code,
-                )
+            decision = (await classifier.classify(masked_input)).decision
         ok, reason = security_case_diff(case["expected_data"], decision)
         actual_data = {
             "action": decision.action,

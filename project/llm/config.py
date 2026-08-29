@@ -62,6 +62,16 @@ ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL = resolve_provider_tuple(
     (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
 )
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
+SECURITY_MODEL, SECURITY_API_KEY, SECURITY_BASE_URL = resolve_provider_tuple(
+    os.environ,
+    "SECURITY",
+    (ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL),
+)
+SECURITY_MAX_TOKENS = int(os.getenv("SECURITY_MAX_TOKENS", "10"))
+OUTPUT_VALIDATOR_ENABLED = _parse_boolean(
+    os.getenv("OUTPUT_VALIDATOR_ENABLED"),
+    default=False,
+)
 COMPACT_MODEL, COMPACT_API_KEY, COMPACT_BASE_URL = resolve_provider_tuple(
     os.environ,
     "COMPACT",

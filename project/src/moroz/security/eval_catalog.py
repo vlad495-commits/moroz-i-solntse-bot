@@ -18,7 +18,9 @@ class _ScriptedProvider:
         self._responses = tuple(responses)
         self.calls = 0
 
-    async def complete(self, _request: LLMRequest) -> LLMResponse:
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        if request.purpose == "security":
+            return LLMResponse("OK", 0, 0, 0, 0, "catalog-eval-security")
         text = self._responses[self.calls]
         self.calls += 1
         return LLMResponse(text, 0, 0, 0, 0, "catalog-eval")

@@ -764,10 +764,11 @@
 
         <div id="worker-llm" class="node purple wide-node">
           <small>security pipeline + LLM gateway</small>
-          <h3>Guardrails → PII masking → LLM → output validator</h3>
+          <h3>Local guards → PII → Security + Router → LLM → local output check</h3>
           <p>
-            Primary/reserve provider, контролируемый retry и безопасный fallback.
-            Результат содержит text, model и token usage.
+            Security видит только current masked text и отвечает OK/BLOCK; Router
+            стартует параллельно, но закрыт до allow. Semantic output-validator
+            опционален, локальные canary/leak/PII/fact checks обязательны.
           </p>
         </div>
         <div class="arrow"></div>

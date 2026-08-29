@@ -18,6 +18,10 @@ from moroz.messaging.outbox import process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
 from moroz.security.llm_gateway import LLMResponse
+from moroz.security.input_security import (
+    InputSecurityDecision,
+    InputSecurityVerdict,
+)
 from moroz.security.pipeline import SecurityPipeline
 from moroz.security.validator import extract_structured_facts
 from worker.main import MessageTaskHandler
@@ -48,7 +52,7 @@ class SecurityOnlyGateway(ForbiddenGateway):
         if request.purpose != "security":
             raise AssertionError("stale catalog must not call answer LLM")
         return LLMResponse(
-            '{"action":"allow","category":"safe"}',
+            "OK",
             1, 1, 0, 2, "security-test",
         )
 
@@ -60,6 +64,13 @@ class ForbiddenRouter:
     async def route(self, _text, _context):
         self.calls += 1
         raise AssertionError("deterministic catalog route must not call Router")
+
+
+class AllowingInputSecurity:
+    async def classify(self, _masked_text):
+        return InputSecurityVerdict(
+            InputSecurityDecision("allow", "llm", "ok")
+        )
 
 
 class CatalogRepository:
@@ -124,6 +135,7 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
         "",
         extract_structured_facts(""),
         router=router,
+        input_security=AllowingInputSecurity(),
     )
 
     async def llm(text, context, *, recent_message_count, catalog):
@@ -314,7 +326,12 @@ async def test_catalog_reply_rolls_back_when_outbound_insert_fails(database):
         )
 
     gateway = ForbiddenGateway()
-    pipeline = SecurityPipeline(gateway, "", extract_structured_facts(""))
+    pipeline = SecurityPipeline(
+        gateway,
+        "",
+        extract_structured_facts(""),
+        input_security=AllowingInputSecurity(),
+    )
 
     async def llm(text, context, *, recent_message_count, catalog):
         return await pipeline.respond(

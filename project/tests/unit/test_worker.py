@@ -173,10 +173,10 @@ async def test_input_security_alert_uses_only_static_allowlisted_fields():
     router = SimpleNamespace(emit=AsyncMock(return_value=True))
 
     callback = worker_main.build_input_security_alert(router)
-    await callback("security_unavailable")
+    await callback("private-provider-payload")
 
     router.emit.assert_awaited_once_with(
-        code="security_unavailable",
+        code="security_down",
         subject="input_security",
         severity="CRITICAL",
         text="Input Security classifier unavailable or invalid",

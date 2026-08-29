@@ -128,9 +128,9 @@ def _build_alert_router(redis_client, telegram: Bot):
 
 
 def build_input_security_alert(alert_router):
-    async def alert(code: str) -> None:
+    async def alert(_code: str) -> None:
         await alert_router.emit(
-            code=code,
+            code="security_down",
             subject="input_security",
             severity="CRITICAL",
             text="Input Security classifier unavailable or invalid",

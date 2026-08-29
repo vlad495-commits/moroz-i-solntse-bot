@@ -10,6 +10,10 @@ from moroz.security.llm_gateway import (
     PrimaryReserveGateway,
     RetryableLLMError,
 )
+from moroz.security.input_security import (
+    InputSecurityDecision,
+    InputSecurityVerdict,
+)
 from moroz.security.pipeline import SAFE_OUTPUT_FALLBACK, SecurityPipeline
 from moroz.security.validator import extract_structured_facts
 
@@ -25,6 +29,13 @@ class _ScriptedProvider:
         if isinstance(event, BaseException):
             raise event
         return event
+
+
+class _AllowingInputSecurity:
+    async def classify(self, _masked_text: str) -> InputSecurityVerdict:
+        return InputSecurityVerdict(
+            InputSecurityDecision("allow", "llm", "ok")
+        )
 
 
 def _local_response(text: str, model: str) -> LLMResponse:
@@ -67,21 +78,16 @@ async def evaluate_structural_case(
         expected_calls = (1, 1)
         expected_text = SAFE_OUTPUT_FALLBACK
     else:
-        primary = _ScriptedProvider(
-            RetryableLLMError(),
-            _local_response(
-                '{"action":"allow","category":"safe"}',
-                "validator",
-            ),
-        )
+        primary = _ScriptedProvider(RetryableLLMError())
         reserve = _ScriptedProvider(_local_response(reserve_reply, "reserve"))
-        expected_calls = (2, 1)
+        expected_calls = (1, 1)
         expected_text = reserve_reply
 
     result = await SecurityPipeline(
         PrimaryReserveGateway(primary, reserve),
         "",
         extract_structured_facts(""),
+        input_security=_AllowingInputSecurity(),
     ).respond(
         str(case.get("input") or case.get("question") or "Безопасный вопрос"),
         [],

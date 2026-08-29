@@ -6,10 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from moroz.messaging.router import deterministic_route
 from moroz.security.guardrails import check_input
-from moroz.security.input_security import needs_input_security_review
-from moroz.security.pii import PiiSession
 
 
 DATASET = Path("/workspace/llm/eval/security_dataset.json")
@@ -21,6 +18,7 @@ CATEGORY_COUNTS = {
     "context_poisoning": 4,
     "false_positive": 10,
 }
+V2_ALWAYS_LLM_KEYS = {f"security-fp-0{index}" for index in range(1, 7)}
 
 
 def test_security_dataset_has_stable_unique_contract():
@@ -76,15 +74,12 @@ def test_security_dataset_covers_provider_quality_both_ways():
     json.loads(DATASET.read_text(encoding="utf-8")),
     ids=lambda case: case["case_key"],
 )
-def test_security_dataset_source_matches_runtime_boundary(case):
+def test_security_dataset_source_matches_versioned_boundary(case):
     guard = check_input(case["input"], recent_message_count=0)
-    masked_input = PiiSession().mask(case["input"]).text
-    needs_llm = needs_input_security_review(
-        guard.action,
-        route_unresolved=(
-            guard.action == "allow" and deterministic_route(masked_input) is None
-        ),
-        has_context=bool(case["context"]),
-    )
+    expected_source = "local" if guard.action in {"block", "stop", "escalate"} else "llm"
 
-    assert case["expected_source"] == ("llm" if needs_llm else "local")
+    if case["case_key"] in V2_ALWAYS_LLM_KEYS:
+        assert case["expected_source"] == "local"
+        assert expected_source == "llm"
+    else:
+        assert case["expected_source"] == expected_source

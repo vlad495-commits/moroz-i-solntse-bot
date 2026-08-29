@@ -14,8 +14,8 @@ class CapturingClassifier:
         self.verdict = verdict
         self.calls = []
 
-    async def classify(self, text, context):
-        self.calls.append((text, context))
+    async def classify(self, text):
+        self.calls.append(text)
         if isinstance(self.verdict, Exception):
             raise self.verdict
         return self.verdict
@@ -51,15 +51,17 @@ def test_security_case_diff_compares_action_and_source_only():
 
 
 @pytest.mark.asyncio
-async def test_local_case_never_calls_classifier_answer_router_or_judge(monkeypatch):
-    classifier = CapturingClassifier(AssertionError("classifier must stay unused"))
+async def test_local_allow_is_masked_and_always_checked_by_classifier(monkeypatch):
+    classifier = CapturingClassifier(
+        InputSecurityVerdict(InputSecurityDecision("allow", "llm", "ok"))
+    )
     case = security_case(
         question="Хочу записаться, мой телефон +7 000 000-00-01",
         input_data={
             "input": "Хочу записаться, мой телефон +7 000 000-00-01",
             "context": [],
         },
-        expected_data={"action": "allow", "source": "local"},
+        expected_data={"action": "allow", "source": "llm"},
     )
     saved = {}
 
@@ -78,18 +80,20 @@ async def test_local_case_never_calls_classifier_answer_router_or_judge(monkeypa
     result = await eval_runner.run_security_case(case, 80, classifier=classifier)
 
     assert result["verdict"] == "pass"
-    assert classifier.calls == []
+    assert len(classifier.calls) == 1
+    assert "+7 000 000-00-01" not in classifier.calls[0]
+    assert "<PII_" in classifier.calls[0]
     assert saved["actual_data"] == {
         "action": "allow",
-        "source": "local",
-        "reason_code": "input_allowed",
+        "source": "llm",
+        "reason_code": "ok",
     }
     assert saved["actual_answer"] == ""
     assert saved["check_layer"] == "security"
 
 
 @pytest.mark.asyncio
-async def test_quality_case_masks_current_and_context_before_classifier(monkeypatch):
+async def test_quality_case_sends_only_masked_current_to_classifier(monkeypatch):
     classifier = CapturingClassifier(
         InputSecurityVerdict(
             InputSecurityDecision("allow", "llm", "safe"),
@@ -112,11 +116,9 @@ async def test_quality_case_masks_current_and_context_before_classifier(monkeypa
         return 702
 
     monkeypatch.setattr(eval_runner.evdb, "save_result", save_result)
-    monkeypatch.setattr(eval_runner, "deterministic_route", lambda _text: None)
-
     result = await eval_runner.run_security_case(case, 81, classifier=classifier)
 
-    sent = repr(classifier.calls)
+    sent = classifier.calls[0]
     assert "+7 000 000-00-01" not in sent
     assert "client01@example.invalid" not in sent
     assert "<PII_" in sent
@@ -125,7 +127,7 @@ async def test_quality_case_masks_current_and_context_before_classifier(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_history_forces_classifier_even_for_deterministic_route(monkeypatch):
+async def test_history_is_not_sent_to_classifier(monkeypatch):
     classifier = CapturingClassifier(
         InputSecurityVerdict(InputSecurityDecision("allow", "llm", "safe"))
     )
@@ -146,7 +148,7 @@ async def test_history_forces_classifier_even_for_deterministic_route(monkeypatc
     result = await eval_runner.run_security_case(case, 84, classifier=classifier)
 
     assert result["verdict"] == "pass"
-    assert len(classifier.calls) == 1
+    assert classifier.calls == ["Хочу записаться"]
 
 
 @pytest.mark.asyncio
@@ -160,8 +162,6 @@ async def test_security_errors_store_and_log_only_error_type(monkeypatch, caplog
         return 703
 
     monkeypatch.setattr(eval_runner.evdb, "save_result", save_result)
-    monkeypatch.setattr(eval_runner, "deterministic_route", lambda _text: None)
-
     with caplog.at_level(logging.ERROR, logger=eval_runner.logger.name):
         result = await eval_runner.run_security_case(
             security_case(question="private-question-sentinel"),
@@ -221,15 +221,28 @@ def test_security_classifier_uses_runtime_provider_settings(monkeypatch):
         def __init__(self, client, kind, model, temperature, max_tokens):
             captured.append((client, kind, model, temperature, max_tokens))
 
+    security_client = object()
+    reserve_client = object()
+    monkeypatch.setattr(eval_runner, "_create_client", lambda *_args: security_client)
+    monkeypatch.setattr(eval_runner, "SECURITY_MODEL", "security-model")
+    monkeypatch.setattr(eval_runner, "SECURITY_API_KEY", "security-key")
+    monkeypatch.setattr(eval_runner, "SECURITY_BASE_URL", "https://security.invalid")
+    monkeypatch.setattr(eval_runner, "SECURITY_MAX_TOKENS", 10)
     monkeypatch.setattr(eval_runner, "_init_clients", lambda: None)
-    monkeypatch.setattr(eval_runner, "_primary", object())
-    monkeypatch.setattr(eval_runner, "_primary_kind", "openai")
-    monkeypatch.setattr(eval_runner, "_reserve", None)
+    monkeypatch.setattr(eval_runner, "_reserve", reserve_client)
+    monkeypatch.setattr(eval_runner, "_reserve_kind", "openai")
+    monkeypatch.setattr(eval_runner, "RESERVE_MODEL", "reserve-model")
     monkeypatch.setattr(eval_runner, "SDKProvider", Provider)
 
     eval_runner._build_security_classifier()
 
-    assert captured[0][3:] == (
-        eval_runner.LLM_TEMPERATURE,
-        eval_runner.LLM_MAX_TOKENS,
-    )
+    assert captured == [
+        (security_client, "openai", "security-model", 0.0, 10),
+        (
+            reserve_client,
+            "openai",
+            "reserve-model",
+            eval_runner.LLM_TEMPERATURE,
+            eval_runner.LLM_MAX_TOKENS,
+        ),
+    ]

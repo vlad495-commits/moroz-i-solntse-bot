@@ -12,10 +12,7 @@ from moroz.messaging.router import (
 )
 from moroz.security.guardrails import check_input
 from moroz.security.context_compactor import ContextCompactor
-from moroz.security.input_security import (
-    LLMInputSecurityClassifier,
-    needs_input_security_review,
-)
+from moroz.security.input_security import LLMInputSecurityClassifier
 from moroz.security.llm_gateway import (
     LLMRequest,
     LLMResponse,
@@ -23,7 +20,6 @@ from moroz.security.llm_gateway import (
     LLMUnavailable,
     NonRetryableLLMError,
 )
-from moroz.security.output_validator import LLMOutputValidator
 from moroz.security.pii import PiiSession, UnknownPlaceholder
 from moroz.security.validator import (
     StructuredFacts,
@@ -131,7 +127,7 @@ class SecurityPipeline:
         self.input_security = input_security or LLMInputSecurityClassifier(
             gateway
         )
-        self.output_validator = output_validator or LLMOutputValidator(gateway)
+        self.output_validator = output_validator
         self.context_compactor = context_compactor
 
     async def respond(
@@ -169,50 +165,41 @@ class SecurityPipeline:
 
         local_route = deterministic_route(masked_current.text)
         needs_router = local_route is None and self.router is not None
-        needs_security_llm = needs_input_security_review(
-            decision.action,
-            route_unresolved=needs_router,
-            has_context=bool(masked_context),
+        security_task = asyncio.create_task(
+            self.input_security.classify(masked_current.text)
         )
-        security_task = (
+        router_task = (
             asyncio.create_task(
-                self.input_security.classify(
-                    masked_current.text,
-                    masked_context,
-                )
+                self.router.route(masked_current.text, masked_context)
             )
-            if needs_security_llm
+            if needs_router
             else None
         )
-        router_task = None
         try:
-            if security_task is not None:
-                try:
-                    security_verdict = await security_task
-                except Exception:
-                    await _cancel_and_drain(router_task)
-                    return _aggregate(
-                        accumulated,
-                        INPUT_BLOCK_REPLY,
-                        "security-fallback",
-                    )
-                if security_verdict.usage:
-                    accumulated.append(_usage_only(security_verdict.usage))
-                if security_verdict.decision.action != "allow":
-                    return _aggregate(
-                        accumulated,
-                        INPUT_BLOCK_REPLY,
-                        (
-                            "security-fallback"
-                            if security_verdict.decision.source == "fallback"
-                            else "security-llm"
-                        ),
-                    )
-
-            if needs_router:
-                router_task = asyncio.create_task(
-                    self.router.route(masked_current.text, masked_context)
+            try:
+                security_verdict = await security_task
+            except Exception:
+                await _cancel_and_drain(router_task)
+                return _aggregate(
+                    accumulated,
+                    INPUT_BLOCK_REPLY,
+                    "security-fallback",
                 )
+            if security_verdict.usage:
+                accumulated.append(_usage_only(security_verdict.usage))
+            if security_verdict.decision.action != "allow":
+                await _cancel_and_drain(router_task)
+                return _aggregate(
+                    accumulated,
+                    INPUT_BLOCK_REPLY,
+                    (
+                        "security-fallback"
+                        if security_verdict.decision.source == "fallback"
+                        else "security-llm"
+                    ),
+                )
+
+            if router_task is not None:
                 try:
                     router_verdict = await router_task
                 except Exception:
@@ -326,26 +313,7 @@ class SecurityPipeline:
                 forbidden_raw=forbidden_raw,
             )
             if verdict.ok:
-                semantic = await self.output_validator.validate(
-                    masked_input=masked_current.text,
-                    masked_context=answer_context,
-                    route_metadata=route_metadata,
-                    candidate=answer.text,
-                )
-                if semantic.usage:
-                    accumulated.append(_usage_only(semantic.usage))
-                latest_usage = semantic.usage[-1] if semantic.usage else None
-                logger.info(
-                    "output_validator_decision attempt=%s action=%s source=%s "
-                    "reason_code=%s model=%s total_tokens=%s",
-                    attempt,
-                    semantic.decision.action,
-                    semantic.decision.source,
-                    semantic.decision.reason_code,
-                    latest_usage.model if latest_usage else "none",
-                    sum(item.total_tokens for item in semantic.usage),
-                )
-                if semantic.decision.action == "allow":
+                if self.output_validator is None:
                     try:
                         restored = session.restore_validated(
                             answer.text,
@@ -356,7 +324,37 @@ class SecurityPipeline:
                     else:
                         return _aggregate(accumulated, restored, answer.model)
                 else:
-                    validator_code = semantic.decision.reason_code
+                    semantic = await self.output_validator.validate(
+                        masked_input=masked_current.text,
+                        masked_context=answer_context,
+                        route_metadata=route_metadata,
+                        candidate=answer.text,
+                    )
+                    if semantic.usage:
+                        accumulated.append(_usage_only(semantic.usage))
+                    latest_usage = semantic.usage[-1] if semantic.usage else None
+                    logger.info(
+                        "output_validator_decision attempt=%s action=%s source=%s "
+                        "reason_code=%s model=%s total_tokens=%s",
+                        attempt,
+                        semantic.decision.action,
+                        semantic.decision.source,
+                        semantic.decision.reason_code,
+                        latest_usage.model if latest_usage else "none",
+                        sum(item.total_tokens for item in semantic.usage),
+                    )
+                    if semantic.decision.action == "allow":
+                        try:
+                            restored = session.restore_validated(
+                                answer.text,
+                                masked_current.placeholders,
+                            )
+                        except UnknownPlaceholder:
+                            validator_code = "unknown_placeholder"
+                        else:
+                            return _aggregate(accumulated, restored, answer.model)
+                    else:
+                        validator_code = semantic.decision.reason_code
             else:
                 validator_code = verdict.code
             if initial_validator_code is None:

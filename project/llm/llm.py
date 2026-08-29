@@ -45,6 +45,7 @@ from config import (
     LLM_TEMPERATURE,
     LLM_MAX_TOKENS,
     LLM_REQUEST_TIMEOUT_SEC,
+    OUTPUT_VALIDATOR_ENABLED,
     PROMPT_RELOAD_CHANNEL,
     REDIS_URL,
     RESERVE_API_KEY,
@@ -54,6 +55,10 @@ from config import (
     ROUTER_BASE_URL,
     ROUTER_MAX_TOKENS,
     ROUTER_MODEL,
+    SECURITY_API_KEY,
+    SECURITY_BASE_URL,
+    SECURITY_MAX_TOKENS,
+    SECURITY_MODEL,
     SYSTEM_PROMPT_PATH,
 )
 
@@ -246,6 +251,14 @@ def init_llm(
         0.0,
         ROUTER_MAX_TOKENS,
     )
+    security_kind = _detect_kind(SECURITY_MODEL, SECURITY_BASE_URL)
+    security_provider = SDKProvider(
+        _create_client(SECURITY_API_KEY, SECURITY_BASE_URL, security_kind),
+        security_kind,
+        SECURITY_MODEL,
+        0.0,
+        SECURITY_MAX_TOKENS,
+    )
     compact_kind = _detect_kind(COMPACT_MODEL, COMPACT_BASE_URL)
     compact_provider = SDKProvider(
         _create_client(COMPACT_API_KEY, COMPACT_BASE_URL, compact_kind),
@@ -261,10 +274,15 @@ def init_llm(
         extract_structured_facts(_system_prompt),
         router=LLMIntentRouter(router_provider),
         input_security=LLMInputSecurityClassifier(
-            gateway,
+            security_provider,
+            reserve,
             security_alert,
         ),
-        output_validator=LLMOutputValidator(gateway, output_alert),
+        output_validator=(
+            LLMOutputValidator(gateway, output_alert)
+            if OUTPUT_VALIDATOR_ENABLED
+            else None
+        ),
         context_compactor=ContextCompactor(
             compact_provider,
             compact_alert,

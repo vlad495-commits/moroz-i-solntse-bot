@@ -100,9 +100,7 @@ class BlockingSecurityGateway:
         if request.purpose == "security":
             self.started.set()
             await self.release.wait()
-            return _response(
-                json.dumps({"action": "allow", "category": "safe"})
-            )
+            return _response("OK")
         if request.purpose == "validator":
             return _response(
                 json.dumps({"action": "allow", "category": "safe"})
@@ -115,6 +113,16 @@ class AllowingOutputValidator:
         return OutputValidationVerdict(
             OutputValidationDecision("allow", "llm", "safe")
         )
+
+
+class AllowingInputSecurity:
+    async def classify(self, _masked_text):
+        from moroz.security.input_security import (
+            InputSecurityDecision,
+            InputSecurityVerdict,
+        )
+
+        return InputSecurityVerdict(InputSecurityDecision("allow", "llm", "ok"))
 
 
 class ImmediateRouter:
@@ -343,7 +351,7 @@ async def test_no_downstream_state_before_allow_and_no_synthetic_route_state(dat
         )
     )
     await asyncio.wait_for(gateway.started.wait(), 1)
-    assert not router.started.is_set()
+    await asyncio.wait_for(router.started.wait(), 1)
 
     async with database.acquire() as connection:
         before_allow = await connection.fetchrow(
@@ -357,7 +365,6 @@ async def test_no_downstream_state_before_allow_and_no_synthetic_route_state(dat
     assert tuple(before_allow.values()) == (0, 0, 0)
 
     gateway.release.set()
-    await asyncio.wait_for(router.started.wait(), 1)
     await task
 
     async with database.acquire() as connection:
@@ -408,18 +415,16 @@ async def test_security_pipeline_masks_each_critical_pii_class(
     user_message,
     placeholder,
 ):
-    primary = ScriptedProvider([
-        _response(),
-        _response(json.dumps({"action": "allow", "category": "safe"})),
-    ])
+    primary = ScriptedProvider([_response()])
     result = await SecurityPipeline(
         PrimaryReserveGateway(primary),
         "",
         extract_structured_facts(""),
+        input_security=AllowingInputSecurity(),
     ).respond(user_message, [])
 
     assert result.text == "Безопасный ответ."
-    assert primary.calls == 2
+    assert primary.calls == 1
     sent = repr(primary.requests)
     assert placeholder in sent
     assert user_message not in sent
@@ -445,6 +450,7 @@ async def test_security_pipeline_enforces_provider_fallback_matrix(
         PrimaryReserveGateway(primary, reserve),
         "",
         extract_structured_facts(""),
+        input_security=AllowingInputSecurity(),
         output_validator=AllowingOutputValidator(),
     ).respond("Сколько стоит криокапсула?", [])
 
