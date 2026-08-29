@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+import moroz.messaging.router as router_module
 from moroz.messaging.router import (
     ROUTER_RESPONSE_FORMAT,
     LLMIntentRouter,
@@ -34,29 +35,38 @@ def router_response(text: str) -> LLMResponse:
     return LLMResponse(text, 11, 3, 2, 14, "router-model", (usage,))
 
 
+def test_routes_are_the_minimal_single_route_allowlist() -> None:
+    assert router_module.ROUTES == (
+        "consultation",
+        "booking",
+        "booking_management",
+        "escalation",
+        "smalltalk",
+        "offtopic",
+        "other",
+    )
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("Сколько стоит криотерапия?", ("faq",)),
-        ("Хочу записаться", ("booking",)),
-        ("Перенесите мою запись", ("booking_change",)),
-        ("Отмените мою запись", ("booking_cancel",)),
-        ("Хочу пожаловаться", ("complaint",)),
-        ("Позовите администратора", ("human_handoff",)),
-        ("Спасибо!", ("smalltalk",)),
+        ("Сколько стоит криотерапия?", "consultation"),
+        ("Какой у вас телефон?", "consultation"),
+        ("Хочу записаться", "booking"),
+        ("Перенесите мою запись", "booking_management"),
+        ("Отмените мою запись", "booking_management"),
+        ("Перенесите или отмените запись", "booking_management"),
+        ("Хочу пожаловаться", "escalation"),
+        ("Позовите администратора", "escalation"),
+        ("Верните деньги за услугу", "escalation"),
+        ("Спасибо!", "smalltalk"),
     ],
 )
-def test_deterministic_route_resolves_only_single_explicit_intent(
+def test_deterministic_route_resolves_only_unambiguous_cases(
     text: str,
-    expected: tuple[str, ...],
+    expected: str,
 ) -> None:
-    assert deterministic_route(text) == RouteDecision(
-        intents=expected,
-        requires_clarification=False,
-        source="deterministic",
-        confidence=None,
-        reason_code=None,
-    )
+    assert deterministic_route(text) == RouteDecision(expected, 1.0)
 
 
 @pytest.mark.parametrize(
@@ -65,20 +75,27 @@ def test_deterministic_route_resolves_only_single_explicit_intent(
         "Да, давайте завтра",
         "Нет, другую",
         "Сколько стоит и можно записаться?",
-        "Перенесите или отмените запись",
         "А это как?",
+        "Какой сегодня курс доллара?",
+        "У вас есть вакансии?",
     ],
 )
-def test_deterministic_route_returns_none_for_context_or_multi_intent(
+def test_deterministic_route_defers_context_mixed_and_nonlocal_cases(
     text: str,
 ) -> None:
     assert deterministic_route(text) is None
-    assert route_message(text) == RouteDecision(
-        ("unknown",),
-        True,
-        source="fallback",
-        reason_code="unresolved",
-    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Я недоволен ценой и хочу записаться",
+        "Отмените запись и позовите руководителя",
+        "Спасибо, но хочу пожаловаться",
+    ],
+)
+def test_explicit_escalation_has_safe_local_priority(text: str) -> None:
+    assert deterministic_route(text) == RouteDecision("escalation", 1.0)
 
 
 @pytest.mark.parametrize(
@@ -91,50 +108,52 @@ def test_deterministic_route_returns_none_for_context_or_multi_intent(
         "У вас есть мой телефон?",
     ],
 )
-def test_deterministic_route_does_not_guess_intent_from_contact_metadata(
+def test_deterministic_route_does_not_guess_from_contact_metadata(
     text: str,
 ) -> None:
     assert deterministic_route(text) is None
 
 
 @pytest.mark.parametrize(
-    "text",
+    ("text", "expected"),
     [
-        "Какой у вас телефон?",
-        "Какие у вас контакты?",
-        "Подскажите контакты центра",
-        "Ваш телефон?",
+        ("Спасибо", "smalltalk"),
+        ("Спасибо!", "smalltalk"),
+        ("Большое спасибо", "smalltalk"),
+        ("Спасибо, хочу записаться", "booking"),
+        ("Спасибо, но всё плохо", None),
     ],
 )
-def test_deterministic_route_resolves_explicit_center_contact_questions(
+def test_smalltalk_rule_is_anchored_to_the_whole_message(
     text: str,
+    expected: str | None,
 ) -> None:
-    assert deterministic_route(text) == RouteDecision(("faq",), False)
+    decision = deterministic_route(text)
+    assert (decision.route if decision else None) == expected
+
+
+def test_route_message_uses_safe_general_fallback() -> None:
+    assert route_message("Неоднозначный текст") == RouteDecision(
+        "consultation",
+        0.0,
+    )
 
 
 @pytest.mark.asyncio
-async def test_llm_router_accepts_strict_multi_intent_and_derives_conflict() -> None:
+async def test_llm_router_accepts_one_strict_route() -> None:
     provider = ScriptedProvider(
         router_response(
-            json.dumps(
-                {
-                    "intents": ["booking_change", "booking_cancel"],
-                    "confidence": 0.91,
-                }
-            )
+            json.dumps({"route": "booking", "confidence": 0.91})
         )
     )
-
     verdict = await LLMIntentRouter(provider).route(
-        "Перенесите или отмените запись",
-        [],
+        "Да, давайте завтра",
+        [{"role": "assistant", "content": "Хотите записаться?"}],
     )
-
-    assert verdict.decision.intents == ("booking_change", "booking_cancel")
-    assert verdict.decision.requires_clarification is True
+    assert verdict.decision == RouteDecision("booking", 0.91)
     assert verdict.source == "llm"
-    assert verdict.confidence == 0.91
     assert verdict.reason_code is None
+    assert verdict.confidence == 0.91
     assert provider.requests[0].purpose == "router"
     assert provider.requests[0].response_format == ROUTER_RESPONSE_FORMAT
 
@@ -142,15 +161,13 @@ async def test_llm_router_accepts_strict_multi_intent_and_derives_conflict() -> 
 @pytest.mark.asyncio
 async def test_router_context_is_last_six_roles_and_2000_chars() -> None:
     provider = ScriptedProvider(
-        router_response('{"intents":["faq"],"confidence":0.8}')
+        router_response('{"route":"consultation","confidence":0.8}')
     )
     context = [
         {"role": "user", "content": f"message-{index}-" + "x" * 500}
         for index in range(8)
     ] + [{"role": "system", "content": "must-not-leave"}]
-
     await LLMIntentRouter(provider).route("Сколько стоит?", context)
-
     prompt = provider.requests[0].messages[-1]["content"]
     assert "message-0" not in prompt
     assert "message-1" not in prompt
@@ -163,28 +180,25 @@ async def test_router_context_is_last_six_roles_and_2000_chars() -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        '```json\n{"intents":["faq"],"confidence":0.9}\n```',
-        '{"intents":["faq"],"confidence":0.9,"extra":true}',
-        '{"intents":["unknown-intent"],"confidence":0.9}',
-        '{"intents":["faq","faq"],"confidence":0.9}',
-        '{"intents":["faq","booking","other","unknown"],"confidence":0.9}',
-        '{"intents":[],"confidence":0.9}',
-        '{"intents":["faq"],"confidence":true}',
-        '{"intents":["faq"],"confidence":NaN}',
-        '{"intents":["faq"],"confidence":1.1}',
+        '```json\n{"route":"consultation","confidence":0.9}\n```',
+        'result: {"route":"consultation","confidence":0.9}',
+        '{"route":"consultation","confidence":0.9,"extra":true}',
+        '{"route":"unknown","confidence":0.9}',
+        '{"intents":["consultation"],"confidence":0.9}',
+        '{"route":["consultation"],"confidence":0.9}',
+        '{"route":"consultation","confidence":true}',
+        '{"route":"consultation","confidence":NaN}',
+        '{"route":"consultation","confidence":1.1}',
+        '{"route":"consultation","confidence":-0.1}',
     ],
 )
-async def test_invalid_router_output_uses_unknown_without_false_confidence(
-    raw: str,
-) -> None:
+async def test_invalid_router_output_uses_safe_general_route(raw: str) -> None:
     verdict = await LLMIntentRouter(
         ScriptedProvider(router_response(raw))
     ).route("Неоднозначный текст", [])
-
-    assert verdict.decision.intents == ("unknown",)
-    assert verdict.decision.requires_clarification is True
+    assert verdict.decision == RouteDecision("consultation", 0.0)
     assert verdict.source == "fallback"
-    assert verdict.confidence is None
+    assert verdict.confidence == 0.0
     assert verdict.reason_code == "invalid_router_output"
 
 
@@ -196,8 +210,8 @@ async def test_provider_failure_is_sanitized_and_cancellation_propagates(
     failed = await LLMIntentRouter(
         ScriptedProvider(LLMUnavailable(secret))
     ).route("Неоднозначный текст", [])
-    assert failed.decision.intents == ("unknown",)
-    assert failed.decision.requires_clarification is True
+    assert failed.decision == RouteDecision("consultation", 0.0)
+    assert failed.source == "fallback"
     assert failed.reason_code == "router_unavailable"
     assert secret not in caplog.text
 
@@ -205,20 +219,6 @@ async def test_provider_failure_is_sanitized_and_cancellation_propagates(
     with pytest.raises(asyncio.CancelledError) as raised:
         await LLMIntentRouter(ScriptedProvider(cancellation)).route("текст", [])
     assert raised.value is cancellation
-
-
-@pytest.mark.asyncio
-async def test_provider_failure_keeps_deterministic_route_resolved() -> None:
-    verdict = await LLMIntentRouter(
-        ScriptedProvider(LLMUnavailable())
-    ).route("Сколько стоит криотерапия?", [])
-
-    assert verdict.decision == RouteDecision(
-        ("faq",),
-        False,
-        source="fallback",
-        reason_code="router_unavailable",
-    )
 
 
 def test_router_verdict_is_immutable_and_does_not_echo_input() -> None:
