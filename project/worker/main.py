@@ -11,7 +11,11 @@ from aiogram import Bot
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 
-from config import CONTEXT_MESSAGES_LIMIT, DATA_RETENTION_DAYS
+from config import (
+    CONTEXT_MESSAGES_LIMIT,
+    DATA_RETENTION_DAYS,
+    YCLIENTS_CATALOG_GROUNDING_ENABLED,
+)
 from llm import generate_response, init_llm, prompt_reload_listener
 from moroz.booking.catalog import (
     CATALOG_SYNC_KIND,
@@ -208,6 +212,7 @@ class MessageTaskHandler:
         catalog_sync=None,
         retention_cleanup=None,
         catalog_repository=None,
+        catalog_grounding_enabled=False,
         clock=None,
         scheduler_handler=handle_scheduler_job,
     ):
@@ -222,7 +227,9 @@ class MessageTaskHandler:
         self._projection_sync = projection_sync
         self._catalog_sync = catalog_sync
         self._retention_cleanup = retention_cleanup
-        self._catalog_repository = catalog_repository
+        self._catalog_repository = (
+            catalog_repository if catalog_grounding_enabled else None
+        )
         self._clock = clock or (lambda: datetime.now(UTC))
         self._scheduler_handler = scheduler_handler
         self._system_scheduler_lock = asyncio.Lock()
@@ -953,6 +960,7 @@ async def run() -> None:
             catalog_sync=catalog_sync,
             retention_cleanup=retention_cleanup,
             catalog_repository=catalog_repository,
+            catalog_grounding_enabled=YCLIENTS_CATALOG_GROUNDING_ENABLED,
         )
         async def runtime_handler(task: QueueTask) -> None:
             if alert_router is None:

@@ -422,15 +422,15 @@ git commit -m "test: проведена полная приёмка staging-бо
 
 Critical/Important defects block release. Nuances are tracked with an explicit workaround and do not trigger speculative code changes.
 
-- [ ] **Step 2: Reproduce one defect at a time**
+- [x] **Step 2: Reproduce one defect at a time**
 
 Invoke systematic-debugging, trace the shared root cause and create the smallest failing automated test. Before code edits create an isolated `codex/pre-yclients-release-fixes` worktree using `using-git-worktrees`.
 
-- [ ] **Step 3: Implement minimal TDD fix**
+- [x] **Step 3: Implement minimal TDD fix**
 
 Invoke test-driven-development and ponytail. Fix the shared root cause with no new dependency or abstraction unless existing code cannot express the correction.
 
-- [ ] **Step 4: Verify and commit each logical fix**
+- [x] **Step 4: Verify and commit each logical fix**
 
 Run RED → GREEN, related regression set and `git diff --check`; update roadmap/changelog and commit with a concrete root-cause message such as `fix: сохранён контекст после сжатия истории`.
 

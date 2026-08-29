@@ -138,6 +138,7 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
         llm,
         TelegramSender(FakeTelegram(), repository),
         catalog_repository=catalog_repository,
+        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     task = QueueTask(
@@ -169,6 +170,44 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
     assert router.calls == 0
 
 
+async def test_pre_yclients_mode_skips_catalog_and_uses_normal_answer(database):
+    repository = MessageRepository(database)
+    assert await repository.accept(
+        incoming("catalog-disabled", "Сколько стоит криокапсула?")
+    )
+    catalog_repository = CatalogRepository(grounding())
+    calls = []
+
+    async def llm(text, context, *, recent_message_count):
+        calls.append((text, context, recent_message_count))
+        return LLMResponse(
+            "Криокапсула — 1 500 ₽ по базе знаний.",
+            10, 5, 0, 15, "answer-test",
+        )
+
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+        catalog_repository=catalog_repository,
+        catalog_grounding_enabled=False,
+        clock=lambda: NOW,
+    )
+    await handler.handle(QueueTask(
+        kind="process_message",
+        payload={"chat_id": "42", "update_ids": ["catalog-disabled"]},
+        idempotency_key=process_message_key(["catalog-disabled"]),
+    ))
+
+    async with database.acquire() as connection:
+        answer = await connection.fetchval(
+            "SELECT content FROM messages WHERE role = 'assistant'"
+        )
+    assert answer == "Криокапсула — 1 500 ₽ по базе знаний."
+    assert len(calls) == 1
+    assert catalog_repository.calls == []
+
+
 async def test_human_mode_never_reads_catalog_or_calls_llm(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming("catalog-human"))
@@ -194,6 +233,7 @@ async def test_human_mode_never_reads_catalog_or_calls_llm(database):
         forbidden_llm,
         TelegramSender(FakeTelegram(), repository),
         catalog_repository=ForbiddenCatalog(),
+        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     await handler.handle(QueueTask(
@@ -229,6 +269,7 @@ async def test_complex_catalog_grounding_reaches_llm_without_extra_history(datab
         llm,
         TelegramSender(FakeTelegram(), repository),
         catalog_repository=catalog_repository,
+        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     await handler.handle(QueueTask(
@@ -286,6 +327,7 @@ async def test_catalog_reply_rolls_back_when_outbound_insert_fails(database):
         llm,
         TelegramSender(FakeTelegram(), repository),
         catalog_repository=CatalogRepository(grounding()),
+        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     try:
@@ -341,6 +383,7 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
         llm,
         TelegramSender(FakeTelegram(), repository),
         catalog_repository=CatalogRepository(stale),
+        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     await handler.handle(QueueTask(

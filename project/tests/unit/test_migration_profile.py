@@ -200,6 +200,9 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "COMPACT_THRESHOLD": "${COMPACT_THRESHOLD:-30}",
         "COMPACT_KEEP_RECENT": "${COMPACT_KEEP_RECENT:-10}",
         "DATA_RETENTION_DAYS": "${DATA_RETENTION_DAYS:-1095}",
+        "YCLIENTS_CATALOG_GROUNDING_ENABLED": (
+            "${YCLIENTS_CATALOG_GROUNDING_ENABLED:-false}"
+        ),
         "YCLIENTS_PARTNER_TOKEN": "${YCLIENTS_PARTNER_TOKEN:-}",
         "YCLIENTS_USER_TOKEN": "${YCLIENTS_USER_TOKEN:-}",
         "YCLIENTS_COMPANY_ID": "${YCLIENTS_COMPANY_ID:-}",

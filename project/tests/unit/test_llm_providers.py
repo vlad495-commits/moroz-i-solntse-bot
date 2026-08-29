@@ -213,3 +213,16 @@ def test_default_compact_limits_are_valid():
         llm_config.COMPACT_THRESHOLD,
         llm_config.COMPACT_KEEP_RECENT,
     ) == (40, 30, 10)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, False), ("", False), ("false", False), ("TRUE", True), ("1", True)],
+)
+def test_catalog_grounding_flag_is_strict_and_defaults_off(value, expected):
+    assert llm_config._parse_boolean(value, default=False) is expected
+
+
+def test_catalog_grounding_flag_rejects_unknown_value():
+    with pytest.raises(ValueError, match="invalid boolean setting"):
+        llm_config._parse_boolean("sometimes", default=False)

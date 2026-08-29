@@ -29,6 +29,7 @@ REQUIRED = (
     "YCLIENTS_USER_TOKEN",
     "YCLIENTS_COMPANY_ID",
     "YCLIENTS_BASE_URL",
+    "YCLIENTS_CATALOG_GROUNDING_ENABLED",
     "BACKUP_ENCRYPTION_KEY",
 )
 
@@ -76,6 +77,15 @@ def validate(env: Mapping[str, str]) -> list[str]:
         errors.append("ADMIN_SESSION_SECRET must be at least 32 characters")
     if (env.get("ADMIN_COOKIE_SECURE") or "").strip().lower() != "true":
         errors.append("ADMIN_COOKIE_SECURE must be true in production")
+    if (
+        (env.get("YCLIENTS_CATALOG_GROUNDING_ENABLED") or "")
+        .strip()
+        .lower()
+        != "true"
+    ):
+        errors.append(
+            "YCLIENTS_CATALOG_GROUNDING_ENABLED must be true in production"
+        )
     webhook_secret = (env.get("TELEGRAM_WEBHOOK_SECRET") or "").strip()
     if webhook_secret and len(webhook_secret) < 16:
         errors.append("TELEGRAM_WEBHOOK_SECRET must be at least 16 characters")

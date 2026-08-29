@@ -8,6 +8,17 @@ from moroz.common.config import database_url_from_env
 from moroz.security.provider_config import resolve_provider_tuple
 
 
+def _parse_boolean(value: str | None, *, default: bool) -> bool:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return default
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("invalid boolean setting")
+
+
 def _validate_context_limits(
     context_limit: int,
     compact_threshold: int,
@@ -64,6 +75,10 @@ DATABASE_URL = database_url_from_env(os.environ, required=False)
 CONTEXT_MESSAGES_LIMIT = int(os.getenv("CONTEXT_MESSAGES_LIMIT", "40"))
 COMPACT_THRESHOLD = int(os.getenv("COMPACT_THRESHOLD", "30"))
 COMPACT_KEEP_RECENT = int(os.getenv("COMPACT_KEEP_RECENT", "10"))
+YCLIENTS_CATALOG_GROUNDING_ENABLED = _parse_boolean(
+    os.getenv("YCLIENTS_CATALOG_GROUNDING_ENABLED"),
+    default=False,
+)
 _validate_context_limits(
     CONTEXT_MESSAGES_LIMIT,
     COMPACT_THRESHOLD,
