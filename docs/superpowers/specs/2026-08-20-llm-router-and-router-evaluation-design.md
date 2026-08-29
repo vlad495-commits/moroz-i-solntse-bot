@@ -1,5 +1,7 @@
 # LLM Router + Router Evaluation — спецификация дизайна
 
+> **Историческая спецификация v1.** Она фиксирует реализованный и принятый 2026-08-25 multi-intent Router, immutable suite `router`, migration `0014` и real-provider acceptance `19/20`. Актуальный single-route контракт и причины совместимого перехода описаны в `docs/superpowers/specs/2026-08-29-simple-router-design.md`; v1 dataset, migration и сохранённые результаты не переписываются.
+
 ## Цель
 
 Добавить в текущий Telegram message pipeline Moroz i Solntse гибридную scripts-first маршрутизацию: однозначные команды, активные workflow и узкие локальные правила завершают выбор сценария без Router LLM; неоднозначные сообщения классифицирует отдельная дешёвая Router LLM. Runtime-компонент и Router Evaluation реализуются и принимаются одной парой.

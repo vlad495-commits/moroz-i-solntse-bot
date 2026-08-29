@@ -57,4 +57,3 @@ def test_downgrade_deletes_only_v2_owned_rows_in_dependency_order():
     assert result_delete < run_delete < case_delete
     assert downgrade.count("suite = 'router_v2'") >= 4
     assert "suite = 'router'" not in downgrade
-

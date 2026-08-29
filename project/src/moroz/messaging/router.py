@@ -76,17 +76,37 @@ class RouterVerdict:
         return self.decision.confidence
 
 
+_COMPLAINT_RULE = re.compile(
+    r"\b(?:(?:хочу|желаю|нужно)\s+(?:пожаловат\w*|"
+    r"оставить\s+(?:жалоб\w*|претензи\w*))|"
+    r"у\s+меня\s+(?:жалоб\w*|претензи\w*)|"
+    r"(?:я|мы)\s+недовол\w*|complaint)\b",
+    re.IGNORECASE,
+)
+_NEGATED_COMPLAINT_RULE = re.compile(
+    r"\b(?:(?:у\s+меня\s+)?(?:жалоб\w*|претензи\w*)\s+нет|"
+    r"не\s+(?:хочу\s+)?(?:пожаловат\w*|оставлять\s+"
+    r"(?:жалоб\w*|претензи\w*)))\b",
+    re.IGNORECASE,
+)
 _ESCALATION_RULES = (
     re.compile(
-        r"\b(?:жалоб\w*|пожаловат\w*|недовол\w*|претензи\w*|"
-        r"верн\w*\s+деньг\w*|возврат\w*\s+денег|"
-        r"списал\w*\s+деньг\w*|complaint|refund)\b",
+        r"\b(?:верн\w*\s+деньг\w*|возврат\w*\s+денег|"
+        r"списал\w*\s+деньг\w*|refund)\b",
         re.IGNORECASE,
     ),
     re.compile(
         r"\b(?:позовите|позвать|соедините|переведите|переключите)\s+"
         r"(?:меня\s+)?(?:с\s+)?(?:жив\w*\s+)?(?:администратор\w*|"
         r"человек\w*|оператор\w*|руководител\w*|сотрудник\w*)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:(?:хочу|нужно)\s+(?:поговорить|связаться)\s+(?:с\s+)?"
+        r"(?:администратор\w*|человек\w*|оператор\w*|"
+        r"руководител\w*|сотрудник\w*)|"
+        r"можно\s+(?:администратор\w*|человек\w*|оператор\w*|"
+        r"руководител\w*|сотрудник\w*))\b",
         re.IGNORECASE,
     ),
 )
@@ -171,7 +191,13 @@ _ROUTE_RULES: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
 
 
 def deterministic_route(text: str) -> RouteDecision | None:
-    if any(rule.search(text) is not None for rule in _ESCALATION_RULES):
+    explicit_complaint = (
+        _COMPLAINT_RULE.search(text) is not None
+        and _NEGATED_COMPLAINT_RULE.search(text) is None
+    )
+    if explicit_complaint or any(
+        rule.search(text) is not None for rule in _ESCALATION_RULES
+    ):
         return RouteDecision("escalation", 1.0)
     routes = {
         route
@@ -187,9 +213,19 @@ def route_message(text: str) -> RouteDecision:
     return deterministic_route(text) or RouteDecision("consultation", 0.0)
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate router key")
+        result[key] = value
+    return result
+
+
 def _parse_router_output(text: str) -> RouteDecision:
     data = json.loads(
         text,
+        object_pairs_hook=_unique_json_object,
         parse_constant=lambda _value: (_ for _ in ()).throw(
             ValueError("non-finite router number")
         ),
@@ -229,13 +265,27 @@ def bound_untrusted_context(
     return list(reversed(selected))
 
 
-def build_untrusted_input(text: str, context: list[dict[str, str]]) -> str:
-    bounded = bound_untrusted_context(context)
+def build_untrusted_input(
+    text: str,
+    context: list[dict[str, str]],
+    *,
+    max_chars: int = 2000,
+) -> str:
+    current_prefix = "UNTRUSTED_CURRENT_MESSAGE:\n"
+    current_budget = max(0, max_chars - len(current_prefix))
+    current = str(text)[-current_budget:] if current_budget else ""
+    current_block = f"{current_prefix}{current}"
+    context_prefix = "UNTRUSTED_RECENT_CONTEXT:\n"
+    context_budget = max_chars - len(current_block) - len(context_prefix) - 1
+    if context_budget <= 0:
+        return current_block
+    bounded = bound_untrusted_context(context, max_chars=context_budget)
     transcript = "\n".join(
         f"{message['role']}: {message['content']}" for message in bounded
     )
-    prefix = f"UNTRUSTED_RECENT_CONTEXT:\n{transcript}\n" if transcript else ""
-    return f"{prefix}UNTRUSTED_CURRENT_MESSAGE:\n{text}"
+    if not transcript:
+        return current_block
+    return f"{context_prefix}{transcript}\n{current_block}"
 
 
 class LLMIntentRouter:

@@ -35,7 +35,7 @@
 - Produces: `deterministic_route(text) -> RouteDecision | None`.
 - Produces: `route_message(text) -> RouteDecision`, safe fallback `consultation/0.0`.
 
-- [ ] **Step 1: Переписать Router unit-тесты на новый контракт**
+- [x] **Step 1: Переписать Router unit-тесты на новый контракт**
 
 Добавить точные ожидания:
 
@@ -75,7 +75,7 @@ Invalid matrix обязана включать array contract, extra key, unknow
 boolean/NaN/out-of-range confidence, markdown и surrounding text. Все случаи
 дают `consultation/0.0`, `source="fallback"` и статический reason code.
 
-- [ ] **Step 2: Запустить RED в Docker**
+- [x] **Step 2: Запустить RED в Docker**
 
 ```powershell
 Set-Location project
@@ -86,7 +86,7 @@ docker compose --env-file ../.env --profile test run --rm test `
 Expected: FAIL на старых `INTENTS`, массиве `intents` и
 `requires_clarification`.
 
-- [ ] **Step 3: Реализовать минимальный Router core**
+- [x] **Step 3: Реализовать минимальный Router core**
 
 Использовать exact schema:
 
@@ -151,11 +151,11 @@ RouterVerdict(
 Сохранить текущие `bound_untrusted_context` и `build_untrusted_input` без
 расширения данных. Не ловить `asyncio.CancelledError`.
 
-- [ ] **Step 4: Запустить GREEN Router tests**
+- [x] **Step 4: Запустить GREEN Router tests**
 
 Повторить команду Step 2; expected: PASS.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```powershell
 git add project/src/moroz/messaging/router.py project/tests/unit/messaging/test_router.py changelog.md
@@ -178,7 +178,7 @@ git commit -m "refactor: упрощён контракт LLM Router"
   `RouterVerdict.source/reason_code/usage`.
 - Produces metadata: `ROUTE route=<route>; source=<source>; confidence=<bucket>`.
 
-- [ ] **Step 1: Написать pipeline RED-тесты**
+- [x] **Step 1: Написать pipeline RED-тесты**
 
 Обновить fixtures на single route и доказать:
 
@@ -197,7 +197,7 @@ RouterVerdict(RouteDecision("booking", 0.9), (), source="llm")
 - complaint/handoff не создают escalation/human-mode side effect;
 - masked current/context, usage order и `CancelledError` не меняются.
 
-- [ ] **Step 2: Запустить pipeline RED в Docker**
+- [x] **Step 2: Запустить pipeline RED в Docker**
 
 ```powershell
 Set-Location project
@@ -208,7 +208,7 @@ docker compose --env-file ../.env --profile test run --rm test `
 
 Expected: FAIL на `.intents`, clarification metadata и старом delimiter.
 
-- [ ] **Step 3: Сделать минимальную runtime-адаптацию**
+- [x] **Step 3: Сделать минимальную runtime-адаптацию**
 
 В `SecurityPipeline.respond` отдельно вести `route_source` и
 `route_reason_code`. При неожиданной Router ошибке использовать
@@ -231,7 +231,7 @@ route_metadata = (
 В `_LegacyInvokeGateway` заменить delimiter `"\n\nROUTE intents="` на
 `"\n\nROUTE route="`. Другую answer/validator/compact логику не менять.
 
-- [ ] **Step 4: Запустить GREEN и соседние regressions**
+- [x] **Step 4: Запустить GREEN и соседние regressions**
 
 ```powershell
 Set-Location project
@@ -245,7 +245,7 @@ docker compose --env-file ../.env --profile test run --rm test `
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```powershell
 git add project/src/moroz/security/pipeline.py project/llm/llm.py `
@@ -271,7 +271,7 @@ git commit -m "refactor: подключён single-route Router к pipeline"
 - Produces suite `router_v2` with `expected_data={"route": ...}`.
 - Migration revision: `0019_router_v2`, down revision: `0018_simple_security`.
 
-- [ ] **Step 1: Написать dataset/migration RED-тесты**
+- [x] **Step 1: Написать dataset/migration RED-тесты**
 
 Новый dataset contract:
 
@@ -317,7 +317,7 @@ Migration-test проверяет checksum, `revision/down_revision`, suite owne
 `expected_data={"route": ...}`, downgrade order results → runs → cases и
 отсутствие UPDATE/DELETE для suite `router`.
 
-- [ ] **Step 2: Запустить RED в Docker**
+- [x] **Step 2: Запустить RED в Docker**
 
 ```powershell
 Set-Location project
@@ -329,7 +329,7 @@ docker compose --env-file ../.env --profile test run --rm test `
 
 Expected: FAIL, потому что v2 dataset/migration отсутствуют.
 
-- [ ] **Step 3: Добавить v2 dataset и data-only migration**
+- [x] **Step 3: Добавить v2 dataset и data-only migration**
 
 Migration загружает dataset только после SHA-256 проверки и bulk-insert-ит:
 
@@ -351,7 +351,7 @@ migration не редактировать. Обновить все exact-head as
 tests с `0018_simple_security` на `0019_router_v2`, сохранив отдельные проверки
 перехода через `0018`.
 
-- [ ] **Step 4: Проверить GREEN и migration cycle**
+- [x] **Step 4: Проверить GREEN и migration cycle**
 
 ```powershell
 Set-Location project
@@ -366,7 +366,7 @@ docker compose --env-file ../.env --profile test run --rm test `
 Expected: PASS; single head `0019_router_v2`; downgrade к `0018` удаляет только
 `router_v2`, старые router/security/validator/compact cases и history сохранены.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```powershell
 git add project/llm/eval/router_dataset_v2.json `
@@ -396,7 +396,7 @@ git commit -m "feat: добавлена Router Evaluation v2"
 - Comparator: expected `route` equals `RouteDecision.route`.
 - Historical `suite="router"` run details remain renderable.
 
-- [ ] **Step 1: Написать runner/UI RED-тесты**
+- [x] **Step 1: Написать runner/UI RED-тесты**
 
 Comparator:
 
@@ -424,7 +424,7 @@ Admin start/problem rerun читает и создаёт только `router_v2
 показывает один route. Старый run с suite `router` также получает заголовок и
 back-link Router Evaluation, но не запускает старые cases.
 
-- [ ] **Step 2: Запустить RED в Docker**
+- [x] **Step 2: Запустить RED в Docker**
 
 ```powershell
 Set-Location project
@@ -436,7 +436,7 @@ docker compose --env-file ../.env --profile test run --rm test `
 
 Expected: FAIL на старом suite/intents/clarification UI.
 
-- [ ] **Step 3: Адаптировать runner и шаблоны**
+- [x] **Step 3: Адаптировать runner и шаблоны**
 
 В runner добавить `ROUTER_EVAL_SUITE = "router_v2"`, сравнивать только route,
 а source/reason брать из deterministic branch или `RouterVerdict`.
@@ -452,7 +452,7 @@ Expected: FAIL на старом suite/intents/clarification UI.
 Для исторического `router` detail оставить tolerant fallback на старые
 `intents`, чтобы ранее сохранённые run results читались без миграции.
 
-- [ ] **Step 4: Запустить GREEN и общие eval regressions**
+- [x] **Step 4: Запустить GREEN и общие eval regressions**
 
 ```powershell
 Set-Location project
@@ -468,7 +468,7 @@ docker compose --env-file ../.env --profile test run --rm test `
 
 Expected: PASS, без внешних provider-вызовов.
 
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4**
 
 ```powershell
 git add project/admin/eval_runner.py project/admin/eval_routes.py `
@@ -492,7 +492,7 @@ git commit -m "refactor: адаптирована Router Evaluation к одно�
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`
 
-- [ ] **Step 1: Запустить focused Docker gate**
+- [x] **Step 1: Запустить focused Docker gate**
 
 ```powershell
 Set-Location project
@@ -510,7 +510,7 @@ docker compose --env-file ../.env --profile test run --rm test `
 
 Expected: PASS.
 
-- [ ] **Step 2: Проверить migration/config/compile/static gates**
+- [x] **Step 2: Проверить migration/config/compile/static gates**
 
 ```powershell
 Set-Location project
@@ -527,7 +527,7 @@ git diff --exit-code -- project/llm/eval/router_dataset.json `
 
 Expected: все команды exit `0`; старые immutable файлы без diff.
 
-- [ ] **Step 3: Запустить полный Docker suite**
+- [x] **Step 3: Запустить полный Docker suite**
 
 ```powershell
 Set-Location project
@@ -540,21 +540,21 @@ docker compose --env-file ../.env --profile test run --rm `
 
 Expected: zero failures. Записать точный count и duration.
 
-- [ ] **Step 4: Независимый review и TDD fix-loop**
+- [x] **Step 4: Независимый review и TDD fix-loop**
 
 Review обязан проверить single-route schema, scripts-first collisions,
 Security ordering/cancellation, false escalation, fallback, PII/logging,
 historical eval compatibility и migration ownership. Исправить все подтверждённые
 Critical/Important замечания test-first и повторить затронутые gates.
 
-- [ ] **Step 5: Обновить документы фактическим контрактом и evidence**
+- [x] **Step 5: Обновить документы фактическим контрактом и evidence**
 
 Зафиксировать семь маршрутов, metadata-only escalation, `consultation/0.0`
 fallback, `router_v2`, точные тестовые результаты и отсутствие платных вызовов,
 push/deployment/production. Старые документы явно пометить как historical v1,
 не переписывая историю acceptance `19/20` старого multi-intent prompt.
 
-- [ ] **Step 6: Финальная проверка и commit**
+- [x] **Step 6: Финальная проверка и commit**
 
 ```powershell
 git diff --check
@@ -569,3 +569,11 @@ Expected: локальный commit и чистое рабочее дерево.
 
 Платный Router Evaluation нового prompt не запускать; его отсутствие явно
 записать как ограничение, а не как failure локальной реализации.
+
+Evidence (2026-08-29): core Router `54 passed`; post-review focused gate
+`277 passed in 131.58s`; migration cycle `31 passed in 107.40s`; compileall,
+Compose config, immutable v1 diff и single-head `0019_router_v2` зелёные;
+финальный canonical full Docker suite `1684 passed in 996.23s`. Независимый
+review после TDD fix-loop: `0 Critical / 0 Important / 0 Minor`, Ready.
+Платный Router Evaluation, push, deployment, staging и production-действия не
+выполнялись.

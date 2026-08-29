@@ -1,5 +1,7 @@
 # LLM Router + Router Evaluation Implementation Plan
 
+> **Исторический выполненный план v1.** Содержащиеся ниже multi-intent contract, suite `router`, migration `0014` и acceptance `19/20` остаются неизменяемой историей. Текущий single-route Router реализуется по `docs/superpowers/plans/2026-08-29-simple-router.md` через новый suite `router_v2` и migration `0019_router_v2`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Реализовать гибридный scripts-first intent-router, безопасный параллельный gate Input Security + Router и suite-aware Router Evaluation в существующем общем eval-контуре.

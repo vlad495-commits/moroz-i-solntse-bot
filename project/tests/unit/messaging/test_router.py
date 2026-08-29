@@ -101,6 +101,35 @@ def test_explicit_escalation_has_safe_local_priority(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
+        "Хочу поговорить с администратором",
+        "Можно администратора?",
+    ],
+)
+def test_explicit_handoff_phrases_route_to_escalation(text: str) -> None:
+    assert deterministic_route(text) == RouteDecision("escalation", 1.0)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Жалоб нет, хочу записаться", "booking"),
+        ("У меня жалоб нет, хочу записаться", "booking"),
+        ("Не хочу жаловаться, хочу записаться", "booking"),
+        ("Не хочу пожаловаться, хочу записаться", "booking"),
+        ("Жалоб нет", None),
+    ],
+)
+def test_negated_complaint_does_not_create_false_escalation(
+    text: str,
+    expected: str | None,
+) -> None:
+    decision = deterministic_route(text)
+    assert (decision.route if decision else None) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "Мой телефон <PII_PHONE_1>, а сколько это?",
         "Мой телефон +7 900 111-22-33, а сколько это?",
         "Подскажите, мой телефон записан правильно?",
@@ -177,6 +206,22 @@ async def test_router_context_is_last_six_roles_and_2000_chars() -> None:
 
 
 @pytest.mark.asyncio
+async def test_router_current_and_context_share_one_2000_character_budget() -> None:
+    provider = ScriptedProvider(
+        router_response('{"route":"consultation","confidence":0.8}')
+    )
+    current = "current-prefix-" + "x" * 4000 + "-current-tail"
+    context = [{"role": "user", "content": "y" * 2000}]
+
+    await LLMIntentRouter(provider).route(current, context)
+
+    prompt = provider.requests[0].messages[-1]["content"]
+    assert len(prompt) <= 2000
+    assert "current-prefix" not in prompt
+    assert "current-tail" in prompt
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "raw",
     [
@@ -190,6 +235,7 @@ async def test_router_context_is_last_six_roles_and_2000_chars() -> None:
         '{"route":"consultation","confidence":NaN}',
         '{"route":"consultation","confidence":1.1}',
         '{"route":"consultation","confidence":-0.1}',
+        '{"route":"escalation","route":"consultation","confidence":0.9}',
     ],
 )
 async def test_invalid_router_output_uses_safe_general_route(raw: str) -> None:
