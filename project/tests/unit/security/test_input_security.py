@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from moroz.security.input_security import (
+    INPUT_SECURITY_SYSTEM_PROMPT,
     InputSecurityDecision,
     LLMInputSecurityClassifier,
 )
@@ -25,6 +26,13 @@ class Provider:
 def response(text: str, model: str = "security-model") -> LLMResponse:
     usage = LLMUsage("security", 10, 1, 0, 11, model)
     return LLMResponse(text, 10, 1, 0, 11, model, (usage,))
+
+
+def test_prompt_allows_correction_of_a_service_choice():
+    prompt = INPUT_SECURITY_SYSTEM_PROMPT.casefold()
+
+    assert "исправить выбор услуги" in prompt
+    assert "не означает смену системных правил" in prompt
 
 
 @pytest.mark.asyncio
