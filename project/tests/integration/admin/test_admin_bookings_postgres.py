@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -7,7 +8,9 @@ import pytest_asyncio
 
 from bookings_database import (
     BookingDatabaseUnavailable,
+    enqueue_admin_booking_command,
     get_booking_detail,
+    list_booking_service_options,
     list_calendar_bookings,
     list_bookings,
 )
@@ -17,6 +20,52 @@ from moroz.common.db import Database
 pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+
+
+async def test_manual_command_is_queued_and_audited_without_pii_in_audit(
+    database,
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        await connection.execute(
+            """
+            INSERT INTO yclients_service_catalog
+                (service_id, staff_id, service_name, staff_name, price_min,
+                 price_max, duration_minutes, synced_at)
+            VALUES ('10', '20', 'Криотерапия', 'Анна', 1000, 1000, 30, now())
+            """
+        )
+        options = await list_booking_service_options(database)
+        assert options == [{
+            "service_id": "10", "staff_id": "20",
+            "service_name": "Криотерапия", "staff_name": "Анна",
+            "duration_minutes": 30,
+        }]
+        command_id = await enqueue_admin_booking_command(
+            database,
+            kind="admin_booking_create",
+            payload={"customer_name": "Ирина", "customer_phone": "+79990000000"},
+            actor_id=7,
+            ip_address="127.0.0.1",
+            user_agent="pytest",
+        )
+        job = await connection.fetchrow(
+            "SELECT kind, status, payload FROM scheduler_jobs WHERE id = $1",
+            command_id,
+        )
+        audit = await connection.fetchrow(
+            "SELECT action, after FROM admin_audit_events WHERE object_id = $1",
+            str(command_id),
+        )
+        assert job["kind"] == "admin_booking_create"
+        assert job["status"] == "pending"
+        assert json.loads(job["payload"])["customer_name"] == "Ирина"
+        assert audit["action"] == "booking.admin_booking_create.requested"
+        assert "Ирина" not in str(audit["after"])
+        assert "+79990000000" not in str(audit["after"])
+    finally:
+        await connection.close()
 
 
 @pytest_asyncio.fixture

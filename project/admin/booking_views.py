@@ -3,6 +3,7 @@
 import base64
 import binascii
 import json
+import re
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
@@ -37,6 +38,8 @@ EVENT_TITLES = {
     "booking_execution_started": "Операция начата",
     "booking_confirmed": "Запись подтверждена",
     "booking_cancelled": "Запись отменена",
+    "booking_completed": "Клиент пришёл",
+    "booking_no_show": "Клиент не пришёл",
     "booking_rescheduled": "Запись перенесена",
     "slot_unavailable": "Слот уже недоступен",
     "admin_attention_required": "Требуется помощь администратора",
@@ -66,6 +69,8 @@ MOSCOW = ZoneInfo("Europe/Moscow")
 CALENDAR_START_HOUR = 7
 CALENDAR_END_HOUR = 22
 _DAY_NAMES = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+_PHONE_RE = re.compile(r"^\+?\d{10,16}$")
+_BOOKING_ACTION_STATUSES = {"completed", "no_show", "cancelled"}
 
 
 def week_bounds(
@@ -133,6 +138,66 @@ def calendar_layout(
         )
         days[day_index]["items"].append(card)
     return days
+
+
+def validate_manual_booking(
+    *,
+    customer_name: str,
+    customer_phone: str,
+    service_staff: str,
+    starts_at: str,
+    consent: str,
+    comment: str,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    try:
+        name = customer_name.strip()
+        phone = customer_phone.strip().replace(" ", "").replace("-", "")
+        service_id, staff_id = service_staff.split(":", 1)
+        local_start = datetime.fromisoformat(starts_at).replace(tzinfo=MOSCOW)
+        current = (now or datetime.now(UTC)).astimezone(MOSCOW)
+        note = comment.strip()
+        if (
+            not 1 <= len(name) <= 100
+            or not _PHONE_RE.fullmatch(phone)
+            or not _canonical_provider_id(service_id)
+            or not _canonical_provider_id(staff_id)
+            or local_start <= current
+            or local_start > current + timedelta(days=365)
+            or consent != "yes"
+            or len(note) > 500
+        ):
+            raise ValueError
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("manual booking") from error
+    return {
+        "customer_name": name,
+        "customer_phone": phone,
+        "service_id": service_id,
+        "staff_id": staff_id,
+        "starts_at": local_start.isoformat(),
+        "personal_data_processing_allowed": True,
+        "comment": note or None,
+    }
+
+
+def validate_booking_status_action(
+    external_id: str,
+    status: str,
+) -> tuple[str, str]:
+    if not _canonical_provider_id(external_id) or status not in _BOOKING_ACTION_STATUSES:
+        raise ValueError("booking action")
+    return external_id, status
+
+
+def _canonical_provider_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and value.isascii()
+        and value.isdigit()
+        and value[0] != "0"
+        and len(value) <= 64
+    )
 
 
 def projection_failure_label(code: object) -> str:

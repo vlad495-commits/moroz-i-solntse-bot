@@ -698,8 +698,53 @@ def test_yclients_services_are_disabled_when_required_config_is_empty(
         monkeypatch.setenv(name, "")
 
     assert worker_main._build_yclients_services(object()) == (
-        None, None, None, None,
+        None, None, None, None, None,
     )
+
+
+@pytest.mark.asyncio
+async def test_admin_booking_command_is_completed_by_dedicated_service():
+    job_id = uuid4()
+    job = SchedulerJob(
+        id=job_id,
+        kind="admin_booking_status",
+        run_at=None,
+        payload={"external_id": "42", "status": "completed"},
+        idempotency_key=f"admin_booking_status:{job_id}",
+        attempts=0,
+        booking_key=None,
+        booking_starts_at=None,
+    )
+    completed = []
+
+    class SchedulerRepository:
+        async def get_claimed(self, _job_id):
+            return job
+
+        async def complete(self, received_job, result):
+            completed.append((received_job, result))
+
+    class Commands:
+        async def handle(self, received_job):
+            assert received_job is job
+            return JobResult.sent()
+
+    handler = worker_main.MessageTaskHandler(
+        object(),
+        object(),
+        object(),
+        scheduler_repository=SchedulerRepository(),
+        admin_booking_commands=Commands(),
+    )
+    await handler.handle(
+        QueueTask(
+            kind="scheduler_job",
+            payload={"job_id": str(job_id)},
+            idempotency_key=f"scheduler_job:{job_id}",
+        )
+    )
+
+    assert completed == [(job, JobResult.sent())]
 
 
 @pytest.mark.parametrize(
@@ -792,6 +837,21 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
             assert callable(clock)
             built.append(("catalog_sync", repository, reader, scheduler))
 
+    class BookingRepository:
+        def __init__(self, received_database):
+            assert received_database is database
+            built.append(("booking_repository", received_database))
+
+    class CommandRepository:
+        def __init__(self, received_database):
+            assert received_database is database
+            built.append(("command_repository", received_database))
+
+    class CommandService:
+        def __init__(self, adapter, booking_repository, command_repository, scheduler, *, clock):
+            assert callable(clock)
+            built.append(("command_service", adapter, booking_repository, command_repository, scheduler))
+
     monkeypatch.setenv("YCLIENTS_PARTNER_TOKEN", "partner")
     monkeypatch.setenv("YCLIENTS_USER_TOKEN", "user")
     monkeypatch.setenv("YCLIENTS_COMPANY_ID", "17")
@@ -806,8 +866,11 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     monkeypatch.setattr(worker_main, "YclientsCatalogReader", CatalogReader)
     monkeypatch.setattr(worker_main, "CatalogRepository", CatalogRepository)
     monkeypatch.setattr(worker_main, "CatalogSyncCoordinator", CatalogSync)
+    monkeypatch.setattr(worker_main, "BookingRepository", BookingRepository)
+    monkeypatch.setattr(worker_main, "AdminBookingCommandRepository", CommandRepository)
+    monkeypatch.setattr(worker_main, "AdminBookingCommandService", CommandService)
 
-    lifecycle, projection_sync, catalog_sync, catalog_repository = (
+    lifecycle, projection_sync, catalog_sync, catalog_repository, command_service = (
         worker_main._build_yclients_services(database)
     )
 
@@ -815,11 +878,13 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     assert isinstance(projection_sync, ProjectionSync)
     assert isinstance(catalog_sync, CatalogSync)
     assert isinstance(catalog_repository, CatalogRepository)
+    assert isinstance(command_service, CommandService)
     assert [entry[0] for entry in built] == [
-        "config", "adapter", "feedback", "lifecycle", "reader",
+        "config", "adapter", "scheduler_repository", "feedback", "lifecycle", "reader",
         "projection_repository", "scheduler_repository", "projection_sync",
         "catalog_reader", "catalog_repository", "scheduler_repository",
-        "catalog_sync",
+        "catalog_sync", "booking_repository", "command_repository",
+        "command_service",
     ]
 
 
@@ -904,7 +969,7 @@ async def test_configured_worker_ensures_current_projection_before_queue_consume
     monkeypatch.setattr(
         worker_main,
         "_build_yclients_services",
-        lambda _database: (None, ProjectionSync(), CatalogSync(), object()),
+        lambda _database: (None, ProjectionSync(), CatalogSync(), object(), None),
     )
     monkeypatch.setattr(worker_main, "init_llm", lambda: None)
     monkeypatch.setattr(worker_main, "_supervise", supervise)

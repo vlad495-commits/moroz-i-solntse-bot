@@ -1148,6 +1148,23 @@ button:hover {
 .calendar-booking-no_show,
 .calendar-booking-cancelled { border-left-color: var(--accent); background: #FFF0ED; }
 .calendar-booking-unknown { border-left-color: #D68A00; background: #FFF5DB; }
+.calendar-booking summary { cursor: pointer; list-style: none; }
+.calendar-booking summary::-webkit-details-marker { display: none; }
+.calendar-booking[open] { z-index: 5; min-height: max-content !important; box-shadow: 0 8px 24px rgba(40, 52, 73, .18); }
+.booking-card-actions { display: flex; flex-wrap: wrap; gap: 4px; padding-top: 6px; }
+.booking-card-actions form { margin: 0; }
+.booking-card-actions button,
+.booking-card-actions a { border: 0; border-radius: 5px; background: #fff; color: var(--ink); cursor: pointer; font: inherit; font-size: 11px; padding: 4px 6px; text-decoration: none; }
+.manual-booking { margin: 0 0 16px; }
+.manual-booking > summary { display: inline-block; list-style: none; cursor: pointer; }
+.manual-booking > summary::-webkit-details-marker { display: none; }
+.manual-booking-form { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 12px; margin-top: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.manual-booking-form label { display: grid; gap: 5px; font-size: 13px; }
+.manual-booking-form input,
+.manual-booking-form select { min-width: 0; }
+.manual-booking-consent { display: flex !important; align-items: center; }
+.manual-booking-consent input { width: auto; }
+@media (max-width: 800px) { .manual-booking-form { grid-template-columns: 1fr; } }
 
 @media (max-width: 1080px) {
     .stats-grid-compact { grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); }

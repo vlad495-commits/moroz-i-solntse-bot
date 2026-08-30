@@ -1,7 +1,8 @@
-"""Safe PostgreSQL projections for the read-only admin booking centre."""
+"""Safe PostgreSQL reads and command enqueueing for the admin booking centre."""
 
+import json
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from booking_views import (
     decode_booking_cursor,
@@ -405,6 +406,73 @@ async def list_calendar_bookings(
         "items": [normalize_booking_row(row, detail=True) for row in rows],
         "freshness": freshness,
     }
+
+
+async def list_booking_service_options(database: Database | None) -> list[dict[str, object]]:
+    """Return the current YCLIENTS service/staff pairs for the manual form."""
+    if database is None:
+        raise BookingDatabaseUnavailable("booking database unavailable")
+    async with database.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            SELECT service_id, staff_id, service_name, staff_name,
+                   duration_minutes
+            FROM yclients_service_catalog
+            ORDER BY service_name, staff_name, service_id, staff_id
+            """
+        )
+    return [dict(row) for row in rows]
+
+
+async def enqueue_admin_booking_command(
+    database: Database | None,
+    *,
+    kind: str,
+    payload: dict[str, object],
+    actor_id: int,
+    ip_address: str | None,
+    user_agent: str | None,
+) -> UUID:
+    """Atomically queue one worker-owned YCLIENTS mutation and its audit event."""
+    if database is None:
+        raise BookingDatabaseUnavailable("booking database unavailable")
+    command_id = uuid4()
+    object_id = str(payload.get("external_id") or command_id)
+    audit_after = {
+        "command_id": str(command_id),
+        "kind": kind,
+        "status": payload.get("status"),
+    }
+    async with database.acquire() as connection:
+        async with connection.transaction():
+            await connection.execute(
+                """
+                INSERT INTO scheduler_jobs
+                    (id, kind, run_at, payload, idempotency_key, status,
+                     attempts, created_at, updated_at)
+                VALUES ($1, $2, now(), $3::jsonb, $4, 'pending', 0, now(), now())
+                """,
+                command_id,
+                kind,
+                json.dumps(payload, ensure_ascii=False),
+                f"{kind}:{command_id}",
+            )
+            await connection.execute(
+                """
+                INSERT INTO admin_audit_events (
+                    actor_id, action, object_type, object_id,
+                    before, after, ip_address, user_agent
+                )
+                VALUES ($1, $2, 'booking', $3, NULL, $4::jsonb, $5, $6)
+                """,
+                actor_id,
+                f"booking.{kind}.requested",
+                object_id,
+                json.dumps(audit_after, ensure_ascii=False),
+                ip_address,
+                user_agent,
+            )
+    return command_id
 
 
 async def get_booking_detail(

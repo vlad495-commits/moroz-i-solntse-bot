@@ -1,8 +1,10 @@
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from uuid import UUID
 
 import pytest
 import booking_views
+from jinja2 import Environment, FileSystemLoader
 
 from booking_views import (
     calendar_layout,
@@ -10,13 +12,20 @@ from booking_views import (
     encode_booking_cursor,
     normalize_booking_event,
     normalize_booking_row,
+    validate_booking_status_action,
     validate_booking_filters,
+    validate_manual_booking,
     week_bounds,
 )
 
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
 BOOKING_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+
+def test_bookings_template_compiles():
+    templates = Path(__file__).parents[3] / "admin" / "templates"
+    Environment(loader=FileSystemLoader(templates)).get_template("bookings.html")
 
 
 def test_week_bounds_use_moscow_monday_and_reject_bad_date():
@@ -54,6 +63,71 @@ def test_calendar_layout_groups_cards_and_positions_them_by_moscow_time():
     assert layout[0]["items"][0]["height"] == 45
     assert layout[6]["items"][0]["time_label"] == "21:00"
     assert layout[6]["items"][0]["height"] == 60
+
+
+def test_manual_booking_validation_returns_bounded_worker_payload():
+    payload = validate_manual_booking(
+        customer_name="  Анна  ",
+        customer_phone=" +79990000000 ",
+        service_staff="331:6544",
+        starts_at="2026-09-01T12:30",
+        consent="yes",
+        comment="  Позвонить заранее  ",
+        now=NOW,
+    )
+
+    assert payload == {
+        "customer_name": "Анна",
+        "customer_phone": "+79990000000",
+        "service_id": "331",
+        "staff_id": "6544",
+        "starts_at": "2026-09-01T12:30:00+03:00",
+        "personal_data_processing_allowed": True,
+        "comment": "Позвонить заранее",
+    }
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"customer_name": ""},
+        {"customer_phone": "private"},
+        {"service_staff": "331"},
+        {"starts_at": "2026-08-01T12:00"},
+        {"consent": ""},
+        {"comment": "x" * 501},
+    ],
+)
+def test_manual_booking_validation_rejects_invalid_input(changes):
+    values = {
+        "customer_name": "Анна",
+        "customer_phone": "+79990000000",
+        "service_staff": "331:6544",
+        "starts_at": "2026-09-01T12:30",
+        "consent": "yes",
+        "comment": "",
+        "now": NOW,
+    }
+    with pytest.raises(ValueError, match="manual booking"):
+        validate_manual_booking(**{**values, **changes})
+
+
+def test_status_action_allowlist_accepts_only_provider_ids_and_terminal_statuses():
+    assert validate_booking_status_action("9001", "completed") == (
+        "9001",
+        "completed",
+    )
+    assert validate_booking_status_action("9001", "no_show") == (
+        "9001",
+        "no_show",
+    )
+    assert validate_booking_status_action("9001", "cancelled") == (
+        "9001",
+        "cancelled",
+    )
+    for external_id, status in (("0", "completed"), ("abc", "completed"), ("1", "confirmed")):
+        with pytest.raises(ValueError, match="booking action"):
+            validate_booking_status_action(external_id, status)
 
 
 def test_filter_allowlist():

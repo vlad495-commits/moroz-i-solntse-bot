@@ -296,6 +296,48 @@ async def test_get_booking_lifecycle_rejects_non_integer_attendance(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "attendance"),
+    [("completed", 1), ("no_show", -1)],
+)
+async def test_admin_visit_status_preserves_record_and_updates_attendance(
+    server: ScriptedServer,
+    status: str,
+    attendance: int,
+) -> None:
+    source = _record(
+        client={"name": "Анна", "phone": "+79990000000"},
+        comment="Комментарий",
+    )
+    changed = _record(attendance=attendance)
+    server.responses.extend(
+        [
+            (200, {"success": True, "data": source}),
+            (201, {"success": True, "data": changed}),
+        ]
+    )
+
+    await YclientsAdapter(_config(server)).set_visit_status("9001", status)
+
+    assert [request[0] for request in server.requests] == ["GET", "PUT"]
+    body = server.requests[1][3]
+    assert body["attendance"] == attendance
+    assert body["client"] == source["client"]
+    assert body["custom_fields"] == source["custom_fields"]
+    assert body["comment"] == "Комментарий"
+
+
+@pytest.mark.asyncio
+async def test_admin_cancel_deletes_any_provider_record(server: ScriptedServer) -> None:
+    server.responses.append((204, b""))
+
+    await YclientsAdapter(_config(server)).set_visit_status("9001", "cancelled")
+
+    assert [request[0] for request in server.requests] == ["DELETE"]
+    assert urlsplit(server.requests[0][1]).path == "/api/v1/record/123/9001"
+
+
+@pytest.mark.asyncio
 async def test_availability_accepts_epoch_dates_iso_times_ids_and_filters_exact_bounds(
     server: ScriptedServer,
 ) -> None:

@@ -17,6 +17,28 @@
 
     <h2 class="calendar-period">{{ week_start.strftime('%d.%m') }}–{{ week_end.strftime('%d.%m.%Y') }}</h2>
 
+    {% if notice == "queued" %}<p class="notice success">Изменение принято и скоро появится после синхронизации с YCLIENTS.</p>{% endif %}
+
+    <details class="manual-booking">
+        <summary class="btn btn-primary">+ Создать запись</summary>
+        <form method="post" action="{{ request.scope.get('root_path', '') }}/bookings/manual" class="manual-booking-form">
+            <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
+            <label>Клиент<input name="customer_name" maxlength="100" required></label>
+            <label>Телефон<input name="customer_phone" type="tel" placeholder="+79990000000" required></label>
+            <label>Услуга и сотрудник
+                <select name="service_staff" required>
+                    <option value="">Выберите</option>
+                    {% for option in service_options %}<option value="{{ option.service_id }}:{{ option.staff_id }}">{{ option.service_name }} · {{ option.staff_name }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>Дата и время<input name="starts_at" type="datetime-local" required></label>
+            <label>Комментарий<input name="comment" maxlength="500"></label>
+            <label class="manual-booking-consent"><input name="consent" type="checkbox" value="yes" required> Клиент согласен на обработку данных</label>
+            <button class="btn btn-primary" type="submit" {% if not service_options %}disabled{% endif %}>Создать в YCLIENTS</button>
+            {% if not service_options %}<small>Сначала дождитесь синхронизации каталога YCLIENTS.</small>{% endif %}
+        </form>
+    </details>
+
     {% set freshness = page.get("freshness", {}) %}
     <aside class="booking-freshness {% if freshness.get('stale') %}booking-freshness-stale{% endif %}">
         <strong>Последняя синхронизация:</strong>
@@ -42,12 +64,27 @@
             <div class="calendar-day-column">
                 {% for hour in calendar_hours %}<i style="top: {{ (hour - 7) * 60 }}px"></i>{% endfor %}
                 {% for booking in day['items'] %}
-                <a class="calendar-booking calendar-booking-{{ booking.status }}" style="top: {{ booking.top }}px; min-height: {{ booking.height }}px" href="{% if booking.detail_id %}{{ request.scope.get('root_path', '') }}/bookings/{{ booking.detail_id }}{% else %}#booking-{{ booking.row_key|replace(':', '-') }}{% endif %}" id="booking-{{ booking.row_key|replace(':', '-') }}">
-                    <strong>{{ booking.time_label }}</strong>
-                    <span>{{ booking.client_name or booking.customer_label }}</span>
-                    <small>{% if booking.service_names %}{{ booking.service_names|join(', ') }}{% else %}Услуга не указана{% endif %}</small>
-                    <small>{{ booking.status_label }}</small>
-                </a>
+                <details class="calendar-booking calendar-booking-{{ booking.status }}" style="top: {{ booking.top }}px; min-height: {{ booking.height }}px" id="booking-{{ booking.row_key|replace(':', '-') }}">
+                    <summary>
+                        <strong>{{ booking.time_label }}</strong>
+                        <span>{{ booking.client_name or booking.customer_label }}</span>
+                        <small>{% if booking.service_names %}{{ booking.service_names|join(', ') }}{% else %}Услуга не указана{% endif %}</small>
+                        <small>{{ booking.status_label }}</small>
+                    </summary>
+                    <div class="booking-card-actions">
+                        {% if booking.external_id and booking.status in ['confirmed', 'unknown'] %}
+                        {% for action, label in [('completed', 'Пришёл'), ('no_show', 'Не пришёл'), ('cancelled', 'Отменить')] %}
+                        <form method="post" action="{{ request.scope.get('root_path', '') }}/bookings/external/{{ booking.external_id }}/status">
+                            <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
+                            <input type="hidden" name="week" value="{{ week_start.isoformat() }}">
+                            <input type="hidden" name="status" value="{{ action }}">
+                            <button type="submit">{{ label }}</button>
+                        </form>
+                        {% endfor %}
+                        {% endif %}
+                        {% if booking.detail_id %}<a href="{{ request.scope.get('root_path', '') }}/bookings/{{ booking.detail_id }}">Подробнее</a>{% endif %}
+                    </div>
+                </details>
                 {% endfor %}
             </div>
             {% endfor %}
