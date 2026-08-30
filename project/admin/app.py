@@ -34,7 +34,7 @@ from auth import (  # noqa: E402
     get_current_user,
     verify_session_token,
 )
-from pricing import calculate_cost  # noqa: E402
+from pricing import calculate_cost, summarize_usage_groups  # noqa: E402
 from prompt_routes import router as prompt_router  # noqa: E402
 from eval_routes import cancel_eval_tasks, router as eval_router  # noqa: E402
 from bot_control_routes import router as bot_control_router  # noqa: E402
@@ -233,6 +233,9 @@ async def chat_detail(
     )
     stats["cost_usd"] = cost
     stats["savings_usd"] = savings
+    for message in detail["messages"]:
+        if message["role"] == "user" and message["llm_usage_state"] == "used":
+            message["llm_usage"] = summarize_usage_groups(message["usage_groups"])
 
     return templates.TemplateResponse(
         request,
