@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Реактивация — Admin{% endblock %}
+{% block content %}
+<section class="reactivation-page">
+    <div class="row-between">
+        <div>
+            <p class="page-eyebrow">Внутренняя очередь</p>
+            <h1>Реактивация</h1>
+            <p class="page-note">Отправка не подключена. Кампании и получатели остаются только во внутреннем журнале.</p>
+        </div>
+    </div>
+
+    {% if request.query_params.get('saved') %}<p class="notice success">Настройки сохранены</p>{% endif %}
+    {% if request.query_params.get('consent') %}<p class="notice success">Согласие обновлено</p>{% endif %}
+    {% if request.query_params.get('campaign') %}<p class="notice success">Кампания сохранена</p>{% endif %}
+
+    <div class="reactivation-grid">
+        <form class="card form-card" method="post" action="{{ request.scope.get('root_path', '') }}/reactivation/settings">
+            <h2>Настройки</h2>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label>Дней после визита<input type="number" name="after_visit_days" min="0" max="3650" required value="{{ data.settings.after_visit_days }}"></label>
+            <label>Дней без визита для спящих<input type="number" name="sleeping_days" min="1" max="3650" required value="{{ data.settings.sleeping_days }}"></label>
+            <label>Скидка, %<input type="number" name="discount_percent" min="0" max="100" required value="{{ data.settings.discount_percent }}"></label>
+            <label>Месячный лимит сообщений<input type="number" name="monthly_message_limit" min="0" max="100" required value="{{ data.settings.monthly_message_limit }}"></label>
+            <label>Лимит игноров<input type="number" name="ignore_limit" min="0" max="100" required value="{{ data.settings.ignore_limit }}"></label>
+            <label>Базовый оффер<textarea name="base_offer" rows="4" maxlength="4000">{{ data.settings.base_offer }}</textarea></label>
+            <label>Инструкция для LLM<textarea name="llm_instruction" rows="4" maxlength="4000">{{ data.settings.llm_instruction }}</textarea></label>
+            <button type="submit">Сохранить настройки</button>
+        </form>
+
+        <div class="reactivation-stack">
+            <form class="card form-card" method="post" action="{{ request.scope.get('root_path', '') }}/reactivation/consent">
+                <h2>Marketing consent</h2>
+                <p class="muted">Processing consent не считается согласием на маркетинг.</p>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="channel" value="telegram">
+                <label>Telegram user ID<input name="user_id" maxlength="128" required></label>
+                <label>Версия текста согласия<input name="consent_version" maxlength="128" required></label>
+                <div class="form-actions">
+                    <button type="submit" name="action" value="grant">Записать согласие</button>
+                    <button class="btn-secondary" type="submit" name="action" value="revoke">Отозвать согласие</button>
+                </div>
+            </form>
+
+            <form class="card form-card" method="post" action="{{ request.scope.get('root_path', '') }}/reactivation/campaigns">
+                <h2>Новая кампания</h2>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label>Сегмент<select name="segment">
+                    <option value="after_visit">После визита</option>
+                    <option value="sleeping">Спящие</option>
+                    <option value="regular">Постоянные (2+ визита)</option>
+                </select></label>
+                <div class="form-actions">
+                    <button class="btn-secondary" type="submit" name="action" value="draft">Создать черновик</button>
+                    <button type="submit" name="action" value="queue">Создать и поставить в очередь</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <section class="card">
+        <h2>Согласия</h2>
+        <div class="data-table"><table><thead><tr><th>Канал</th><th>Клиент</th><th>Версия</th><th>Статус</th><th>Дата</th></tr></thead><tbody>
+        {% for consent in data.consents %}<tr><td>{{ consent.channel }}</td><td>{{ consent.user_id }}</td><td>{{ consent.consent_version }}</td><td>{{ 'Активно' if consent.active else 'Отозвано' }}</td><td>{{ consent.granted_at if consent.active else consent.revoked_at }}</td></tr>
+        {% else %}<tr><td colspan="5">Marketing consent пока не записан</td></tr>{% endfor %}
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h2>Журнал кампаний</h2>
+        <div class="data-table"><table><thead><tr><th>Дата</th><th>Сегмент</th><th>Статус</th><th>Отправлено</th><th>Пропущено</th><th>Ошибки</th><th>Получатели</th><th></th></tr></thead><tbody>
+        {% for campaign in data.campaigns %}<tr><td>{{ campaign.created_at }}</td><td>{{ {'after_visit':'После визита','sleeping':'Спящие','regular':'Постоянные'}[campaign.segment] }}</td><td>{{ campaign.status }}</td><td>{{ campaign.sent_count }}</td><td>{{ campaign.skipped_count }}</td><td>{{ campaign.error_count }}</td><td>{{ campaign.recipient_count }}</td><td>{% if campaign.status == 'draft' %}<form method="post" action="{{ request.scope.get('root_path', '') }}/reactivation/campaigns/{{ campaign.id }}/queue"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Поставить в очередь</button></form>{% endif %}</td></tr>
+        {% else %}<tr><td colspan="8">Кампаний пока нет</td></tr>{% endfor %}
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h2>Журнал доставок</h2>
+        <div class="data-table"><table><thead><tr><th>Дата</th><th>Канал</th><th>Клиент</th><th>Статус</th><th>Причина</th></tr></thead><tbody>
+        {% for delivery in data.deliveries %}<tr><td>{{ delivery.created_at }}</td><td>{{ delivery.channel }}</td><td>{{ delivery.user_id }}</td><td>{{ delivery.status }}</td><td>{{ delivery.skip_reason or delivery.error_code or '—' }}</td></tr>
+        {% else %}<tr><td colspan="5">Доставок пока нет</td></tr>{% endfor %}
+        </tbody></table></div>
+    </section>
+</section>
+{% endblock %}

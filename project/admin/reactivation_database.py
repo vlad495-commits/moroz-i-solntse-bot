@@ -123,7 +123,7 @@ async def set_marketing_consent(
     return dict(row)
 
 
-async def create_campaign(database, *, segment: str, created_by: int):
+async def create_campaign(database, *, segment: str, created_by: int | None):
     if segment not in SEGMENTS:
         raise ValueError("unsupported reactivation segment")
     campaign_id = uuid4()
