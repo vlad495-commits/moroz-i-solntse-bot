@@ -89,7 +89,7 @@ Expected: PASS до первого merge.
 **Interfaces:**
 - Produces: одна sidebar-ссылка `Evaluations / Эвалы` и внутренние подкладки существующих suites.
 
-- [ ] **Step 1: Выполнить merge**
+- [x] **Step 1: Выполнить merge**
 
 ```powershell
 git merge --no-ff codex/admin-evaluations-navigation -m "merge: объединена навигация evaluations"
@@ -97,7 +97,7 @@ git merge --no-ff codex/admin-evaluations-navigation -m "merge: объедине
 
 Expected: runtime-конфликтов нет; `changelog.md`, roadmap и CSS могут потребовать проверки результата auto-merge.
 
-- [ ] **Step 2: Проверить навигацию и публичный prefix**
+- [x] **Step 2: Проверить навигацию и публичный prefix**
 
 ```powershell
 Set-Location project
