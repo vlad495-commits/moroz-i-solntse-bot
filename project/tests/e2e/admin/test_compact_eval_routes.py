@@ -85,7 +85,7 @@ async def test_compact_index_is_read_only_root_path_safe_and_hides_transcript(
     assert 'action="/admin/eval/compact/runs"' in body
     assert 'action="/admin/eval/compact/runs/problematic"' in body
     assert 'href="/admin/eval/compact/"' in body
-    assert "Compact Evaluation" in body
+    assert "Сжатие контекста" in body
     assert "compact-fact-retention-001" in body
     assert "mode: llm" in body and "messages: 1" in body
     assert "required: 1" in body and "forbidden: 1" in body

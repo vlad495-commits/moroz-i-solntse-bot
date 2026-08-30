@@ -76,7 +76,7 @@ async def test_validator_index_is_read_only_and_root_path_safe(monkeypatch):
     assert 'action="/admin/eval/validator/runs"' in body
     assert 'action="/admin/eval/validator/runs/problematic"' in body
     assert 'href="/admin/eval/validator/"' in body
-    assert "Validator Evaluation" in body
+    assert "Валидатор" in body
     assert "validator-test-001" in body
     assert "synthetic-candidate" in body
     assert "regenerate" in body and "technical_artifact" in body
