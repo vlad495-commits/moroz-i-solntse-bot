@@ -466,7 +466,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0020_admin_reactivation"
+            "0021_reactivation_draft"
         )
     finally:
         await conn.close()
@@ -605,7 +605,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0020_admin_reactivation"
+        assert current_revision == "0021_reactivation_draft"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -768,7 +768,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0020_admin_reactivation"
+        assert current_revision == "0021_reactivation_draft"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -865,7 +865,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0020_admin_reactivation"
+        assert current_revision == "0021_reactivation_draft"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
@@ -938,7 +938,7 @@ async def test_yclients_booking_projection_migration_creates_bounded_schema(
     finally:
         await conn.close()
 
-    assert current_revision == "0020_admin_reactivation"
+    assert current_revision == "0021_reactivation_draft"
     assert columns == [
         "external_id",
         "booking_key",
@@ -1025,7 +1025,7 @@ async def test_review_cases_table_and_rows_survive_forward_upgrade_for_rollback(
             "SELECT id FROM eval_case_reviews WHERE id = $1", review_id
         ) == review_id
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0020_admin_reactivation"
+            "0021_reactivation_draft"
         )
     finally:
         await conn.close()
@@ -1086,7 +1086,7 @@ async def test_router_eval_migration_preserves_answer_rows_and_downgrades_only_r
             "SELECT to_regclass('public.router_eval_cases')"
         ) is None
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0020_admin_reactivation"
+            "0021_reactivation_draft"
         )
 
         router_case = await conn.fetchval(
@@ -1285,7 +1285,7 @@ async def test_security_eval_migration_preserves_other_suites_on_downgrade(
             security_case,
         )
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0020_admin_reactivation"
+            "0021_reactivation_draft"
         )
     finally:
         await conn.close()
@@ -1386,7 +1386,7 @@ async def test_validator_eval_migration_seeds_cases_and_downgrades_only_validato
             validator_case,
         )
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0020_admin_reactivation"
+            "0021_reactivation_draft"
         )
     finally:
         await conn.close()
@@ -1615,7 +1615,7 @@ async def test_yclients_service_catalog_migration_creates_only_bounded_columns(
     finally:
         await conn.close()
 
-    assert current_revision == "0020_admin_reactivation"
+    assert current_revision == "0021_reactivation_draft"
     assert columns == [
         "service_id",
         "staff_id",
@@ -1672,7 +1672,7 @@ async def test_yclients_projection_suppression_migration_is_metadata_only(
     finally:
         await conn.close()
 
-    assert current_revision == "0020_admin_reactivation"
+    assert current_revision == "0021_reactivation_draft"
     assert columns == [
         ("external_id", "text", "NO", None),
         ("created_at", "timestamp with time zone", "NO", "now()"),

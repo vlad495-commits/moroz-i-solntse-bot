@@ -131,7 +131,8 @@ async def create_campaign(database, *, segment: str, created_by: int | None):
         raise ValueError("unsupported reactivation segment")
     campaign_id = uuid4()
     async with database.acquire() as connection:
-        row = await connection.fetchrow(
+        async with connection.transaction():
+            row = await connection.fetchrow(
             """
             INSERT INTO reactivation_campaigns
                 (id, segment, status, after_visit_days, sleeping_days,
@@ -142,10 +143,36 @@ async def create_campaign(database, *, segment: str, created_by: int | None):
             WHERE id = 1
             RETURNING id
             """,
-            campaign_id,
-            segment,
-            created_by,
-        )
+                campaign_id,
+                segment,
+                created_by,
+            )
+            if row is not None:
+                campaign = await connection.fetchrow(
+                    "SELECT segment, after_visit_days, sleeping_days "
+                    "FROM reactivation_campaigns WHERE id = $1",
+                    campaign_id,
+                )
+                recipients = await _eligible_recipients(
+                    connection, campaign=campaign, now=None
+                )
+                await connection.executemany(
+                    """
+                    INSERT INTO reactivation_deliveries
+                        (id, campaign_id, channel, user_id, status)
+                    VALUES ($1, $2, $3, $4, 'draft')
+                    """,
+                    [
+                        (uuid4(), campaign_id, item["channel"], item["user_id"])
+                        for item in recipients
+                    ],
+                )
+                await connection.execute(
+                    "UPDATE reactivation_campaigns SET recipient_count = $2 "
+                    "WHERE id = $1",
+                    campaign_id,
+                    len(recipients),
+                )
     if row is None:
         raise RuntimeError("reactivation settings are missing")
     return row["id"]
@@ -171,34 +198,64 @@ async def queue_campaign(
             if campaign is None:
                 raise ValueError("reactivation campaign not found")
             if campaign["status"] == "draft":
-                recipients = await _eligible_recipients(
-                    connection,
-                    campaign=campaign,
-                    now=now,
-                )
-                await connection.executemany(
+                await connection.execute(
                     """
-                    INSERT INTO reactivation_deliveries
-                        (id, campaign_id, channel, user_id, status)
-                    VALUES ($1, $2, $3, $4, 'queued')
-                    ON CONFLICT (campaign_id, channel, user_id) DO NOTHING
+                    UPDATE reactivation_deliveries AS delivery
+                    SET status = 'skipped',
+                        skip_reason = CASE
+                            WHEN consent.active IS DISTINCT FROM true
+                                THEN 'marketing_consent_inactive'
+                            WHEN EXISTS (
+                                SELECT 1 FROM human_mode AS mode
+                                WHERE mode.customer_id = delivery.user_id
+                                  AND mode.enabled = true
+                            ) THEN 'human_mode'
+                            ELSE 'customer_data_missing'
+                        END,
+                        updated_at = now()
+                    FROM marketing_consents AS consent
+                    WHERE delivery.campaign_id = $1
+                      AND delivery.status = 'draft'
+                      AND consent.channel = delivery.channel
+                      AND consent.user_id = delivery.user_id
+                      AND (
+                        consent.active IS DISTINCT FROM true
+                        OR EXISTS (
+                            SELECT 1 FROM human_mode AS mode
+                            WHERE mode.customer_id = delivery.user_id
+                              AND mode.enabled = true
+                        )
+                        OR NOT EXISTS (
+                            SELECT 1 FROM bookings AS booking
+                            WHERE booking.customer_id = delivery.user_id
+                              AND booking.status = 'completed'
+                        )
+                      )
                     """,
-                    [
-                        (uuid4(), campaign_id, row["channel"], row["user_id"])
-                        for row in recipients
-                    ],
+                    campaign_id,
+                )
+                await connection.execute(
+                    "UPDATE reactivation_deliveries SET status = 'queued', "
+                    "updated_at = now() WHERE campaign_id = $1 "
+                    "AND status = 'draft'",
+                    campaign_id,
+                )
+                skipped = await connection.fetchval(
+                    "SELECT count(*) FROM reactivation_deliveries "
+                    "WHERE campaign_id = $1 AND status = 'skipped'",
+                    campaign_id,
                 )
                 await connection.execute(
                     """
                     UPDATE reactivation_campaigns
                     SET status = 'queued',
-                        recipient_count = $2,
+                        skipped_count = $2,
                         queued_at = COALESCE($3, now()),
                         updated_at = now()
                     WHERE id = $1
                     """,
                     campaign_id,
-                    len(recipients),
+                    skipped,
                     now,
                 )
             row = await connection.fetchrow(
@@ -261,44 +318,42 @@ async def get_page_data(database):
 
 
 async def _eligible_recipients(connection, *, campaign, now):
-    segment = campaign["segment"]
-    if segment == "regular":
-        segment_clause = "count(*) >= 2"
-        parameters = ()
-    elif segment == "sleeping":
-        segment_clause = (
-            "max(booking.scheduled_end_at) <= "
-            "COALESCE($1, now()) - make_interval(days => $2)"
-        )
-        parameters = (now, campaign["sleeping_days"])
-    else:
-        segment_clause = (
-            "max(booking.scheduled_end_at) <= "
-            "COALESCE($1, now()) - make_interval(days => $2)"
-        )
-        parameters = (now, campaign["after_visit_days"])
+    if campaign["segment"] not in SEGMENTS:
+        raise ValueError("unsupported reactivation segment")
     return await connection.fetch(
-        f"""
-        WITH segment_customers AS (
-            SELECT booking.customer_id
+        """
+        WITH customer_segments AS (
+            SELECT booking.customer_id,
+                   CASE
+                       WHEN max(booking.scheduled_end_at) <=
+                            COALESCE($1, now()) - make_interval(days => $2)
+                           THEN 'sleeping'
+                       WHEN count(*) >= 2 THEN 'regular'
+                       WHEN max(booking.scheduled_end_at) <=
+                            COALESCE($1, now()) - make_interval(days => $3)
+                           THEN 'after_visit'
+                   END AS segment
             FROM bookings AS booking
             WHERE booking.status = 'completed'
               AND booking.scheduled_end_at IS NOT NULL
             GROUP BY booking.customer_id
-            HAVING {segment_clause}
         )
         SELECT consent.channel, consent.user_id
-        FROM segment_customers AS segment
+        FROM customer_segments AS segment
         JOIN marketing_consents AS consent
           ON consent.user_id = segment.customer_id
          AND consent.channel = 'telegram'
          AND consent.active = true
-        WHERE NOT EXISTS (
+        WHERE segment.segment = $4
+          AND NOT EXISTS (
             SELECT 1 FROM human_mode AS mode
             WHERE mode.customer_id = segment.customer_id
               AND mode.enabled = true
         )
         ORDER BY consent.channel, consent.user_id
         """,
-        *parameters,
+        now,
+        campaign["sleeping_days"],
+        campaign["after_visit_days"],
+        campaign["segment"],
     )

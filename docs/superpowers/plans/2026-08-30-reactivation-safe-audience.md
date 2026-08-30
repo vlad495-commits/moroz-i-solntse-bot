@@ -46,12 +46,12 @@
 - Produces: draft delivery status and `create_campaign(...)->UUID` that materializes recipient IDs.
 - Consumes: booking aggregates and active marketing consent.
 
-- [ ] Add failing integration cases proving one customer receives exactly one priority segment and draft creation inserts `reactivation_deliveries(status='draft')`.
-- [ ] Add a failing case proving queue confirmation does not add a newly eligible customer and changes revoked/human-mode draft rows to `skipped`.
-- [ ] Run RED in Docker.
-- [ ] Add migration `0021` that replaces the delivery status check with `('draft','queued','skipped','sent','error')`.
-- [ ] Replace segment predicates with one aggregate `CASE`; create campaign and draft rows in one transaction; queue only revalidates stored draft rows.
-- [ ] Run focused migration/repository GREEN; commit `feat: добавлен безопасный черновик аудитории`.
+- [x] Add failing integration cases proving one customer receives exactly one priority segment and draft creation inserts `reactivation_deliveries(status='draft')`.
+- [x] Add a failing case proving queue confirmation does not add a newly eligible customer and changes revoked/human-mode draft rows to `skipped`.
+- [x] Run RED in Docker.
+- [x] Add migration `0021` that replaces the delivery status check with `('draft','queued','skipped','sent','error')`.
+- [x] Replace segment predicates with one aggregate `CASE`; create campaign and draft rows in one transaction; queue only revalidates stored draft rows.
+- [x] Run focused migration/repository GREEN; commit `feat: добавлен безопасный черновик аудитории`.
 
 ### Task 3: Preview-first admin UI and closure
 

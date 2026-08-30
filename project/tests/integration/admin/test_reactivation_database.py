@@ -137,9 +137,11 @@ async def test_reactivation_settings_round_trip(database):
     (
         ("after_visit", 1, 2, True),
         ("after_visit", 1, 0, False),
+        ("after_visit", 2, 2, False),
         ("sleeping", 1, 120, True),
         ("sleeping", 1, 10, False),
         ("regular", 2, 10, True),
+        ("regular", 2, 120, False),
         ("regular", 1, 120, False),
     ),
 )
@@ -183,6 +185,12 @@ async def test_campaign_queue_uses_deterministic_segments_and_active_consent(
     campaign_id = await create_campaign(
         database, segment=segment, created_by=1
     )
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_deliveries "
+            "WHERE campaign_id = $1 AND status = 'draft'",
+            campaign_id,
+        ) == (1 if eligible else 0)
     queued = await queue_campaign(
         database, campaign_id=campaign_id, now=NOW
     )
@@ -229,6 +237,44 @@ async def test_revoked_consent_is_never_queued(database, migrated_database_url):
     async with database.acquire() as connection:
         assert await connection.fetchval(
             "SELECT count(*) FROM reactivation_deliveries"
+        ) == 0
+
+
+async def test_queue_never_adds_customer_absent_from_draft(
+    database, migrated_database_url
+):
+    async def seed(customer_id):
+        connection = await asyncpg.connect(migrated_database_url)
+        try:
+            await _seed_booking(
+                connection,
+                customer_id=customer_id,
+                completed_at=NOW - timedelta(days=2),
+            )
+        finally:
+            await connection.close()
+        await set_marketing_consent(
+            database,
+            channel="telegram",
+            user_id=customer_id,
+            consent_version="marketing-v1",
+            active=True,
+        )
+
+    await seed("previewed")
+    campaign_id = await create_campaign(
+        database, segment="after_visit", created_by=1
+    )
+    await seed("became-eligible-later")
+
+    queued = await queue_campaign(database, campaign_id=campaign_id, now=NOW)
+
+    assert queued["recipient_count"] == 1
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_deliveries "
+            "WHERE campaign_id = $1 AND user_id = 'became-eligible-later'",
+            campaign_id,
         ) == 0
         assert await connection.fetchval(
             "SELECT count(*) FROM outbound_messages"
