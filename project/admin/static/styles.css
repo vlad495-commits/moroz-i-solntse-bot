@@ -967,26 +967,63 @@ button:hover {
 .reasoning { background: rgba(255, 59, 31, 0.08); font-style: italic; }
 
 .eval-tabs {
-    display: flex;
-    gap: 28px;
-    overflow-x: auto;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+    overflow: hidden;
     margin: 0 0 28px;
-    border-bottom: 1px solid rgba(16, 75, 169, 0.14);
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.76);
+    box-shadow: 0 12px 32px rgba(7, 27, 46, 0.06);
 }
 
 .eval-tab {
-    flex: 0 0 auto;
-    padding: 12px 2px 11px;
-    border-bottom: 3px solid transparent;
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    padding: 11px 12px;
+    border-radius: 14px;
     color: var(--muted);
+    text-align: center;
     text-decoration: none;
     font-weight: 750;
+    transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.eval-tab:hover,
-.eval-tab.active {
-    border-bottom-color: var(--brand);
+.eval-tab:hover {
+    background: var(--ice);
     color: var(--brand);
+}
+
+.eval-tab.active {
+    background: var(--brand);
+    color: #fff;
+    box-shadow: 0 8px 20px rgba(16, 75, 169, 0.22);
+}
+
+.eval-tab:focus-visible {
+    outline: 3px solid rgba(16, 75, 169, 0.24);
+    outline-offset: 2px;
+}
+
+@media (max-width: 700px) {
+    .eval-tabs {
+        display: flex;
+        overflow-x: auto;
+        scroll-snap-type: x proximity;
+    }
+
+    .eval-tab {
+        min-width: 150px;
+        flex: 0 0 auto;
+        scroll-snap-align: start;
+    }
+
+    .eval-tab:only-child { flex: 1 0 100%; }
 }
 
 .eval-option {

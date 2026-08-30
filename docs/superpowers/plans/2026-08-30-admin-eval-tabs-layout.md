@@ -28,7 +28,7 @@
 - Consumes: существующие `.eval-tabs`, `.eval-tab`, `.eval-tab.active` из `eval_list.html`.
 - Produces: пять равных desktop-сегментов, заметное active/focus состояние и horizontal overflow до 700 px.
 
-- [ ] **Step 1: Добавить failing CSS-контракт**
+- [x] **Step 1: Добавить failing CSS-контракт**
 
 ```python
 from pathlib import Path
@@ -50,7 +50,7 @@ def test_eval_tabs_use_full_width_segmented_layout():
     assert "@media (max-width: 700px) {\n    .eval-tabs {" in styles
 ```
 
-- [ ] **Step 2: Подтвердить RED**
+- [x] **Step 2: Подтвердить RED**
 
 Run:
 
@@ -61,11 +61,11 @@ docker compose --env-file ../.env --profile test run --rm --no-deps --build test
 
 Expected: `1 failed`, потому что `.eval-tabs` пока использует `display: flex`.
 
-- [ ] **Step 3: Внести минимальную CSS-правку**
+- [x] **Step 3: Внести минимальную CSS-правку**
 
 Заменить существующие rules на grid-контейнер с `width: 100%`, светлой карточкой и равными колонками; активной вкладке задать `background: var(--brand)` и белый текст. В существующий `@media (max-width: 700px)` добавить flex overflow и `min-width: 150px` для вкладок.
 
-- [ ] **Step 4: Подтвердить GREEN и регрессию**
+- [x] **Step 4: Подтвердить GREEN и регрессию**
 
 Run:
 
@@ -78,7 +78,7 @@ docker compose --env-file ../.env config --quiet
 
 Expected: все navigation-тесты проходят; compileall и Compose завершаются с exit `0`.
 
-- [ ] **Step 5: Обновить evidence и зафиксировать результат**
+- [x] **Step 5: Обновить evidence и зафиксировать результат**
 
 Отметить задачу выполненной в `Дорожная карта.md`, добавить RED/GREEN evidence в `changelog.md`, выполнить `git diff --check` и commit:
 
