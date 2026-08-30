@@ -2,6 +2,7 @@ from moroz.common.db import Database
 
 
 PROCESSING_CONSENT_VERSION = "v1"
+MARKETING_CONSENT_VERSION = "v1"
 
 
 class ConsentService:
@@ -56,4 +57,24 @@ class ConsentService:
                 channel,
                 user_id,
                 consent_version,
+        )
+
+    async def grant_marketing_consent(
+        self, channel: str, user_id: str, consent_version: str, *, connection
+    ) -> None:
+        await connection.execute(
+            """
+            INSERT INTO marketing_consents
+                (id, channel, user_id, consent_version, active, granted_at)
+            VALUES (gen_random_uuid(), $1, $2, $3, true, now())
+            ON CONFLICT (channel, user_id) DO UPDATE SET
+                consent_version = EXCLUDED.consent_version,
+                active = true,
+                granted_at = now(),
+                revoked_at = NULL,
+                updated_at = now()
+            """,
+            channel,
+            user_id,
+            consent_version,
         )

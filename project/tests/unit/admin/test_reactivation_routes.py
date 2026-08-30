@@ -26,8 +26,11 @@ def test_reactivation_tab_files_and_navigation_exist():
     assert "Реактивация" in html
     assert "Отправка не подключена" in html
     assert "Записать согласие" in html
-    assert "Создать черновик" in html
+    assert "Создать и проверить список" in html
     assert "Поставить в очередь" in html
+    assert "Создать и поставить в очередь" not in html
+    assert "Последний визит" in html
+    assert "Визитов" in html
     assert "Журнал кампаний" in html
     assert "Отправить сообщения" not in html
 
@@ -192,8 +195,7 @@ async def test_consent_action_is_allowlisted_and_persisted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_campaign_can_be_drafted_or_queued_without_sender(monkeypatch):
-    queued = []
+async def test_campaign_creation_is_always_preview_first(monkeypatch):
     campaign_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
     async def current_user(_request):
@@ -203,26 +205,20 @@ async def test_campaign_can_be_drafted_or_queued_without_sender(monkeypatch):
         assert values == {"segment": "regular", "created_by": 7}
         return campaign_id
 
-    async def queue_campaign(_database, **values):
-        queued.append(values["campaign_id"])
-        return {"recipient_count": 0}
-
     async def no_audit(**_values):
         return None
 
     monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
     monkeypatch.setattr(reactivation_routes.database, "get_database", lambda: object())
     monkeypatch.setattr(reactivation_routes.rdb, "create_campaign", create_campaign)
-    monkeypatch.setattr(reactivation_routes.rdb, "queue_campaign", queue_campaign)
     monkeypatch.setattr(reactivation_routes, "record_audit", no_audit)
 
     response = await reactivation_routes.reactivation_campaign_create(
         _request(),
         segment="regular",
-        action="queue",
+        action="draft",
         csrf_token="known-csrf",
     )
 
-    assert response.headers["location"] == "/admin/reactivation/?campaign=queued"
-    assert queued == [campaign_id]
+    assert response.headers["location"] == "/admin/reactivation/?campaign=draft"
     assert not hasattr(reactivation_routes, "send_campaign")
