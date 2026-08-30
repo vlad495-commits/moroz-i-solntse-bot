@@ -187,9 +187,12 @@ class SDKProvider:
                 arguments = {
                     "model": self.model,
                     "messages": list(request.messages),
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
                 }
+                if self.model.casefold().startswith("gpt-5"):
+                    arguments["max_completion_tokens"] = self.max_tokens
+                else:
+                    arguments["temperature"] = self.temperature
+                    arguments["max_tokens"] = self.max_tokens
                 if request.response_format is not None:
                     arguments["response_format"] = request.response_format
                 response = await self.client.chat.completions.create(**arguments)

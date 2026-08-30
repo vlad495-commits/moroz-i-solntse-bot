@@ -213,6 +213,27 @@ async def test_provider_owns_generation_settings_and_request_retains_purpose(
 
 
 @pytest.mark.asyncio
+async def test_openai_gpt5_uses_supported_generation_settings():
+    client = OpenAIClient(openai_response())
+
+    await provider(
+        client,
+        "openai",
+        model="gpt-5.6-luna",
+        temperature=0.7,
+        max_tokens=321,
+    ).complete(request())
+
+    assert client.calls == [
+        {
+            "model": "gpt-5.6-luna",
+            "messages": [{"role": "user", "content": "safe"}],
+            "max_completion_tokens": 321,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_openai_receives_response_format_and_usage_keeps_purpose():
     schema = {
         "type": "json_schema",
