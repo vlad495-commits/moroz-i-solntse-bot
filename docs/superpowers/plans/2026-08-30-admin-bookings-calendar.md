@@ -32,11 +32,11 @@
 **Interfaces:**
 - Produces: `week_bounds(value, now)`, `calendar_layout(items, week_start)`, `list_calendar_bookings(database, week_start, week_end)`.
 
-- [ ] Написать unit-тесты понедельника, перехода недель, московской зоны и раскладки карточек по дням/минутам.
-- [ ] Запустить Docker RED и подтвердить ожидаемое отсутствие функций.
-- [ ] Реализовать минимальные helpers и SQL exact `[week_start, week_end)` поверх существующего unified CTE.
-- [ ] Переключить GET route/template на неделю, добавить навигацию, карточки, состояние пустой недели и responsive CSS.
-- [ ] Запустить focused Docker GREEN и закоммитить `feat: добавлен недельный календарь записей`.
+- [x] Написать unit-тесты понедельника, перехода недель, московской зоны и раскладки карточек по дням/минутам.
+- [x] Запустить Docker RED и подтвердить ожидаемое отсутствие функций.
+- [x] Реализовать минимальные helpers и SQL exact `[week_start, week_end)` поверх существующего unified CTE.
+- [x] Переключить GET route/template на неделю, добавить навигацию, карточки, состояние пустой недели и responsive CSS.
+- [x] Запустить focused Docker GREEN и закоммитить `feat: добавлен недельный календарь записей`.
 
 ### Task 2: Ручная запись и действия через worker
 
@@ -57,12 +57,12 @@
 - Consumes: `scheduler_jobs`, `BookingService`, `BookingRepository`, `YclientsAdapter`, `ProjectionSyncCoordinator`.
 - Produces: job kinds `admin_booking_create` and `admin_booking_status`; `YclientsAdapter.set_visit_status(external_id, status)`.
 
-- [ ] Написать RED-тесты валидного payload, точного выбора слота, идемпотентного создания и mapping `completed/no_show/cancelled`.
-- [ ] Написать RED-тесты POST route: RBAC, CSRF, allowlist полей, audit и enqueue без YCLIENTS secrets в admin.
-- [ ] Реализовать атомарную постановку job и загрузку существующего service catalog для формы.
-- [ ] Реализовать worker command service: create через `BookingService`, status/cancel через `YclientsAdapter`, локальное событие для bot-owned записи и внеочередной projection job.
-- [ ] Добавить формы и действия в карточку; для terminal status скрыть недопустимые кнопки.
-- [ ] Запустить Docker GREEN и закоммитить `feat: добавлены команды управления записями`.
+- [x] Написать RED-тесты валидного payload, точного выбора слота, идемпотентного создания и mapping `completed/no_show/cancelled`.
+- [x] Проверить POST boundary: существующие RBAC/CSRF, allowlist полей, audit без PII и enqueue без YCLIENTS secrets в admin.
+- [x] Реализовать атомарную постановку job и загрузку существующего service catalog для формы.
+- [x] Реализовать worker command service: create через `BookingService`, status/cancel через `YclientsAdapter`, локальное событие для bot-owned записи и внеочередной projection job.
+- [x] Добавить формы и действия в карточку; для terminal status скрыть недопустимые кнопки.
+- [x] Запустить Docker GREEN и закоммитить `feat: добавлены команды управления записями`.
 
 ### Task 3: Документы и закрывающая проверка
 
@@ -74,8 +74,8 @@
 **Interfaces:**
 - Produces: воспроизводимое evidence и список конфликтных shared files.
 
-- [ ] Обновить roadmap фактическим результатом и ограничениями ролей/YCLIENTS.
-- [ ] Записать RED/GREEN, baseline checksum blocker и отсутствие внешних действий в changelog.
-- [ ] Запустить свежий Docker focused regression и `docker compose config`.
-- [ ] Проверить diff, секреты и общую навигацию; выполнить code review и исправить Critical/Important замечания.
-- [ ] Закоммитить `docs: зафиксирована вкладка записей` и сообщить ветку, коммиты, тесты и merge-конфликты.
+- [x] Обновить roadmap фактическим результатом и ограничениями ролей/YCLIENTS.
+- [x] Записать RED/GREEN, baseline checksum blocker и отсутствие внешних действий в changelog.
+- [x] Запустить свежий Docker focused regression и `docker compose config`.
+- [x] Проверить diff, секреты и общую навигацию; выполнить code review и исправить Critical/Important замечания.
+- [x] Закоммитить `docs: зафиксирована вкладка записей` и сообщить ветку, коммиты, тесты и merge-конфликты.
