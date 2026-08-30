@@ -1083,15 +1083,51 @@ button:hover {
     .eval-tab:only-child { flex: 1 0 100%; }
 }
 
-.eval-option {
-    display: inline-flex;
+.eval-heading { margin-bottom: 16px; }
+
+.eval-toolbar {
+    width: 100%;
+    margin-bottom: 28px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.76);
+    box-shadow: 0 12px 32px rgba(7, 27, 46, 0.06);
+}
+
+.eval-status {
+    display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--ice);
     color: var(--muted);
     font-size: 13px;
 }
 
-.eval-option small { font-size: 11px; }
+.eval-status strong { color: var(--text); }
+
+.eval-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.eval-action { margin: 0; }
+
+.eval-action .btn,
+.eval-actions-grid > .btn {
+    width: 100%;
+    min-height: 48px;
+    text-align: center;
+}
+
+@media (max-width: 700px) {
+    .eval-actions-grid { grid-template-columns: 1fr; }
+}
+
 .btn-disabled { cursor: not-allowed; opacity: 0.55; }
 
 .review-tabs {

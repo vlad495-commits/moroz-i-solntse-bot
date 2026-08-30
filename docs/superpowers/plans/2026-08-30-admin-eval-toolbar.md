@@ -29,7 +29,7 @@
 - Consumes: существующий Jinja-контекст `suite`, `cases`, `problem_cases`, `user`.
 - Produces: классы `eval-heading`, `eval-toolbar`, `eval-status`, `eval-actions-grid`, `eval-action`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_eval_actions_use_balanced_toolbar_layout():
@@ -42,13 +42,13 @@ def test_eval_actions_use_balanced_toolbar_layout():
     assert "width: 100%;" in styles.split(".eval-action .btn {", 1)[1].split("}", 1)[0]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `docker compose --env-file ../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py::test_eval_actions_use_balanced_toolbar_layout -q`
 
 Expected: `FAIL`, потому что новая панель и CSS-контракт ещё отсутствуют.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```html
 <h1 class="eval-heading">…</h1>
@@ -64,13 +64,13 @@ Expected: `FAIL`, потому что новая панель и CSS-контр�
 @media (max-width: 700px) { .eval-actions-grid { grid-template-columns: 1fr; } }
 ```
 
-- [ ] **Step 4: Run focused and regression tests**
+- [x] **Step 4: Run focused and regression tests**
 
 Run: `docker compose --env-file ../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py -q`
 
 Expected: все тесты файла проходят.
 
-- [ ] **Step 5: Verify project contracts and commit**
+- [x] **Step 5: Verify project contracts and commit**
 
 Run: `docker compose --env-file ../.env config --quiet`
 
@@ -80,4 +80,3 @@ Expected: exit code `0`.
 git add project/admin/templates/eval_list.html project/admin/static/styles.css project/tests/e2e/admin/test_eval_navigation.py "Дорожная карта.md" changelog.md docs/superpowers
 git commit -m "fix: выровнять панель действий evaluations"
 ```
-
