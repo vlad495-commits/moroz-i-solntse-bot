@@ -12,6 +12,7 @@ admin_app = importlib.import_module("app")
 bot_control_routes = importlib.import_module("bot_control_routes")
 customer_data_routes = importlib.import_module("customer_data_routes")
 prompt_routes = importlib.import_module("prompt_routes")
+statistics_routes = importlib.import_module("statistics_routes")
 rbac = importlib.import_module("rbac")
 audit_repository = importlib.import_module("audit_repository")
 
@@ -303,14 +304,18 @@ async def test_stats_page_rejects_admin_role_before_stats_read(monkeypatch):
     async def current_user(_request):
         return user(role="admin")
 
-    async def stats_must_not_be_called():
+    async def stats_must_not_be_called(_period):
         raise AssertionError("stats should not be read before RBAC passes")
 
-    monkeypatch.setattr(admin_app, "get_current_user", current_user)
-    monkeypatch.setattr(admin_app.database, "get_global_stats", stats_must_not_be_called)
+    monkeypatch.setattr(statistics_routes, "get_current_user", current_user)
+    monkeypatch.setattr(
+        statistics_routes.database,
+        "get_statistics_snapshot",
+        stats_must_not_be_called,
+    )
 
     with pytest.raises(HTTPException) as denied:
-        await admin_app.stats_page(object())
+        await statistics_routes.statistics_page(object())
 
     assert denied.value.status_code == 403
 
