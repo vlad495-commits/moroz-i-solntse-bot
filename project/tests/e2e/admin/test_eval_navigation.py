@@ -127,6 +127,28 @@ def test_eval_sidebar_has_only_one_evaluations_link():
     assert "Input Security" not in sidebar
 
 
+def test_owner_sidebar_follows_customer_workflow_order():
+    body = render_eval_list("answer", "/eval/")
+    sidebar = body.split('<div class="nav-links">', 1)[1].split(
+        '<div class="sidebar-footer">', 1
+    )[0]
+    labels = (
+        "Диалоги",
+        "Статистика",
+        "Записи",
+        "Эскалации",
+        "Реактивация",
+        "Evaluations / Эвалы",
+        "Промпт",
+        "Управление",
+        "Логи",
+    )
+
+    positions = [sidebar.index(label) for label in labels]
+
+    assert positions == sorted(positions)
+
+
 def test_non_owner_sees_only_accessible_answer_tab():
     body = render_eval_list("answer", "/eval/", role="admin")
 
