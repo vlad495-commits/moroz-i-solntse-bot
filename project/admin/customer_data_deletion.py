@@ -307,6 +307,20 @@ async def _delete_customer_data(
                     sorted(user_ids),
                 )
                 await _delete(
+                    conn, counts, "marketing_consents",
+                    "DELETE FROM marketing_consents "
+                    "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                    DELETION_CHANNEL,
+                    sorted(user_ids),
+                )
+                await _delete(
+                    conn, counts, "reactivation_deliveries",
+                    "DELETE FROM reactivation_deliveries "
+                    "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                    DELETION_CHANNEL,
+                    sorted(user_ids),
+                )
+                await _delete(
                     conn, counts, "token_usage",
                     "DELETE FROM token_usage WHERE chat_id = $1 OR user_id::text = ANY($2::text[])",
                     chat_id,
@@ -365,6 +379,18 @@ async def _delete_customer_data(
                         ),
                         await conn.fetchval(
                             "SELECT count(*) FROM processing_consents "
+                            "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                            DELETION_CHANNEL,
+                            sorted(user_ids),
+                        ),
+                        await conn.fetchval(
+                            "SELECT count(*) FROM marketing_consents "
+                            "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                            DELETION_CHANNEL,
+                            sorted(user_ids),
+                        ),
+                        await conn.fetchval(
+                            "SELECT count(*) FROM reactivation_deliveries "
                             "WHERE channel = $1 AND user_id = ANY($2::text[])",
                             DELETION_CHANNEL,
                             sorted(user_ids),

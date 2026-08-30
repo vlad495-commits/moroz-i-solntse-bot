@@ -43,6 +43,7 @@ from metrics_routes import router as metrics_router  # noqa: E402
 from customer_data_routes import router as customer_data_router  # noqa: E402
 from escalation_routes import router as escalation_router  # noqa: E402
 from booking_routes import router as booking_router  # noqa: E402
+from reactivation_routes import router as reactivation_router  # noqa: E402
 from paths import admin_url  # noqa: E402
 from rbac import require_role  # noqa: E402
 
@@ -84,6 +85,7 @@ app.include_router(metrics_router)
 app.include_router(customer_data_router)
 app.include_router(escalation_router)
 app.include_router(booking_router)
+app.include_router(reactivation_router)
 
 
 # Jinja2 фильтры для форматирования
