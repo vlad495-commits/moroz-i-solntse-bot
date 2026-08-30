@@ -2,6 +2,7 @@
 
 > **Роль документа:** append-only инженерный журнал значимых действий и доказательств. Это не backlog и не источник текущего статуса; актуальное состояние находится в `Дорожная карта.md`.
 
+[2026-08-30 18:07] В отдельном worktree `codex/admin-evaluations-navigation` после согласования дизайна начата UI-перестройка раздела Evaluations: одна ссылка бокового меню и внутренние подкладки существующих наборов. Runtime, API, датасеты, staging и production не затрагивались.
 [2026-08-14 22:56] Task 4: начата TDD-реализация подключения YCLIENTS projection sync к существующему worker; добавлены RED-контракты ранней ветки scheduler job и безопасной фиксации ошибок, без внешних вызовов.
 [2026-08-14 23:01] Task 4: реализована проводка projection sync через worker; Docker GREEN целевого набора — 61 passed. Compose, scheduler-контейнер и внешние провайдеры не изменялись и не вызывались.
 [2026-08-14 23:02] Task 4: записан отчёт `.superpowers/sdd/yclients-reconciliation-task-4-report.md` с RED/GREEN evidence, self-review и ограничениями проверки.
