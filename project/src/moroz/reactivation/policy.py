@@ -122,7 +122,7 @@ def evaluate_eligibility(
 
     checks = (
         (value.deletion_active, "deletion"),
-        (value.identity_status == "unverified", "no_verified_identity"),
+        (value.identity_status not in ("verified", "conflict"), "no_verified_identity"),
         (value.identity_status == "conflict", "identity_conflict"),
         (not value.consent_proven, "no_proven_consent"),
         (not value.consent_active, "consent_revoked"),

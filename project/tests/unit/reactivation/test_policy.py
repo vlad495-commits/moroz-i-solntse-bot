@@ -58,6 +58,7 @@ def test_inactivity_boundary(inactive_days: int, eligible: bool, reason: str) ->
         ({"deletion_active": True}, "deletion"),
         ({"identity_status": "unverified"}, "no_verified_identity"),
         ({"identity_status": "conflict"}, "identity_conflict"),
+        ({"identity_status": "unknown"}, "no_verified_identity"),
         ({"consent_proven": False}, "no_proven_consent"),
         ({"consent_active": False}, "consent_revoked"),
         ({"suppressed": True}, "suppressed"),
