@@ -630,18 +630,40 @@ select:focus {
 
 .msg-header {
     justify-content: space-between;
-    margin-bottom: 5px;
+    margin-bottom: 9px;
     font-size: 12px;
 }
 
-.msg-role { font-weight: 800; }
+.msg-role {
+    display: inline-flex;
+    align-items: center;
+    min-height: 23px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: rgba(33, 91, 179, 0.10);
+    color: var(--brand);
+    font-weight: 800;
+    letter-spacing: 0.01em;
+}
+.msg-assistant .msg-role {
+    background: rgba(27, 151, 105, 0.12);
+    color: #137a55;
+}
 .msg-time { color: var(--muted); }
-.msg-body { white-space: pre-wrap; word-break: break-word; }
+.msg-body {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1.55;
+}
 
 .message-llm-analytics {
-    margin-top: 11px;
-    padding-top: 9px;
-    border-top: 1px solid var(--line);
+    margin-top: 22px;
+    padding: 10px 12px;
+    border: 1px solid rgba(73, 105, 148, 0.16);
+    border-radius: 12px;
+    background: rgba(73, 105, 148, 0.045);
     color: var(--muted);
     font-size: 12px;
 }
@@ -654,7 +676,7 @@ select:focus {
     justify-content: space-between;
     gap: 8px 16px;
     flex-wrap: wrap;
-    width: fit-content;
+    width: 100%;
     cursor: pointer;
     color: var(--muted);
     list-style: none;
@@ -669,7 +691,10 @@ select:focus {
     transition: transform 160ms ease;
 }
 .message-llm-details[open] summary::before { transform: rotate(0); }
-.message-llm-details-label { color: var(--brand); font-weight: 800; }
+.message-llm-details-label {
+    color: var(--brand);
+    font-weight: 800;
+}
 .message-llm-details-content {
     display: grid;
     gap: 8px;

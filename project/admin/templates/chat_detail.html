@@ -49,7 +49,7 @@
     {% for msg in chat.messages %}
     <div class="msg msg-{{ msg.role }}">
         <div class="msg-header">
-            <span class="msg-role">{{ 'Юзер' if msg.role == 'user' else 'Бот' }}</span>
+            <span class="msg-role">{{ 'Клиент' if msg.role == 'user' else 'Бот' }}</span>
             <span class="msg-time">{{ msg.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
         </div>
         <div class="msg-body">{{ msg.content }}</div>
@@ -62,7 +62,7 @@
             {% else %}
             <details class="message-llm-details">
                 <summary>
-                    <span class="message-llm-details-label">Детали обработки</span>
+                    <span class="message-llm-details-label">Технические детали</span>
                     <span>{{ msg.llm_usage.llm_calls }} выз. · {{ msg.llm_usage.total_tokens|int }} токенов · {{ msg.llm_usage.cost_usd|money }}</span>
                 </summary>
                 <div class="message-llm-details-content">
