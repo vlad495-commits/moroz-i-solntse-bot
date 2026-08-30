@@ -229,6 +229,7 @@ async def test_openai_gpt5_uses_supported_generation_settings():
             "model": "gpt-5.6-luna",
             "messages": [{"role": "user", "content": "safe"}],
             "max_completion_tokens": 321,
+            "reasoning_effort": "none",
         }
     ]
 
