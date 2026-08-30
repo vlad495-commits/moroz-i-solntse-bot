@@ -1347,3 +1347,48 @@ button:hover {
 @media (max-width: 860px) {
     .reactivation-grid { grid-template-columns: 1fr; }
 }
+
+.statistics-page { display: flex; flex-direction: column; gap: 6px; }
+.statistics-header,
+.statistics-filter,
+.statistics-settings form {
+    display: flex;
+    align-items: end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.statistics-header { justify-content: space-between; }
+.statistics-filter label,
+.statistics-settings label { color: var(--text); font-size: 13px; font-weight: 700; }
+.statistics-filter input { min-width: 150px; }
+.statistics-estimate,
+.statistics-settings {
+    margin-top: 16px;
+    padding: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.72);
+    box-shadow: var(--shadow);
+}
+.statistics-estimate h2,
+.statistics-settings h2 { margin-top: 6px; }
+.statistics-estimate p,
+.statistics-formula,
+.stat-note { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.statistics-formula {
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: var(--ice);
+    font-family: ui-monospace, "SF Mono", monospace;
+}
+.statistics-settings input { min-width: 220px; }
+.stat-value-unavailable { font-size: 20px; }
+.stat-note { margin-top: 8px; }
+
+@media (max-width: 720px) {
+    .statistics-header,
+    .statistics-filter,
+    .statistics-settings form { align-items: stretch; flex-direction: column; }
+    .statistics-filter input,
+    .statistics-settings input { min-width: 100%; }
+}
