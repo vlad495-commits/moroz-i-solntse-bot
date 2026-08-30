@@ -43,8 +43,8 @@ from metrics_routes import router as metrics_router  # noqa: E402
 from customer_data_routes import router as customer_data_router  # noqa: E402
 from escalation_routes import router as escalation_router  # noqa: E402
 from booking_routes import router as booking_router  # noqa: E402
+from statistics_routes import router as statistics_router  # noqa: E402
 from paths import admin_url  # noqa: E402
-from rbac import require_role  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ app.include_router(metrics_router)
 app.include_router(customer_data_router)
 app.include_router(escalation_router)
 app.include_router(booking_router)
+app.include_router(statistics_router)
 
 
 # Jinja2 фильтры для форматирования
@@ -238,27 +239,4 @@ async def chat_detail(
         request,
         "chat_detail.html",
         {"user": user, "chat": detail, "events": events},
-    )
-
-
-@app.get("/stats", response_class=HTMLResponse)
-async def stats_page(request: Request):
-    user = await get_current_user(request)
-    require_role(user, {"owner"})
-    stats = await database.get_global_stats()
-    incidents = await database.get_recent_incidents(limit=20)
-
-    cost, savings = calculate_cost(
-        stats.get("prompt_tokens", 0),
-        stats.get("completion_tokens", 0),
-        stats.get("cached_tokens", 0),
-        os.getenv("LLM_MODEL", "gpt-4.1-mini"),
-    )
-    stats["cost_usd"] = cost
-    stats["savings_usd"] = savings
-
-    return templates.TemplateResponse(
-        request,
-        "stats.html",
-        {"user": user, "stats": stats, "incidents": incidents},
     )
