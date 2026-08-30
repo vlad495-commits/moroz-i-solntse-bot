@@ -278,9 +278,9 @@ Runtime использует только immutable owner-approved template. Р�
 6. сетевой вызов происходит вне DB lock через существующий delivery worker;
 7. provider result обновляет outbox и reactivation step идемпотентно.
 
-Программа не держит DB lock во время сети. Transport rate limits остаются в sender/worker и не редактируются во вкладке.
+Reserve/claim-транзакции остаются короткими. Непосредственно сетевой Telegram-вызов переиспользует существующий per-customer delivery fence: transaction-scoped advisory lock конкретного клиента удерживается до фиксации результата, чтобы customer deletion, STOP и отправка не могли обогнать друг друга. Row locks и глобальная блокировка на время сети не удерживаются. Для реактивации sender дополнительно берёт shared program advisory lock, а emergency stop — exclusive lock того же ключа; поэтому разные клиенты отправляются параллельно, а stop дожидается уже начатых вызовов и не пропускает новые. Transport rate limits остаются в sender/worker и не редактируются во вкладке.
 
-Уточнение после сверки с PostgreSQL 16 через Context7: `SKIP LOCKED` используется только как механизм конкурентного claim очереди, а не как источник данных для preview или eligibility, потому что он намеренно пропускает уже заблокированные строки. `pg_advisory_xact_lock` берётся только внутри короткой транзакции и автоматически освобождается при её завершении. После claim условия всё равно перечитываются и проверяются в той же транзакции.
+Уточнение после сверки с PostgreSQL 16 через Context7: `SKIP LOCKED` используется только как механизм конкурентного claim очереди, а не как источник данных для preview или eligibility, потому что он намеренно пропускает уже заблокированные строки. Transaction-scoped advisory locks автоматически освобождаются при завершении соответствующей транзакции. После claim условия всё равно перечитываются перед сетевым вызовом внутри delivery fence.
 
 ### Emergency stop
 
@@ -447,7 +447,7 @@ Ponytail-ограничение: для одной программы не со�
 | Consent proof неполный | Клиент исключён как `no_proven_consent`. |
 | Два scheduler/worker | Один claim за счёт `SKIP LOCKED` и unique step key. |
 | Ответ одновременно с reminder | Customer lock + повторный preflight; inbound побеждает, если зафиксирован до reserve. |
-| Pause одновременно с send | Program lock + source-aware send guard. |
+| Pause одновременно с send | Shared program lock у отправки + exclusive program lock у stop + source-aware send guard. |
 | Timeout после Telegram POST | `delivery_unknown`, без retry и reminder. |
 | Bot blocked / permanent provider error | Suppression + закрытие journey. |
 | Template изменён после preview | Preview становится invalid, активация запрещена. |
