@@ -171,10 +171,41 @@ async def index(request: Request):
         os.getenv("LLM_MODEL", "gpt-4.1-mini"),
     )
     summary["cost_usd"] = summary_cost
-    llm_models = {
-        "main": os.getenv("LLM_MODEL", "не настроена"),
-        "reserve": os.getenv("RESERVE_MODEL") or "не настроена",
-    }
+    main_model = os.getenv("LLM_MODEL") or "не настроена"
+    reserve_model = os.getenv("RESERVE_MODEL") or "не предусмотрена"
+    router_model = os.getenv("ROUTER_MODEL") or main_model
+    security_model = os.getenv("SECURITY_MODEL") or router_model
+    validator_enabled = os.getenv(
+        "OUTPUT_VALIDATOR_ENABLED", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    llm_models = [
+        {
+            "title": "Основной ответ",
+            "main": main_model,
+            "reserve": reserve_model,
+        },
+        {
+            "title": "Роутер",
+            "main": router_model,
+            "reserve": "не предусмотрена",
+        },
+        {
+            "title": "LLM Security",
+            "main": security_model,
+            "reserve": reserve_model,
+        },
+        {
+            "title": "Валидация",
+            "main": main_model,
+            "reserve": reserve_model,
+            "status": "включена" if validator_enabled else "выключена",
+        },
+        {
+            "title": "Контекст",
+            "main": router_model,
+            "reserve": "не предусмотрена",
+        },
+    ]
 
     # Расчёт стоимости для каждого чата
     for c in chats:

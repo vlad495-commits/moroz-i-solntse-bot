@@ -20,9 +20,28 @@
     <div class="stat dialogs-card"><div class="stat-label">Всего сообщений</div><div class="stat-value">{{ summary.total_messages|default(0)|int }}</div></div>
     <div class="stat dialogs-card dialogs-card-large"><div class="stat-label">Общая стоимость</div><div class="stat-value">{{ summary.cost_usd|default(0)|money }}</div></div>
     <div class="stat stat-models dialogs-model-card">
-        <div class="stat-label">LLM-модели</div>
-        <div class="model-line"><span>Основная</span><strong>{{ llm_models.main }}</strong></div>
-        <div class="model-line"><span>Резервная</span><strong>{{ llm_models.reserve }}</strong></div>
+        <div class="dialogs-model-card-head">
+            <div class="stat-label">LLM-модели по модулям</div>
+            <span class="models-legend">Основная · резервная</span>
+        </div>
+        <div class="module-models-grid">
+            {% for module in llm_models %}
+            <div class="module-model">
+                <div class="module-model-title">
+                    <span>{{ module.title }}</span>
+                    {% if module.status %}<span class="module-status{% if module.status == 'включена' %} module-status-enabled{% endif %}">{{ module.status }}</span>{% endif %}
+                </div>
+                <div class="module-model-value">
+                    <span>Основная</span>
+                    <strong>{{ module.main }}</strong>
+                </div>
+                <div class="module-model-value module-model-value-reserve">
+                    <span>Резервная</span>
+                    <strong>{{ module.reserve }}</strong>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
     </div>
 </div>
 
