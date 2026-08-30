@@ -27,6 +27,10 @@ from fastapi.templating import Jinja2Templates
 import prompt_database as pdb
 from auth import get_current_user
 from audit_repository import record_audit, request_ip_address, request_user_agent
+from moroz.messaging.router import ROUTER_SYSTEM_PROMPT
+from moroz.security.context_compactor import COMPACT_SYSTEM_PROMPT
+from moroz.security.input_security import INPUT_SECURITY_SYSTEM_PROMPT
+from moroz.security.output_validator import OUTPUT_VALIDATOR_SYSTEM_PROMPT
 from paths import admin_url
 from rbac import require_role, validate_csrf
 
@@ -47,6 +51,39 @@ PROMPT_RELOAD_APPLIED = "applied"
 PROMPT_RELOAD_REJECTED = "rejected"
 PROMPT_RELOAD_UNCONFIRMED = "unconfirmed"
 PROMPT_UPDATE_LOCK = asyncio.Lock()
+PROMPT_TABS = (
+    ("main", "Основной промпт"),
+    ("router", "Роутер"),
+    ("security", "LLM Security"),
+    ("validator", "Валидация"),
+    ("compact", "Контекст"),
+)
+AUXILIARY_PROMPTS = {
+    "router": {
+        "title": "Промпт роутера",
+        "description": "Определяет маршрут входящего сообщения до основного ответа.",
+        "source": "src/moroz/messaging/router.py",
+        "content": ROUTER_SYSTEM_PROMPT,
+    },
+    "security": {
+        "title": "Промпт LLM Security",
+        "description": "Проверяет входящее сообщение на prompt injection и опасные инструкции.",
+        "source": "src/moroz/security/input_security.py",
+        "content": INPUT_SECURITY_SYSTEM_PROMPT,
+    },
+    "validator": {
+        "title": "Промпт валидации ответа",
+        "description": "Проверяет готовый ответ перед отправкой клиенту, когда Validator включён.",
+        "source": "src/moroz/security/output_validator.py",
+        "content": OUTPUT_VALIDATOR_SYSTEM_PROMPT,
+    },
+    "compact": {
+        "title": "Промпт контекста",
+        "description": "Сжимает старую часть длинного диалога в безопасную краткую сводку.",
+        "source": "src/moroz/security/context_compactor.py",
+        "content": COMPACT_SYSTEM_PROMPT,
+    },
+}
 
 
 async def _publish_reload(version_id: int, content: str) -> str:
@@ -184,11 +221,18 @@ def _write_prompt(content: str) -> bool:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def prompt_editor(request: Request, saved: str = "", error: str = ""):
+async def prompt_editor(
+    request: Request,
+    saved: str = "",
+    error: str = "",
+    tab: str = "main",
+):
     user = await get_current_user(request)
     require_role(user, {"owner"})
-    current = _read_current_prompt()
-    versions = await pdb.list_versions(limit=50)
+    active_tab = tab if tab in dict(PROMPT_TABS) else "main"
+    is_main_prompt = active_tab == "main"
+    current = _read_current_prompt() if is_main_prompt else ""
+    versions = await pdb.list_versions(limit=50) if is_main_prompt else []
     return templates.TemplateResponse(
         request, "prompt_edit.html",
         {
@@ -198,6 +242,9 @@ async def prompt_editor(request: Request, saved: str = "", error: str = ""):
             "saved": saved,
             "error": error,
             "file_path": str(PROMPT_FILE),
+            "prompt_tabs": PROMPT_TABS,
+            "active_tab": active_tab,
+            "active_prompt": AUXILIARY_PROMPTS.get(active_tab),
         },
     )
 

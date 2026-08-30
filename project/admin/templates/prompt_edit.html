@@ -1,7 +1,27 @@
 {% extends "base.html" %}
-{% block title %}Системный промпт — Admin{% endblock %}
+{% block title %}Промпты — Admin{% endblock %}
 {% block content %}
-<h1>Системный промпт <span class="muted">({{ file_path }})</span></h1>
+<div class="prompt-heading">
+    <div class="page-eyebrow">LLM-контур</div>
+    <h1>Промпты</h1>
+</div>
+
+<nav class="eval-tabs prompt-tabs" aria-label="Промпты LLM-модулей">
+    {% for tab_id, tab_title in prompt_tabs %}
+    <a href="{{ request.scope.get('root_path', '') }}/prompt/?tab={{ tab_id }}"
+       class="eval-tab prompt-tab{% if active_tab == tab_id %} active{% endif %}"
+       {% if active_tab == tab_id %}aria-current="page"{% endif %}>{{ tab_title }}</a>
+    {% endfor %}
+</nav>
+
+{% if active_tab == 'main' %}
+<div class="prompt-section-head">
+    <div>
+        <h2>Основной системный промпт</h2>
+        <p>Формирует финальный ответ клиенту.</p>
+    </div>
+    <span class="prompt-mode-badge prompt-mode-edit">Редактирование</span>
+</div>
 
 {% if saved %}
 <div class="success">Сохранено. Версия #{{ saved }}.</div>
@@ -77,5 +97,19 @@
         {% endfor %}
     </tbody>
 </table>
+{% endif %}
+{% else %}
+<section class="auxiliary-prompt-panel">
+    <div class="prompt-section-head">
+        <div>
+            <h2>{{ active_prompt.title }}</h2>
+            <p>{{ active_prompt.description }}</p>
+        </div>
+        <span class="prompt-mode-badge">Только просмотр</span>
+    </div>
+    <div class="auxiliary-prompt-source">Источник: <code>{{ active_prompt.source }}</code></div>
+    <textarea class="auxiliary-prompt-content" rows="24" readonly aria-label="{{ active_prompt.title }}">{{ active_prompt.content }}</textarea>
+    <p class="page-note">Этот промпт применяется из кода. Изменение и hot reload для него пока не подключены.</p>
+</section>
 {% endif %}
 {% endblock %}
