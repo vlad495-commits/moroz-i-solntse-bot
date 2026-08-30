@@ -921,7 +921,7 @@ def _build_yclients_services(
     )
     admin_booking_commands = AdminBookingCommandService(
         adapter,
-        BookingRepository(database),
+        BookingRepository(database, schedule_notifications=False),
         AdminBookingCommandRepository(database),
         scheduler_repository,
         clock=lambda: datetime.now(UTC),

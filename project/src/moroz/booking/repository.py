@@ -27,8 +27,9 @@ def _load_json(value: object) -> object:
 
 
 class BookingRepository:
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, *, schedule_notifications: bool = True):
         self._database = database
+        self._schedule_notifications = schedule_notifications
 
     @asynccontextmanager
     async def serialized_scenario(
@@ -319,11 +320,12 @@ class BookingRepository:
                 "status": booking.status,
             },
         )
-        await self._sync_notification_jobs(
-            connection,
-            booking,
-            now=scenario.updated_at,
-        )
+        if self._schedule_notifications:
+            await self._sync_notification_jobs(
+                connection,
+                booking,
+                now=scenario.updated_at,
+            )
 
     @staticmethod
     async def _sync_notification_jobs(

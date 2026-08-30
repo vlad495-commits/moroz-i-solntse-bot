@@ -1083,7 +1083,7 @@ button:hover {
     display: grid;
     min-width: 980px;
     grid-template-columns: 64px repeat(7, minmax(128px, 1fr));
-    grid-template-rows: 62px 900px;
+    grid-template-rows: 62px var(--calendar-height);
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: 22px;
@@ -1103,7 +1103,7 @@ button:hover {
 .calendar-day-heading span { color: var(--muted); font-size: 11px; font-weight: 750; }
 .calendar-day-heading strong { font-size: 16px; }
 .calendar-times,
-.calendar-day-column { position: relative; height: 900px; }
+.calendar-day-column { position: relative; height: var(--calendar-height); }
 .calendar-times { border-right: 1px solid var(--line); }
 
 .calendar-times span {
@@ -1148,7 +1148,7 @@ button:hover {
 .calendar-booking-no_show,
 .calendar-booking-cancelled { border-left-color: var(--accent); background: #FFF0ED; }
 .calendar-booking-unknown { border-left-color: #D68A00; background: #FFF5DB; }
-.calendar-booking summary { cursor: pointer; list-style: none; }
+.calendar-booking summary { display: flex; flex-direction: column; cursor: pointer; list-style: none; }
 .calendar-booking summary::-webkit-details-marker { display: none; }
 .calendar-booking[open] { z-index: 5; min-height: max-content !important; box-shadow: 0 8px 24px rgba(40, 52, 73, .18); }
 .booking-card-actions { display: flex; flex-wrap: wrap; gap: 4px; padding-top: 6px; }

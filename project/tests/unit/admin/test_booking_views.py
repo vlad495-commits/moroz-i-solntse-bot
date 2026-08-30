@@ -59,10 +59,29 @@ def test_calendar_layout_groups_cards_and_positions_them_by_moscow_time():
         week_start + timedelta(days=offset) for offset in range(7)
     ]
     assert layout[0]["items"][0]["time_label"] == "10:30–11:15"
-    assert layout[0]["items"][0]["top"] == 210
+    assert layout[0]["items"][0]["top"] == 630
     assert layout[0]["items"][0]["height"] == 45
     assert layout[6]["items"][0]["time_label"] == "21:00"
     assert layout[6]["items"][0]["height"] == 60
+
+
+def test_calendar_layout_separates_overlapping_cards_and_keeps_full_day_visible():
+    week_start = date(2026, 8, 10)
+    items = [
+        {
+            "starts_at": datetime(2026, 8, 10, hour, 0, tzinfo=UTC),
+            "scheduled_end_at": datetime(2026, 8, 10, hour + 1, 0, tzinfo=UTC),
+        }
+        for hour in (0, 0, 20)
+    ]
+
+    cards = calendar_layout(items, week_start)[0]["items"]
+
+    assert cards[0]["left_percent"] == 0
+    assert cards[1]["left_percent"] == 50
+    assert cards[0]["width_percent"] == cards[1]["width_percent"] == 50
+    assert cards[0]["top"] == 180
+    assert cards[2]["top"] == 1380
 
 
 def test_manual_booking_validation_returns_bounded_worker_payload():

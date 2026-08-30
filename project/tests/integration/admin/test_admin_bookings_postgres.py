@@ -15,6 +15,7 @@ from bookings_database import (
     list_bookings,
 )
 from moroz.common.db import Database
+from moroz.booking.admin_commands import AdminBookingCommandRepository
 
 
 pytest_plugins = ["tests.integration.conftest"]
@@ -64,6 +65,11 @@ async def test_manual_command_is_queued_and_audited_without_pii_in_audit(
         assert audit["action"] == "booking.admin_booking_create.requested"
         assert "Ирина" not in str(audit["after"])
         assert "+79990000000" not in str(audit["after"])
+        await AdminBookingCommandRepository(database).scrub_personal_data(command_id)
+        scrubbed = await connection.fetchval(
+            "SELECT payload FROM scheduler_jobs WHERE id = $1", command_id
+        )
+        assert json.loads(scrubbed) == {}
     finally:
         await connection.close()
 
@@ -209,6 +215,42 @@ async def _seed_unsuccessful_sync(
         status,
         error_code,
     )
+
+
+async def test_status_event_is_idempotent_per_admin_command(
+    database,
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        await _seed_booking(
+            connection,
+            status="confirmed",
+            starts_at=NOW + timedelta(days=1),
+            phase="confirmed",
+            error_code=None,
+            updated_at=NOW,
+            external_id="9001",
+        )
+        command_id = uuid4()
+        repository = AdminBookingCommandRepository(database)
+
+        await repository.record_status(command_id, "9001", "completed")
+        await repository.record_status(command_id, "9001", "completed")
+
+        row = await connection.fetchrow(
+            """
+            SELECT bookings.status,
+                   (SELECT count(*) FROM booking_events WHERE id = $2) AS events
+            FROM bookings WHERE external_id = $1
+            """,
+            "9001",
+            command_id,
+        )
+        assert row["status"] == "completed"
+        assert row["events"] == 1
+    finally:
+        await connection.close()
 
 
 async def test_calendar_returns_exact_week_from_all_yclients_sources(

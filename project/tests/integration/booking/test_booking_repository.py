@@ -201,6 +201,24 @@ async def test_confirm_schedules_notifications_in_same_transaction(
     assert {row["status"] for row in rows} == {"pending"}
 
 
+async def test_confirm_can_persist_admin_booking_without_client_notifications(
+    database, scenario
+):
+    repo = BookingRepository(database, schedule_notifications=False)
+    executing = replace(scenario, phase="executing", customer_id="admin:manual")
+    booking = replace(confirmed_booking(), customer_id="admin:manual")
+    await repo.create_scenario(executing)
+
+    await repo.confirm(replace(executing, phase="confirmed"), booking)
+
+    async with database.acquire() as connection:
+        count = await connection.fetchval(
+            "SELECT count(*) FROM scheduler_jobs WHERE booking_key = $1",
+            booking.booking_key,
+        )
+    assert count == 0
+
+
 async def test_reschedule_replaces_old_notification_schedule(
     database, repo, scenario
 ):

@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from moroz.booking.models import BookingScenario, SlotQuery
 from moroz.booking.projection import PROJECTION_SYNC_KIND
@@ -22,7 +22,9 @@ class AdminBookingCommandRepository:
     def __init__(self, database) -> None:
         self._database = database
 
-    async def record_status(self, external_id: str, status: str) -> None:
+    async def record_status(
+        self, command_id: UUID, external_id: str, status: str
+    ) -> None:
         async with self._database.acquire() as connection:
             async with connection.transaction():
                 row = await connection.fetchrow(
@@ -52,8 +54,9 @@ class AdminBookingCommandRepository:
                     INSERT INTO booking_events
                         (id, scenario_id, event_type, payload)
                     VALUES ($1, $2, $3, $4::jsonb)
+                    ON CONFLICT (id) DO NOTHING
                     """,
-                    uuid4(),
+                    command_id,
                     row["last_scenario_id"],
                     {
                         "completed": "booking_completed",
@@ -61,6 +64,27 @@ class AdminBookingCommandRepository:
                         "cancelled": "booking_cancelled",
                     }[status],
                     "{}",
+                )
+
+    async def scrub_personal_data(self, command_id: UUID) -> None:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    """
+                    UPDATE scheduler_jobs
+                    SET payload = '{}'::jsonb, updated_at = now()
+                    WHERE id = $1
+                    """,
+                    command_id,
+                )
+                await connection.execute(
+                    """
+                    UPDATE booking_scenarios
+                    SET state = state - 'customer_name' - 'customer_phone' - 'comment',
+                        updated_at = now()
+                    WHERE id = $1
+                    """,
+                    command_id,
                 )
 
 
@@ -94,8 +118,18 @@ class AdminBookingCommandService:
         return JobResult.skipped("unsupported_kind")
 
     async def _create(self, job: SchedulerJob) -> JobResult:
+        existing = await self._booking_repository.get_scenario(job.id)
+        if (
+            existing is not None
+            and existing.phase == "confirmed"
+            and existing.state.get("status") == "confirmed"
+        ):
+            await self._schedule_projection(job.id)
+            await self._command_repository.scrub_personal_data(job.id)
+            return JobResult.sent()
         payload = _create_payload(job.payload, self._clock())
         if payload is None:
+            await self._command_repository.scrub_personal_data(job.id)
             return JobResult.skipped("invalid_admin_booking_payload")
         starts_at = payload["starts_at"]
         query = SlotQuery(
@@ -116,6 +150,7 @@ class AdminBookingCommandService:
             None,
         )
         if slot is None:
+            await self._command_repository.scrub_personal_data(job.id)
             return JobResult.skipped("slot_unavailable")
         state = {
             "slot_query": {
@@ -144,10 +179,12 @@ class AdminBookingCommandService:
         scenario_id = await self._booking_repository.create_scenario(scenario)
         result = await self._booking_service.handle(scenario_id, confirmed=True)
         if result.status != "ok":
+            await self._command_repository.scrub_personal_data(job.id)
             return JobResult.skipped(
                 result.error_code or result.next_action or result.status
             )
         await self._schedule_projection(job.id)
+        await self._command_repository.scrub_personal_data(job.id)
         return JobResult.sent()
 
     async def _status(self, job: SchedulerJob) -> JobResult:
@@ -156,7 +193,7 @@ class AdminBookingCommandService:
             return JobResult.skipped("invalid_admin_booking_payload")
         external_id, status = payload
         await self._adapter.set_visit_status(external_id, status)
-        await self._command_repository.record_status(external_id, status)
+        await self._command_repository.record_status(job.id, external_id, status)
         await self._schedule_projection(job.id)
         return JobResult.sent()
 

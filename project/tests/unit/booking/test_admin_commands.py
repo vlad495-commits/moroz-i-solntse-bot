@@ -9,7 +9,7 @@ from moroz.booking.admin_commands import (
     ADMIN_BOOKING_STATUS_KIND,
     AdminBookingCommandService,
 )
-from moroz.booking.models import Slot
+from moroz.booking.models import BookingScenario, Slot
 from moroz.messaging.models import ScenarioResult
 from moroz.notifications.models import SchedulerJob
 
@@ -46,12 +46,16 @@ class Adapter:
 
 
 class BookingRepository:
-    def __init__(self):
+    def __init__(self, existing=None):
         self.scenarios = []
+        self.existing = existing
 
     async def create_scenario(self, scenario):
         self.scenarios.append(scenario)
         return scenario.id
+
+    async def get_scenario(self, _scenario_id):
+        return self.existing
 
 
 class BookingService:
@@ -66,9 +70,13 @@ class BookingService:
 class CommandRepository:
     def __init__(self):
         self.statuses = []
+        self.scrubbed = []
 
-    async def record_status(self, external_id, status):
-        self.statuses.append((external_id, status))
+    async def record_status(self, command_id, external_id, status):
+        self.statuses.append((command_id, external_id, status))
+
+    async def scrub_personal_data(self, command_id):
+        self.scrubbed.append(command_id)
 
 
 class Scheduler:
@@ -87,11 +95,12 @@ async def test_create_command_selects_exact_slot_and_runs_existing_booking_servi
     adapter = Adapter([slot])
     bookings = BookingRepository()
     booking_service = BookingService()
+    commands = CommandRepository()
     scheduler = Scheduler()
     service = AdminBookingCommandService(
         adapter,
         bookings,
-        CommandRepository(),
+        commands,
         scheduler,
         booking_service=booking_service,
         clock=lambda: NOW,
@@ -120,12 +129,14 @@ async def test_create_command_selects_exact_slot_and_runs_existing_booking_servi
     assert booking_service.calls == [(JOB_ID, True)]
     assert scheduler.jobs[0].kind == "yclients_booking_projection_sync"
     assert scheduler.jobs[0].idempotency_key.endswith(str(JOB_ID))
+    assert commands.scrubbed == [JOB_ID]
 
 
 @pytest.mark.asyncio
 async def test_create_command_skips_when_exact_slot_is_unavailable():
+    commands = CommandRepository()
     service = AdminBookingCommandService(
-        Adapter(), BookingRepository(), CommandRepository(), Scheduler(), clock=lambda: NOW
+        Adapter(), BookingRepository(), commands, Scheduler(), clock=lambda: NOW
     )
 
     result = await service.handle(
@@ -144,6 +155,37 @@ async def test_create_command_skips_when_exact_slot_is_unavailable():
     )
 
     assert result.reason == "slot_unavailable"
+    assert commands.scrubbed == [JOB_ID]
+
+
+@pytest.mark.asyncio
+async def test_create_retry_recovers_confirmed_scenario_after_payload_was_scrubbed():
+    existing = BookingScenario(
+        id=JOB_ID,
+        kind="create",
+        phase="confirmed",
+        idempotency_key=f"{ADMIN_BOOKING_CREATE_KIND}:{JOB_ID}",
+        customer_id=f"admin:{JOB_ID}",
+        state={"status": "confirmed"},
+        error_code=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    commands = CommandRepository()
+    scheduler = Scheduler()
+    service = AdminBookingCommandService(
+        Adapter(),
+        BookingRepository(existing),
+        commands,
+        scheduler,
+        clock=lambda: NOW,
+    )
+
+    result = await service.handle(_job(ADMIN_BOOKING_CREATE_KIND, {}))
+
+    assert result.status == "sent"
+    assert scheduler.jobs[0].kind == "yclients_booking_projection_sync"
+    assert commands.scrubbed == [JOB_ID]
 
 
 @pytest.mark.asyncio
@@ -168,7 +210,7 @@ async def test_status_command_updates_yclients_and_local_projection_state():
 
     assert result.status == "sent"
     assert adapter.statuses == [("9001", "no_show")]
-    assert repository.statuses == [("9001", "no_show")]
+    assert repository.statuses == [(JOB_ID, "9001", "no_show")]
     assert scheduler.jobs[0].kind == "yclients_booking_projection_sync"
 
 

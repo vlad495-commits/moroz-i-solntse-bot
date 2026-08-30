@@ -13,6 +13,8 @@ import database
 from audit_repository import request_ip_address, request_user_agent
 from auth import get_current_user
 from booking_views import (
+    CALENDAR_END_HOUR,
+    CALENDAR_START_HOUR,
     MOSCOW,
     calendar_layout,
     validate_booking_status_action,
@@ -76,7 +78,9 @@ async def booking_list(
             "next_week": (
                 week_start.astimezone(MOSCOW).date() + timedelta(days=7)
             ).isoformat(),
-            "calendar_hours": range(7, 23),
+            "calendar_hours": range(CALENDAR_START_HOUR, CALENDAR_END_HOUR + 1),
+            "calendar_start_hour": CALENDAR_START_HOUR,
+            "calendar_height": (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * 60,
             "service_options": service_options,
             "notice": request.query_params.get("notice"),
         },

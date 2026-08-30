@@ -66,8 +66,8 @@ PROJECTION_FAILURE_LABELS = {
     "yclients_projection_write": "Результат сверки не удалось сохранить",
 }
 MOSCOW = ZoneInfo("Europe/Moscow")
-CALENDAR_START_HOUR = 7
-CALENDAR_END_HOUR = 22
+CALENDAR_START_HOUR = 0
+CALENDAR_END_HOUR = 24
 _DAY_NAMES = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 _PHONE_RE = re.compile(r"^\+?\d{10,16}$")
 _BOOKING_ACTION_STATUSES = {"completed", "no_show", "cancelled"}
@@ -137,7 +137,51 @@ def calendar_layout(
             ),
         )
         days[day_index]["items"].append(card)
+    for day in days:
+        _place_calendar_lanes(day["items"])
     return days
+
+
+def _place_calendar_lanes(cards: list[dict[str, object]]) -> None:
+    cards.sort(key=lambda card: card["starts_at"])
+    group: list[dict[str, object]] = []
+    group_end: datetime | None = None
+    for card in cards:
+        starts_at = card["starts_at"]
+        end_at = card.get("scheduled_end_at")
+        effective_end = (
+            end_at
+            if isinstance(end_at, datetime) and end_at > starts_at
+            else starts_at + timedelta(minutes=60)
+        )
+        if group and group_end is not None and starts_at >= group_end:
+            _assign_group_lanes(group)
+            group = []
+            group_end = None
+        card["_effective_end"] = effective_end
+        group.append(card)
+        group_end = effective_end if group_end is None else max(group_end, effective_end)
+    _assign_group_lanes(group)
+
+
+def _assign_group_lanes(cards: list[dict[str, object]]) -> None:
+    lane_ends: list[datetime] = []
+    for card in cards:
+        starts_at = card["starts_at"]
+        lane = next(
+            (index for index, end_at in enumerate(lane_ends) if end_at <= starts_at),
+            len(lane_ends),
+        )
+        if lane == len(lane_ends):
+            lane_ends.append(card["_effective_end"])
+        else:
+            lane_ends[lane] = card["_effective_end"]
+        card["_lane"] = lane
+    columns = max(1, len(lane_ends))
+    for card in cards:
+        card["left_percent"] = card.pop("_lane") * 100 / columns
+        card["width_percent"] = 100 / columns
+        card.pop("_effective_end")
 
 
 def validate_manual_booking(

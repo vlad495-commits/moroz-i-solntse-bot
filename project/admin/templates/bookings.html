@@ -48,7 +48,7 @@
     </aside>
 
     <div class="calendar-scroll">
-        <div class="week-calendar">
+        <div class="week-calendar" style="--calendar-height: {{ calendar_height }}px">
             <div class="calendar-corner"></div>
             {% for day in days %}
             <div class="calendar-day-heading">
@@ -58,13 +58,13 @@
             {% endfor %}
 
             <div class="calendar-times" aria-hidden="true">
-                {% for hour in calendar_hours %}<span style="top: {{ (hour - 7) * 60 }}px">{{ '%02d:00'|format(hour) }}</span>{% endfor %}
+                {% for hour in calendar_hours %}<span style="top: {{ (hour - calendar_start_hour) * 60 }}px">{{ '%02d:00'|format(hour) }}</span>{% endfor %}
             </div>
             {% for day in days %}
             <div class="calendar-day-column">
-                {% for hour in calendar_hours %}<i style="top: {{ (hour - 7) * 60 }}px"></i>{% endfor %}
+                {% for hour in calendar_hours %}<i style="top: {{ (hour - calendar_start_hour) * 60 }}px"></i>{% endfor %}
                 {% for booking in day['items'] %}
-                <details class="calendar-booking calendar-booking-{{ booking.status }}" style="top: {{ booking.top }}px; min-height: {{ booking.height }}px" id="booking-{{ booking.row_key|replace(':', '-') }}">
+                <details class="calendar-booking calendar-booking-{{ booking.status }}" style="top: {{ booking.top }}px; left: calc({{ booking.left_percent }}% + 4px); right: auto; width: calc({{ booking.width_percent }}% - 8px); min-height: {{ booking.height }}px" id="booking-{{ booking.row_key|replace(':', '-') }}">
                     <summary>
                         <strong>{{ booking.time_label }}</strong>
                         <span>{{ booking.client_name or booking.customer_label }}</span>

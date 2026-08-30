@@ -838,8 +838,9 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
             built.append(("catalog_sync", repository, reader, scheduler))
 
     class BookingRepository:
-        def __init__(self, received_database):
+        def __init__(self, received_database, *, schedule_notifications):
             assert received_database is database
+            assert schedule_notifications is False
             built.append(("booking_repository", received_database))
 
     class CommandRepository:
