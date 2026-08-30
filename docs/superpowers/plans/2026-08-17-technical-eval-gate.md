@@ -82,7 +82,7 @@ git commit -m "feat: добавлен technical eval без цен"
 - Modify: `project/src/moroz/security/validator.py`
 - Modify: `project/tests/unit/security/test_validator.py`
 - Modify: `project/tests/unit/security/test_pipeline.py`
-- Modify: `project/llm/eval/local_2026-08-17_report.md`
+- Modify: `docs/archive/evaluations/local_2026-08-17_report.md`
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`
 
@@ -144,7 +144,7 @@ Run `git diff --check`, confirm datasets unchanged relative to
 `f356c2c372dc67e8ebd1c2e6e433e5946a10e782`, then commit:
 
 ```powershell
-git add project/src/moroz/security/validator.py project/tests/unit/security/test_validator.py project/tests/unit/security/test_pipeline.py project/llm/eval/local_2026-08-17_report.md 'Дорожная карта.md' changelog.md
+git add project/src/moroz/security/validator.py project/tests/unit/security/test_validator.py project/tests/unit/security/test_pipeline.py docs/archive/evaluations/local_2026-08-17_report.md 'Дорожная карта.md' changelog.md
 git commit -m "fix: walk-in включён в technical eval gate"
 ```
 

@@ -78,7 +78,7 @@
 ### Task 4: Fresh eval и закрытие отчёта
 
 **Files:**
-- Modify: `project/llm/eval/local_2026-08-17_report.md`
+- Modify: `docs/archive/evaluations/local_2026-08-17_report.md`
 - Modify: `Дорожная карта.md`
 - Modify: `changelog.md`
 

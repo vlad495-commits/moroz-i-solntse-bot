@@ -231,7 +231,7 @@
 
 ### Целевая архитектура: эвалы и качество
 - [x] Реализовать согласованный план `docs/superpowers/plans/2026-08-17-eval-catalog-guardrails.md`: synthetic catalog path, structural evaluator, adversarial guard и постоянные safe facts/replies.
-- [x] Выполнить свежий локальный eval на HEAD `f356c2c`: основной judge-run `46/69 PASS`, adversarial gate `2/20 PASS`; причины и ограничения зафиксированы в `project/llm/eval/local_2026-08-17_report.md`.
+  - [x] Выполнить свежий локальный eval на HEAD `f356c2c`: основной judge-run `46/69 PASS`, adversarial gate `2/20 PASS`; причины и ограничения зафиксированы в `docs/archive/evaluations/local_2026-08-17_report.md`.
 - [x] Подключить к admin eval-runner synthetic YCLIENTS catalog grounding и добавить шесть кейсов свежести, отсутствия услуги, неоднозначности, stale/missing, catalog injection и запрета цены вне выбранных facts.
 - [x] Закрыть все 20 local adversarial bypass без ослабления универсального `adversarial_dataset.json` (изначальные 2 PASS зависели от внешнего prompt-defense).
 - [ ] Перевести 11 legacy price/duration eval-кейсов на synthetic catalog fixtures без возврата статических цен в prompt; отдельно разобрать контракты 35/62.
