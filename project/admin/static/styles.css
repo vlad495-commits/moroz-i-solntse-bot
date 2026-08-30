@@ -999,6 +999,61 @@ button:hover {
     line-height: 1.55;
 }
 
+.prompt-heading { margin-bottom: 16px; }
+.prompt-heading h1 { margin: 4px 0 0; }
+.prompt-tabs { margin-bottom: 22px; }
+.prompt-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 14px;
+}
+.prompt-section-head h2 { margin: 0 0 4px; }
+.prompt-section-head p { margin: 0; color: var(--muted); }
+.prompt-mode-badge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(73, 105, 148, 0.10);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+}
+.prompt-mode-edit {
+    background: rgba(16, 75, 169, 0.10);
+    color: var(--brand);
+}
+.auxiliary-prompt-panel {
+    padding: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.78);
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.84);
+    box-shadow: var(--shadow);
+}
+.auxiliary-prompt-source {
+    margin-bottom: 12px;
+    color: var(--muted);
+    font-size: 12px;
+}
+.auxiliary-prompt-content {
+    min-height: 430px;
+    margin: 0;
+    border-color: rgba(73, 105, 148, 0.18);
+    background: rgba(233, 241, 251, 0.64);
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    resize: vertical;
+}
+
+@media (max-width: 700px) {
+    .prompt-section-head { flex-direction: column; gap: 10px; }
+}
+
 .run-status {
     padding: 18px;
     margin-bottom: 16px;
