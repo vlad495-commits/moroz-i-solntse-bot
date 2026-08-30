@@ -39,14 +39,21 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
     staff_outbound_id = uuid4()
     control_staff_outbound_id = uuid4()
     try:
-        await conn.execute(
-            "INSERT INTO messages (chat_id, user_id, username, role, content) "
-            "VALUES (42, 7, 'target-user', 'user', 'secret'), "
-            "(84, 8, 'control-user', 'user', 'keep')"
+        target_message_id = await conn.fetchval(
+            "INSERT INTO messages "
+            "(chat_id, user_id, username, role, content, llm_usage_tracked) "
+            "VALUES (42, 7, 'target-user', 'user', 'secret', true) RETURNING id"
+        )
+        control_message_id = await conn.fetchval(
+            "INSERT INTO messages "
+            "(chat_id, user_id, username, role, content, llm_usage_tracked) "
+            "VALUES (84, 8, 'control-user', 'user', 'keep', true) RETURNING id"
         )
         await conn.execute(
-            "INSERT INTO token_usage (chat_id, user_id, model) "
-            "VALUES (42, 7, 'test'), (84, 8, 'test')"
+            "INSERT INTO token_usage (chat_id, user_id, source_message_id, model) "
+            "VALUES (42, 7, $1, 'test'), (84, 8, $2, 'test')",
+            target_message_id,
+            control_message_id,
         )
         await conn.execute(
             "INSERT INTO processing_consents (channel, user_id, consent_version) "
@@ -220,6 +227,17 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
             "SELECT count(*) FROM task_outbox WHERE idempotency_key = 'staff-send'"
         ) == 0
         assert await conn.fetchval("SELECT count(*) FROM messages WHERE chat_id = 84") == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM messages WHERE id = $1", target_message_id
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM token_usage WHERE source_message_id = $1",
+            target_message_id,
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM token_usage WHERE source_message_id = $1",
+            control_message_id,
+        ) == 1
         assert await conn.fetchval("SELECT count(*) FROM processing_consents WHERE user_id = '8'") == 1
 
         assert await conn.fetchval(

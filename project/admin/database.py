@@ -246,7 +246,8 @@ async def get_chat_detail(chat_id: int) -> dict[str, Any] | None:
     async with _pool.acquire() as conn:
         msg_rows = await conn.fetch(
             """
-            SELECT id, chat_id, user_id, username, role, content, created_at
+            SELECT id, chat_id, user_id, username, role, content,
+                   llm_usage_tracked, created_at
             FROM messages
             WHERE chat_id = $1
             ORDER BY created_at ASC
@@ -271,14 +272,51 @@ async def get_chat_detail(chat_id: int) -> dict[str, Any] | None:
             chat_id,
         )
 
+        usage_rows = await conn.fetch(
+            """
+            SELECT
+                source_message_id,
+                purpose,
+                model,
+                COUNT(*) AS llm_calls,
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens
+            FROM token_usage
+            WHERE chat_id = $1 AND source_message_id IS NOT NULL
+            GROUP BY source_message_id, purpose, model
+            ORDER BY source_message_id, purpose, model
+            """,
+            chat_id,
+        )
+
     user_id = next((r["user_id"] for r in msg_rows if r["user_id"]), None)
     username = next((r["username"] for r in msg_rows if r["username"]), None)
+    usage_by_message: dict[int, list[dict[str, Any]]] = {}
+    for row in usage_rows:
+        group = dict(row)
+        source_message_id = group.pop("source_message_id")
+        usage_by_message.setdefault(source_message_id, []).append(group)
+
+    messages = []
+    for row in msg_rows:
+        message = dict(row)
+        groups = usage_by_message.get(message["id"], [])
+        message["usage_groups"] = groups
+        if message["role"] != "user" or message["llm_usage_tracked"] is None:
+            message["llm_usage_state"] = "unavailable"
+        elif groups:
+            message["llm_usage_state"] = "used"
+        else:
+            message["llm_usage_state"] = "none"
+        messages.append(message)
 
     return {
         "chat_id": chat_id,
         "user_id": user_id,
         "username": username,
-        "messages": [dict(r) for r in msg_rows],
+        "messages": messages,
         "stats": dict(token_row) if token_row else {},
     }
 

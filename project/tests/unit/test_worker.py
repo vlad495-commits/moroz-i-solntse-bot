@@ -69,14 +69,17 @@ async def test_worker_persists_each_consumed_usage_as_its_own_row():
         ),
     )
 
-    await worker_main._persist_token_usage(connection, 81, 82, result)
+    await worker_main._persist_token_usage(connection, 81, 82, 901, result)
 
     persisted_usage = [args[2:] for _query, args in connection.executions]
     assert persisted_usage == [
-        ("router", 3, 1, 0, 4, "router-model"),
-        ("answer", 9, 4, 1, 13, "answer-model"),
+        (901, "router", 3, 1, 0, 4, "router-model"),
+        (901, "answer", 9, 4, 1, 13, "answer-model"),
     ]
-    assert all("purpose" in query for query, _args in connection.executions)
+    assert all(
+        "source_message_id" in query and "purpose" in query
+        for query, _args in connection.executions
+    )
 
 
 @pytest.mark.asyncio
@@ -87,17 +90,19 @@ async def test_worker_persistence_falls_back_only_for_non_zero_legacy_answer():
         connection,
         81,
         82,
+        901,
         LLMResponse("Ответ", 8, 5, 1, 13, "legacy-model"),
     )
     await worker_main._persist_token_usage(
         connection,
         81,
         82,
+        901,
         LLMResponse("Локально", 0, 0, 0, 0, "security-local"),
     )
 
     assert [args[2:] for _query, args in connection.executions] == [
-        ("answer", 8, 5, 1, 13, "legacy-model"),
+        (901, "answer", 8, 5, 1, 13, "legacy-model"),
     ]
 
 

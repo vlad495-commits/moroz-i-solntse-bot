@@ -68,17 +68,66 @@ async def test_message_transaction_persists_physical_usage_once(database):
     await handler.handle(task)
 
     async with database.acquire() as connection:
+        message = await connection.fetchrow(
+            "SELECT id, llm_usage_tracked FROM messages "
+            "WHERE chat_id = 81 AND role = 'user'"
+        )
         rows = await connection.fetch(
-            "SELECT purpose, prompt_tokens, completion_tokens, cached_tokens, "
-            "total_tokens, model FROM token_usage ORDER BY id"
+            "SELECT source_message_id, purpose, prompt_tokens, "
+            "completion_tokens, cached_tokens, total_tokens, model "
+            "FROM token_usage ORDER BY id"
         )
 
     assert calls == 1
+    assert message["llm_usage_tracked"] is True
+    assert {row["source_message_id"] for row in rows} == {message["id"]}
     assert [tuple(row.values()) for row in rows] == [
-        ("router", 3, 1, 0, 4, "router-model"),
-        ("compact", 2, 1, 0, 3, "compact-model"),
-        ("answer", 9, 4, 1, 13, "answer-model"),
+        (message["id"], "router", 3, 1, 0, 4, "router-model"),
+        (message["id"], "compact", 2, 1, 0, 3, "compact-model"),
+        (message["id"], "answer", 9, 4, 1, 13, "answer-model"),
     ]
+
+
+async def test_human_mode_marks_message_observed_without_usage(database):
+    async with database.acquire() as connection:
+        await connection.execute(
+            "INSERT INTO human_mode "
+            "(customer_id, enabled, reason_code, enabled_at) "
+            "VALUES ('93', true, 'admin_handoff', $1)",
+            datetime(2026, 8, 30, tzinfo=UTC),
+        )
+    await MessageRepository(database).accept(
+        IncomingMessage(
+            update_id="human-usage-1",
+            message_id="human-message-1",
+            channel="telegram",
+            chat_id="93",
+            user_id="94",
+            text="Сообщение оператору",
+            received_at=datetime(2026, 8, 30, tzinfo=UTC),
+            correlation_id=uuid4(),
+        )
+    )
+
+    async def forbidden_llm(*_args, **_kwargs):
+        raise AssertionError("human mode must not call LLM")
+
+    await MessageTaskHandler(database, forbidden_llm, telegram=None).handle(
+        QueueTask(
+            kind="process_message",
+            payload={"update_ids": ["human-usage-1"]},
+            idempotency_key="process_message:human-usage-1",
+        )
+    )
+    async with database.acquire() as connection:
+        row = await connection.fetchrow(
+            "SELECT llm_usage_tracked FROM messages WHERE chat_id = 93"
+        )
+        usage_count = await connection.fetchval(
+            "SELECT count(*) FROM token_usage WHERE chat_id = 93"
+        )
+    assert row["llm_usage_tracked"] is True
+    assert usage_count == 0
 
 
 async def test_worker_passes_only_40_previous_messages_without_current_input(database):

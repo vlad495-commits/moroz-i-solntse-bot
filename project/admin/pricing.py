@@ -52,3 +52,40 @@ def calculate_cost(
     savings = (cached_tokens * (p["prompt"] - cache_price)) / 1_000_000
 
     return cost, savings
+
+
+def summarize_usage_groups(groups: list[dict]) -> dict:
+    """Посчитать итог сообщения и стоимость каждой пары purpose/model."""
+    summary = {
+        "llm_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd": 0.0,
+        "savings_usd": 0.0,
+        "groups": [],
+    }
+    token_fields = (
+        "llm_calls",
+        "prompt_tokens",
+        "completion_tokens",
+        "cached_tokens",
+        "total_tokens",
+    )
+    for group in groups:
+        item = dict(group)
+        cost, savings = calculate_cost(
+            item["prompt_tokens"],
+            item["completion_tokens"],
+            item["cached_tokens"],
+            item["model"],
+        )
+        item["cost_usd"] = cost
+        item["savings_usd"] = savings
+        summary["groups"].append(item)
+        for field in token_fields:
+            summary[field] += item[field]
+        summary["cost_usd"] += cost
+        summary["savings_usd"] += savings
+    return summary

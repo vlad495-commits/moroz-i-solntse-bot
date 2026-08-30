@@ -638,6 +638,37 @@ select:focus {
 .msg-time { color: var(--muted); }
 .msg-body { white-space: pre-wrap; word-break: break-word; }
 
+.message-llm-analytics {
+    margin-top: 11px;
+    padding-top: 9px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.message-llm-empty { font-style: italic; }
+.message-llm-summary,
+.message-llm-group {
+    display: flex;
+    gap: 6px 12px;
+    flex-wrap: wrap;
+    align-items: baseline;
+}
+.message-llm-summary strong { color: var(--text); }
+.message-llm-groups {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+}
+.message-llm-group {
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.48);
+}
+.message-llm-group strong { color: var(--brand); }
+.message-llm-group code { font-size: 11px; }
+
 .customer-events { margin: 28px 0; }
 .customer-events-list { display: grid; gap: 10px; }
 .customer-event {
