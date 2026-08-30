@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -525,6 +526,152 @@ async def get_global_stats() -> dict[str, Any]:
         **dict(token_stats),
         "total_incidents": total_incidents,
     }
+
+
+async def get_statistics_snapshot(period) -> dict[str, Any]:
+    if not _pool:
+        raise RuntimeError("database is not initialized")
+    async with _pool.acquire() as conn:
+        totals = await conn.fetchrow(
+            """
+            WITH message_totals AS (
+                SELECT
+                    COUNT(DISTINCT user_id) FILTER (
+                        WHERE role = 'user' AND user_id IS NOT NULL
+                    ) AS users,
+                    COUNT(*) AS messages
+                FROM messages
+                WHERE created_at >= $1 AND created_at < $2
+            ),
+            automatic AS (
+                SELECT COUNT(*) AS automatic_replies
+                FROM outbound_messages
+                WHERE created_at >= $1 AND created_at < $2
+                  AND status = 'sent'
+                  AND idempotency_key LIKE 'reply:%'
+            ),
+            automated AS (
+                SELECT COUNT(DISTINCT bot.chat_id) AS automated_dialogues
+                FROM outbound_messages AS bot
+                WHERE bot.created_at >= $1 AND bot.created_at < $2
+                  AND bot.status = 'sent'
+                  AND bot.idempotency_key LIKE 'reply:%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM escalations AS escalation
+                      WHERE escalation.customer_id = bot.chat_id
+                        AND escalation.created_at >= $1
+                        AND escalation.created_at < $2
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM outbound_messages AS staff
+                      WHERE staff.chat_id = bot.chat_id
+                        AND staff.created_at >= $1
+                        AND staff.created_at < $2
+                        AND staff.status = 'sent'
+                        AND staff.idempotency_key LIKE 'admin_handoff_reply:%'
+                  )
+            ),
+            escalation_totals AS (
+                SELECT COUNT(*) AS escalations
+                FROM escalations
+                WHERE created_at >= $1 AND created_at < $2
+            ),
+            usage_totals AS (
+                SELECT
+                    COUNT(*) AS llm_calls,
+                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                    COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens
+                FROM token_usage
+                WHERE created_at >= $1 AND created_at < $2
+            )
+            SELECT *
+            FROM message_totals
+            CROSS JOIN automatic
+            CROSS JOIN automated
+            CROSS JOIN escalation_totals
+            CROSS JOIN usage_totals
+            """,
+            period.starts_at,
+            period.ends_at,
+        )
+        usage_rows = await conn.fetch(
+            """
+            SELECT
+                model,
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens
+            FROM token_usage
+            WHERE created_at >= $1 AND created_at < $2
+            GROUP BY model
+            ORDER BY model
+            """,
+            period.starts_at,
+            period.ends_at,
+        )
+        has_incidents = await conn.fetchval(
+            "SELECT to_regclass('public.security_incidents')"
+        )
+        incidents = None
+        incidents_reason = "Нет данных: Security-инциденты ещё не сохраняются."
+        if has_incidents:
+            incidents = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM security_incidents
+                WHERE created_at >= $1 AND created_at < $2
+                """,
+                period.starts_at,
+                period.ends_at,
+            )
+            incidents_reason = None
+    result = dict(totals)
+    result["usage_rows"] = [dict(row) for row in usage_rows]
+    result["security_incidents"] = incidents
+    result["security_incidents_reason"] = incidents_reason
+    return result
+
+
+async def get_statistics_settings() -> dict[str, Decimal | None]:
+    empty = {"minutes_per_dialogue": None, "hourly_rate_rub": None}
+    if not _pool:
+        return empty
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT minutes_per_dialogue, hourly_rate_rub
+            FROM admin_statistics_settings
+            WHERE id = true
+            """
+        )
+    return dict(row) if row else empty
+
+
+async def save_statistics_settings(
+    minutes_per_dialogue: Decimal,
+    hourly_rate_rub: Decimal,
+) -> dict[str, Decimal]:
+    if minutes_per_dialogue <= 0 or hourly_rate_rub <= 0:
+        raise ValueError("statistics settings")
+    if not _pool:
+        raise RuntimeError("database is not initialized")
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO admin_statistics_settings
+                (id, minutes_per_dialogue, hourly_rate_rub, updated_at)
+            VALUES (true, $1, $2, now())
+            ON CONFLICT (id) DO UPDATE SET
+                minutes_per_dialogue = EXCLUDED.minutes_per_dialogue,
+                hourly_rate_rub = EXCLUDED.hourly_rate_rub,
+                updated_at = now()
+            RETURNING minutes_per_dialogue, hourly_rate_rub
+            """,
+            minutes_per_dialogue,
+            hourly_rate_rub,
+        )
+    return dict(row)
 
 
 async def get_system_metrics_snapshot() -> dict[str, Any]:
