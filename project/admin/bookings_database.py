@@ -39,6 +39,7 @@ _UNIFIED_CTES = """
     provider_rows AS (
         SELECT
             'y:' || projection.external_id AS row_key,
+            projection.external_id,
             CASE WHEN booking.id IS NOT NULL THEN booking.id END AS detail_id,
             CASE WHEN booking.id IS NOT NULL THEN booking.customer_id END AS customer_id,
             projection.starts_at,
@@ -110,6 +111,7 @@ _UNIFIED_CTES = """
     local_rows AS (
         SELECT
             'l:' || booking.id::text AS row_key,
+            booking.external_id,
             booking.id AS detail_id,
             booking.customer_id,
             booking.starts_at,
@@ -203,6 +205,16 @@ _HISTORY_SQL = _UNIFIED_CTES + """
       AND ($4::timestamptz IS NULL OR (starts_at, row_key) < ($4, $5::text))
     ORDER BY starts_at DESC, row_key DESC
     LIMIT $7
+"""
+
+_CALENDAR_SQL = _UNIFIED_CTES.replace("$6", "$1").replace("$8", "$2") + """
+    SELECT row_key, external_id, detail_id, customer_id, starts_at,
+           scheduled_end_at, status, updated_at, kind, phase, error_code,
+           source, reconciliation_state, client_name, staff_name, service_names
+    FROM unified
+    WHERE starts_at >= $3::timestamptz
+      AND starts_at < $4::timestamptz
+    ORDER BY starts_at ASC, row_key ASC
 """
 
 _FRESHNESS_SQL = """
@@ -334,6 +346,63 @@ async def list_bookings(
             else None
         ),
         "has_more": has_more,
+        "freshness": freshness,
+    }
+
+
+async def list_calendar_bookings(
+    database: Database | None,
+    *,
+    week_start: datetime,
+    week_end: datetime,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Return all projected bookings inside one exact calendar week."""
+    if database is None:
+        raise BookingDatabaseUnavailable("booking database unavailable")
+    if (
+        week_start.tzinfo is None
+        or week_start.utcoffset() is None
+        or week_end.tzinfo is None
+        or week_end.utcoffset() is None
+        or week_end - week_start != timedelta(days=7)
+    ):
+        raise ValueError("booking week")
+    current_time = now or datetime.now(UTC)
+    async with database.acquire() as connection:
+        async with connection.transaction(isolation="repeatable_read", readonly=True):
+            freshness_row = await connection.fetchrow(
+                _FRESHNESS_SQL,
+                "yclients_booking_projection_sync",
+                ["pending", "claimed", "failed"],
+            )
+            last_success_at = (
+                freshness_row["projection_synced_at"]
+                or freshness_row["empty_snapshot_at"]
+            )
+            rows = await connection.fetch(
+                _CALENDAR_SQL,
+                week_start,
+                last_success_at is not None,
+                week_start,
+                week_end,
+            )
+    freshness = {
+        "last_success_at": last_success_at,
+        "stale": (
+            last_success_at is not None
+            and current_time - last_success_at > timedelta(minutes=20)
+        ),
+    }
+    if freshness_row["last_error_code"] is not None:
+        freshness.update(
+            last_failure_at=freshness_row["last_failure_at"],
+            last_failure_label=projection_failure_label(
+                freshness_row["last_error_code"]
+            ),
+        )
+    return {
+        "items": [normalize_booking_row(row, detail=True) for row in rows],
         "freshness": freshness,
     }
 

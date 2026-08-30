@@ -2,19 +2,20 @@
 {% block title %}Записи — Admin{% endblock %}
 {% block content %}
 <section class="bookings-page">
-    <div class="row-between">
+    <header class="booking-calendar-header">
         <div>
-            <p class="page-eyebrow">Только просмотр</p>
+            <p class="page-eyebrow">YCLIENTS · недельный вид</p>
             <h1>Записи</h1>
-            <p class="page-note">Локальная проекция: данные могут отставать от YCLIENTS. Изменения записей здесь недоступны.</p>
+            <p class="page-note">Все каналы в одном календаре. Время московское.</p>
         </div>
-    </div>
+        <nav class="calendar-navigation" aria-label="Навигация по неделям">
+            <a class="btn" href="{{ request.scope.get('root_path', '') }}/bookings/?week={{ previous_week }}" aria-label="Предыдущая неделя">←</a>
+            <a class="btn" href="{{ request.scope.get('root_path', '') }}/bookings/">Текущая неделя</a>
+            <a class="btn" href="{{ request.scope.get('root_path', '') }}/bookings/?week={{ next_week }}" aria-label="Следующая неделя">→</a>
+        </nav>
+    </header>
 
-    <nav class="review-tabs" aria-label="Представление записей">
-        {% for key, label in [('upcoming', 'Ближайшие'), ('attention', 'Требуют внимания'), ('history', 'История')] %}
-        <a class="review-tab {% if view == key %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}/bookings/?view={{ key }}{% if status %}&amp;status={{ status }}{% endif %}&amp;source={{ source }}&amp;reconciliation={{ reconciliation }}">{{ label }}</a>
-        {% endfor %}
-    </nav>
+    <h2 class="calendar-period">{{ week_start.strftime('%d.%m') }}–{{ week_end.strftime('%d.%m.%Y') }}</h2>
 
     {% set freshness = page.get("freshness", {}) %}
     <aside class="booking-freshness {% if freshness.get('stale') %}booking-freshness-stale{% endif %}">
@@ -24,65 +25,34 @@
         {% if freshness.get("last_failure_label") and freshness.get("last_failure_at") %}<p class="failed"><strong>Последняя ошибка сверки:</strong> {{ freshness["last_failure_label"] }} · {{ freshness["last_failure_at"] }}</p>{% endif %}
     </aside>
 
-    <form class="logs-filters" method="get">
-        <input type="hidden" name="view" value="{{ view }}">
-        <label>Источник
-            <select name="source">
-                {% for key, label in [('all', 'Все источники'), ('bot', 'Создано ботом'), ('other', 'Другой канал')] %}
-                <option value="{{ key }}" {% if source == key %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>Сверка
-            <select name="reconciliation">
-                {% for key, label in [('all', 'Все записи'), ('mismatch', 'Есть расхождение')] %}
-                <option value="{{ key }}" {% if reconciliation == key %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>Статус
-            <select name="status">
-                <option value="">Все статусы</option>
-                {% for key, label in [('confirmed', 'Подтверждена'), ('cancelled', 'Отменена'), ('completed', 'Завершена'), ('no_show', 'Клиент не пришёл'), ('unknown', 'Статус неизвестен')] %}
-                <option value="{{ key }}" {% if status == key %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <div class="form-actions"><button type="submit">Показать</button></div>
-    </form>
-
-    {% if page["items"] %}
-    <div class="bookings-list">
-        {% for booking in page["items"] %}
-        <article class="booking-card">
-            <div class="row-between">
-                <div>
-                    <strong>{% if booking.detail_id is not none %}<a href="{{ request.scope.get('root_path', '') }}/bookings/{{ booking.detail_id }}">{{ booking.starts_at }}</a>{% else %}{{ booking.starts_at }}{% endif %}</strong>
-                    <p class="muted">Обновлено: {{ booking.updated_at }}</p>
-                </div>
-                <div class="booking-badges">
-                    <span class="chip">{{ booking.status_label }}</span>
-                    <span class="booking-badge booking-badge-source">{{ booking.source_label }}</span>
-                    <span class="booking-badge {% if booking.reconciliation_state != 'in_sync' %}booking-badge-mismatch{% endif %}">{{ booking.reconciliation_label }}</span>
-                </div>
+    <div class="calendar-scroll">
+        <div class="week-calendar">
+            <div class="calendar-corner"></div>
+            {% for day in days %}
+            <div class="calendar-day-heading">
+                <span>{{ day.label }}</span>
+                <strong>{{ day.date.strftime('%d.%m') }}</strong>
             </div>
-            {% if booking.scenario_label or booking.phase_label %}<p>{{ booking.scenario_label or "—" }} · {{ booking.phase_label or "—" }}</p>{% endif %}
-            <dl class="booking-details">
-                <div><dt>Клиент</dt><dd>{% if booking.customer_chat_id is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ booking.customer_chat_id }}">{{ booking.client_name or booking.customer_label }}</a>{% else %}{{ booking.client_name or booking.customer_label }}{% endif %}</dd></div>
-                <div><dt>Сотрудник</dt><dd>{{ booking.staff_name or "—" }}</dd></div>
-                <div><dt>Услуги</dt><dd>{% if booking.service_names %}{{ booking.service_names|join(", ") }}{% else %}—{% endif %}</dd></div>
-            </dl>
-            {% if booking.customer_chat_id is not none %}<a class="back" href="{{ request.scope.get('root_path', '') }}/chats/{{ booking.customer_chat_id }}">Открыть диалог клиента</a>{% else %}<span class="muted">{{ booking.customer_label }}</span>{% endif %}
-            {% if booking.error_label %}<p class="failed">{{ booking.error_label }}</p>{% endif %}
-        </article>
-        {% endfor %}
-    </div>
-    {% else %}
-    <p class="empty">В локальной проекции нет записей по этому фильтру</p>
-    {% endif %}
+            {% endfor %}
 
-    {% if page["has_more"] and page["next_cursor"] %}
-    <p class="bookings-pagination"><a class="btn" href="{{ request.scope.get('root_path', '') }}/bookings/?view={{ view }}{% if status %}&amp;status={{ status }}{% endif %}&amp;source={{ source }}&amp;reconciliation={{ reconciliation }}&amp;cursor={{ page['next_cursor']|urlencode }}">Дальше</a></p>
-    {% endif %}
+            <div class="calendar-times" aria-hidden="true">
+                {% for hour in calendar_hours %}<span style="top: {{ (hour - 7) * 60 }}px">{{ '%02d:00'|format(hour) }}</span>{% endfor %}
+            </div>
+            {% for day in days %}
+            <div class="calendar-day-column">
+                {% for hour in calendar_hours %}<i style="top: {{ (hour - 7) * 60 }}px"></i>{% endfor %}
+                {% for booking in day['items'] %}
+                <a class="calendar-booking calendar-booking-{{ booking.status }}" style="top: {{ booking.top }}px; min-height: {{ booking.height }}px" href="{% if booking.detail_id %}{{ request.scope.get('root_path', '') }}/bookings/{{ booking.detail_id }}{% else %}#booking-{{ booking.row_key|replace(':', '-') }}{% endif %}" id="booking-{{ booking.row_key|replace(':', '-') }}">
+                    <strong>{{ booking.time_label }}</strong>
+                    <span>{{ booking.client_name or booking.customer_label }}</span>
+                    <small>{% if booking.service_names %}{{ booking.service_names|join(', ') }}{% else %}Услуга не указана{% endif %}</small>
+                    <small>{{ booking.status_label }}</small>
+                </a>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% if not page['items'] %}<p class="empty">На этой неделе записей нет</p>{% endif %}
 </section>
 {% endblock %}

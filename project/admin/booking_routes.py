@@ -1,6 +1,7 @@
 """Read-only staff views for the local booking projection."""
 
 import logging
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -11,8 +12,8 @@ from fastapi.templating import Jinja2Templates
 import database
 from audit_repository import request_ip_address, request_user_agent
 from auth import get_current_user
-from booking_views import decode_booking_cursor, validate_booking_filters
-from bookings_database import get_booking_detail, list_bookings
+from booking_views import MOSCOW, calendar_layout, week_bounds
+from bookings_database import get_booking_detail, list_calendar_bookings
 from rbac import require_role
 
 
@@ -25,25 +26,16 @@ STAFF_ROLES = {"owner", "admin"}
 @router.get("/", response_class=HTMLResponse)
 async def booking_list(
     request: Request,
-    view: str = "upcoming",
-    status: str | None = None,
-    source: str = "all",
-    reconciliation: str = "all",
-    cursor: str | None = None,
+    week: str | None = None,
 ):
     user = await get_current_user(request)
     require_role(user, STAFF_ROLES)
-    status = status or None
     try:
-        validate_booking_filters(view, status, source, reconciliation)
-        decode_booking_cursor(cursor)
-        page = await list_bookings(
+        week_start, week_end = week_bounds(week)
+        page = await list_calendar_bookings(
             database.get_database(),
-            view=view,
-            status=status,
-            source=source,
-            reconciliation=reconciliation,
-            cursor=cursor,
+            week_start=week_start,
+            week_end=week_end,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -56,10 +48,18 @@ async def booking_list(
         {
             "user": user,
             "page": page,
-            "view": view,
-            "status": status,
-            "source": source,
-            "reconciliation": reconciliation,
+            "days": calendar_layout(
+                page["items"], week_start.astimezone(MOSCOW).date()
+            ),
+            "week_start": week_start.astimezone(MOSCOW).date(),
+            "week_end": (week_end.astimezone(MOSCOW).date() - timedelta(days=1)),
+            "previous_week": (
+                week_start.astimezone(MOSCOW).date() - timedelta(days=7)
+            ).isoformat(),
+            "next_week": (
+                week_start.astimezone(MOSCOW).date() + timedelta(days=7)
+            ).isoformat(),
+            "calendar_hours": range(7, 23),
         },
     )
 

@@ -8,6 +8,7 @@ import pytest_asyncio
 from bookings_database import (
     BookingDatabaseUnavailable,
     get_booking_detail,
+    list_calendar_bookings,
     list_bookings,
 )
 from moroz.common.db import Database
@@ -159,6 +160,61 @@ async def _seed_unsuccessful_sync(
         status,
         error_code,
     )
+
+
+async def test_calendar_returns_exact_week_from_all_yclients_sources(
+    database,
+    migrated_database_url,
+):
+    monday = datetime(2026, 8, 9, 21, 0, tzinfo=UTC)
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        booking_key = uuid4()
+        await _seed_booking(
+            connection,
+            status="confirmed",
+            starts_at=monday + timedelta(hours=12),
+            phase="confirmed",
+            error_code=None,
+            updated_at=NOW,
+            external_id="701",
+            booking_key=booking_key,
+        )
+        await _seed_projection(
+            connection,
+            external_id="701",
+            booking_key=booking_key,
+            marker_state="valid",
+            starts_at=monday + timedelta(hours=12),
+        )
+        await _seed_projection(
+            connection,
+            external_id="702",
+            booking_key=None,
+            marker_state="absent",
+            starts_at=monday + timedelta(days=2, hours=10),
+        )
+        await _seed_projection(
+            connection,
+            external_id="703",
+            booking_key=None,
+            marker_state="absent",
+            starts_at=monday + timedelta(days=8),
+        )
+
+        result = await list_calendar_bookings(
+            database,
+            week_start=monday,
+            week_end=monday + timedelta(days=7),
+            now=NOW,
+        )
+
+        assert [(item["external_id"], item["source"]) for item in result["items"]] == [
+            ("701", "bot"),
+            ("702", "other"),
+        ]
+    finally:
+        await connection.close()
 
 
 async def test_list_bookings_projects_views_filters_and_keyset_pages(

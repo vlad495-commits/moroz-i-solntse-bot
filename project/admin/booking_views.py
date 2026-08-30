@@ -4,8 +4,9 @@ import base64
 import binascii
 import json
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 
 BOOKING_VIEWS = {"upcoming", "attention", "history"}
@@ -61,6 +62,77 @@ PROJECTION_FAILURE_LABELS = {
     "yclients_page_bound": "Сверка превысила безопасный объём данных",
     "yclients_projection_write": "Результат сверки не удалось сохранить",
 }
+MOSCOW = ZoneInfo("Europe/Moscow")
+CALENDAR_START_HOUR = 7
+CALENDAR_END_HOUR = 22
+_DAY_NAMES = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+
+
+def week_bounds(
+    value: str | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("booking week")
+    try:
+        selected = date.fromisoformat(value) if value else current.astimezone(MOSCOW).date()
+    except (TypeError, ValueError) as error:
+        raise ValueError("booking week") from error
+    monday = selected - timedelta(days=selected.weekday())
+    local_start = datetime.combine(monday, time.min, tzinfo=MOSCOW)
+    return local_start.astimezone(UTC), (local_start + timedelta(days=7)).astimezone(UTC)
+
+
+def calendar_layout(
+    items: list[dict[str, object]],
+    week_start: date,
+) -> list[dict[str, object]]:
+    days = [
+        {
+            "date": week_start + timedelta(days=offset),
+            "label": _DAY_NAMES[offset],
+            "items": [],
+        }
+        for offset in range(7)
+    ]
+    for item in items:
+        starts_at = item.get("starts_at")
+        if not isinstance(starts_at, datetime) or starts_at.tzinfo is None:
+            continue
+        local_start = starts_at.astimezone(MOSCOW)
+        day_index = (local_start.date() - week_start).days
+        if day_index not in range(7):
+            continue
+        end_at = item.get("scheduled_end_at")
+        local_end = (
+            end_at.astimezone(MOSCOW)
+            if isinstance(end_at, datetime) and end_at.tzinfo is not None
+            else None
+        )
+        duration = (
+            max(1, int((local_end - local_start).total_seconds() // 60))
+            if local_end is not None and local_end > local_start
+            else 60
+        )
+        card = dict(item)
+        card.update(
+            top=max(
+                0,
+                local_start.hour * 60
+                + local_start.minute
+                - CALENDAR_START_HOUR * 60,
+            ),
+            height=max(36, duration),
+            time_label=(
+                local_start.strftime("%H:%M")
+                if local_end is None
+                else f"{local_start:%H:%M}–{local_end:%H:%M}"
+            ),
+        )
+        days[day_index]["items"].append(card)
+    return days
 
 
 def projection_failure_label(code: object) -> str:

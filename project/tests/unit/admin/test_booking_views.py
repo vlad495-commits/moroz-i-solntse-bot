@@ -1,20 +1,59 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
 import booking_views
 
 from booking_views import (
+    calendar_layout,
     decode_booking_cursor,
     encode_booking_cursor,
     normalize_booking_event,
     normalize_booking_row,
     validate_booking_filters,
+    week_bounds,
 )
 
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
 BOOKING_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+
+def test_week_bounds_use_moscow_monday_and_reject_bad_date():
+    start, end = week_bounds("2026-08-14", now=NOW)
+
+    assert start == datetime(2026, 8, 9, 21, 0, tzinfo=UTC)
+    assert end == datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+    assert week_bounds(None, now=NOW) == (start, end)
+    with pytest.raises(ValueError, match="booking week"):
+        week_bounds("14.08.2026", now=NOW)
+
+
+def test_calendar_layout_groups_cards_and_positions_them_by_moscow_time():
+    week_start = date(2026, 8, 10)
+    items = [
+        {
+            "starts_at": datetime(2026, 8, 10, 7, 30, tzinfo=UTC),
+            "scheduled_end_at": datetime(2026, 8, 10, 8, 15, tzinfo=UTC),
+            "client_name": "Анна",
+        },
+        {
+            "starts_at": datetime(2026, 8, 16, 18, 0, tzinfo=UTC),
+            "scheduled_end_at": None,
+            "client_name": "Ирина",
+        },
+    ]
+
+    layout = calendar_layout(items, week_start)
+
+    assert [day["date"] for day in layout] == [
+        week_start + timedelta(days=offset) for offset in range(7)
+    ]
+    assert layout[0]["items"][0]["time_label"] == "10:30–11:15"
+    assert layout[0]["items"][0]["top"] == 210
+    assert layout[0]["items"][0]["height"] == 45
+    assert layout[6]["items"][0]["time_label"] == "21:00"
+    assert layout[6]["items"][0]["height"] == 60
 
 
 def test_filter_allowlist():
