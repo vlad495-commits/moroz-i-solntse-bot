@@ -40,7 +40,7 @@
 - Consumes: актуальный локальный `main` с этим планом.
 - Produces: ветка `codex/admin-integration-2026-08-30`.
 
-- [ ] **Step 1: Зафиксировать точные входные HEAD и чистоту**
+- [x] **Step 1: Зафиксировать точные входные HEAD и чистоту**
 
 ```powershell
 $mainRoot = 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot'
@@ -60,13 +60,13 @@ foreach ($branch in $branches) {
 
 Expected: все статусы и diff-check чистые; HEAD совпадают с таблицей выше.
 
-- [ ] **Step 2: Создать integration branch/worktree**
+- [x] **Step 2: Создать integration branch/worktree**
 
 ```powershell
 git -C $mainRoot worktree add "$mainRoot\.worktrees\admin-integration" -b codex/admin-integration-2026-08-30 main
 ```
 
-- [ ] **Step 3: Прогнать короткий baseline**
+- [x] **Step 3: Прогнать короткий baseline**
 
 ```powershell
 $integrationRoot = "$mainRoot\.worktrees\admin-integration"
