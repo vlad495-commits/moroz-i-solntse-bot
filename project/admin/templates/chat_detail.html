@@ -19,11 +19,12 @@
     <div class="stat"><div class="stat-label">Модель</div><div class="stat-value model">{{ chat.stats.last_model or '—' }}</div></div>
 </div>
 
+{% set non_message_events = events['items'] | rejectattr('category', 'equalto', 'message') | list %}
+{% if non_message_events %}
 <section class="customer-events">
     <h2>События клиента</h2>
-    {% if events['items'] %}
     <div class="customer-events-list">
-        {% for event in events['items'] %}
+        {% for event in non_message_events %}
         <article class="customer-event customer-event-category-{{ event.category }}">
             <div class="customer-event-head">
                 <span class="customer-event-category">{{ event.category }}</span>
@@ -35,15 +36,13 @@
         </article>
         {% endfor %}
     </div>
-    {% else %}
-    <p class="empty-state">Событий пока нет.</p>
-    {% endif %}
     {% if events.next_cursor is not none %}
     <nav class="customer-events-pagination" aria-label="Страницы событий">
         {% if events.next_cursor is not none %}<a href="{{ request.scope.get('root_path', '') }}/chats/{{ chat.chat_id }}?events_cursor={{ events.next_cursor|urlencode }}">Раньше →</a>{% endif %}
     </nav>
     {% endif %}
 </section>
+{% endif %}
 
 <h2>Сообщения</h2>
 <div class="messages">
@@ -61,26 +60,34 @@
             {% elif msg.llm_usage_state == 'none' %}
             <span class="message-llm-empty">LLM не вызывалась</span>
             {% else %}
-            <div class="message-llm-summary">
-                <strong>Итого: {{ msg.llm_usage.llm_calls }} LLM-вызова · {{ msg.llm_usage.total_tokens|int }} токенов</strong>
-                <span>Prompt: {{ msg.llm_usage.prompt_tokens|int }}</span>
-                <span>Completion: {{ msg.llm_usage.completion_tokens|int }}</span>
-                <span>Кэш: {{ msg.llm_usage.cached_tokens|int }}</span>
-                <span>Стоимость: {{ msg.llm_usage.cost_usd|money }}</span>
-                <span class="savings">Сэкономлено: {{ msg.llm_usage.savings_usd|money }}</span>
-            </div>
-            <div class="message-llm-groups">
-                {% set purpose_names = {'security': 'Security', 'router': 'Router', 'compact': 'Compact', 'answer': 'Answer', 'validator': 'Validation', 'validation': 'Validation'} %}
-                {% for group in msg.llm_usage.groups %}
-                <div class="message-llm-group">
-                    <strong>{{ purpose_names.get(group.purpose, group.purpose) }}</strong>
-                    <code>{{ group.model or '—' }}</code>
-                    <span>{{ group.llm_calls }} выз. · {{ group.total_tokens|int }} токенов</span>
-                    <span>P: {{ group.prompt_tokens|int }} · C: {{ group.completion_tokens|int }} · Кэш: {{ group.cached_tokens|int }}</span>
-                    <span>Стоимость: {{ group.cost_usd|money }} · <span class="savings">Сэкономлено: {{ group.savings_usd|money }}</span></span>
+            <details class="message-llm-details">
+                <summary>
+                    <span class="message-llm-details-label">Детали обработки</span>
+                    <span>{{ msg.llm_usage.llm_calls }} выз. · {{ msg.llm_usage.total_tokens|int }} токенов · {{ msg.llm_usage.cost_usd|money }}</span>
+                </summary>
+                <div class="message-llm-details-content">
+                    <div class="message-llm-summary">
+                        <strong>Итого: {{ msg.llm_usage.llm_calls }} LLM-вызова · {{ msg.llm_usage.total_tokens|int }} токенов</strong>
+                        <span>Prompt: {{ msg.llm_usage.prompt_tokens|int }}</span>
+                        <span>Completion: {{ msg.llm_usage.completion_tokens|int }}</span>
+                        <span>Кэш: {{ msg.llm_usage.cached_tokens|int }}</span>
+                        <span>Стоимость: {{ msg.llm_usage.cost_usd|money }}</span>
+                        <span class="savings">Сэкономлено: {{ msg.llm_usage.savings_usd|money }}</span>
+                    </div>
+                    <div class="message-llm-groups">
+                        {% set purpose_names = {'security': 'Security', 'router': 'Router', 'compact': 'Compact', 'answer': 'Answer', 'validator': 'Validation', 'validation': 'Validation'} %}
+                        {% for group in msg.llm_usage.groups %}
+                        <div class="message-llm-group">
+                            <strong>{{ purpose_names.get(group.purpose, group.purpose) }}</strong>
+                            <code>{{ group.model or '—' }}</code>
+                            <span>{{ group.llm_calls }} выз. · {{ group.total_tokens|int }} токенов</span>
+                            <span>P: {{ group.prompt_tokens|int }} · C: {{ group.completion_tokens|int }} · Кэш: {{ group.cached_tokens|int }}</span>
+                            <span>Стоимость: {{ group.cost_usd|money }} · <span class="savings">Сэкономлено: {{ group.savings_usd|money }}</span></span>
+                        </div>
+                        {% endfor %}
+                    </div>
                 </div>
-                {% endfor %}
-            </div>
+            </details>
             {% endif %}
         </div>
         {% endif %}
