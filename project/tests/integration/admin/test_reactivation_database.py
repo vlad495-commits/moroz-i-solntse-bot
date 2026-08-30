@@ -101,10 +101,11 @@ async def test_marketing_consent_grant_and_revoke_are_explicit(database):
         database,
         channel="telegram",
         user_id="42",
-        consent_version="marketing-v1",
+        consent_version="must-not-replace-granted-version",
         active=False,
     )
     assert revoked["active"] is False
+    assert revoked["consent_version"] == "marketing-v1"
     assert revoked["granted_at"] == granted["granted_at"]
     assert revoked["revoked_at"] is not None
 
@@ -237,4 +238,42 @@ async def test_revoked_consent_is_never_queued(database, migrated_database_url):
         ) == 0
         assert await connection.fetchval(
             "SELECT count(*) FROM scheduler_jobs"
+        ) == 0
+
+
+async def test_active_human_mode_is_never_queued(database, migrated_database_url):
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        await _seed_booking(
+            connection,
+            customer_id="human-mode",
+            completed_at=NOW - timedelta(days=120),
+        )
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, enabled_at)
+            VALUES ('human-mode', true, 'manual', $1)
+            """,
+            NOW,
+        )
+    finally:
+        await connection.close()
+    await set_marketing_consent(
+        database,
+        channel="telegram",
+        user_id="human-mode",
+        consent_version="marketing-v1",
+        active=True,
+    )
+
+    campaign_id = await create_campaign(
+        database, segment="sleeping", created_by=1
+    )
+    queued = await queue_campaign(database, campaign_id=campaign_id, now=NOW)
+
+    assert queued["recipient_count"] == 0
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_deliveries"
         ) == 0

@@ -38,6 +38,7 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
     outbound_id = uuid4()
     staff_outbound_id = uuid4()
     control_staff_outbound_id = uuid4()
+    reactivation_campaign_id = uuid4()
     try:
         await conn.execute(
             "INSERT INTO messages (chat_id, user_id, username, role, content) "
@@ -51,6 +52,37 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
         await conn.execute(
             "INSERT INTO processing_consents (channel, user_id, consent_version) "
             "VALUES ('telegram', '7', 'v1'), ('telegram', '8', 'v1')"
+        )
+        await conn.execute(
+            """
+            INSERT INTO marketing_consents
+                (id, channel, user_id, consent_version, active, granted_at)
+            VALUES ($1, 'telegram', '42', 'marketing-v1', true, now()),
+                   ($2, 'telegram', '84', 'marketing-v1', true, now())
+            """,
+            uuid4(),
+            uuid4(),
+        )
+        await conn.execute(
+            """
+            INSERT INTO reactivation_campaigns
+                (id, segment, status, after_visit_days, sleeping_days,
+                 discount_percent, base_offer, llm_instruction,
+                 recipient_count, queued_at)
+            VALUES ($1, 'sleeping', 'queued', 1, 90, 0, '', '', 2, now())
+            """,
+            reactivation_campaign_id,
+        )
+        await conn.execute(
+            """
+            INSERT INTO reactivation_deliveries
+                (id, campaign_id, channel, user_id, status)
+            VALUES ($1, $2, 'telegram', '42', 'queued'),
+                   ($3, $2, 'telegram', '84', 'queued')
+            """,
+            uuid4(),
+            reactivation_campaign_id,
+            uuid4(),
         )
         await conn.execute(
             """
@@ -198,6 +230,8 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
             "message_inbox": "channel = 'telegram' AND chat_id = '42'",
             "outbound_messages": "channel = 'telegram' AND chat_id = '42'",
             "processing_consents": "channel = 'telegram' AND user_id = '7'",
+            "marketing_consents": "channel = 'telegram' AND user_id = '42'",
+            "reactivation_deliveries": "channel = 'telegram' AND user_id = '42'",
             "booking_scenarios": "customer_id = '42'",
             "bookings": "customer_id = '42'",
             "notification_feedback_requests": "customer_id = '42'",
@@ -221,6 +255,12 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
         ) == 0
         assert await conn.fetchval("SELECT count(*) FROM messages WHERE chat_id = 84") == 1
         assert await conn.fetchval("SELECT count(*) FROM processing_consents WHERE user_id = '8'") == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM marketing_consents WHERE user_id = '84'"
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM reactivation_deliveries WHERE user_id = '84'"
+        ) == 1
 
         assert await conn.fetchval(
             "SELECT count(*) FROM yclients_booking_projection "

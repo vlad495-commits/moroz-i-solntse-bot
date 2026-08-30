@@ -32,23 +32,23 @@
 - Produces: `get_page_data()`, `save_settings(...)`, `set_marketing_consent(...)`, `create_campaign(...)`.
 - Consumes: existing `admin.database.pool` lifecycle and `bookings.customer_id/status/scheduled_end_at`.
 
-- [ ] **Step 1: Write failing migration and repository tests**
+- [x] **Step 1: Write failing migration and repository tests**
 
 Assert that migration `0020_admin_reactivation` follows `0019_router_v2`, creates `marketing_consents`, `reactivation_settings`, `reactivation_campaigns`, `reactivation_deliveries`, and downgrade removes only those tables. Integration tests must assert absence means no marketing consent, grant/revoke timestamps round-trip, settings round-trip, and `processing_consents` never creates eligibility.
 
-- [ ] **Step 2: Run RED in Docker**
+- [x] **Step 2: Run RED in Docker**
 
 ```powershell
-docker compose -p codex-admin-reactivation --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' --profile test run --rm test pytest -q tests/unit/admin/test_migration_0020.py tests/integration/admin/test_reactivation_database.py
+docker compose --env-file ../.env -p codex-admin-reactivation --profile test run --rm test pytest -q tests/unit/admin/test_migration_0020.py tests/integration/admin/test_reactivation_database.py
 ```
 
 Expected: collection/import failure because migration and repository do not exist.
 
-- [ ] **Step 3: Implement minimum schema and repository**
+- [x] **Step 3: Implement minimum schema and repository**
 
 Use one current-state row per `channel + user_id`; `set_marketing_consent` uses `INSERT ... ON CONFLICT DO UPDATE`, sets `granted_at=now(), revoked_at=NULL` for grant and preserves `granted_at` while setting `revoked_at=now()` for revoke. Seed singleton settings row `id=1` with conservative numeric defaults and empty offer/instruction. Do not seed any consent or campaign data.
 
-- [ ] **Step 4: Run GREEN in Docker and commit**
+- [x] **Step 4: Run GREEN in Docker and commit**
 
 Expected: all Task 1 tests pass.
 
@@ -67,18 +67,18 @@ git commit -m "feat: добавлены данные реактивации и m
 - Produces: `create_campaign(segment: str, created_by: UUID) -> UUID` and campaign/delivery aggregates in `get_page_data()`.
 - Consumes: settings singleton and active rows from `marketing_consents`.
 
-- [ ] **Step 1: Add RED integration cases**
+- [x] **Step 1: Add RED integration cases**
 
 Create synthetic rows only inside disposable PostgreSQL fixtures. Assert: `after_visit` uses completed visit age, `sleeping` uses latest completed visit age, `regular` requires `count(*) >= 2`, inactive/revoked/no consent never gets a delivery, and queuing creates only `reactivation_campaigns` plus `reactivation_deliveries(status='queued')`.
 
-- [ ] **Step 2: Implement one transaction and three allowlisted SQL predicates**
+- [x] **Step 2: Implement one transaction and three allowlisted SQL predicates**
 
 Reject unknown segments before SQL. Snapshot discount, offer and LLM instruction into the campaign. Insert selected `channel/user_id` rows with a unique `(campaign_id, channel, user_id)` constraint and update recipient counters. Do not import messaging, scheduler or LLM modules.
 
-- [ ] **Step 3: Run focused GREEN and commit**
+- [x] **Step 3: Run focused GREEN and commit**
 
 ```powershell
-docker compose -p codex-admin-reactivation --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' --profile test run --rm test pytest -q tests/integration/admin/test_reactivation_database.py
+docker compose --env-file ../.env -p codex-admin-reactivation --profile test run --rm test pytest -q tests/integration/admin/test_reactivation_database.py
 git add project/admin/reactivation_database.py project/tests/integration/admin/test_reactivation_database.py changelog.md
 git commit -m "feat: добавлена внутренняя очередь реактивации"
 ```
@@ -97,18 +97,18 @@ git commit -m "feat: добавлена внутренняя очередь ре
 - Routes: `GET /reactivation/`, `POST /reactivation/settings`, `POST /reactivation/consent`, `POST /reactivation/campaigns`.
 - Every POST consumes existing `csrf_token`; all routes require role `owner`.
 
-- [ ] **Step 1: Add RED route/template tests**
+- [x] **Step 1: Add RED route/template tests**
 
 Assert owner access, non-owner 403, CSRF failure, validated numeric bounds, consent grant/revoke, campaign creation redirect, navigation label and active state, Russian table headers, and absence of any send/start button.
 
-- [ ] **Step 2: Implement router and single template**
+- [x] **Step 2: Implement router and single template**
 
 Use native HTML number inputs and textareas. The page contains settings, consent recording, campaign form, queue and journal. Status text explicitly says «Отправка не подключена».
 
-- [ ] **Step 3: Run focused GREEN and commit**
+- [x] **Step 3: Run focused GREEN and commit**
 
 ```powershell
-docker compose -p codex-admin-reactivation --env-file 'D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env' --profile test run --rm test pytest -q tests/unit/admin/test_reactivation_routes.py tests/unit/test_database_modules.py
+docker compose --env-file ../.env -p codex-admin-reactivation --profile test run --rm test pytest -q tests/unit/admin/test_reactivation_routes.py tests/unit/test_database_modules.py
 git add project/admin/reactivation_routes.py project/admin/templates/reactivation.html project/admin/app.py project/admin/templates/base.html project/admin/static/styles.css project/tests/unit/admin/test_reactivation_routes.py changelog.md
 git commit -m "feat: добавлена вкладка реактивации"
 ```
@@ -125,25 +125,25 @@ git commit -m "feat: добавлена вкладка реактивации"
 **Interfaces:**
 - Customer deletion removes matching `marketing_consents` and `reactivation_deliveries`; campaign aggregates remain non-identifying journal data.
 
-- [ ] **Step 1: Add RED deletion assertions**
+- [x] **Step 1: Add RED deletion assertions**
 
 Seed one consent and delivery for the deleted Telegram customer and unrelated control rows. Assert only target identifiers disappear and deletion verification counts reach zero.
 
-- [ ] **Step 2: Implement the two targeted deletes and verification queries**
+- [x] **Step 2: Implement the two targeted deletes and verification queries**
 
 Keep the existing customer advisory lock and transaction. Do not delete whole campaigns or settings.
 
-- [ ] **Step 3: Run Docker gates**
+- [x] **Step 3: Run Docker gates**
 
 Run focused reactivation/admin/privacy tests, migration upgrade/downgrade/upgrade on the disposable DB, Compose config, compileall, `git diff --check`, and a full suite if the known Router LF baseline can be mounted safely without changing tracked files. Confirm `outbound_messages`, `task_outbox` and `scheduler_jobs` remain empty in reactivation tests.
 
-- [ ] **Step 4: Update roadmap/changelog and commit**
+- [x] **Step 4: Update roadmap/changelog and commit**
 
 ```powershell
 git add project/admin/customer_data_deletion.py project/tests Дорожная\ карта.md changelog.md
 git commit -m "test: закрыта безопасность реактивации"
 ```
 
-- [ ] **Step 5: Review common integration conflicts**
+- [x] **Step 5: Review common integration conflicts**
 
 Compare branch against `main` and report expected conflicts in `project/admin/app.py`, `project/admin/templates/base.html`, migration revision `0020`, `Дорожная карта.md` and `changelog.md`. Do not merge or push.

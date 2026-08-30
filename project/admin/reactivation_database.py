@@ -100,7 +100,10 @@ async def set_marketing_consent(
                 CASE WHEN $5 THEN NULL ELSE now() END
             )
             ON CONFLICT (channel, user_id) DO UPDATE SET
-                consent_version = EXCLUDED.consent_version,
+                consent_version = CASE
+                    WHEN EXCLUDED.active THEN EXCLUDED.consent_version
+                    ELSE marketing_consents.consent_version
+                END,
                 active = EXCLUDED.active,
                 granted_at = CASE
                     WHEN EXCLUDED.active THEN now()
