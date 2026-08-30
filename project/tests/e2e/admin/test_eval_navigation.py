@@ -97,6 +97,25 @@ def test_eval_tabs_use_full_width_segmented_layout():
     assert "@media (max-width: 700px) {\n    .eval-tabs {" in styles
 
 
+def test_eval_actions_use_balanced_toolbar_layout():
+    body = render_eval_list("answer", "/eval/")
+    styles = (PROJECT_ROOT / "admin" / "static" / "styles.css").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<h1 class="eval-heading">' in body
+    assert '<section class="eval-toolbar"' in body
+    assert '<div class="eval-actions-grid">' in body
+    assert body.count('class="eval-action"') == 2
+    assert 'class="btn eval-action"' in body
+    assert 'type="checkbox"' not in body
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in styles
+    action_button = styles.split(".eval-action .btn,", 1)[1].split("}", 1)[0]
+    assert "width: 100%;" in action_button
+    assert "min-height: 48px;" in action_button
+    assert "@media (max-width: 700px)" in styles
+
+
 def test_eval_sidebar_has_only_one_evaluations_link():
     body = render_eval_list("answer", "/eval/")
     sidebar = body.split('<nav class="sidebar">', 1)[1].split("</nav>", 1)[0]

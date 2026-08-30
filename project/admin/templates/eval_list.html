@@ -17,34 +17,34 @@
     {% endfor %}
 </nav>
 
-<div class="row-between">
-    <h1>{{ suite_titles.get(active_suite, 'Эвалы') }} <span class="muted">({{ cases|length }} кейсов)</span></h1>
-    <div class="actions">
-        {% if not is_component %}
-        <span class="eval-option" title="Опция недоступна: текущий eval runner не поддерживает отдельный режим запуска с валидатором">
-            <input type="checkbox" disabled aria-label="С валидатором">
-            С валидатором <small>недоступно в текущем раннере</small>
-        </span>
-        {% endif %}
-        <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% elif is_component %}/{{ suite }}{% endif %}/runs" style="display: inline">
+<h1 class="eval-heading">{{ suite_titles.get(active_suite, 'Эвалы') }} <span class="muted">({{ cases|length }} кейсов)</span></h1>
+<section class="eval-toolbar" aria-label="Действия набора">
+    {% if not is_component %}
+    <div class="eval-status" role="status">
+        <span aria-hidden="true">ⓘ</span>
+        <span><strong>С валидатором</strong> — недоступно в текущем раннере</span>
+    </div>
+    {% endif %}
+    <div class="eval-actions-grid">
+        <form class="eval-action" method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% elif is_component %}/{{ suite }}{% endif %}/runs">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn btn-primary" {% if not cases %}disabled{% endif %}>
                 ▶ {% if is_router %}Проверить Router{% elif is_security %}Проверить Input Security{% elif is_validator %}Проверить Validator{% elif is_compact %}Проверить Compact Context{% else %}Запустить эвалюэйшены{% endif %}
             </button>
         </form>
-        <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% elif is_component %}/{{ suite }}{% endif %}/runs/problematic" style="display: inline">
+        <form class="eval-action" method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% elif is_component %}/{{ suite }}{% endif %}/runs/problematic">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn" {% if not problem_cases %}disabled{% endif %}>
                 ⚠ Прогнать проблемные{% if problem_cases %} ({{ problem_cases|length }}){% endif %}
             </button>
         </form>
         {% if not is_component %}
-        <a href="{{ request.scope.get('root_path', '') }}/eval/cases/new" class="btn">+ Новый кейс</a>
+        <a href="{{ request.scope.get('root_path', '') }}/eval/cases/new" class="btn eval-action">+ Новый кейс</a>
         {% else %}
-        <span class="btn btn-disabled" aria-disabled="true" title="Набор версионируется в Git">+ Новый кейс</span>
+        <span class="btn btn-disabled eval-action" aria-disabled="true" title="Набор версионируется в Git">+ Новый кейс</span>
         {% endif %}
     </div>
-</div>
+</section>
 
 {% if request.query_params.get('error') == 'no_cases' %}
 <div class="empty">Кейсов для этого набора пока нет.</div>
