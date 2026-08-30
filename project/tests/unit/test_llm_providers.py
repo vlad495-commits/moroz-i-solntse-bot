@@ -207,12 +207,13 @@ def test_security_environment_is_scoped_to_worker_and_admin_only():
         assert all(f"      {variable}:" not in block for variable in variables)
 
 
-def test_output_validator_flag_is_scoped_to_worker_only():
+def test_output_validator_flag_is_scoped_to_worker_and_admin():
     compose = Path("/workspace/docker-compose.yml").read_text(encoding="utf-8")
 
-    assert "      OUTPUT_VALIDATOR_ENABLED:" in _service_block(compose, "worker")
+    for service in ("worker", "admin"):
+        assert "      OUTPUT_VALIDATOR_ENABLED:" in _service_block(compose, service)
     for service in (
-        "admin", "test", "migrate", "cutover", "scheduler", "bot",
+        "test", "migrate", "cutover", "scheduler", "bot",
         "redis", "postgres", "rabbitmq",
     ):
         assert "      OUTPUT_VALIDATOR_ENABLED:" not in _service_block(compose, service)

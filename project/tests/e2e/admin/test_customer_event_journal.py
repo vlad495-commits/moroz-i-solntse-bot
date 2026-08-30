@@ -35,9 +35,9 @@ def _events():
             {
                 "event_id": "message:1",
                 "occurred_at": datetime(2026, 8, 13, 20, 0, tzinfo=UTC),
-                "category": "message",
-                "kind": "message.user",
-                "title": "Сообщение клиента",
+                "category": "booking",
+                "kind": "booking.created",
+                "title": "Запись создана",
                 "description": "<script>alert('journal')</script>",
                 "status": None,
             }
@@ -78,7 +78,7 @@ async def test_chat_detail_renders_safe_event_page_for_both_roles(
 
     assert response.status_code == 200
     assert "События клиента" in response.text
-    assert "Сообщение клиента" in response.text
+    assert "Запись создана" in response.text
     assert "events_cursor=next-safe-cursor" in response.text
     assert "<script>alert('journal')</script>" not in response.text
     assert "&lt;script&gt;alert" in response.text
