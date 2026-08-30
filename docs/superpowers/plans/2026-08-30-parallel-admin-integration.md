@@ -381,7 +381,7 @@ git commit -m "test: проверена интеграция вкладок ад
 - Consumes: полностью проверенный `codex/admin-integration-2026-08-30`.
 - Produces: локальный `main` с тем же exact tree.
 
-- [ ] **Step 1: Убедиться, что `main` не изменился параллельно**
+- [x] **Step 1: Убедиться, что `main` не изменился параллельно**
 
 ```powershell
 git -C $mainRoot status --short
@@ -390,13 +390,13 @@ git -C $mainRoot merge-base --is-ancestor main codex/admin-integration-2026-08-3
 
 Expected: clean и exit `0`. Если `main` изменился, остановиться, влить новый `main` в integration branch и повторить Task 7.
 
-- [ ] **Step 2: Fast-forward local main**
+- [x] **Step 2: Fast-forward local main**
 
 ```powershell
 git -C $mainRoot merge --ff-only codex/admin-integration-2026-08-30
 ```
 
-- [ ] **Step 3: Повторить merged-state smoke**
+- [x] **Step 3: Повторить merged-state smoke**
 
 ```powershell
 Set-Location "$mainRoot\project"
@@ -405,7 +405,7 @@ docker compose --env-file ../.env --profile test run --rm --build test pytest -q
 
 Expected: PASS на exact `main`.
 
-- [ ] **Step 4: Очистить только integration worktree после успешного smoke**
+- [x] **Step 4: Очистить только integration worktree после успешного smoke**
 
 ```powershell
 Set-Location $mainRoot
