@@ -211,13 +211,13 @@ Expected: PASS; `alembic heads` возвращает только `0020_message_
 - Consumes: `0020_message_llm_analytics`.
 - Produces: `0021_admin_reactivation` and owner-only `/reactivation/`.
 
-- [ ] **Step 1: Начать merge без коммита**
+- [x] **Step 1: Начать merge без коммита**
 
 ```powershell
 git merge --no-ff --no-commit codex/admin-reactivation
 ```
 
-- [ ] **Step 2: Линеаризовать migration**
+- [x] **Step 2: Линеаризовать migration**
 
 ```powershell
 git mv project/migrations/versions/0020_admin_reactivation.py project/migrations/versions/0021_admin_reactivation.py
@@ -234,7 +234,7 @@ down_revision = "0020_message_llm_analytics"
 
 Заменить найденные ссылки реактивации на `0021_admin_reactivation`; общий `test_migrations.py` должен ожидать эту head, но сохранять колонки/FK migration `0020_message_llm_analytics`.
 
-- [ ] **Step 3: Разрешить runtime/UI/privacy-конфликты**
+- [x] **Step 3: Разрешить runtime/UI/privacy-конфликты**
 
 Итог обязан сохранять одновременно:
 
@@ -244,7 +244,7 @@ down_revision = "0020_message_llm_analytics"
 - удаление linked token usage и всех consent/delivery-данных реактивации;
 - CSS всех трёх уже влитых вкладок без дублирующихся правил.
 
-- [ ] **Step 4: Завершить merge и проверить**
+- [x] **Step 4: Завершить merge и проверить**
 
 ```powershell
 git add -A
