@@ -122,13 +122,13 @@ Expected: PASS; legacy eval URLs сохранены.
 - Produces: weekly YCLIENTS projection calendar и `AdminBookingCommandService` в worker.
 - Preserves: Evaluations navigation from Task 2.
 
-- [ ] **Step 1: Выполнить merge и проверить общие документы/CSS**
+- [x] **Step 1: Выполнить merge и проверить общие документы/CSS**
 
 ```powershell
 git merge --no-ff codex/admin-zapisi -m "merge: добавлен недельный календарь записей"
 ```
 
-- [ ] **Step 2: Прогнать booking/worker gate**
+- [x] **Step 2: Прогнать booking/worker gate**
 
 ```powershell
 Set-Location project
