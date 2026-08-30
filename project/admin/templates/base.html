@@ -31,22 +31,8 @@
                 </a>
             {% endif %}
             <a href="{{ request.scope.get('root_path', '') }}/eval/" class="{% if path.startswith('/eval') %}active{% endif %}">
-                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg></span>Evaluations
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg></span>Evaluations / Эвалы
             </a>
-            {% if user.role == 'owner' %}
-            <a href="{{ request.scope.get('root_path', '') }}/eval/router/" class="{% if path.startswith('/eval/router') %}active{% endif %}">
-                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4"/></svg></span>Router Evaluation
-            </a>
-            <a href="{{ request.scope.get('root_path', '') }}/eval/security/" class="{% if path.startswith('/eval/security') %}active{% endif %}">
-                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6Z"/><path d="m9 12 2 2 4-4"/></svg></span>Input Security
-            </a>
-            <a href="{{ request.scope.get('root_path', '') }}/eval/validator/" class="{% if path.startswith('/eval/validator') %}active{% endif %}">
-                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12 9 17 20 6"/><path d="M4 6h8"/></svg></span>Validator Evaluation
-            </a>
-            <a href="{{ request.scope.get('root_path', '') }}/eval/compact/" class="{% if path.startswith('/eval/compact') %}active{% endif %}">
-                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7h14M7 12h10M9 17h6"/></svg></span>Compact Evaluation
-            </a>
-            {% endif %}
             <a href="{{ request.scope.get('root_path', '') }}/escalations/" class="{% if path.startswith('/escalations') %}active{% endif %}">
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg></span>Эскалации
             </a>

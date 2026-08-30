@@ -4,11 +4,28 @@
 {% set is_validator = suite == 'validator' %}
 {% set is_compact = suite == 'compact' %}
 {% set is_component = is_router or is_security or is_validator or is_compact %}
-{% block title %}{% if is_router %}Router Evaluation{% elif is_security %}Input Security Evaluation{% elif is_validator %}Validator Evaluation{% elif is_compact %}Compact Evaluation{% else %}Эвалюэйшены{% endif %} — Admin{% endblock %}
+{% set active_suite = 'router_v2' if is_router else suite %}
+{% set suite_titles = {'answer': 'Основная LLM', 'validator': 'Валидатор', 'router_v2': 'Роутер', 'security': 'Input Security', 'compact': 'Сжатие контекста'} %}
+{% set eval_tabs = [('answer', 'Основная LLM', '/eval/'), ('validator', 'Валидатор', '/eval/validator/'), ('router_v2', 'Роутер', '/eval/router/'), ('security', 'Input Security', '/eval/security/'), ('compact', 'Сжатие контекста', '/eval/compact/')] %}
+{% block title %}{{ suite_titles.get(active_suite, 'Эвалы') }} — Admin{% endblock %}
 {% block content %}
+<nav class="eval-tabs" aria-label="Наборы evaluations">
+    {% for key, label, href in eval_tabs %}
+    {% if key == 'answer' or user.role == 'owner' %}
+    <a class="eval-tab {% if active_suite == key %}active{% endif %}" href="{{ request.scope.get('root_path', '') }}{{ href }}">{{ label }}</a>
+    {% endif %}
+    {% endfor %}
+</nav>
+
 <div class="row-between">
-    <h1>{% if is_router %}Router Evaluation{% elif is_security %}Input Security Evaluation{% elif is_validator %}Validator Evaluation{% elif is_compact %}Compact Evaluation{% else %}Эвалюэйшены{% endif %} <span class="muted">({{ cases|length }} кейсов)</span></h1>
+    <h1>{{ suite_titles.get(active_suite, 'Эвалы') }} <span class="muted">({{ cases|length }} кейсов)</span></h1>
     <div class="actions">
+        {% if not is_component %}
+        <span class="eval-option" title="Опция недоступна: текущий eval runner не поддерживает отдельный режим запуска с валидатором">
+            <input type="checkbox" disabled aria-label="С валидатором">
+            С валидатором <small>недоступно в текущем раннере</small>
+        </span>
+        {% endif %}
         <form method="post" action="{{ request.scope.get('root_path', '') }}/eval{% if is_router %}/router{% elif is_component %}/{{ suite }}{% endif %}/runs" style="display: inline">
             <input type="hidden" name="csrf_token" value="{{ user.csrf_token or '' }}">
             <button type="submit" class="btn btn-primary" {% if not cases %}disabled{% endif %}>
@@ -23,6 +40,8 @@
         </form>
         {% if not is_component %}
         <a href="{{ request.scope.get('root_path', '') }}/eval/cases/new" class="btn">+ Новый кейс</a>
+        {% else %}
+        <span class="btn btn-disabled" aria-disabled="true" title="Набор версионируется в Git">+ Новый кейс</span>
         {% endif %}
     </div>
 </div>
@@ -41,11 +60,12 @@
 <table class="data-table">
     <thead>
         <tr>
-            <th>#</th>
-            <th>Запущен</th>
+            <th>ID</th>
+            <th>Дата запуска</th>
             <th>Статус</th>
             <th>Прошло / всего</th>
             <th>Pass rate</th>
+            {% if not is_component %}<th>Валидатор</th>{% endif %}
             <th>{% if is_router %}Router-модель{% elif is_security %}Security-модель{% elif is_validator %}Validator-модель{% elif is_compact %}Compact-модель{% else %}Judge-модель{% endif %}</th>
         </tr>
     </thead>
@@ -57,6 +77,7 @@
             <td><span class="badge badge-status-{{ r.status }}">{{ r.status }}</span></td>
             <td>{{ r.passed }} / {{ r.total }}{% if r.failed %} <span class="failed">(✗ {{ r.failed }}){% endif %}</span></td>
             <td>{% if r.total %}{{ "%.0f"|format(r.passed / r.total * 100) }}%{% else %}—{% endif %}</td>
+            {% if not is_component %}<td>—</td>{% endif %}
             <td><code>{{ r.judge_model or '—' }}</code></td>
         </tr>
         {% endfor %}

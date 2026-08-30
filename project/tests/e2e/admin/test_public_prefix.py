@@ -94,11 +94,15 @@ def test_router_eval_navigation_stays_under_admin_prefix():
 
     response = eval_routes.templates.TemplateResponse(
         request("/eval/router/"),
-        "base.html",
+        "eval_list.html",
         {
             "user": SimpleNamespace(
                 username="owner", role="owner", csrf_token="csrf"
             ),
+            "suite": "router_v2",
+            "cases": [],
+            "problem_cases": [],
+            "runs": [],
         },
     )
 
@@ -110,11 +114,15 @@ def test_security_eval_navigation_stays_under_admin_prefix():
 
     response = eval_routes.templates.TemplateResponse(
         request("/eval/security/"),
-        "base.html",
+        "eval_list.html",
         {
             "user": SimpleNamespace(
                 username="owner", role="owner", csrf_token="csrf"
             ),
+            "suite": "security",
+            "cases": [],
+            "problem_cases": [],
+            "runs": [],
         },
     )
 

@@ -28,7 +28,7 @@
 - Consumes: существующий `eval_routes.templates.TemplateResponse` и контекст `suite`, `cases`, `problem_cases`, `runs`.
 - Produces: проверяемый HTML-контракт классов `eval-tabs`, `eval-tab active`, единственной sidebar-ссылки и таблицы истории.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from datetime import datetime, timezone
@@ -80,6 +80,7 @@ def test_eval_template_renders_shared_tabs_and_active_suite(suite, path, active_
     body = render_eval_list(suite, path)
     assert '<nav class="eval-tabs"' in body
     assert f'class="eval-tab active" href="/admin{path}">{active_label}</a>' in body
+    assert body.count('<a class="eval-tab') == 5
     assert "Стирание ПД" not in body
 
 def test_eval_sidebar_has_only_one_evaluations_link():
@@ -95,7 +96,7 @@ def test_eval_history_keeps_required_columns():
     assert "#41" in body and "75%" in body and "judge-test" in body
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -105,7 +106,7 @@ docker compose --env-file ../../../.env run --rm test pytest tests/e2e/admin/tes
 
 Expected: FAIL because `eval-tabs`, the active underline contract and consolidated sidebar do not exist.
 
-- [ ] **Step 3: Commit RED tests**
+- [x] **Step 3: Commit RED tests**
 
 ```powershell
 git add project/tests/e2e/admin/test_eval_navigation.py
@@ -125,7 +126,7 @@ git commit -m "test: добавлен контракт навигации evalua
 - Consumes: текущий `suite`, legacy URL, `cases`, `problem_cases`, `runs`.
 - Produces: одна sidebar-ссылка, пять suite links, активная подкладка, единая таблица последних прогонов.
 
-- [ ] **Step 1: Implement the minimal template and CSS change**
+- [x] **Step 1: Implement the minimal template and CSS change**
 
 ```jinja2
 {% set eval_tabs = [('answer', 'Основная LLM', '/eval/'), ('validator', 'Валидатор', '/eval/validator/'), ('router_v2', 'Роутер', '/eval/router/'), ('security', 'Input Security', '/eval/security/'), ('compact', 'Сжатие контекста', '/eval/compact/')] %}
@@ -138,7 +139,7 @@ git commit -m "test: добавлен контракт навигации evalua
 
 Remove the four specialized anchors from `base.html` and add CSS-only underline styling. Keep existing run/case form actions. For Git-managed component suites render «Новый кейс» disabled with an explicit tooltip; for `answer` keep the working existing link. Show the requested validator option on `answer` as unavailable in the current runner, rather than posting an ignored value.
 
-- [ ] **Step 2: Run GREEN navigation tests**
+- [x] **Step 2: Run GREEN navigation tests**
 
 ```powershell
 docker compose --env-file ../../../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py -q
@@ -146,7 +147,7 @@ docker compose --env-file ../../../.env run --rm test pytest tests/e2e/admin/tes
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Run focused regression**
+- [x] **Step 3: Run focused regression**
 
 ```powershell
 docker compose --env-file ../../../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py tests/e2e/admin/test_router_eval_routes.py tests/e2e/admin/test_security_eval_routes.py tests/e2e/admin/test_validator_eval_routes.py tests/e2e/admin/test_compact_eval_routes.py tests/e2e/admin/test_public_prefix.py -q
@@ -154,7 +155,7 @@ docker compose --env-file ../../../.env run --rm test pytest tests/e2e/admin/tes
 
 Expected: all focused admin evaluation tests pass.
 
-- [ ] **Step 4: Record evidence and commit**
+- [x] **Step 4: Record evidence and commit**
 
 Update the roadmap task as complete and append Docker evidence to `changelog.md`, then:
 
@@ -163,7 +164,7 @@ git add project/admin/templates/base.html project/admin/templates/eval_list.html
 git commit -m "feat: объединена навигация evaluations"
 ```
 
-- [ ] **Step 5: Verify clean diff**
+- [x] **Step 5: Verify clean diff**
 
 ```powershell
 git diff --check HEAD~1 HEAD

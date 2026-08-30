@@ -7,7 +7,9 @@ import eval_routes
 from auth import AuthenticatedUser
 
 
-def render_eval_list(suite: str, path: str, *, with_run: bool = False) -> str:
+def render_eval_list(
+    suite: str, path: str, *, with_run: bool = False, role: str = "owner"
+) -> str:
     request = Request(
         {
             "type": "http",
@@ -40,7 +42,7 @@ def render_eval_list(suite: str, path: str, *, with_run: bool = False) -> str:
         request,
         "eval_list.html",
         {
-            "user": AuthenticatedUser(7, "owner", "owner", "csrf", "session"),
+            "user": AuthenticatedUser(7, role, role, "csrf", "session"),
             "suite": suite,
             "cases": [],
             "problem_cases": [],
@@ -70,7 +72,7 @@ def test_eval_template_renders_shared_tabs_and_active_suite(
         f'class="eval-tab active" href="/admin{path}">{active_label}</a>'
         in body
     )
-    assert body.count('class="eval-tab') == 5
+    assert body.count('<a class="eval-tab') == 5
     assert "Стирание ПД" not in body
 
 
@@ -83,6 +85,14 @@ def test_eval_sidebar_has_only_one_evaluations_link():
     assert "Validator Evaluation" not in sidebar
     assert "Compact Evaluation" not in sidebar
     assert "Input Security" not in sidebar
+
+
+def test_non_owner_sees_only_accessible_answer_tab():
+    body = render_eval_list("answer", "/eval/", role="admin")
+
+    assert body.count('<a class="eval-tab') == 1
+    assert 'href="/admin/eval/">Основная LLM</a>' in body
+    assert 'href="/admin/eval/validator/"' not in body
 
 
 def test_eval_history_keeps_required_columns_and_values():
