@@ -190,7 +190,11 @@ class SDKProvider:
                 }
                 if self.model.casefold().startswith("gpt-5"):
                     arguments["max_completion_tokens"] = self.max_tokens
-                    if self.model.casefold().startswith("gpt-5.6"):
+                    if (
+                        self.model.casefold().startswith("gpt-5.6")
+                        and request.purpose
+                        in {"security", "router", "compact", "validator"}
+                    ):
                         arguments["reasoning_effort"] = "none"
                 else:
                     arguments["temperature"] = self.temperature
