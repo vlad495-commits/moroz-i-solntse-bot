@@ -51,8 +51,7 @@
                     <option value="regular">Постоянные (2+ визита)</option>
                 </select></label>
                 <div class="form-actions">
-                    <button class="btn-secondary" type="submit" name="action" value="draft">Создать черновик</button>
-                    <button type="submit" name="action" value="queue">Создать и поставить в очередь</button>
+                    <button type="submit" name="action" value="draft">Создать и проверить список</button>
                 </div>
             </form>
         </div>
@@ -76,9 +75,10 @@
 
     <section class="card">
         <h2>Журнал доставок</h2>
-        <div class="data-table"><table><thead><tr><th>Дата</th><th>Канал</th><th>Клиент</th><th>Статус</th><th>Причина</th></tr></thead><tbody>
-        {% for delivery in data.deliveries %}<tr><td>{{ delivery.created_at }}</td><td>{{ delivery.channel }}</td><td>{{ delivery.user_id }}</td><td>{{ delivery.status }}</td><td>{{ delivery.skip_reason or delivery.error_code or '—' }}</td></tr>
-        {% else %}<tr><td colspan="5">Доставок пока нет</td></tr>{% endfor %}
+        <p class="muted">Это точный предпросмотр черновика. При подтверждении новые клиенты не добавляются.</p>
+        <div class="data-table"><table><thead><tr><th>Дата</th><th>Канал</th><th>Клиент</th><th>Username</th><th>Визитов</th><th>Последний визит</th><th>Consent</th><th>Статус</th><th>Причина</th></tr></thead><tbody>
+        {% for delivery in data.deliveries %}<tr><td>{{ delivery.created_at }}</td><td>{{ delivery.channel }}</td><td>{{ delivery.user_id }}</td><td>{{ delivery.username or '—' }}</td><td>{{ delivery.completed_visits }}</td><td>{{ delivery.last_visit_at or '—' }}</td><td>{{ delivery.consent_at or '—' }}</td><td>{{ delivery.status }}</td><td>{{ delivery.skip_reason or delivery.error_code or '—' }}</td></tr>
+        {% else %}<tr><td colspan="9">Получателей пока нет</td></tr>{% endfor %}
         </tbody></table></div>
     </section>
 </section>

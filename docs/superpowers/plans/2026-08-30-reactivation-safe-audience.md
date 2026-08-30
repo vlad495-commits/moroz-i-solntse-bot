@@ -67,9 +67,9 @@
 - UI creates only a draft; journal displays recipient ID, available username, visit count, last visit, consent date and status.
 - Queue POST confirms an existing draft only.
 
-- [ ] Add failing route/template tests requiring one `Создать и проверить список` action and forbidding `Создать и поставить в очередь`.
-- [ ] Add repository projection fields through joins to bookings, messages and consent without new stored PII.
-- [ ] Simplify campaign POST to draft-only and render the exact recipient preview plus skipped reason.
-- [ ] Run Docker route, repository, privacy, migration and no-outbound gates; run Compose config, Docker compileall and `git diff --check`.
-- [ ] Mark roadmap complete, log exact evidence and commit `feat: добавлен предпросмотр аудитории реактивации`.
-- [ ] Report navigation and migration conflicts; keep branch/worktree, do not merge or push.
+- [x] Add failing route/template tests requiring one `Создать и проверить список` action and forbidding `Создать и поставить в очередь`.
+- [x] Add repository projection fields through joins to bookings, messages and consent without new stored PII.
+- [x] Simplify campaign POST to draft-only and render the exact recipient preview plus skipped reason.
+- [x] Run Docker route, repository, privacy, migration and no-outbound gates; run Compose config, Docker compileall and `git diff --check`.
+- [x] Mark roadmap complete, log exact evidence and commit `feat: добавлен предпросмотр аудитории реактивации`.
+- [x] Report navigation and migration conflicts; keep branch/worktree, do not merge or push.

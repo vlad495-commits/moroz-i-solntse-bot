@@ -135,34 +135,27 @@ async def reactivation_campaign_create(
     user = await get_current_user(request)
     require_role(user, {"owner"})
     validate_csrf(user, csrf_token)
-    if segment not in rdb.SEGMENTS or action not in {"draft", "queue"}:
+    if segment not in rdb.SEGMENTS or action != "draft":
         raise HTTPException(status_code=422, detail="invalid campaign")
     campaign_id = await rdb.create_campaign(
         database.get_database(),
         segment=segment,
         created_by=user.id,
     )
-    result = {"recipient_count": 0}
-    if action == "queue":
-        result = await rdb.queue_campaign(
-            database.get_database(), campaign_id=campaign_id
-        )
     await _audit(
         request,
         user,
-        action=f"reactivation.campaign_{action}",
+        action="reactivation.campaign_draft",
         object_type="reactivation_campaign",
         object_id=str(campaign_id),
         before=None,
         after={
             "segment": segment,
-            "status": "queued" if action == "queue" else "draft",
-            "recipient_count": result["recipient_count"],
+            "status": "draft",
         },
     )
-    result_status = "queued" if action == "queue" else "draft"
     return RedirectResponse(
-        url=admin_url(request, f"/reactivation/?campaign={result_status}"),
+        url=admin_url(request, "/reactivation/?campaign=draft"),
         status_code=302,
     )
 

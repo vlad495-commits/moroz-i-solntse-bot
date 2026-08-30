@@ -302,10 +302,31 @@ async def get_page_data(database):
         )
         deliveries = await connection.fetch(
             """
-            SELECT campaign_id, channel, user_id, status, skip_reason,
-                   error_code, created_at, updated_at
-            FROM reactivation_deliveries
-            ORDER BY created_at DESC, id DESC
+            SELECT delivery.campaign_id, delivery.channel, delivery.user_id,
+                   delivery.status, delivery.skip_reason, delivery.error_code,
+                   delivery.created_at, delivery.updated_at,
+                   stats.completed_visits, stats.last_visit_at,
+                   latest_message.username, consent.granted_at AS consent_at
+            FROM reactivation_deliveries AS delivery
+            LEFT JOIN LATERAL (
+                SELECT count(*)::integer AS completed_visits,
+                       max(scheduled_end_at) AS last_visit_at
+                FROM bookings
+                WHERE customer_id = delivery.user_id
+                  AND status = 'completed'
+            ) AS stats ON true
+            LEFT JOIN LATERAL (
+                SELECT username
+                FROM messages
+                WHERE chat_id::text = delivery.user_id
+                  AND username IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+            ) AS latest_message ON true
+            LEFT JOIN marketing_consents AS consent
+              ON consent.channel = delivery.channel
+             AND consent.user_id = delivery.user_id
+            ORDER BY delivery.created_at DESC, delivery.id DESC
             LIMIT 200
             """
         )
