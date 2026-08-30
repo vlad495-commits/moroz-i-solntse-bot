@@ -43,3 +43,19 @@ completed without errors.
 None. The scope is schema-only: no runtime flow, staging/production, provider
 call, or real message was touched. `Дорожная карта.md` remains unchanged because
 completion of Task 1 does not complete the overarching Reactivation V2 item.
+
+## Review follow-up
+
+The accepted review found incomplete acceptance coverage, not a migration or
+runtime defect. The PostgreSQL test now verifies all nine new foreign keys with
+their exact target table and `ON DELETE` policy. It also seeds representative
+pre-0023 rows for `marketing_consents`, `reactivation_settings`,
+`reactivation_campaigns`, `reactivation_deliveries`, and
+`yclients_booking_projection`; after downgrade it verifies their original
+columns and values, including the mandated legacy-consent deactivation.
+
+RED used an intentionally incorrect expected `ON DELETE RESTRICT` for the
+journey-step FK and failed against PostgreSQL's actual `ON DELETE CASCADE`.
+After restoring the contract, the full focused Docker gate passed: `6 passed
+in 7.65s`; `alembic current` and `alembic heads` both returned only
+`0023_reactivation_v2 (head)`.

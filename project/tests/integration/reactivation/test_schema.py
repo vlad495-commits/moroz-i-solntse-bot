@@ -1,6 +1,6 @@
 import os
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import asyncpg
@@ -46,6 +46,63 @@ STEP_COLUMNS = (
     "created_at", "updated_at",
 )
 
+EXPECTED_FOREIGN_KEYS = {
+    "fk_reactivation_program_versions_created_by": (
+        "FOREIGN KEY (created_by) REFERENCES admin_users(id) ON DELETE SET NULL"
+    ),
+    "fk_reactivation_program_versions_activated_by": (
+        "FOREIGN KEY (activated_by) REFERENCES admin_users(id) ON DELETE SET NULL"
+    ),
+    "fk_reactivation_program_versions_test_outbound": (
+        "FOREIGN KEY (test_outbound_id) REFERENCES outbound_messages(id) ON DELETE SET NULL"
+    ),
+    "fk_marketing_consents_proof_event": (
+        "FOREIGN KEY (proof_event_id) REFERENCES marketing_consent_events(id) ON DELETE SET NULL"
+    ),
+    "fk_reactivation_journeys_program_version": (
+        "FOREIGN KEY (program_version_id) REFERENCES reactivation_program_versions(id) ON DELETE RESTRICT"
+    ),
+    "fk_reactivation_journey_steps_journey": (
+        "FOREIGN KEY (journey_id) REFERENCES reactivation_journeys(id) ON DELETE CASCADE"
+    ),
+    "fk_reactivation_journey_steps_outbound": (
+        "FOREIGN KEY (outbound_id) REFERENCES outbound_messages(id) ON DELETE SET NULL"
+    ),
+    "fk_reactivation_settings_active_version": (
+        "FOREIGN KEY (active_version_id) REFERENCES reactivation_program_versions(id) ON DELETE RESTRICT"
+    ),
+    "fk_reactivation_settings_legal_approved_by": (
+        "FOREIGN KEY (legal_approved_by) REFERENCES admin_users(id) ON DELETE SET NULL"
+    ),
+}
+
+LEGACY_COLUMNS = {
+    "marketing_consents": (
+        "id", "channel", "user_id", "consent_version", "active", "granted_at",
+        "revoked_at", "created_at", "updated_at",
+    ),
+    "reactivation_settings": (
+        "id", "after_visit_days", "sleeping_days", "discount_percent",
+        "monthly_message_limit", "ignore_limit", "base_offer", "llm_instruction",
+        "updated_at",
+    ),
+    "reactivation_campaigns": (
+        "id", "segment", "status", "after_visit_days", "sleeping_days",
+        "discount_percent", "base_offer", "llm_instruction", "recipient_count",
+        "skipped_count", "sent_count", "error_count", "created_by", "queued_at",
+        "created_at", "updated_at",
+    ),
+    "reactivation_deliveries": (
+        "id", "campaign_id", "channel", "user_id", "status", "skip_reason",
+        "error_code", "created_at", "updated_at",
+    ),
+    "yclients_booking_projection": (
+        "external_id", "booking_key", "bot_marker_state", "starts_at",
+        "scheduled_end_at", "status", "deleted", "client_name", "staff_name",
+        "service_names", "synced_at",
+    ),
+}
+
 
 def run_alembic(database_url: str, *args: str) -> None:
     subprocess.run(
@@ -75,7 +132,12 @@ async def test_reactivation_v2_schema_upgrade_constraints_and_downgrade(
 ) -> None:
     run_alembic(disposable_database_url, "upgrade", BASE_REVISION)
     connection = await asyncpg.connect(disposable_database_url)
+    now = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+    legacy_booking_end_at = now + timedelta(hours=1)
     legacy_consent_id = uuid4()
+    legacy_campaign_id = uuid4()
+    legacy_delivery_id = uuid4()
+    legacy_booking_key = uuid4()
     try:
         await connection.execute(
             """
@@ -85,12 +147,60 @@ async def test_reactivation_v2_schema_upgrade_constraints_and_downgrade(
             """,
             legacy_consent_id,
         )
+        await connection.execute(
+            """
+            UPDATE reactivation_settings
+            SET after_visit_days = 2, sleeping_days = 120, discount_percent = 15,
+                monthly_message_limit = 2, ignore_limit = 3, base_offer = 'legacy-offer',
+                llm_instruction = 'legacy-instruction', updated_at = $1
+            WHERE id = 1
+            """,
+            now,
+        )
+        await connection.execute(
+            """
+            INSERT INTO reactivation_campaigns
+                (id, segment, status, after_visit_days, sleeping_days,
+                 discount_percent, base_offer, llm_instruction, recipient_count,
+                 skipped_count, sent_count, error_count, created_by, queued_at,
+                 created_at, updated_at)
+            VALUES ($1, 'regular', 'queued', 2, 120, 15, 'legacy-offer',
+                    'legacy-instruction', 4, 1, 2, 1, 777, $2, $2, $2)
+            """,
+            legacy_campaign_id,
+            now,
+        )
+        await connection.execute(
+            """
+            INSERT INTO reactivation_deliveries
+                (id, campaign_id, channel, user_id, status, skip_reason,
+                 error_code, created_at, updated_at)
+            VALUES ($1, $2, 'telegram', 'legacy-delivery', 'error',
+                    'legacy-skip', 'legacy-error', $3, $3)
+            """,
+            legacy_delivery_id,
+            legacy_campaign_id,
+            now,
+        )
+        await connection.execute(
+            """
+            INSERT INTO yclients_booking_projection
+                (external_id, booking_key, bot_marker_state, starts_at,
+                 scheduled_end_at, status, deleted, client_name, staff_name,
+                 service_names, synced_at)
+                VALUES ('legacy-booking', $1, 'valid', $2, $3,
+                    'completed', false, 'Legacy Client', 'Legacy Staff',
+                    ARRAY['Legacy service'], $2)
+            """,
+            legacy_booking_key,
+            now,
+            legacy_booking_end_at,
+        )
     finally:
         await connection.close()
 
     run_alembic(disposable_database_url, "upgrade", "head")
     connection = await asyncpg.connect(disposable_database_url)
-    now = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
     program_id = uuid4()
     journey_id = uuid4()
     try:
@@ -129,9 +239,8 @@ async def test_reactivation_v2_schema_upgrade_constraints_and_downgrade(
                 """
             )
         }
-        assert "FOREIGN KEY (proof_event_id) REFERENCES marketing_consent_events(id) ON DELETE SET NULL" in constraints["fk_marketing_consents_proof_event"]
-        assert "FOREIGN KEY (program_version_id) REFERENCES reactivation_program_versions(id) ON DELETE RESTRICT" in constraints["fk_reactivation_journeys_program_version"]
-        assert "FOREIGN KEY (journey_id) REFERENCES reactivation_journeys(id) ON DELETE CASCADE" in constraints["fk_reactivation_journey_steps_journey"]
+        for name, definition in EXPECTED_FOREIGN_KEYS.items():
+            assert constraints[name] == definition
 
         legacy = await connection.fetchrow(
             "SELECT source, proof_event_id, active FROM marketing_consents WHERE id = $1",
@@ -238,9 +347,106 @@ async def test_reactivation_v2_schema_upgrade_constraints_and_downgrade(
             "outbound_messages",
         ):
             assert await connection.fetchval("SELECT to_regclass($1)", f"public.{table}") == table
-        assert await connection.fetchval(
-            "SELECT user_id FROM marketing_consents WHERE id = $1", legacy_consent_id
-        ) == "legacy-user"
+        for table, columns in LEGACY_COLUMNS.items():
+            assert await _column_names(connection, table) == columns
+
+        consent = await connection.fetchrow(
+            """
+            SELECT id, channel, user_id, consent_version, active, granted_at, revoked_at
+            FROM marketing_consents WHERE id = $1
+            """,
+            legacy_consent_id,
+        )
+        assert tuple(consent[:5]) == (
+            legacy_consent_id,
+            "telegram",
+            "legacy-user",
+            "legacy-v1",
+            False,
+        )
+        assert consent[5] is not None
+        assert consent[6] is None
+        assert tuple(
+            await connection.fetchrow(
+                """
+                SELECT id, after_visit_days, sleeping_days, discount_percent,
+                       monthly_message_limit, ignore_limit, base_offer,
+                       llm_instruction, updated_at
+                FROM reactivation_settings WHERE id = 1
+                """
+            )
+        ) == (1, 2, 120, 15, 2, 3, "legacy-offer", "legacy-instruction", now)
+        assert tuple(
+            await connection.fetchrow(
+                """
+                SELECT id, segment, status, after_visit_days, sleeping_days,
+                       discount_percent, base_offer, llm_instruction, recipient_count,
+                       skipped_count, sent_count, error_count, created_by, queued_at,
+                       created_at, updated_at
+                FROM reactivation_campaigns WHERE id = $1
+                """,
+                legacy_campaign_id,
+            )
+        ) == (
+            legacy_campaign_id,
+            "regular",
+            "queued",
+            2,
+            120,
+            15,
+            "legacy-offer",
+            "legacy-instruction",
+            4,
+            1,
+            2,
+            1,
+            777,
+            now,
+            now,
+            now,
+        )
+        assert tuple(
+            await connection.fetchrow(
+                """
+                SELECT id, campaign_id, channel, user_id, status, skip_reason,
+                       error_code, created_at, updated_at
+                FROM reactivation_deliveries WHERE id = $1
+                """,
+                legacy_delivery_id,
+            )
+        ) == (
+            legacy_delivery_id,
+            legacy_campaign_id,
+            "telegram",
+            "legacy-delivery",
+            "error",
+            "legacy-skip",
+            "legacy-error",
+            now,
+            now,
+        )
+        assert tuple(
+            await connection.fetchrow(
+                """
+                SELECT external_id, booking_key, bot_marker_state, starts_at,
+                       scheduled_end_at, status, deleted, client_name, staff_name,
+                       service_names, synced_at
+                FROM yclients_booking_projection WHERE external_id = 'legacy-booking'
+                """
+            )
+        ) == (
+            "legacy-booking",
+            legacy_booking_key,
+            "valid",
+            now,
+            legacy_booking_end_at,
+            "completed",
+            False,
+            "Legacy Client",
+            "Legacy Staff",
+            ["Legacy service"],
+            now,
+        )
         for table in (
             "customer_activity_projection",
             "marketing_consent_events",
