@@ -29,10 +29,10 @@
 - Produces: `ConsentService.grant_marketing_consent(channel, user_id, consent_version, connection=...)`.
 - Consumes: existing checked Redis state and the callback transaction.
 
-- [ ] Add a failing E2E case: checked `pii + ads` followed by `done` creates one active `marketing_consents` row with channel `telegram`, user `7`, version `v1`; `pii` alone creates none.
-- [ ] Run the two cases in Docker and verify the ads case fails because the row is absent.
-- [ ] Add `MARKETING_CONSENT_VERSION = "v1"`, one upsert method, and call it inside the existing consent transaction only when `"ads" in checked`.
-- [ ] Run the focused privacy cases in Docker; commit `feat: marketing consent сохраняется из Telegram`.
+- [x] Add a failing E2E case: checked `pii + ads` followed by `done` creates one active `marketing_consents` row with channel `telegram`, user `7`, version `v1`; `pii` alone creates none.
+- [x] Run the two cases in Docker and verify the ads case fails because the row is absent.
+- [x] Add `MARKETING_CONSENT_VERSION = "v1"`, one upsert method, and call it inside the existing consent transaction only when `"ads" in checked`.
+- [x] Run the focused privacy cases in Docker; commit `feat: marketing consent сохраняется из Telegram`.
 
 ### Task 2: Exclusive segments and materialized draft
 

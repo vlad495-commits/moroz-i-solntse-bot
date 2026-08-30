@@ -546,6 +546,34 @@ async def test_checked_policy_done_persists_only_versioned_consent(
     assert fake_telegram.last_text == CONSENT_THANKS
 
 
+async def test_checked_ads_done_persists_separate_marketing_consent(client, db):
+    await client.post(
+        "/telegram/webhook",
+        json=telegram_consent_callback(
+            update_id=971,
+            data=CONSENT_PII_CALLBACK_DATA,
+        ),
+    )
+    await client.post(
+        "/telegram/webhook",
+        json=telegram_consent_callback(
+            update_id=972,
+            data=CONSENT_ADS_CALLBACK_DATA,
+        ),
+    )
+    await client.post(
+        "/telegram/webhook",
+        json=telegram_consent_callback(update_id=973),
+    )
+
+    consent = await db.fetchrow(
+        "SELECT channel, user_id, consent_version, active, granted_at "
+        "FROM marketing_consents"
+    )
+    assert tuple(consent.values())[:4] == ("telegram", "7", "v1", True)
+    assert isinstance(consent["granted_at"], datetime)
+
+
 async def test_stale_consent_is_upgraded_by_done_callback(
     client, db, redis_client, fake_telegram
 ):

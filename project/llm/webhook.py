@@ -41,6 +41,7 @@ from moroz.messaging.telegram import deliver_claimed_outbound
 from moroz.privacy import deletion_marker_key
 from moroz.privacy import customer_lock_subject
 from moroz.security.consent import (
+    MARKETING_CONSENT_VERSION,
     PROCESSING_CONSENT_VERSION,
     ConsentService,
 )
@@ -349,6 +350,13 @@ def create_app(
                             PROCESSING_CONSENT_VERSION,
                             connection=connection,
                         )
+                        if "ads" in checked:
+                            await webhook_app.state.consent_service.grant_marketing_consent(
+                                "telegram",
+                                str(callback.from_user.id),
+                                MARKETING_CONSENT_VERSION,
+                                connection=connection,
+                            )
                         await webhook_app.state.redis.delete(
                             _consent_state_key(
                                 callback.message.chat.id,
