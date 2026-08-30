@@ -101,7 +101,7 @@ def test_eval_history_keeps_required_columns():
 Run:
 
 ```powershell
-docker compose --env-file ../../../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py -q
+docker compose --env-file ../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py -q
 ```
 
 Expected: FAIL because `eval-tabs`, the active underline contract and consolidated sidebar do not exist.
@@ -142,7 +142,7 @@ Remove the four specialized anchors from `base.html` and add CSS-only underline 
 - [x] **Step 2: Run GREEN navigation tests**
 
 ```powershell
-docker compose --env-file ../../../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py -q
+docker compose --env-file ../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py -q
 ```
 
 Expected: all tests pass.
@@ -150,7 +150,7 @@ Expected: all tests pass.
 - [x] **Step 3: Run focused regression**
 
 ```powershell
-docker compose --env-file ../../../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py tests/e2e/admin/test_router_eval_routes.py tests/e2e/admin/test_security_eval_routes.py tests/e2e/admin/test_validator_eval_routes.py tests/e2e/admin/test_compact_eval_routes.py tests/e2e/admin/test_public_prefix.py -q
+docker compose --env-file ../.env run --rm test pytest tests/e2e/admin/test_eval_navigation.py tests/e2e/admin/test_router_eval_routes.py tests/e2e/admin/test_security_eval_routes.py tests/e2e/admin/test_validator_eval_routes.py tests/e2e/admin/test_compact_eval_routes.py tests/e2e/admin/test_public_prefix.py -q
 ```
 
 Expected: all focused admin evaluation tests pass.

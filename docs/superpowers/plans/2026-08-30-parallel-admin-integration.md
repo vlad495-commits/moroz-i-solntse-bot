@@ -70,9 +70,8 @@ git -C $mainRoot worktree add "$mainRoot\.worktrees\admin-integration" -b codex/
 
 ```powershell
 $integrationRoot = "$mainRoot\.worktrees\admin-integration"
-$envFile = "$mainRoot\.env"
 Set-Location "$integrationRoot\project"
-docker compose --env-file $envFile --profile test run --rm --build test pytest -q tests/integration/test_migrations.py tests/e2e/admin/test_public_prefix.py tests/e2e/admin/test_csrf_rbac_audit.py tests/unit/test_worker.py
+docker compose --env-file ../.env --profile test run --rm --build test pytest -q tests/integration/test_migrations.py tests/e2e/admin/test_public_prefix.py tests/e2e/admin/test_csrf_rbac_audit.py tests/unit/test_worker.py
 ```
 
 Expected: PASS до первого merge.
@@ -101,7 +100,7 @@ Expected: runtime-конфликтов нет; `changelog.md`, roadmap и CSS м
 
 ```powershell
 Set-Location project
-docker compose --env-file $envFile --profile test run --rm --build test pytest -q tests/e2e/admin/test_eval_navigation.py tests/e2e/admin/test_router_eval_routes.py tests/e2e/admin/test_security_eval_routes.py tests/e2e/admin/test_validator_eval_routes.py tests/e2e/admin/test_compact_eval_routes.py tests/e2e/admin/test_public_prefix.py
+docker compose --env-file ../.env --profile test run --rm --build test pytest -q tests/e2e/admin/test_eval_navigation.py tests/e2e/admin/test_router_eval_routes.py tests/e2e/admin/test_security_eval_routes.py tests/e2e/admin/test_validator_eval_routes.py tests/e2e/admin/test_compact_eval_routes.py tests/e2e/admin/test_public_prefix.py
 Set-Location ..
 ```
 
@@ -132,7 +131,7 @@ git merge --no-ff codex/admin-zapisi -m "merge: добавлен недельн�
 
 ```powershell
 Set-Location project
-docker compose --env-file $envFile --profile test run --rm --build test pytest -q tests/unit/admin/test_booking_views.py tests/unit/booking/test_admin_commands.py tests/e2e/admin/test_admin_bookings.py tests/integration/admin/test_admin_bookings_postgres.py tests/integration/booking/test_booking_repository.py tests/contract/booking/test_yclients_adapter.py tests/unit/test_worker.py
+docker compose --env-file ../.env --profile test run --rm --build test pytest -q tests/unit/admin/test_booking_views.py tests/unit/booking/test_admin_commands.py tests/e2e/admin/test_admin_bookings.py tests/integration/admin/test_admin_bookings_postgres.py tests/integration/booking/test_booking_repository.py tests/contract/booking/test_yclients_adapter.py tests/unit/test_worker.py
 Set-Location ..
 ```
 
@@ -189,7 +188,7 @@ git commit -m "test: уточнено имя migration-контракта ана
 
 ```powershell
 Set-Location project
-docker compose --env-file $envFile --profile test run --rm --build test pytest -q tests/unit/admin/test_migration_0020_message_llm_analytics.py tests/unit/admin/test_message_llm_analytics.py tests/unit/booking/test_admin_commands.py tests/unit/test_worker.py tests/integration/test_migrations.py tests/integration/test_worker_usage_postgres.py tests/integration/admin/test_message_llm_analytics_postgres.py tests/integration/admin/test_admin_bookings_postgres.py tests/integration/test_retention_postgres.py tests/integration/admin/test_customer_data_deletion_postgres.py tests/e2e/admin/test_message_llm_analytics_ui.py tests/e2e/admin/test_admin_bookings.py tests/e2e/test_message_delivery.py
+docker compose --env-file ../.env --profile test run --rm --build test pytest -q tests/unit/admin/test_migration_0020_message_llm_analytics.py tests/unit/admin/test_message_llm_analytics.py tests/unit/booking/test_admin_commands.py tests/unit/test_worker.py tests/integration/test_migrations.py tests/integration/test_worker_usage_postgres.py tests/integration/admin/test_message_llm_analytics_postgres.py tests/integration/admin/test_admin_bookings_postgres.py tests/integration/test_retention_postgres.py tests/integration/admin/test_customer_data_deletion_postgres.py tests/e2e/admin/test_message_llm_analytics_ui.py tests/e2e/admin/test_admin_bookings.py tests/e2e/test_message_delivery.py
 Set-Location ..
 ```
 
@@ -250,7 +249,7 @@ down_revision = "0020_message_llm_analytics"
 git add -A
 git commit -m "merge: добавлена админка реактивации"
 Set-Location project
-docker compose --env-file $envFile --profile test run --rm --build test pytest -q tests/unit/admin/test_migration_0020_message_llm_analytics.py tests/unit/admin/test_migration_0021_reactivation.py tests/unit/admin/test_reactivation_database_module.py tests/unit/admin/test_reactivation_routes.py tests/integration/test_migrations.py tests/integration/admin/test_reactivation_database.py tests/integration/admin/test_customer_data_deletion_postgres.py tests/e2e/admin/test_message_llm_analytics_ui.py tests/e2e/admin/test_eval_navigation.py
+docker compose --env-file ../.env --profile test run --rm --build test pytest -q tests/unit/admin/test_migration_0020_message_llm_analytics.py tests/unit/admin/test_migration_0021_reactivation.py tests/unit/admin/test_reactivation_database_module.py tests/unit/admin/test_reactivation_routes.py tests/integration/test_migrations.py tests/integration/admin/test_reactivation_database.py tests/integration/admin/test_customer_data_deletion_postgres.py tests/e2e/admin/test_message_llm_analytics_ui.py tests/e2e/admin/test_eval_navigation.py
 Set-Location ..
 ```
 
@@ -306,8 +305,8 @@ down_revision = "0021_admin_reactivation"
 git add -A
 git commit -m "merge: добавлена периодная статистика"
 Set-Location project
-docker compose --env-file $envFile --profile test run --rm --build test pytest -q tests/unit/admin/test_migration_0020_message_llm_analytics.py tests/unit/admin/test_migration_0021_reactivation.py tests/unit/admin/test_migration_0022_statistics.py tests/unit/admin/test_stats_calculations.py tests/integration/test_migrations.py tests/integration/admin/test_statistics_postgres.py tests/integration/admin/test_message_llm_analytics_postgres.py tests/integration/admin/test_reactivation_database.py tests/e2e/admin/test_admin_statistics.py tests/e2e/admin/test_csrf_rbac_audit.py tests/e2e/admin/test_public_prefix.py
-docker compose --env-file $envFile --profile test run --rm test alembic -c /workspace/alembic.ini heads
+docker compose --env-file ../.env --profile test run --rm --build test pytest -q tests/unit/admin/test_migration_0020_message_llm_analytics.py tests/unit/admin/test_migration_0021_reactivation.py tests/unit/admin/test_migration_0022_statistics.py tests/unit/admin/test_stats_calculations.py tests/integration/test_migrations.py tests/integration/admin/test_statistics_postgres.py tests/integration/admin/test_message_llm_analytics_postgres.py tests/integration/admin/test_reactivation_database.py tests/e2e/admin/test_admin_statistics.py tests/e2e/admin/test_csrf_rbac_audit.py tests/e2e/admin/test_public_prefix.py
+docker compose --env-file ../.env --profile test run --rm test alembic -c /workspace/alembic.ini heads
 Set-Location ..
 ```
 
@@ -340,9 +339,9 @@ Expected: нет незакоммиченных файлов, whitespace errors 
 
 ```powershell
 Set-Location project
-docker compose --env-file $envFile config --quiet
-docker compose --env-file $envFile --profile test run --rm test python -X pycache_prefix=/tmp/admin-integration-pycache -m compileall -q /workspace/admin /workspace/worker /workspace/src /workspace/migrations
-docker compose --env-file $envFile --profile test run --rm test alembic -c /workspace/alembic.ini heads
+docker compose --env-file ../.env config --quiet
+docker compose --env-file ../.env --profile test run --rm test python -X pycache_prefix=/tmp/admin-integration-pycache -m compileall -q /workspace/admin /workspace/worker /workspace/src /workspace/migrations
+docker compose --env-file ../.env --profile test run --rm test alembic -c /workspace/alembic.ini heads
 Set-Location ..
 ```
 
@@ -352,7 +351,7 @@ Expected: exit `0`; ровно одна head `0022_admin_statistics`.
 
 ```powershell
 Set-Location project
-docker compose --env-file $envFile --profile test run --rm --build --volume "..\docs:/docs:ro" --volume "..\moroz-i-solntse-full-architecture.html:/moroz-i-solntse-full-architecture.html:ro" test pytest -q
+docker compose --env-file ../.env --profile test run --rm --build --volume "..\docs:/docs:ro" --volume "..\moroz-i-solntse-full-architecture.html:/moroz-i-solntse-full-architecture.html:ro" test pytest -q
 Set-Location ..
 ```
 
@@ -401,7 +400,7 @@ git -C $mainRoot merge --ff-only codex/admin-integration-2026-08-30
 
 ```powershell
 Set-Location "$mainRoot\project"
-docker compose --env-file $envFile --profile test run --rm --build test pytest -q tests/e2e/admin/test_eval_navigation.py tests/e2e/admin/test_admin_bookings.py tests/e2e/admin/test_message_llm_analytics_ui.py tests/e2e/admin/test_admin_statistics.py tests/unit/admin/test_reactivation_routes.py tests/integration/test_migrations.py tests/unit/test_worker.py
+docker compose --env-file ../.env --profile test run --rm --build test pytest -q tests/e2e/admin/test_eval_navigation.py tests/e2e/admin/test_admin_bookings.py tests/e2e/admin/test_message_llm_analytics_ui.py tests/e2e/admin/test_admin_statistics.py tests/unit/admin/test_reactivation_routes.py tests/integration/test_migrations.py tests/unit/test_worker.py
 ```
 
 Expected: PASS на exact `main`.

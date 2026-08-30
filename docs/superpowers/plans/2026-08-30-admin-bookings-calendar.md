@@ -76,6 +76,6 @@
 
 - [x] Обновить roadmap фактическим результатом и ограничениями ролей/YCLIENTS.
 - [x] Записать RED/GREEN, baseline checksum blocker и отсутствие внешних действий в changelog.
-- [x] Запустить свежий Docker focused regression и `docker compose config`.
+- [x] Запустить свежий Docker focused regression и Compose config-check.
 - [x] Проверить diff, секреты и общую навигацию; выполнить code review и исправить Critical/Important замечания.
 - [x] Закоммитить `docs: зафиксирована вкладка записей` и сообщить ветку, коммиты, тесты и merge-конфликты.
