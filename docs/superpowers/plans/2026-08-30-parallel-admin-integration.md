@@ -324,7 +324,7 @@ Expected: тесты PASS; вывод Alembic — ровно `0022_admin_statist
 **Interfaces:**
 - Produces: один проверенный integration HEAD без unresolved conflicts, нескольких Alembic heads и потери функциональности.
 
-- [ ] **Step 1: Проверить весь diff и отсутствие конфликтных маркеров**
+- [x] **Step 1: Проверить весь diff и отсутствие конфликтных маркеров**
 
 ```powershell
 git status --short
@@ -335,7 +335,7 @@ git diff --name-status main..HEAD
 
 Expected: нет незакоммиченных файлов, whitespace errors и conflict markers.
 
-- [ ] **Step 2: Проверить Compose, syntax и migration chain**
+- [x] **Step 2: Проверить Compose, syntax и migration chain**
 
 ```powershell
 Set-Location project
@@ -347,7 +347,7 @@ Set-Location ..
 
 Expected: exit `0`; ровно одна head `0022_admin_statistics`.
 
-- [ ] **Step 3: Прогнать полный canonical Docker suite**
+- [x] **Step 3: Прогнать полный canonical Docker suite**
 
 ```powershell
 Set-Location project
@@ -357,11 +357,11 @@ Set-Location ..
 
 Expected: все тесты PASS; никакие внешние provider/YCLIENTS/Telegram endpoints не вызываются.
 
-- [ ] **Step 4: Провести ручной local smoke админки**
+- [x] **Step 4: Провести ручной local smoke админки**
 
 Проверить owner/admin роли и страницы: Диалоги с message analytics, Записи, Статистика, Реактивация, Evaluations tabs. Проверить отсутствие дублирующихся sidebar-ссылок, корректный public root prefix, CSRF отказ без токена и отсутствие секретов/PII в HTML.
 
-- [ ] **Step 5: Зафиксировать exact evidence**
+- [x] **Step 5: Зафиксировать exact evidence**
 
 Обновить roadmap/changelog точными test counts, integration HEAD и единственной migration head; commit:
 
