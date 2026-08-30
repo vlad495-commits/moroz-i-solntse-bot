@@ -163,7 +163,13 @@ def build_context_compactor_alert(alert_router):
     return alert
 
 
-async def _persist_token_usage(connection, chat_id: int, user_id: int, result) -> None:
+async def _persist_token_usage(
+    connection,
+    chat_id: int,
+    user_id: int,
+    source_message_id: int,
+    result,
+) -> None:
     usages = getattr(result, "usage", ())
     if not usages and result.total_tokens > 0:
         usages = (
@@ -182,12 +188,13 @@ async def _persist_token_usage(connection, chat_id: int, user_id: int, result) -
         await connection.execute(
             """
             INSERT INTO token_usage
-                (chat_id, user_id, purpose, prompt_tokens, completion_tokens,
-                 cached_tokens, total_tokens, model)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                (chat_id, user_id, source_message_id, purpose, prompt_tokens,
+                 completion_tokens, cached_tokens, total_tokens, model)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """,
             chat_id,
             user_id,
+            source_message_id,
             usage.purpose,
             usage.prompt_tokens,
             usage.completion_tokens,
@@ -495,8 +502,9 @@ class MessageTaskHandler:
                 if human_mode:
                     await connection.execute(
                         """
-                        INSERT INTO messages (chat_id, user_id, role, content)
-                        VALUES ($1, $2, 'user', $3)
+                        INSERT INTO messages
+                            (chat_id, user_id, role, content, llm_usage_tracked)
+                        VALUES ($1, $2, 'user', $3, TRUE)
                         """,
                         numeric_chat_id,
                         user_id,
@@ -552,21 +560,31 @@ class MessageTaskHandler:
                     llm_options["catalog"] = catalog
                 result = await self._llm(persisted_text, context, **llm_options)
 
-                await connection.execute(
+                source_message_id = await connection.fetchval(
                     """
-                    INSERT INTO messages (chat_id, user_id, role, content)
-                    VALUES ($1, $2, 'user', $3),
-                           ($1, $2, 'assistant', $4)
+                    INSERT INTO messages
+                        (chat_id, user_id, role, content, llm_usage_tracked)
+                    VALUES ($1, $2, 'user', $3, TRUE)
+                    RETURNING id
                     """,
                     numeric_chat_id,
                     user_id,
                     persisted_text,
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO messages (chat_id, user_id, role, content)
+                    VALUES ($1, $2, 'assistant', $3)
+                    """,
+                    numeric_chat_id,
+                    user_id,
                     result.text,
                 )
                 await _persist_token_usage(
                     connection,
                     numeric_chat_id,
                     user_id,
+                    source_message_id,
                     result,
                 )
                 await self._repository.enqueue_outbound_in_transaction(
