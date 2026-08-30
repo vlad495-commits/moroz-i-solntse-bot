@@ -271,7 +271,7 @@ Expected: PASS; единственная head — `0021_admin_reactivation`.
 - Consumes: `0021_admin_reactivation`.
 - Produces: `0022_admin_statistics` as the only Alembic head and owner-only period statistics routes.
 
-- [ ] **Step 1: Начать merge без коммита и линеаризовать migration**
+- [x] **Step 1: Начать merge без коммита и линеаризовать migration**
 
 ```powershell
 git merge --no-ff --no-commit codex/admin-statistics
@@ -289,7 +289,7 @@ down_revision = "0021_admin_reactivation"
 
 Обновить migration test и общий schema/head contract на `0022_admin_statistics`.
 
-- [ ] **Step 2: Совместить app/database**
+- [x] **Step 2: Совместить app/database**
 
 Итоговый `app.py` обязан:
 
@@ -300,7 +300,7 @@ down_revision = "0021_admin_reactivation"
 
 Итоговый `database.py` обязан сохранять per-message `usage_groups/llm_usage_state` и новые bounded statistics snapshot/settings queries.
 
-- [ ] **Step 3: Завершить merge и прогнать admin/migration gate**
+- [x] **Step 3: Завершить merge и прогнать admin/migration gate**
 
 ```powershell
 git add -A
