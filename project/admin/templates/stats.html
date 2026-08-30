@@ -1,49 +1,64 @@
 {% extends "base.html" %}
 {% block title %}Статистика — Admin{% endblock %}
 {% block content %}
-<h1>Общая статистика</h1>
+<div class="statistics-page">
+    <div class="statistics-header">
+        <div><div class="page-eyebrow">Для владельца</div><h1>Статистика</h1></div>
+        <form class="statistics-filter" method="get" action="{{ request.scope.get('root_path', '') }}/stats">
+            <label>С<input type="date" name="start" value="{{ period.start_date.isoformat() }}" required></label>
+            <label>По<input type="date" name="end" value="{{ period.end_date.isoformat() }}" required></label>
+            <button class="btn-primary" type="submit">Показать</button>
+        </form>
+    </div>
 
-<div class="stats-grid">
-    <div class="stat"><div class="stat-label">Всего чатов</div><div class="stat-value">{{ stats.total_chats|int }}</div></div>
-    <div class="stat"><div class="stat-label">Всего юзеров</div><div class="stat-value">{{ stats.total_users|int }}</div></div>
-    <div class="stat"><div class="stat-label">Всего сообщений</div><div class="stat-value">{{ stats.total_messages|int }}</div></div>
-    <div class="stat"><div class="stat-label">LLM-вызовов</div><div class="stat-value">{{ stats.total_llm_calls|int }}</div></div>
-    <div class="stat"><div class="stat-label">Prompt-токенов</div><div class="stat-value">{{ stats.prompt_tokens|int }}</div></div>
-    <div class="stat"><div class="stat-label">Completion-токенов</div><div class="stat-value">{{ stats.completion_tokens|int }}</div></div>
-    <div class="stat"><div class="stat-label">Кэшировано токенов</div><div class="stat-value">{{ stats.cached_tokens|int }}</div></div>
-    <div class="stat"><div class="stat-label">Всего токенов</div><div class="stat-value">{{ stats.total_tokens|int }}</div></div>
-    <div class="stat"><div class="stat-label">Стоимость</div><div class="stat-value">{{ stats.cost_usd|money }}</div></div>
-    <div class="stat"><div class="stat-label">Сэкономлено на кэше</div><div class="stat-value savings">{{ stats.savings_usd|money }}</div></div>
-    <div class="stat"><div class="stat-label">Инцидентов безопасности</div><div class="stat-value">{{ stats.total_incidents|int }}</div></div>
+    <h2>Фактические данные</h2>
+    <div class="stats-grid">
+        <div class="stat"><div class="stat-label">Пользователи</div><div class="stat-value">{{ stats.users }}</div></div>
+        <div class="stat"><div class="stat-label">Сообщения</div><div class="stat-value">{{ stats.messages }}</div></div>
+        <div class="stat"><div class="stat-label">Автоматические ответы</div><div class="stat-value">{{ stats.automatic_replies }}</div></div>
+        <div class="stat"><div class="stat-label">LLM-вызовы</div><div class="stat-value">{{ stats.llm_calls }}</div></div>
+        <div class="stat"><div class="stat-label">Входные токены</div><div class="stat-value">{{ stats.prompt_tokens }}</div></div>
+        <div class="stat"><div class="stat-label">Выходные токены</div><div class="stat-value">{{ stats.completion_tokens }}</div></div>
+        <div class="stat"><div class="stat-label">Кэшированные токены</div><div class="stat-value">{{ stats.cached_tokens }}</div></div>
+        <div class="stat"><div class="stat-label">Всего токенов</div><div class="stat-value">{{ stats.total_tokens }}</div></div>
+        <div class="stat">
+            <div class="stat-label">Стоимость LLM</div>
+            {% if cost.cost_usd is not none %}<div class="stat-value">{{ "%.4f"|format(cost.cost_usd) }} USD</div>{% else %}<div class="stat-value stat-value-unavailable">Нет данных</div><div class="stat-note">{{ cost.reason }}</div>{% endif %}
+        </div>
+        <div class="stat">
+            <div class="stat-label">Экономия на кэше</div>
+            {% if cost.cache_savings_usd is not none %}<div class="stat-value savings">{{ "%.4f"|format(cost.cache_savings_usd) }} USD</div>{% else %}<div class="stat-value stat-value-unavailable">Нет данных</div><div class="stat-note">{{ cost.reason }}</div>{% endif %}
+        </div>
+        <div class="stat"><div class="stat-label">Эскалации</div><div class="stat-value">{{ stats.escalations }}</div></div>
+        <div class="stat">
+            <div class="stat-label">Security-инциденты</div>
+            {% if stats.security_incidents is not none %}<div class="stat-value">{{ stats.security_incidents }}</div>{% else %}<div class="stat-value stat-value-unavailable">Нет данных</div><div class="stat-note">{{ stats.security_incidents_reason }}</div>{% endif %}
+        </div>
+    </div>
+
+    <section class="statistics-estimate">
+        <div class="section-eyebrow">Расчётная оценка</div>
+        <h2>Экономия времени оператора</h2>
+        <p>Расчётная оценка: диалог считается автоматизированным, если бот успешно ответил, а в периоде не было эскалации и ответа сотрудника. Это не доказательство полного решения обращения.</p>
+        <div class="stats-grid">
+            <div class="stat"><div class="stat-label">Автоматизированные диалоги · расчётная оценка</div><div class="stat-value">{{ stats.automated_dialogues }}</div></div>
+            <div class="stat"><div class="stat-label">Сэкономленные часы · расчётная оценка</div>{% if estimate.hours is not none %}<div class="stat-value">{{ "%.2f"|format(estimate.hours) }}</div>{% else %}<div class="stat-value stat-value-unavailable">Нет данных</div><div class="stat-note">{{ estimate.reason }}</div>{% endif %}</div>
+            <div class="stat"><div class="stat-label">Экономия на операторе · расчётная оценка</div>{% if estimate.savings_rub is not none %}<div class="stat-value savings">{{ "%.2f"|format(estimate.savings_rub) }} ₽</div>{% else %}<div class="stat-value stat-value-unavailable">Нет данных</div><div class="stat-note">{{ estimate.reason }}</div>{% endif %}</div>
+        </div>
+        <div class="statistics-formula">
+            <div>сэкономленные часы = автоматизированные диалоги × минуты оператора / 60</div>
+            <div>экономия = сэкономленные часы × ставка оператора</div>
+        </div>
+    </section>
+
+    <section class="statistics-settings">
+        <h2>Настройки расчёта</h2>
+        <form method="post" action="{{ request.scope.get('root_path', '') }}/stats/settings">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label>Минуты оператора на один диалог<input type="number" name="minutes_per_dialogue" min="0.01" step="0.01" value="{{ settings.minutes_per_dialogue or '' }}" required></label>
+            <label>Ставка оператора, ₽/час<input type="number" name="hourly_rate_rub" min="0.01" step="0.01" value="{{ settings.hourly_rate_rub or '' }}" required></label>
+            <button class="btn-primary" type="submit">Сохранить настройки</button>
+        </form>
+    </section>
 </div>
-
-<h2>Последние инциденты безопасности</h2>
-{% if not incidents %}
-<div class="empty">Инцидентов нет.</div>
-{% else %}
-<table class="data-table">
-    <thead>
-        <tr>
-            <th>Время</th>
-            <th>Чат</th>
-            <th>Юзер</th>
-            <th>Тип</th>
-            <th>Причина</th>
-            <th>Сообщение</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for i in incidents %}
-        <tr>
-            <td>{{ i.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                    <td><a href="{{ request.scope.get('root_path', '') }}/chats/{{ i.chat_id }}">#{{ i.chat_id }}</a></td>
-            <td>{% if i.username %}@{{ i.username }}{% elif i.user_id %}{{ i.user_id }}{% else %}—{% endif %}</td>
-            <td><span class="badge badge-{{ i.incident_type }}">{{ i.incident_type }}</span></td>
-            <td class="reason">{{ i.reason }}</td>
-            <td class="msg-preview">{{ (i.user_message or '')[:120] }}{% if i.user_message and i.user_message|length > 120 %}…{% endif %}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-{% endif %}
 {% endblock %}
