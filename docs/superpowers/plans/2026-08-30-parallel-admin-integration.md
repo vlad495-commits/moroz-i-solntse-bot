@@ -153,13 +153,13 @@ Expected: PASS; ручные записи не планируют Telegram-ув�
 - Preserves: `AdminBookingCommandService` wiring from Task 3.
 - Produces: exact `token_usage.source_message_id` linkage and per-message admin analytics.
 
-- [ ] **Step 1: Выполнить merge без автоматического коммита**
+- [x] **Step 1: Выполнить merge без автоматического коммита**
 
 ```powershell
 git merge --no-ff --no-commit codex/message-llm-analytics
 ```
 
-- [ ] **Step 2: Разрешить worker-конфликт объединением, а не выбором стороны**
+- [x] **Step 2: Разрешить worker-конфликт объединением, а не выбором стороны**
 
 Итоговый `worker/main.py` обязан одновременно:
 
@@ -171,21 +171,21 @@ git merge --no-ff --no-commit codex/message-llm-analytics
 
 Итоговый `test_worker.py` обязан сохранять оба набора контрактов.
 
-- [ ] **Step 3: Сохранить все CSS/changelog/roadmap additions и завершить merge**
+- [x] **Step 3: Сохранить все CSS/changelog/roadmap additions и завершить merge**
 
 ```powershell
 git add -A
 git commit -m "merge: добавлена LLM-аналитика сообщений"
 ```
 
-- [ ] **Step 4: Устранить будущую add/add коллизию migration-теста**
+- [x] **Step 4: Устранить будущую add/add коллизию migration-теста**
 
 ```powershell
 git mv project/tests/unit/admin/test_migration_0020.py project/tests/unit/admin/test_migration_0020_message_llm_analytics.py
 git commit -m "test: уточнено имя migration-контракта аналитики"
 ```
 
-- [ ] **Step 5: Прогнать совместный analytics/booking gate**
+- [x] **Step 5: Прогнать совместный analytics/booking gate**
 
 ```powershell
 Set-Location project
