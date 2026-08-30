@@ -287,6 +287,46 @@ class YclientsAdapter(BookingPort):
             raise _outcome_unknown("transport") from error
         _check_mutation_status(response.status, expected=204)
 
+    async def set_visit_status(self, external_id: str, status: BookingStatus) -> None:
+        """Apply an explicit staff action to any YCLIENTS record."""
+        provider_id = _provider_id(external_id)
+        if status == "cancelled":
+            try:
+                response = await self._http.request(
+                    "DELETE",
+                    f"/api/v1/record/{self._config.company_id}/{provider_id}",
+                    user_auth=True,
+                )
+            except YclientsTransportError as error:
+                raise _outcome_unknown("transport") from error
+            if response.status not in {204, 404}:
+                _check_mutation_status(response.status, expected=204)
+            return
+        attendance = {"completed": 1, "no_show": -1}.get(status)
+        if attendance is None:
+            raise BookingTemporaryError()
+        record = await self._get_record(provider_id)
+        body = _admin_status_body(record, attendance, self._timezone)
+        try:
+            response = await self._http.request(
+                "PUT",
+                f"/api/v1/record/{self._config.company_id}/{provider_id}",
+                json_body=body,
+                user_auth=True,
+            )
+        except YclientsTransportError as error:
+            raise _outcome_unknown("transport") from error
+        _check_mutation_status(response.status, expected=201)
+        try:
+            changed = _record(_envelope(response))
+            if (
+                _provider_id(changed.get("id")) != provider_id
+                or normalize_visit_status(changed) != status
+            ):
+                raise BookingTemporaryError()
+        except (BookingTemporaryError, ValueError, TypeError, KeyError) as error:
+            raise _outcome_unknown("response_shape", status=response.status) from error
+
     async def _get_record(self, provider_id: int) -> dict[str, object]:
         try:
             response = await self._http.request(
@@ -451,6 +491,45 @@ def _record_client(record: dict[str, object]) -> dict[str, str]:
     ):
         raise BookingTemporaryError()
     return {"name": name, "phone": phone}
+
+
+def _admin_status_body(
+    record: dict[str, object],
+    attendance: int,
+    timezone: ZoneInfo,
+) -> dict[str, object]:
+    staff_value = record.get("staff_id")
+    if staff_value is None and isinstance(record.get("staff"), dict):
+        staff_value = record["staff"].get("id")
+    raw_services = record.get("services")
+    if not isinstance(raw_services, list) or not raw_services:
+        raise BookingTemporaryError()
+    services = [
+        {"id": _provider_id(item.get("id") if isinstance(item, dict) else item)}
+        for item in raw_services
+    ]
+    custom_fields = record.get("custom_fields", {})
+    if not isinstance(custom_fields, dict):
+        raise BookingTemporaryError()
+    body: dict[str, object] = {
+        "staff_id": _provider_id(staff_value),
+        "services": services,
+        "client": _record_client(record),
+        "save_if_busy": False,
+        "datetime": _datetime(record.get("datetime"), timezone).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "seance_length": _positive_int(record.get("seance_length")),
+        "send_sms": False,
+        "attendance": attendance,
+        "custom_fields": dict(custom_fields),
+    }
+    comment = record.get("comment")
+    if comment is not None:
+        if not isinstance(comment, str):
+            raise BookingTemporaryError()
+        body["comment"] = comment
+    return body
 
 
 def _check_mutation_status(status: int, *, expected: int) -> None:

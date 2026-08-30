@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -7,15 +8,70 @@ import pytest_asyncio
 
 from bookings_database import (
     BookingDatabaseUnavailable,
+    enqueue_admin_booking_command,
     get_booking_detail,
+    list_booking_service_options,
+    list_calendar_bookings,
     list_bookings,
 )
 from moroz.common.db import Database
+from moroz.booking.admin_commands import AdminBookingCommandRepository
 
 
 pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+
+
+async def test_manual_command_is_queued_and_audited_without_pii_in_audit(
+    database,
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        await connection.execute(
+            """
+            INSERT INTO yclients_service_catalog
+                (service_id, staff_id, service_name, staff_name, price_min,
+                 price_max, duration_minutes, synced_at)
+            VALUES ('10', '20', 'Криотерапия', 'Анна', 1000, 1000, 30, now())
+            """
+        )
+        options = await list_booking_service_options(database)
+        assert options == [{
+            "service_id": "10", "staff_id": "20",
+            "service_name": "Криотерапия", "staff_name": "Анна",
+            "duration_minutes": 30,
+        }]
+        command_id = await enqueue_admin_booking_command(
+            database,
+            kind="admin_booking_create",
+            payload={"customer_name": "Ирина", "customer_phone": "+79990000000"},
+            actor_id=7,
+            ip_address="127.0.0.1",
+            user_agent="pytest",
+        )
+        job = await connection.fetchrow(
+            "SELECT kind, status, payload FROM scheduler_jobs WHERE id = $1",
+            command_id,
+        )
+        audit = await connection.fetchrow(
+            "SELECT action, after FROM admin_audit_events WHERE object_id = $1",
+            str(command_id),
+        )
+        assert job["kind"] == "admin_booking_create"
+        assert job["status"] == "pending"
+        assert json.loads(job["payload"])["customer_name"] == "Ирина"
+        assert audit["action"] == "booking.admin_booking_create.requested"
+        assert "Ирина" not in str(audit["after"])
+        assert "+79990000000" not in str(audit["after"])
+        await AdminBookingCommandRepository(database).scrub_personal_data(command_id)
+        scrubbed = await connection.fetchval(
+            "SELECT payload FROM scheduler_jobs WHERE id = $1", command_id
+        )
+        assert json.loads(scrubbed) == {}
+    finally:
+        await connection.close()
 
 
 @pytest_asyncio.fixture
@@ -159,6 +215,97 @@ async def _seed_unsuccessful_sync(
         status,
         error_code,
     )
+
+
+async def test_status_event_is_idempotent_per_admin_command(
+    database,
+    migrated_database_url,
+):
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        await _seed_booking(
+            connection,
+            status="confirmed",
+            starts_at=NOW + timedelta(days=1),
+            phase="confirmed",
+            error_code=None,
+            updated_at=NOW,
+            external_id="9001",
+        )
+        command_id = uuid4()
+        repository = AdminBookingCommandRepository(database)
+
+        await repository.record_status(command_id, "9001", "completed")
+        await repository.record_status(command_id, "9001", "completed")
+
+        row = await connection.fetchrow(
+            """
+            SELECT bookings.status,
+                   (SELECT count(*) FROM booking_events WHERE id = $2) AS events
+            FROM bookings WHERE external_id = $1
+            """,
+            "9001",
+            command_id,
+        )
+        assert row["status"] == "completed"
+        assert row["events"] == 1
+    finally:
+        await connection.close()
+
+
+async def test_calendar_returns_exact_week_from_all_yclients_sources(
+    database,
+    migrated_database_url,
+):
+    monday = datetime(2026, 8, 9, 21, 0, tzinfo=UTC)
+    connection = await asyncpg.connect(migrated_database_url)
+    try:
+        booking_key = uuid4()
+        await _seed_booking(
+            connection,
+            status="confirmed",
+            starts_at=monday + timedelta(hours=12),
+            phase="confirmed",
+            error_code=None,
+            updated_at=NOW,
+            external_id="701",
+            booking_key=booking_key,
+        )
+        await _seed_projection(
+            connection,
+            external_id="701",
+            booking_key=booking_key,
+            marker_state="valid",
+            starts_at=monday + timedelta(hours=12),
+        )
+        await _seed_projection(
+            connection,
+            external_id="702",
+            booking_key=None,
+            marker_state="absent",
+            starts_at=monday + timedelta(days=2, hours=10),
+        )
+        await _seed_projection(
+            connection,
+            external_id="703",
+            booking_key=None,
+            marker_state="absent",
+            starts_at=monday + timedelta(days=8),
+        )
+
+        result = await list_calendar_bookings(
+            database,
+            week_start=monday,
+            week_end=monday + timedelta(days=7),
+            now=NOW,
+        )
+
+        assert [(item["external_id"], item["source"]) for item in result["items"]] == [
+            ("701", "bot"),
+            ("702", "other"),
+        ]
+    finally:
+        await connection.close()
 
 
 async def test_list_bookings_projects_views_filters_and_keyset_pages(

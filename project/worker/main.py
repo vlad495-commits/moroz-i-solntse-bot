@@ -22,11 +22,17 @@ from moroz.booking.catalog import (
     CatalogRepository,
     CatalogSyncCoordinator,
 )
+from moroz.booking.admin_commands import (
+    ADMIN_BOOKING_COMMAND_KINDS,
+    AdminBookingCommandRepository,
+    AdminBookingCommandService,
+)
 from moroz.booking.projection import (
     PROJECTION_SYNC_KIND,
     ProjectionRepository,
     ProjectionSyncCoordinator,
 )
+from moroz.booking.repository import BookingRepository
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_catalog import YclientsCatalogError, YclientsCatalogReader
 from moroz.booking.yclients_http import YclientsConfig
@@ -210,6 +216,7 @@ class MessageTaskHandler:
         lifecycle=None,
         projection_sync=None,
         catalog_sync=None,
+        admin_booking_commands=None,
         retention_cleanup=None,
         catalog_repository=None,
         catalog_grounding_enabled=False,
@@ -226,6 +233,7 @@ class MessageTaskHandler:
         self._lifecycle = lifecycle
         self._projection_sync = projection_sync
         self._catalog_sync = catalog_sync
+        self._admin_booking_commands = admin_booking_commands
         self._retention_cleanup = retention_cleanup
         self._catalog_repository = (
             catalog_repository if catalog_grounding_enabled else None
@@ -261,6 +269,24 @@ class MessageTaskHandler:
             raise RuntimeError("scheduler job dependencies are not configured")
         job = await self._scheduler_repository.get_claimed(job_id)
         if job is None:
+            return
+        if job.kind in ADMIN_BOOKING_COMMAND_KINDS:
+            if self._admin_booking_commands is None:
+                raise RuntimeError("admin booking commands are not configured")
+            async with self._system_scheduler_lock:
+                job = await self._scheduler_repository.get_claimed(job_id)
+                if job is None:
+                    return
+                try:
+                    result = await self._admin_booking_commands.handle(job)
+                except Exception as error:
+                    await self._scheduler_repository.record_failure(
+                        job,
+                        error_code=_scheduler_error_code(error),
+                        terminal=job.attempts >= MAX_RETRIES,
+                    )
+                    raise
+                await self._scheduler_repository.complete(job, result)
             return
         if job.kind in {
             PROJECTION_SYNC_KIND,
@@ -858,6 +884,7 @@ def _build_yclients_services(
     ProjectionSyncCoordinator | None,
     CatalogSyncCoordinator | None,
     CatalogRepository | None,
+    AdminBookingCommandService | None,
 ]:
     required = (
         "YCLIENTS_PARTNER_TOKEN",
@@ -866,13 +893,15 @@ def _build_yclients_services(
     )
     present = tuple(bool(os.environ.get(name, "").strip()) for name in required)
     if not any(present):
-        return None, None, None, None
+        return None, None, None, None, None
     if not all(present):
         raise ValueError("YCLIENTS lifecycle configuration is incomplete")
     config = YclientsConfig.from_env(os.environ)
+    adapter = YclientsAdapter(config)
+    scheduler_repository = SchedulerJobRepository(database)
     lifecycle = LifecycleService(
         database,
-        YclientsAdapter(config),
+        adapter,
         FeedbackService(database),
     )
     reader = YclientsRecordsReader(config)
@@ -890,7 +919,20 @@ def _build_yclients_services(
         SchedulerJobRepository(database),
         clock=lambda: datetime.now(UTC),
     )
-    return lifecycle, projection_sync, catalog_sync, catalog_repository
+    admin_booking_commands = AdminBookingCommandService(
+        adapter,
+        BookingRepository(database, schedule_notifications=False),
+        AdminBookingCommandRepository(database),
+        scheduler_repository,
+        clock=lambda: datetime.now(UTC),
+    )
+    return (
+        lifecycle,
+        projection_sync,
+        catalog_sync,
+        catalog_repository,
+        admin_booking_commands,
+    )
 
 
 async def run() -> None:
@@ -922,7 +964,7 @@ async def run() -> None:
             retention_days=DATA_RETENTION_DAYS,
         )
         await retention_cleanup.ensure_current(datetime.now(UTC))
-        lifecycle, projection_sync, catalog_sync, catalog_repository = (
+        lifecycle, projection_sync, catalog_sync, catalog_repository, admin_booking_commands = (
             _build_yclients_services(database)
         )
         if projection_sync is not None:
@@ -958,6 +1000,7 @@ async def run() -> None:
             lifecycle=lifecycle,
             projection_sync=projection_sync,
             catalog_sync=catalog_sync,
+            admin_booking_commands=admin_booking_commands,
             retention_cleanup=retention_cleanup,
             catalog_repository=catalog_repository,
             catalog_grounding_enabled=YCLIENTS_CATALOG_GROUNDING_ENABLED,

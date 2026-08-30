@@ -3,9 +3,11 @@
 import base64
 import binascii
 import json
+import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 
 BOOKING_VIEWS = {"upcoming", "attention", "history"}
@@ -36,6 +38,8 @@ EVENT_TITLES = {
     "booking_execution_started": "Операция начата",
     "booking_confirmed": "Запись подтверждена",
     "booking_cancelled": "Запись отменена",
+    "booking_completed": "Клиент пришёл",
+    "booking_no_show": "Клиент не пришёл",
     "booking_rescheduled": "Запись перенесена",
     "slot_unavailable": "Слот уже недоступен",
     "admin_attention_required": "Требуется помощь администратора",
@@ -61,6 +65,183 @@ PROJECTION_FAILURE_LABELS = {
     "yclients_page_bound": "Сверка превысила безопасный объём данных",
     "yclients_projection_write": "Результат сверки не удалось сохранить",
 }
+MOSCOW = ZoneInfo("Europe/Moscow")
+CALENDAR_START_HOUR = 0
+CALENDAR_END_HOUR = 24
+_DAY_NAMES = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+_PHONE_RE = re.compile(r"^\+?\d{10,16}$")
+_BOOKING_ACTION_STATUSES = {"completed", "no_show", "cancelled"}
+
+
+def week_bounds(
+    value: str | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("booking week")
+    try:
+        selected = date.fromisoformat(value) if value else current.astimezone(MOSCOW).date()
+    except (TypeError, ValueError) as error:
+        raise ValueError("booking week") from error
+    monday = selected - timedelta(days=selected.weekday())
+    local_start = datetime.combine(monday, time.min, tzinfo=MOSCOW)
+    return local_start.astimezone(UTC), (local_start + timedelta(days=7)).astimezone(UTC)
+
+
+def calendar_layout(
+    items: list[dict[str, object]],
+    week_start: date,
+) -> list[dict[str, object]]:
+    days = [
+        {
+            "date": week_start + timedelta(days=offset),
+            "label": _DAY_NAMES[offset],
+            "items": [],
+        }
+        for offset in range(7)
+    ]
+    for item in items:
+        starts_at = item.get("starts_at")
+        if not isinstance(starts_at, datetime) or starts_at.tzinfo is None:
+            continue
+        local_start = starts_at.astimezone(MOSCOW)
+        day_index = (local_start.date() - week_start).days
+        if day_index not in range(7):
+            continue
+        end_at = item.get("scheduled_end_at")
+        local_end = (
+            end_at.astimezone(MOSCOW)
+            if isinstance(end_at, datetime) and end_at.tzinfo is not None
+            else None
+        )
+        duration = (
+            max(1, int((local_end - local_start).total_seconds() // 60))
+            if local_end is not None and local_end > local_start
+            else 60
+        )
+        card = dict(item)
+        card.update(
+            top=max(
+                0,
+                local_start.hour * 60
+                + local_start.minute
+                - CALENDAR_START_HOUR * 60,
+            ),
+            height=max(36, duration),
+            time_label=(
+                local_start.strftime("%H:%M")
+                if local_end is None
+                else f"{local_start:%H:%M}–{local_end:%H:%M}"
+            ),
+        )
+        days[day_index]["items"].append(card)
+    for day in days:
+        _place_calendar_lanes(day["items"])
+    return days
+
+
+def _place_calendar_lanes(cards: list[dict[str, object]]) -> None:
+    cards.sort(key=lambda card: card["starts_at"])
+    group: list[dict[str, object]] = []
+    group_end: datetime | None = None
+    for card in cards:
+        starts_at = card["starts_at"]
+        end_at = card.get("scheduled_end_at")
+        effective_end = (
+            end_at
+            if isinstance(end_at, datetime) and end_at > starts_at
+            else starts_at + timedelta(minutes=60)
+        )
+        if group and group_end is not None and starts_at >= group_end:
+            _assign_group_lanes(group)
+            group = []
+            group_end = None
+        card["_effective_end"] = effective_end
+        group.append(card)
+        group_end = effective_end if group_end is None else max(group_end, effective_end)
+    _assign_group_lanes(group)
+
+
+def _assign_group_lanes(cards: list[dict[str, object]]) -> None:
+    lane_ends: list[datetime] = []
+    for card in cards:
+        starts_at = card["starts_at"]
+        lane = next(
+            (index for index, end_at in enumerate(lane_ends) if end_at <= starts_at),
+            len(lane_ends),
+        )
+        if lane == len(lane_ends):
+            lane_ends.append(card["_effective_end"])
+        else:
+            lane_ends[lane] = card["_effective_end"]
+        card["_lane"] = lane
+    columns = max(1, len(lane_ends))
+    for card in cards:
+        card["left_percent"] = card.pop("_lane") * 100 / columns
+        card["width_percent"] = 100 / columns
+        card.pop("_effective_end")
+
+
+def validate_manual_booking(
+    *,
+    customer_name: str,
+    customer_phone: str,
+    service_staff: str,
+    starts_at: str,
+    consent: str,
+    comment: str,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    try:
+        name = customer_name.strip()
+        phone = customer_phone.strip().replace(" ", "").replace("-", "")
+        service_id, staff_id = service_staff.split(":", 1)
+        local_start = datetime.fromisoformat(starts_at).replace(tzinfo=MOSCOW)
+        current = (now or datetime.now(UTC)).astimezone(MOSCOW)
+        note = comment.strip()
+        if (
+            not 1 <= len(name) <= 100
+            or not _PHONE_RE.fullmatch(phone)
+            or not _canonical_provider_id(service_id)
+            or not _canonical_provider_id(staff_id)
+            or local_start <= current
+            or local_start > current + timedelta(days=365)
+            or consent != "yes"
+            or len(note) > 500
+        ):
+            raise ValueError
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("manual booking") from error
+    return {
+        "customer_name": name,
+        "customer_phone": phone,
+        "service_id": service_id,
+        "staff_id": staff_id,
+        "starts_at": local_start.isoformat(),
+        "personal_data_processing_allowed": True,
+        "comment": note or None,
+    }
+
+
+def validate_booking_status_action(
+    external_id: str,
+    status: str,
+) -> tuple[str, str]:
+    if not _canonical_provider_id(external_id) or status not in _BOOKING_ACTION_STATUSES:
+        raise ValueError("booking action")
+    return external_id, status
+
+
+def _canonical_provider_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and value.isascii()
+        and value.isdigit()
+        and value[0] != "0"
+        and len(value) <= 64
+    )
 
 
 def projection_failure_label(code: object) -> str:
