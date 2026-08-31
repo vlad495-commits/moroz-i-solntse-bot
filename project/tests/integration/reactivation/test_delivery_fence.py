@@ -1,9 +1,11 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 import json
+import os
 from types import SimpleNamespace
 from uuid import uuid4
 
+import aio_pika
 import pytest
 import pytest_asyncio
 from aiogram.exceptions import (
@@ -15,6 +17,7 @@ from aiogram.exceptions import (
 )
 
 from moroz.common.db import Database
+from moroz.common.queue import QueueTask, RabbitQueue
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import DeliveryResult, TelegramSender
 from moroz.privacy import customer_lock_subject
@@ -22,6 +25,7 @@ from moroz.reactivation.policy import ProgramPolicy, template_checksum
 from moroz.reactivation.repository import ReactivationRepository
 from moroz.reactivation.repository import PROGRAM_LOCK_SUBJECT
 from moroz.security.consent import ConsentService
+from worker.main import MessageTaskHandler
 
 
 pytest_plugins = ["tests.integration.conftest"]
@@ -672,7 +676,11 @@ async def test_terminal_delivery_keeps_canonical_lock_order_against_writers(
             await asyncio.sleep(0.1)
             assert not delivery_task.done()
             await transaction.commit()
-        await asyncio.wait_for(delivery_task, timeout=3)
+        if writer == "deletion":
+            with pytest.raises(RuntimeError, match="terminal transition"):
+                await asyncio.wait_for(delivery_task, timeout=3)
+        else:
+            await asyncio.wait_for(delivery_task, timeout=3)
     else:
         transition_done = asyncio.Event()
         release_delivery = asyncio.Event()
@@ -1030,3 +1038,159 @@ async def test_persistent_sent_hook_failure_durably_falls_back_to_unknown(
             "SELECT status FROM reactivation_journey_steps WHERE outbound_id = $1",
             outbound_id,
         ) == "delivery_unknown"
+
+
+@pytest.mark.parametrize("outcome", ["sent", "failed", "delivery_unknown"])
+@pytest.mark.parametrize("hook_behavior", ["no_call", "double_call"])
+async def test_repository_enforces_one_shot_terminal_transition_contract(
+    delivery, outcome, hook_behavior
+):
+    database, _, _ = delivery
+    outbound_id = await _seed_and_reserve(
+        database, delivery[1], f"91-{outcome}-{hook_behavior}"
+    )
+    messages = MessageRepository(database)
+    assert await messages.claim_outbound_delivery(outbound_id) is not None
+
+    async def invalid_hook(*args):
+        if hook_behavior == "no_call":
+            return
+        await args[-1]()
+        await args[-1]()
+
+    with pytest.raises(RuntimeError, match="terminal transition"):
+        if outcome == "sent":
+            await messages.mark_outbound_sent(
+                outbound_id, "provider-id", delivery_hook=invalid_hook, now=NOW
+            )
+        elif outcome == "failed":
+            await messages.mark_outbound_failed(
+                outbound_id, "telegram_bad_request",
+                delivery_hook=invalid_hook, now=NOW,
+            )
+        else:
+            await messages.mark_outbound_delivery_unknown(
+                outbound_id, delivery_hook=invalid_hook,
+                error_code="telegram_network", now=NOW,
+            )
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+        ) == "sending"
+
+
+@pytest.mark.parametrize("outcome", ["sent", "failed", "delivery_unknown"])
+@pytest.mark.parametrize(
+    "hook_behavior",
+    ["no_call", "raise_before", "cancel_before", "raise_after", "cancel_after"],
+)
+async def test_all_provider_outcomes_recover_from_invalid_or_failed_hook(
+    delivery, outcome, hook_behavior
+):
+    database, repository, _ = delivery
+    outcome_index = ["sent", "failed", "delivery_unknown"].index(outcome)
+    behavior_index = [
+        "no_call", "raise_before", "cancel_before", "raise_after", "cancel_after"
+    ].index(hook_behavior)
+    outbound_id = await _seed_and_reserve(
+        database, repository, f"92{outcome_index}{behavior_index}01"
+    )
+    if outcome == "failed":
+        telegram = FakeTelegram(_telegram_error(TelegramBadRequest))
+    elif outcome == "delivery_unknown":
+        telegram = FakeTelegram(_telegram_error(TelegramNetworkError))
+    else:
+        telegram = FakeTelegram()
+
+    async def broken_hook(*args):
+        if hook_behavior == "no_call":
+            return
+        if hook_behavior == "raise_before":
+            raise RuntimeError("hook failed before transition")
+        if hook_behavior == "cancel_before":
+            raise asyncio.CancelledError()
+        await args[-1]()
+        if hook_behavior == "raise_after":
+            raise RuntimeError("hook failed after transition")
+        raise asyncio.CancelledError()
+
+    sender = TelegramSender(
+        telegram,
+        MessageRepository(database),
+        pre_send_guard=repository.pre_send_guard,
+        delivery_hook=broken_hook,
+        managed_delivery_check=repository.is_linked_outbound,
+        clock=lambda: NOW,
+    )
+    cancelled = hook_behavior.startswith("cancel")
+    if cancelled:
+        with pytest.raises(asyncio.CancelledError):
+            await sender.send(outbound_id)
+    elif outcome == "failed":
+        with pytest.raises(RuntimeError):
+            await sender.send(outbound_id)
+    else:
+        assert await sender.send(outbound_id) == DeliveryResult.DELIVERY_UNKNOWN
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+        ) == ("pending" if outcome == "failed" else "delivery_unknown")
+    assert len(telegram.calls) == 1
+
+
+async def test_rabbit_redelivery_reclaims_pending_after_failed_hook(delivery):
+    database, repository, _ = delivery
+    outbound_id = await _seed_and_reserve(database, repository, "93001")
+    telegram = FakeTelegram(_telegram_error(TelegramBadRequest))
+    hook_calls = 0
+
+    async def transient_hook(*args):
+        nonlocal hook_calls
+        hook_calls += 1
+        if hook_calls == 1:
+            raise RuntimeError("transient hook failure")
+        await repository.delivery_hook(*args)
+
+    sender = TelegramSender(
+        telegram,
+        MessageRepository(database),
+        pre_send_guard=repository.pre_send_guard,
+        delivery_hook=transient_hook,
+        managed_delivery_check=repository.is_linked_outbound,
+        clock=lambda: NOW,
+    )
+    handler = MessageTaskHandler(database, object(), sender)
+    queue = RabbitQueue(os.environ["RABBITMQ_URL"], retry_delays=(0, 0, 0))
+    await queue.connect()
+    admin_connection = await aio_pika.connect_robust(os.environ["RABBITMQ_URL"])
+    admin_channel = await admin_connection.channel()
+    tasks = await admin_channel.get_queue("tasks")
+    dead_letters = await admin_channel.get_queue("tasks.dlq")
+    await tasks.purge()
+    await dead_letters.purge()
+    task = QueueTask(
+        kind="send_outbound",
+        payload={"outbound_id": str(outbound_id)},
+        idempotency_key=f"send_outbound:{outbound_id}",
+    )
+    try:
+        await queue.publish(task)
+        await queue.consume_one(handler.handle)
+        async with database.acquire() as connection:
+            assert await connection.fetchval(
+                "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+            ) == "pending"
+        await queue.consume_one(handler.handle)
+        async with database.acquire() as connection:
+            assert await connection.fetchval(
+                "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+            ) == "failed"
+        assert hook_calls == 2
+        assert len(telegram.calls) == 2
+        assert await tasks.get(fail=False) is None
+        assert await dead_letters.get(fail=False) is None
+    finally:
+        await queue.close()
+        await admin_connection.close()

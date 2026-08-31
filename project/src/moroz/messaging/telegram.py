@@ -61,35 +61,49 @@ def classify_delivery_error(
 ManagedDeliveryCheck = Callable[[OutboundMessage], Awaitable[bool]]
 
 
-async def _mark_post_send_unknown(
+async def _recover_post_provider(
     repository,
     outbound,
     *,
-    delivery_hook,
-    managed,
-    now,
+    retry_safe: bool,
 ) -> None:
-    try:
+    if retry_safe:
         durable = await asyncio.shield(
-            repository.mark_outbound_delivery_unknown(
-                outbound.id,
-                delivery_hook=delivery_hook if managed else None,
-                error_code="post_send_completion",
-                now=now,
-            )
+            repository.release_outbound_delivery(outbound.id)
         )
-    except BaseException:
-        logger.error(
-            "post_send_delivery_unknown_mark_failed code=mark_failed count=1"
-        )
+        recovery = "pending"
+    else:
         durable = await asyncio.shield(
             repository.mark_outbound_delivery_unknown(outbound.id)
         )
+        recovery = "delivery_unknown"
     if not durable:
-        raise RuntimeError("delivery_unknown was not persisted")
+        raise RuntimeError("post-provider recovery was not persisted")
     logger.error(
-        "post_send_completion_failed code=post_send_completion count=1"
+        "post_provider_completion_recovered code=%s count=1", recovery
     )
+
+
+async def _complete_post_provider(
+    operation,
+    repository,
+    outbound,
+    *,
+    retry_safe: bool,
+    verify=lambda _result: True,
+):
+    try:
+        result = await operation()
+        if not verify(result):
+            raise RuntimeError("terminal delivery status was not persisted")
+        return True, result
+    except BaseException as error:
+        await _recover_post_provider(
+            repository, outbound, retry_safe=retry_safe
+        )
+        if retry_safe or isinstance(error, asyncio.CancelledError):
+            raise
+        return False, None
 
 
 async def deliver_claimed_outbound(
@@ -138,11 +152,17 @@ async def deliver_claimed_outbound(
         decision = classify_delivery_error(error, managed=managed)
         current_time = clock()
         if decision.outbound_status == "delivery_unknown":
-            await repository.mark_outbound_delivery_unknown(
-                outbound.id,
-                delivery_hook=delivery_hook if managed else None,
-                error_code=decision.error_code,
-                now=current_time,
+            await _complete_post_provider(
+                lambda: repository.mark_outbound_delivery_unknown(
+                    outbound.id,
+                    delivery_hook=delivery_hook if managed else None,
+                    error_code=decision.error_code,
+                    now=current_time,
+                ),
+                repository,
+                outbound,
+                retry_safe=False,
+                verify=bool,
             )
             logger.error(
                 "telegram_delivery_unknown code=%s count=1",
@@ -152,11 +172,17 @@ async def deliver_claimed_outbound(
                 raise
             return DeliveryResult.DELIVERY_UNKNOWN
         if decision.outbound_status == "failed":
-            await repository.mark_outbound_failed(
-                outbound.id,
-                decision.error_code,
-                delivery_hook=delivery_hook,
-                now=current_time,
+            await _complete_post_provider(
+                lambda: repository.mark_outbound_failed(
+                    outbound.id,
+                    decision.error_code,
+                    delivery_hook=delivery_hook,
+                    now=current_time,
+                ),
+                repository,
+                outbound,
+                retry_safe=True,
+                verify=bool,
             )
             logger.error(
                 "telegram_delivery_failed code=%s count=1",
@@ -165,30 +191,18 @@ async def deliver_claimed_outbound(
             return DeliveryResult.FAILED
         await repository.release_outbound_delivery(outbound.id)
         raise
-    try:
-        context_chat_id = await repository.mark_outbound_sent(
+    completed, context_chat_id = await _complete_post_provider(
+        lambda: repository.mark_outbound_sent(
             outbound.id,
             str(sent_message.message_id),
             delivery_hook=delivery_hook if managed else None,
             now=clock(),
-        )
-    except asyncio.CancelledError as error:
-        await _mark_post_send_unknown(
-            repository,
-            outbound,
-            delivery_hook=delivery_hook,
-            managed=managed,
-            now=clock(),
-        )
-        raise
-    except Exception as error:
-        await _mark_post_send_unknown(
-            repository,
-            outbound,
-            delivery_hook=delivery_hook,
-            managed=managed,
-            now=clock(),
-        )
+        ),
+        repository,
+        outbound,
+        retry_safe=False,
+    )
+    if not completed:
         return DeliveryResult.DELIVERY_UNKNOWN
     if context_chat_id is not None and context_cache is not None:
         try:

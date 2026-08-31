@@ -295,27 +295,15 @@ class MessageRepository:
                 )
                 if outbound is None:
                     return None
-                transitioned = None
-
-                async def transition():
-                    nonlocal transitioned
-                    if transitioned is None:
-                        transitioned = await self._transition_sending_outbound(
-                            connection, outbound_id, "sent", external_message_id
-                        )
-                    return transitioned
-
-                if delivery_hook is not None:
-                    if now is None:
-                        raise ValueError("delivery hook timestamp is required")
-                    await delivery_hook(
-                        connection, outbound, "sent", None, now, transition
-                    )
-                else:
-                    await transition()
-                outbound = transitioned
-                if outbound is None:
-                    return None
+                outbound = await self._complete_terminal_outbound(
+                    connection,
+                    outbound,
+                    "sent",
+                    external_message_id=external_message_id,
+                    delivery_hook=delivery_hook,
+                    error_code=None,
+                    now=now,
+                )
                 parsed = parse_admin_reply_key(outbound.idempotency_key)
                 if parsed is None:
                     if outbound.idempotency_key.startswith(
@@ -350,25 +338,15 @@ class MessageRepository:
                 )
                 if outbound is None:
                     return False
-                transitioned = None
-
-                async def transition():
-                    nonlocal transitioned
-                    if transitioned is None:
-                        transitioned = await self._transition_sending_outbound(
-                            connection, outbound_id, "failed"
-                        )
-                    return transitioned
-
-                if delivery_hook is not None:
-                    if now is None:
-                        raise ValueError("delivery hook timestamp is required")
-                    await delivery_hook(
-                        connection, outbound, "failed", error_code, now, transition
-                    )
-                else:
-                    await transition()
-                return transitioned is not None
+                await self._complete_terminal_outbound(
+                    connection,
+                    outbound,
+                    "failed",
+                    delivery_hook=delivery_hook,
+                    error_code=error_code,
+                    now=now,
+                )
+                return True
 
     async def mark_outbound_delivery_unknown(
         self,
@@ -391,30 +369,58 @@ class MessageRepository:
                             outbound_id,
                         )
                     )
-                transitioned = None
+                await self._complete_terminal_outbound(
+                    connection,
+                    outbound,
+                    "delivery_unknown",
+                    delivery_hook=delivery_hook,
+                    error_code=error_code,
+                    now=now,
+                )
+                return True
 
-                async def transition():
-                    nonlocal transitioned
-                    if transitioned is None:
-                        transitioned = await self._transition_sending_outbound(
-                            connection, outbound_id, "delivery_unknown"
-                        )
-                    return transitioned
+    async def _complete_terminal_outbound(
+        self,
+        connection,
+        outbound: OutboundMessage,
+        status: Literal["sent", "failed", "delivery_unknown"],
+        *,
+        external_message_id: str | None = None,
+        delivery_hook: DeliveryHook | None,
+        error_code: str | None,
+        now: datetime | None,
+    ) -> OutboundMessage:
+        transition_calls = 0
+        transitioned = None
 
-                if delivery_hook is not None:
-                    if now is None:
-                        raise ValueError("delivery hook timestamp is required")
-                    await delivery_hook(
-                        connection,
-                        outbound,
-                        "delivery_unknown",
-                        error_code,
-                        now,
-                        transition,
-                    )
-                else:
-                    await transition()
-                return transitioned is not None
+        async def transition():
+            nonlocal transition_calls, transitioned
+            transition_calls += 1
+            if transition_calls != 1:
+                raise RuntimeError("terminal transition must be called exactly once")
+            transitioned = await self._transition_sending_outbound(
+                connection, outbound.id, status, external_message_id
+            )
+            if transitioned is None:
+                raise RuntimeError("terminal transition was not persisted")
+            return transitioned
+
+        if delivery_hook is not None:
+            if now is None:
+                raise ValueError("delivery hook timestamp is required")
+            await delivery_hook(
+                connection, outbound, status, error_code, now, transition
+            )
+        else:
+            await transition()
+        if transition_calls != 1 or transitioned is None:
+            raise RuntimeError("terminal transition must be called exactly once")
+        durable_status = await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id = $1", outbound.id
+        )
+        if durable_status != status:
+            raise RuntimeError("terminal transition status was not persisted")
+        return transitioned
 
     @staticmethod
     async def _sending_outbound_snapshot(connection, outbound_id: UUID):
@@ -451,16 +457,24 @@ class MessageRepository:
         )
         return None if row is None else _outbound_from_row(row)
 
-    async def release_outbound_delivery(self, outbound_id: UUID) -> None:
+    async def release_outbound_delivery(self, outbound_id: UUID) -> bool:
         async with self._database.acquire() as connection:
-            await connection.execute(
-                """
-                UPDATE outbound_messages
-                SET status = 'pending', claimed_at = NULL
-                WHERE id = $1 AND status = 'sending'
-                """,
-                outbound_id,
-            )
+            async with connection.transaction():
+                await connection.execute(
+                    """
+                    UPDATE outbound_messages
+                    SET status = 'pending', claimed_at = NULL
+                    WHERE id = $1 AND status = 'sending'
+                    """,
+                    outbound_id,
+                )
+                return bool(
+                    await connection.fetchval(
+                        "SELECT status = 'pending' FROM outbound_messages "
+                        "WHERE id = $1",
+                        outbound_id,
+                    )
+                )
 
     async def reconcile_stale_outbound_deliveries(self) -> int:
         async with self._database.acquire() as connection:

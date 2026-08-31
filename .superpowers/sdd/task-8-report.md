@@ -155,3 +155,42 @@ held PostgreSQL transactions; only the temporary worktree test containers
 were stopped, then the complete evidence run was repeated from a clean test
 process. No external Telegram, YCLIENTS, LLM, staging or production call was
 made, and Task 9+ remains unchanged.
+
+## Third re-review hardening
+
+- Centralized the terminal callback contract in `MessageRepository`: a hook
+  must invoke its transition exactly once, and the transaction verifies the
+  expected persisted status before returning. Missing, duplicate or rolled
+  back transitions raise instead of producing a success-shaped result.
+- Reused one post-provider recovery path for every completion outcome. An
+  accepted or ambiguous provider attempt falls back to verified
+  `delivery_unknown`; a known provider rejection whose hook cannot complete
+  is returned to verified `pending` and propagated so broker redelivery can
+  actually reclaim it.
+- A real RabbitMQ consumer probe proves the first failed completion is
+  republished while the outbound is reclaimable, and the second delivery
+  claims it and reaches `failed`; the consumer never ACKs an outbound left in
+  `sending`.
+
+### Third re-review TDD evidence
+
+- RED: all six direct no-call/double-call contract probes returned without an
+  error; the provider matrix and Rabbit consumer left completion failures in
+  `sending` (`22 failed`). The first attempted run used the stale test image
+  and collected only deselections; it was rebuilt before recording RED.
+- GREEN: callback no-call/double-call plus exception/cancellation before and
+  after transition for sent, permanent-failure and ambiguous outcomes, with
+  real Rabbit redelivery: `22 passed, 71 deselected in 70.76s`.
+- GREEN: preserved PostgreSQL canonical lock-order matrix:
+  `24 passed, 69 deselected in 77.62s`, including both start orders and no
+  `40P01`. The three deletion-first cases now correctly raise rather than
+  return success after the outbound was already lawfully deleted.
+- GREEN: messaging/worker/consent/e2e closure regression:
+  `208 passed in 162.76s`.
+- GREEN: combined Task 8/messaging/worker/consent/e2e regression:
+  `301 passed in 424.16s`.
+- GREEN: broad Task 5–8/reactivation, PostgreSQL race, messaging, e2e and
+  worker regression: `439 passed in 644.84s`.
+- Final Docker `compileall`, Compose config validation and `git diff --check`
+  passed. No external provider, staging or production call was made, and Task
+  9+ was not changed.

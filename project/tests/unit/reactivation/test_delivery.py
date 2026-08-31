@@ -113,6 +113,7 @@ class FakeRepository:
 
     async def release_outbound_delivery(self, _outbound_id):
         self.status = "pending"
+        return True
 
 
 class FakeTelegram:
