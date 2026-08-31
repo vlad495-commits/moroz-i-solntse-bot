@@ -1,7 +1,7 @@
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -34,6 +34,8 @@ class ProjectionRecord:
     client_name: str | None
     staff_name: str | None
     service_names: tuple[str, ...]
+    client_id: str | None = None
+    record_created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +146,8 @@ def _projection_record(value: object, timezone: ZoneInfo) -> ProjectionRecord:
         starts_at + timedelta(seconds=_positive_int(duration)) if duration is not None else None
     )
     marker, marker_state = _booking_marker(value.get("custom_fields", {}))
+    client_id = _client_id(value.get("client"))
+    record_created_at = _optional_datetime(value.get("create_date"), timezone)
     client_name = _nested_display(value.get("client"), "name")
     staff_name = _nested_display(value.get("staff"), "name")
     services = value.get("services")
@@ -169,6 +173,8 @@ def _projection_record(value: object, timezone: ZoneInfo) -> ProjectionRecord:
         client_name=client_name,
         staff_name=staff_name,
         service_names=service_names,
+        client_id=client_id,
+        record_created_at=record_created_at,
     )
 
 
@@ -193,6 +199,20 @@ def _nested_display(value: object, key: str) -> str | None:
     if not isinstance(value, Mapping):
         raise ValueError("display object is malformed")
     return _safe_display(value.get(key))
+
+
+def _client_id(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("client is malformed")
+    raw = value.get("id")
+    if raw is None:
+        return None
+    client_id = str(_positive_int(raw))
+    if len(client_id) > 64:
+        raise ValueError("client id is too long")
+    return client_id
 
 
 def _safe_display(value: object) -> str | None:
@@ -225,3 +245,7 @@ def _datetime(value: object, timezone: ZoneInfo) -> datetime:
         return parsed.replace(tzinfo=timezone) if parsed.tzinfo is None else parsed.astimezone(timezone)
     except (TypeError, ValueError, OverflowError) as error:
         raise ValueError("datetime is malformed") from error
+
+
+def _optional_datetime(value: object, timezone: ZoneInfo) -> datetime | None:
+    return None if value is None else _datetime(value, timezone).astimezone(UTC)

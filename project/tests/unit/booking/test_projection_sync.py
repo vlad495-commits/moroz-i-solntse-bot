@@ -69,6 +69,8 @@ def projection_snapshot():
                 client_name="Иван",
                 staff_name="Мария",
                 service_names=("Солярий",),
+                client_id="55",
+                record_created_at=NOW - timedelta(days=1),
             ),
         ),
         synced_at=NOW,
@@ -99,6 +101,7 @@ async def test_ensure_current_is_idempotently_bucketed_and_run_schedules_next():
     ]
     assert reader.read_at == [NOW]
     assert [stored for _, stored in repository.replaced] == [snapshot]
+    assert repository.replaced[0][1].records[0].client_id == "55"
 
 
 @pytest.mark.asyncio
