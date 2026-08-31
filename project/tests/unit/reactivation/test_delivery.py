@@ -16,6 +16,7 @@ from aiogram.exceptions import (
 from moroz.messaging.models import OutboundMessage
 from moroz.messaging.telegram import (
     DeliveryResult,
+    TaskRecoveryRequired,
     TelegramSender,
     classify_delivery_error,
 )
@@ -114,6 +115,12 @@ class FakeRepository:
     async def release_outbound_delivery(self, _outbound_id):
         self.status = "pending"
         return True
+
+    async def get_sending_outbound(self, _outbound_id):
+        return self.outbound if self.status == "sending" else None
+
+    async def get_outbound_delivery_status(self, _outbound_id):
+        return self.status
 
 
 class FakeTelegram:
@@ -244,3 +251,22 @@ async def test_managed_check_failure_releases_claim_before_provider(error):
 
     assert repository.status == "pending"
     assert telegram.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_candidate_managed_check_failure_keeps_recovery_signal():
+    outbound = _outbound()
+    repository = FakeRepository(outbound)
+    repository.status = "sending"
+
+    async def broken_check(_outbound):
+        raise RuntimeError("db unavailable")
+
+    sender = TelegramSender(
+        FakeTelegram(), repository, managed_delivery_check=broken_check
+    )
+
+    with pytest.raises(TaskRecoveryRequired):
+        await sender.recover_candidate(outbound.id)
+
+    assert repository.status == "sending"

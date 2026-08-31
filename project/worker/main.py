@@ -273,6 +273,10 @@ class MessageTaskHandler:
             if task.recovery_required:
                 await self._telegram.recover(UUID(outbound_id))
                 return
+            if task.recovery_candidate and await self._telegram.recover_candidate(
+                UUID(outbound_id)
+            ):
+                return
             await self._telegram.send(UUID(outbound_id))
             return
         if task.kind == "scheduler_job":

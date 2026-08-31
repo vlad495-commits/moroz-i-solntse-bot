@@ -44,6 +44,7 @@ class QueueTask:
     payload: dict[str, Any]
     idempotency_key: str
     recovery_required: bool = field(default=False, compare=False, repr=False)
+    recovery_candidate: bool = field(default=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, str) or not self.kind:
@@ -321,12 +322,15 @@ class RabbitQueue(QueuePort):
     ) -> None:
         try:
             task = QueueTask.from_json(message.body.decode())
-            if (
+            explicit_recovery = bool(
                 message.headers
                 and message.headers.get(RECOVERY_REQUIRED_HEADER) == 1
                 and self._retry_count(message) > 0
-            ):
+            )
+            if explicit_recovery:
                 task = replace(task, recovery_required=True)
+            elif getattr(message, "redelivered", False):
+                task = replace(task, recovery_candidate=True)
             await handler(task)
         except Exception as error:
             retry_count = self._retry_count(message)

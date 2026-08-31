@@ -248,6 +248,18 @@ class MessageRepository:
             return None
         return _outbound_from_row(row)
 
+    async def get_sending_outbound(
+        self, outbound_id: UUID
+    ) -> OutboundMessage | None:
+        async with self._database.acquire() as connection:
+            return await self._sending_outbound_snapshot(connection, outbound_id)
+
+    async def get_outbound_delivery_status(self, outbound_id: UUID) -> str | None:
+        async with self._database.acquire() as connection:
+            return await connection.fetchval(
+                "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+            )
+
     @asynccontextmanager
     async def fence_claimed_outbound(
         self,

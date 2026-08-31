@@ -231,3 +231,50 @@ made, and Task 9+ remains unchanged.
 - Final Docker `compileall`, Compose config validation and `git diff --check`
   passed. No external provider, staging or production call was made, and Task
   9+ was not changed.
+
+## Fifth re-review hardening
+
+- Broker `redelivered` metadata now supplies a non-serialized conservative
+  recovery candidate when the explicit recovery header could not be confirmed
+  before the original message was reject-requeued. Explicit recovery headers
+  and retry-count validation keep precedence; payload JSON still cannot forge
+  either internal flag.
+- The candidate is acted on only after the exact outbound is still `sending`
+  and the existing repository-backed managed-link check accepts that durable
+  row. A linked send is terminalized as `delivery_unknown` without another
+  provider call; `pending` follows the normal claim/send path, terminal rows
+  remain idempotent no-ops, and generic `sending` rows are untouched.
+- A transient managed-link lookup failure preserves `TaskRecoveryRequired`,
+  so the existing confirmed retry envelope cannot silently degrade to an
+  ordinary claim-skip. Repeated recovery-storage failure likewise restores the
+  explicit marker on the next successfully confirmed republish.
+- The deliberate conservative trade-off is documented: if Rabbit marks a
+  duplicate redelivered while another managed attempt is genuinely still in
+  flight, the durable row becomes `delivery_unknown`. This may classify an
+  eventual acceptance as ambiguous, but prevents a second provider call and
+  suppresses unsafe automatic reminders. Fresh duplicates with
+  `redelivered=false` retain the previous no-op behavior.
+
+### Fifth re-review TDD evidence
+
+- RED from the independent real Rabbit/PostgreSQL probe: after a provider call
+  and failed confirmed recovery republish, reject-requeue returned the original
+  message without the recovery flag (`expected True, observed False`).
+- GREEN: real Rabbit/PostgreSQL publish-failure and DB-authoritative state
+  matrix for sent, permanent-rejection and ambiguous outcomes, pending,
+  managed/generic sending, terminal and repeated recovery failure:
+  `9 passed, 99 deselected in 31.38s`; provider remained exactly once.
+- GREEN: queue/Rabbit/worker regression: `76 passed in 5.30s`.
+- GREEN: callback, recovery and all 24 canonical PostgreSQL lock-order cases:
+  `61 passed, 47 deselected in 169.42s`, with no `40P01`.
+- GREEN: expanded delivery/messaging/worker/consent/e2e regression:
+  `340 passed in 453.81s`.
+- GREEN: broad exact-tree reactivation/messaging/e2e/worker regression:
+  `454 passed in 653.78s`.
+- Self-review RED proved a candidate managed-link DB error escaped as an
+  ordinary exception; the focused GREEN rerun was `3 passed, 11 deselected in
+  3.90s`, followed by the real Rabbit v5 matrix at `9 passed, 99 deselected in
+  28.85s`.
+- Final Docker `compileall`, Compose config validation and `git diff --check`
+  passed. No external provider, Telegram, YCLIENTS, LLM, staging or production
+  call was made, and Task 9+ was not changed.
