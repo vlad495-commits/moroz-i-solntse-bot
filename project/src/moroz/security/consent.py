@@ -279,6 +279,46 @@ class ConsentService:
                 connection, channel, user_id
             )
 
+        if source_event_id.isascii() and source_event_id.isdigit():
+            has_newer_event = await connection.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM marketing_consent_events
+                    WHERE channel = $1
+                      AND user_id = $2
+                      AND id <> $3
+                      AND source_event_id ~ '^[0-9]+$'
+                      AND source_event_id::numeric > $4::numeric
+                )
+                """,
+                channel,
+                user_id,
+                inserted_event_id,
+                source_event_id,
+            )
+        else:
+            has_newer_event = await connection.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM marketing_consent_events
+                    WHERE channel = $1
+                      AND user_id = $2
+                      AND id <> $3
+                      AND occurred_at > $4
+                )
+                """,
+                channel,
+                user_id,
+                inserted_event_id,
+                occurred_at,
+            )
+        if has_newer_event:
+            return await self._get_marketing_status(
+                connection, channel, user_id
+            )
+
         if action == "granted":
             await connection.execute(
                 """

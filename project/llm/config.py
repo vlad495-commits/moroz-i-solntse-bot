@@ -112,7 +112,7 @@ MARKETING_CONSENT_CLAUSE = (
     "Хочу получать в этом боте сообщения об акциях, новостях и "
     "специальных предложениях (включая рекламные)"
 )
-CONSENT_PROMPT = os.getenv("CONSENT_PROMPT") or (
+CONSENT_PROMPT = (
     "Чтобы начать, отметьте согласия и нажмите «Готово»\n\n"
     "1) Согласен с политикой конфиденциальности\n"
     f"2) {MARKETING_CONSENT_CLAUSE}\n\n"

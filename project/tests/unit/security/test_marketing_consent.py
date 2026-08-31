@@ -1,7 +1,10 @@
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+import importlib
 
 import pytest
+
+import config as llm_config
 
 from moroz.security.consent import (
     MARKETING_CONSENT_VERSION,
@@ -59,3 +62,17 @@ async def test_marketing_event_requires_timezone_aware_timestamp():
             source_event_id="103",
             occurred_at=datetime(2026, 8, 31),
         )
+
+
+def test_consent_prompt_env_cannot_replace_canonical_marketing_clause(
+    monkeypatch,
+):
+    monkeypatch.setenv("CONSENT_PROMPT", "Подменённый текст без условий")
+    overridden = importlib.reload(llm_config)
+    try:
+        assert "Подменённый текст" not in overridden.CONSENT_PROMPT
+        assert overridden.MARKETING_CONSENT_CLAUSE in overridden.CONSENT_PROMPT
+        assert "{policy_url}" in overridden.CONSENT_PROMPT
+    finally:
+        monkeypatch.delenv("CONSENT_PROMPT")
+        importlib.reload(llm_config)

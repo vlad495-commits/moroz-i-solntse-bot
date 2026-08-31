@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from datetime import timedelta
 from hashlib import sha256
 from uuid import uuid4
 
@@ -236,3 +237,76 @@ async def test_supplied_connection_rolls_back_event_and_materialized_state(
         "SELECT count(*) FROM marketing_consent_events"
     ) == 0
     assert await connection.fetchval("SELECT count(*) FROM marketing_consents") == 0
+
+
+async def test_delayed_lower_telegram_update_is_audited_without_materializing(
+    database, connection
+):
+    service = ConsentService(database)
+    stop = {
+        "channel": "telegram",
+        "user_id": "42",
+        "source": "telegram_explicit",
+        "source_event_id": "200",
+        "occurred_at": NOW,
+    }
+    await service.revoke_marketing(**stop)
+    await service.suppress_marketing(**stop, reason="user_stop")
+
+    delayed_enable = {
+        "channel": "telegram",
+        "user_id": "42",
+        "proof_text": CLAUSE,
+        "source": "telegram_explicit",
+        "source_event_id": "199",
+        "occurred_at": NOW + timedelta(seconds=5),
+    }
+    await service.unsuppress_marketing(**delayed_enable)
+    stale_state = await service.grant_marketing(**delayed_enable)
+
+    assert (
+        stale_state.active,
+        stale_state.suppressed,
+        stale_state.suppression_reason,
+    ) == (False, True, "user_stop")
+    assert {
+        row["action"]
+        for row in await connection.fetch(
+            "SELECT action FROM marketing_consent_events "
+            "WHERE source_event_id = '199'"
+        )
+    } == {"unsuppressed", "granted"}
+
+    newer_enable = {**delayed_enable, "source_event_id": "201"}
+    await service.unsuppress_marketing(**newer_enable)
+    current_state = await service.grant_marketing(**newer_enable)
+
+    assert (current_state.active, current_state.suppressed) == (True, False)
+
+
+async def test_older_non_numeric_event_cannot_override_newer_occurred_at(
+    database, connection
+):
+    service = ConsentService(database)
+    await service.grant_marketing(
+        channel="telegram",
+        user_id="42",
+        proof_text=CLAUSE,
+        source="telegram_explicit",
+        source_event_id="201",
+        occurred_at=NOW + timedelta(minutes=1),
+    )
+
+    state = await service.revoke_marketing(
+        channel="telegram",
+        user_id="42",
+        source="admin_revoke",
+        source_event_id="admin-old",
+        occurred_at=NOW,
+    )
+
+    assert state.active is True
+    assert await connection.fetchval(
+        "SELECT count(*) FROM marketing_consent_events "
+        "WHERE source_event_id = 'admin-old' AND action = 'revoked'"
+    ) == 1

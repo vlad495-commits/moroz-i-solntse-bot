@@ -573,7 +573,10 @@ def create_app(
             await send_static_reply(
                 update_id=update.update_id,
                 chat_id=message.chat.id,
-                text=f"{MARKETING_STATUS_REPLY}\n\n{status}",
+                text=(
+                    f"{MARKETING_STATUS_REPLY}\n\n"
+                    f"{MARKETING_CONSENT_CLAUSE}\n\n{status}"
+                ),
                 reply_kind="marketing_status",
                 delivery_options={
                     "reply_markup": _marketing_keyboard().model_dump(

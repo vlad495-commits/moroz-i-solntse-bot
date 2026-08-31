@@ -562,6 +562,21 @@ async def test_checked_policy_done_persists_only_versioned_consent(
 async def test_ads_checkbox_grants_proven_marketing_consent(
     client, db, fake_telegram
 ):
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_text_update("Покажите условия", update_id=99),
+        )
+    ).status_code == 200
+    opt_in_screen = fake_telegram.last_text
+    visible_clause = next(
+        line.removeprefix("2) ")
+        for line in opt_in_screen.splitlines()
+        if MARKETING_CONSENT_CLAUSE in line
+    )
+    assert visible_clause == MARKETING_CONSENT_CLAUSE
+    assert 'href="https://example.com/privacy"' in opt_in_screen
+
     for update_id, data, callback_id in (
         (100, CONSENT_PII_CALLBACK_DATA, "callback-pii"),
         (101, CONSENT_ADS_CALLBACK_DATA, "callback-ads"),
@@ -590,7 +605,7 @@ async def test_ads_checkbox_grants_proven_marketing_consent(
     assert tuple(state.values()) == (
         True,
         "marketing-v1",
-        sha256(MARKETING_CONSENT_CLAUSE.encode()).hexdigest(),
+        sha256(visible_clause.encode()).hexdigest(),
         "102",
     )
     assert fake_telegram.answered_callback_ids == [
@@ -618,6 +633,11 @@ async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
         json=telegram_text_update("/marketing", update_id=120),
     )
     assert command.status_code == 200
+    marketing_screen = fake_telegram.last_text
+    assert MARKETING_CONSENT_CLAUSE in marketing_screen
+    assert marketing_screen.index(MARKETING_CONSENT_CLAUSE) < (
+        marketing_screen.index(MARKETING_DISABLED_REPLY)
+    )
     keyboard = fake_telegram.sent_messages[-1]["reply_markup"].inline_keyboard
     assert [(button.text, button.callback_data) for button in keyboard[0]] == [
         (MARKETING_ENABLE_LABEL, MARKETING_ENABLE_CALLBACK_DATA),
