@@ -31,14 +31,16 @@ ASK_REPLY = "Напишите, пожалуйста, ваш вопрос — я 
 RECEIVED_AT = datetime.fromtimestamp(1_768_478_400, UTC)
 
 
-async def _seed_sent_main_with_reminder(db, *, reminder_status="scheduled"):
+async def _seed_sent_main_with_reminder(
+    db, *, reminder_status="scheduled", first_sent_at=None
+):
     policy = ProgramPolicy()
     version_id = uuid4()
     journey_id = uuid4()
     main_id = uuid4()
     reminder_id = uuid4()
     outbound_id = uuid4() if reminder_status == "reserved" else None
-    first_sent_at = RECEIVED_AT - timedelta(days=1)
+    first_sent_at = first_sent_at or RECEIVED_AT - timedelta(days=1)
     await db.execute(
         """
         INSERT INTO reactivation_program_versions
@@ -157,11 +159,16 @@ async def test_real_text_closes_journey_and_cancels_unsent_reminder(
 async def test_client_button_closes_journey_without_injecting_llm_message(
     client, db, fake_telegram, callback_data, reply
 ):
-    journey_id = await _seed_sent_main_with_reminder(db)
+    message_date = datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=1)
+    first_sent_at = message_date + timedelta(microseconds=500_000)
+    journey_id = await _seed_sent_main_with_reminder(
+        db, first_sent_at=first_sent_at
+    )
     update = telegram_consent_callback(
         update_id=920,
         callback_id="reactivation-callback",
         data=callback_data,
+        message_date=int(message_date.timestamp()),
     )
 
     first = await client.post("/telegram/webhook", json=update)
@@ -169,7 +176,8 @@ async def test_client_button_closes_journey_without_injecting_llm_message(
 
     journey, reminder = await _journey_state(db, journey_id)
     assert first.status_code == duplicate.status_code == 200
-    assert tuple(journey.values()) == ("closed", "responded", RECEIVED_AT)
+    assert tuple(journey.values())[:2] == ("closed", "responded")
+    assert journey["replied_at"] > first_sent_at
     assert tuple(reminder.values()) == ("cancelled", "responded")
     assert fake_telegram.last_text == reply
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0

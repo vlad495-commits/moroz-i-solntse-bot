@@ -655,8 +655,10 @@ async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
         data=MARKETING_ENABLE_CALLBACK_DATA,
         callback_id="callback-enable",
     )
+    received_before = datetime.now(UTC)
     assert (await client.post("/telegram/webhook", json=enable)).status_code == 200
     assert (await client.post("/telegram/webhook", json=enable)).status_code == 200
+    received_after = datetime.now(UTC)
     assert await db.fetchval(
         "SELECT count(*) FROM marketing_consent_events WHERE action = 'granted'"
     ) == 1
@@ -675,9 +677,7 @@ async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
         visible_hash,
         visible_hash,
     )
-    assert proof["occurred_at"] == datetime.fromtimestamp(
-        1_768_478_400, UTC
-    )
+    assert received_before <= proof["occurred_at"] <= received_after
 
     disable = telegram_consent_callback(
         update_id=122,
@@ -715,7 +715,7 @@ async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
     ]
 
 
-async def test_inaccessible_callback_message_uses_stable_epoch_fallback(
+async def test_inaccessible_callback_message_uses_server_receipt_time(
     client, db, fake_telegram
 ):
     assert (
@@ -731,13 +731,16 @@ async def test_inaccessible_callback_message_uses_stable_epoch_fallback(
         message_date=0,
     )
 
+    received_before = datetime.now(UTC)
     assert (
         await client.post("/telegram/webhook", json=callback)
     ).status_code == 200
-    assert await db.fetchval(
+    received_after = datetime.now(UTC)
+    occurred_at = await db.fetchval(
         "SELECT occurred_at FROM marketing_consent_events "
         "WHERE action = 'granted'"
-    ) == datetime.fromtimestamp(0, UTC)
+    )
+    assert received_before <= occurred_at <= received_after
     assert "callback-inaccessible" in fake_telegram.answered_callback_ids
 
 

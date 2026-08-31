@@ -40,3 +40,25 @@ Status: DONE
 
 - No absolute exactly-once mechanism, new recovery infrastructure, campaign abstraction, manual broadcast, runtime LLM copy generation, discounts or extra follow-up was added.
 - Funnel analytics remain Task 10; privacy reuse remains Task 11.
+
+## Limited review fix
+
+- Independent review reproduced a real same-second precision gap: Telegram's
+  `callback.message.date` described the original bot message and could precede
+  durable `first_sent_at`, so a later click did not close the journey.
+- The webhook now captures one UTC server-receipt timestamp before parsing the
+  accepted update and reuses it for every callback transition. The realistic
+  250 ms boundary RED was `2 failed`; exact GREEN was `2 passed`.
+- Duplicate delivery can still call `answer_callback_query` again. Durable
+  business effects and the static reply remain idempotent; per the owner rule,
+  this non-safety Minor is documented as technical debt and not expanded.
+- The first limited gate after the contract change was `107 passed / 2 failed`;
+  both failures were stale privacy assertions for the former message-date and
+  epoch semantics. A second gate was `108 passed / 1 failed`; the remaining
+  failure proved the test had placed `first_sent_at` briefly in the future.
+  No production change followed either diagnostic run.
+- With the deterministic boundary (message timestamp 500 ms before durable
+  send, both before receipt), the final client-flow/privacy plus canonical
+  outcome/delivery lock gate was `45 passed in 138.13s`, without `40P01`.
+- Docker compileall, Compose config and `git diff --check` passed after the
+  final test-only correction. The broad suite was not repeated.
