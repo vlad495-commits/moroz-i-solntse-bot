@@ -23,28 +23,12 @@ def _v2(database) -> ReactivationRepository:
 async def create_draft(
     database,
     *,
+    policy: ProgramPolicy,
     actor_id: int,
-    policy: ProgramPolicy | None = None,
     now: datetime | None = None,
-    inactivity_days: int = 90,
-    reminder_after_days: int | None = 5,
-    cooldown_days: int = 90,
-    main_text: str | None = None,
-    reminder_text: str | None = None,
 ):
-    values = {}
-    if main_text is not None:
-        values["main_text"] = main_text
-    if reminder_text is not None:
-        values["reminder_text"] = reminder_text
-    selected = policy or ProgramPolicy(
-        inactivity_days=inactivity_days,
-        reminder_after_days=reminder_after_days,
-        cooldown_days=cooldown_days,
-        **values,
-    )
     return await _v2(database).create_draft(
-        selected, actor_id, now or datetime.now(UTC)
+        policy, actor_id, now or datetime.now(UTC)
     )
 
 

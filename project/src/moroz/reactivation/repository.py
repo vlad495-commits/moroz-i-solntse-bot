@@ -197,6 +197,11 @@ class ReactivationRepository:
                         f"reactivation-test:{version_id}:{version['template_checksum']}"
                     ),
                 )
+                if (
+                    version["test_outbound_id"] == outbound_id
+                    and version["test_sent_at"] is not None
+                ):
+                    return outbound_id
                 await connection.execute(
                     """
                     UPDATE reactivation_program_versions
@@ -233,6 +238,7 @@ class ReactivationRepository:
                     WHERE version.test_outbound_id = $1
                       AND outbound.id = $1
                       AND outbound.status = 'sent'
+                      AND version.test_sent_at IS NULL
                     RETURNING version.id, version.test_sent_at
                     """,
                     outbound_id,
@@ -316,6 +322,7 @@ class ReactivationRepository:
                 version = await self._version(connection, version_id, lock=True)
                 if version["status"] == "retired":
                     raise ValueError("retired reactivation version cannot be activated")
+                await _lock_population(connection)
                 await self._check_activation_gates(
                     connection, settings, version, current
                 )
@@ -387,6 +394,7 @@ class ReactivationRepository:
                     version = await self._version(
                         connection, settings["active_version_id"], lock=True
                     )
+                    await _lock_population(connection)
                     await self._check_activation_gates(
                         connection, settings, version, current
                     )
@@ -483,11 +491,16 @@ class ReactivationRepository:
                     FROM outbound_messages AS outbound
                     WHERE outbound.id = $1
                       AND outbound.status = 'sent'
+                      AND outbound.channel = 'telegram'
+                      AND outbound.chat_id = $3
+                      AND outbound.text = $4
                       AND outbound.idempotency_key = $2
                 )
                 """,
                 version["test_outbound_id"],
                 f"reactivation-test:{version['id']}:{version['template_checksum']}",
+                self.business_alert_chat_id,
+                version["main_text"],
             )
             if version["test_sent_at"] is None or not test_ok:
                 raise ActivationBlocked("test_sent")
@@ -520,10 +533,13 @@ class ReactivationRepository:
                    activity.updated_at AS activity_updated_at,
                    COALESCE(journey.has_active, false) AS has_active_journey,
                    journey.latest_started_at, journey.updated_at AS journey_updated_at,
+                   journey.fingerprint_rows AS journey_fingerprint_rows,
                    COALESCE(mode.enabled, false) AS human_mode,
                    mode.mutated_at AS human_mode_updated_at,
+                   mode.fingerprint_row AS human_mode_fingerprint_row,
                    COALESCE(escalation.has_open, false) AS has_open_escalation,
-                   escalation.mutated_at AS escalation_updated_at
+                   escalation.mutated_at AS escalation_updated_at,
+                   escalation.fingerprint_rows AS escalation_fingerprint_rows
             FROM marketing_consents AS consent
             LEFT JOIN customer_activity_projection AS activity
               ON activity.channel = consent.channel
@@ -531,7 +547,19 @@ class ReactivationRepository:
             LEFT JOIN LATERAL (
                 SELECT bool_or(item.status != 'closed') AS has_active,
                        max(item.created_at) AS latest_started_at,
-                       max(item.updated_at) AS updated_at
+                       max(item.updated_at) AS updated_at,
+                       COALESCE(
+                           jsonb_agg(
+                               jsonb_build_object(
+                                   'status', item.status,
+                                   'created_at', item.created_at,
+                                   'updated_at', item.updated_at
+                               )
+                               ORDER BY item.status, item.created_at,
+                                        item.updated_at, item.id
+                           ),
+                           '[]'::jsonb
+                       ) AS fingerprint_rows
                 FROM reactivation_journeys AS item
                 WHERE item.channel = consent.channel
                   AND item.user_id = consent.user_id
@@ -540,14 +568,31 @@ class ReactivationRepository:
                 SELECT bool_or(item.enabled AND
                                (item.expires_at IS NULL OR item.expires_at >= $1)) AS enabled,
                        max(GREATEST(item.enabled_at,
-                           COALESCE(item.expires_at, item.enabled_at))) AS mutated_at
+                           COALESCE(item.expires_at, item.enabled_at))) AS mutated_at,
+                       CASE WHEN count(*) = 0 THEN NULL ELSE jsonb_build_object(
+                           'enabled', bool_or(item.enabled),
+                           'enabled_at', max(item.enabled_at),
+                           'expires_at', max(item.expires_at)
+                       ) END AS fingerprint_row
                 FROM human_mode AS item
                 WHERE item.customer_id = consent.user_id
             ) AS mode ON true
             LEFT JOIN LATERAL (
                 SELECT bool_or(item.status = 'open') AS has_open,
                        max(GREATEST(item.created_at,
-                           COALESCE(item.resolved_at, item.created_at))) AS mutated_at
+                           COALESCE(item.resolved_at, item.created_at))) AS mutated_at,
+                       COALESCE(
+                           jsonb_agg(
+                               jsonb_build_object(
+                                   'status', item.status,
+                                   'created_at', item.created_at,
+                                   'resolved_at', item.resolved_at
+                               )
+                               ORDER BY item.status, item.created_at,
+                                        item.resolved_at, item.id
+                           ),
+                           '[]'::jsonb
+                       ) AS fingerprint_rows
                 FROM escalations AS item
                 WHERE item.customer_id = consent.user_id
             ) AS escalation ON true
@@ -614,12 +659,21 @@ class ReactivationRepository:
                     "identity_status": value.identity_status,
                     "consent_active": value.consent_active,
                     "consent_proven": value.consent_proven,
+                    "consent_updated_at": _iso(row["consent_updated_at"]),
                     "suppressed": value.suppressed,
                     "sync_status": value.sync_status,
+                    "activity_updated_at": _iso(row["activity_updated_at"]),
                     "has_active_journey": value.has_active_journey,
                     "latest_journey_started_at": _iso(value.latest_journey_started_at),
+                    "journey_rows": _json_value(row["journey_fingerprint_rows"]),
                     "human_mode": value.human_mode,
+                    "human_mode_row": _json_value(
+                        row["human_mode_fingerprint_row"]
+                    ),
                     "has_open_escalation": value.has_open_escalation,
+                    "escalation_rows": _json_value(
+                        row["escalation_fingerprint_rows"]
+                    ),
                     "population_mutated_at": _iso(row_population),
                 }
             )
@@ -706,6 +760,10 @@ def _uuid_text(value) -> str | None:
     return str(value) if value is not None else None
 
 
+def _json_value(value):
+    return json.loads(value) if isinstance(value, str) else value
+
+
 def _version_audit(version) -> dict:
     counts = version.get("preview_counts")
     if isinstance(counts, str):
@@ -752,4 +810,17 @@ async def _audit(
         object_id,
         json.dumps(before, ensure_ascii=False, sort_keys=True),
         json.dumps(after, ensure_ascii=False, sort_keys=True),
+    )
+
+
+async def _lock_population(connection) -> None:
+    await connection.execute(
+        """
+        LOCK TABLE marketing_consents,
+                   customer_activity_projection,
+                   reactivation_journeys,
+                   human_mode,
+                   escalations
+        IN SHARE MODE
+        """
     )

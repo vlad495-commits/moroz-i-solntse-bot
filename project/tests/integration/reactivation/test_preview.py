@@ -1,6 +1,8 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+import asyncpg
 import pytest
 import pytest_asyncio
 
@@ -159,6 +161,14 @@ async def _ready(repository, version_id, owner_id):
         )
     assert await repository.record_test_sent(outbound_id, NOW)
     await repository.approve_legal(owner_id, "legal-review-2026-08-30", NOW)
+
+
+async def _test_outbound_id(database, version_id):
+    async with database.acquire() as connection:
+        return await connection.fetchval(
+            "SELECT test_outbound_id FROM reactivation_program_versions WHERE id = $1",
+            version_id,
+        )
 
 
 async def test_preview_counts_every_consent_once_by_priority(repository, database):
@@ -389,6 +399,133 @@ async def test_preview_invalidates_on_each_population_mutation(
     assert error.value.code == "current_watermarks"
 
 
+@pytest.mark.parametrize("source", ["consent", "activity"])
+async def test_preview_fingerprint_keeps_each_source_timestamp(
+    repository, database, source
+):
+    value, version_id, owner_id = repository
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+        consent_updated_at = NOW - timedelta(minutes=3 if source == "consent" else 1)
+        activity_updated_at = NOW - timedelta(minutes=3 if source == "activity" else 1)
+        await connection.execute(
+            "UPDATE marketing_consents SET updated_at = $1 WHERE user_id = '123456789'",
+            consent_updated_at,
+        )
+        await connection.execute(
+            "UPDATE customer_activity_projection SET updated_at = $1 "
+            "WHERE user_id = '123456789'",
+            activity_updated_at,
+        )
+    await _ready(value, version_id, owner_id)
+    async with database.acquire() as connection:
+        table = (
+            "marketing_consents"
+            if source == "consent"
+            else "customer_activity_projection"
+        )
+        await connection.execute(
+            f"UPDATE {table} SET updated_at = $1 WHERE user_id = '123456789'",
+            NOW - timedelta(minutes=2),
+        )
+
+    with pytest.raises(ActivationBlocked) as error:
+        await value.activate_version(version_id, owner_id, NOW)
+    assert error.value.code == "current_watermarks"
+
+
+async def test_preview_fingerprint_keeps_every_journey_row(
+    repository, database
+):
+    value, version_id, owner_id = repository
+    old_id = uuid4()
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+        await connection.executemany(
+            """
+            INSERT INTO reactivation_journeys
+                (id, channel, user_id, program_version_id, status,
+                 activity_anchor_at, closed_at, created_at, updated_at)
+            VALUES ($1, 'telegram', '123456789', $2, 'closed', $3, $4, $4, $5)
+            """,
+            [
+                (
+                    old_id,
+                    version_id,
+                    NOW - timedelta(days=300),
+                    NOW - timedelta(days=250),
+                    NOW - timedelta(days=240),
+                ),
+                (
+                    uuid4(),
+                    version_id,
+                    NOW - timedelta(days=220),
+                    NOW - timedelta(days=200),
+                    NOW - timedelta(days=100),
+                ),
+            ],
+        )
+    await _ready(value, version_id, owner_id)
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE reactivation_journeys SET updated_at = $2 WHERE id = $1",
+            old_id,
+            NOW - timedelta(days=230),
+        )
+
+    with pytest.raises(ActivationBlocked) as error:
+        await value.activate_version(version_id, owner_id, NOW)
+    assert error.value.code == "current_watermarks"
+
+
+@pytest.mark.parametrize("source", ["human_mode", "escalation"])
+async def test_preview_fingerprint_keeps_safe_control_row_state(
+    repository, database, source
+):
+    value, version_id, owner_id = repository
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+        if source == "human_mode":
+            await connection.execute(
+                """
+                INSERT INTO human_mode
+                    (customer_id, enabled, reason_code, enabled_at, expires_at)
+                VALUES ('123456789', true, 'manual', $1, $2)
+                """,
+                NOW - timedelta(minutes=20),
+                NOW + timedelta(hours=1),
+            )
+        else:
+            await connection.execute(
+                """
+                INSERT INTO escalations
+                    (id, source, customer_id, status, reason_code, payload,
+                     created_at, resolved_at)
+                VALUES ($1, 'test', '123456789', 'resolved', 'test',
+                        '{}'::jsonb, $2, $3)
+                """,
+                uuid4(),
+                NOW - timedelta(hours=2),
+                NOW - timedelta(minutes=10),
+            )
+    await _ready(value, version_id, owner_id)
+    async with database.acquire() as connection:
+        if source == "human_mode":
+            await connection.execute(
+                "UPDATE human_mode SET enabled_at = $1 WHERE customer_id = '123456789'",
+                NOW - timedelta(minutes=15),
+            )
+        else:
+            await connection.execute(
+                "UPDATE escalations SET created_at = $1 WHERE customer_id = '123456789'",
+                NOW - timedelta(hours=1),
+            )
+
+    with pytest.raises(ActivationBlocked) as error:
+        await value.activate_version(version_id, owner_id, NOW)
+    assert error.value.code == "current_watermarks"
+
+
 async def test_test_send_uses_only_configured_alert_and_callback_sets_sent_at(
     repository, database
 ):
@@ -419,6 +556,126 @@ async def test_test_send_uses_only_configured_alert_and_callback_sets_sent_at(
         )
     delivery_callback = ReactivationRepository(database)
     assert await delivery_callback.record_test_sent(outbound_id, NOW)
+
+
+@pytest.mark.parametrize("mutation", ["configured_chat", "channel", "chat_id", "text"])
+async def test_test_sent_gate_binds_exact_current_delivery_proof(
+    repository, database, mutation
+):
+    value, version_id, owner_id = repository
+    await _ready(value, version_id, owner_id)
+    outbound_id = await _test_outbound_id(database, version_id)
+    if mutation == "configured_chat":
+        value.business_alert_chat_id = "90002"
+    else:
+        column, replacement = {
+            "channel": ("channel", "email"),
+            "chat_id": ("chat_id", "90002"),
+            "text": ("text", "tampered test text"),
+        }[mutation]
+        async with database.acquire() as connection:
+            await connection.execute(
+                f"UPDATE outbound_messages SET {column} = $2 WHERE id = $1",
+                outbound_id,
+                replacement,
+            )
+
+    with pytest.raises(ActivationBlocked) as error:
+        await value.activate_version(version_id, owner_id, NOW)
+    assert error.value.code == "test_sent"
+
+
+async def test_delivery_callback_and_requeue_are_audit_idempotent(
+    repository, database
+):
+    value, version_id, owner_id = repository
+    await value.preview_version(version_id, actor_id=owner_id, now=NOW)
+    outbound_id = await value.queue_test_send(version_id, owner_id, NOW)
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE outbound_messages SET status = 'sent' WHERE id = $1", outbound_id
+        )
+    assert await value.record_test_sent(outbound_id, NOW)
+    async with database.acquire() as connection:
+        audit_count = await connection.fetchval(
+            "SELECT count(*) FROM admin_audit_events "
+            "WHERE action IN ('reactivation.test_sent', 'reactivation.test_queued')"
+        )
+
+    assert not await value.record_test_sent(outbound_id, NOW + timedelta(seconds=1))
+    assert await value.queue_test_send(
+        version_id, owner_id, NOW + timedelta(seconds=1)
+    ) == outbound_id
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM admin_audit_events "
+            "WHERE action IN ('reactivation.test_sent', 'reactivation.test_queued')"
+        ) == audit_count
+        assert await connection.fetchval(
+            "SELECT test_sent_at FROM reactivation_program_versions WHERE id = $1",
+            version_id,
+        ) == NOW
+
+
+@pytest.mark.parametrize("transition", ["activate", "set_mode_active"])
+async def test_activation_fence_serializes_concurrent_consent_writer(
+    repository, database, migrated_database_url, transition
+):
+    value, version_id, owner_id = repository
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+    await _ready(value, version_id, owner_id)
+    if transition == "set_mode_active":
+        await value.activate_version(version_id, owner_id, NOW)
+        await value.set_mode("paused", owner_id, NOW)
+    population_checked = asyncio.Event()
+    release_activation = asyncio.Event()
+    original_population = value._population
+
+    async def pause_after_population(connection, version, now):
+        result = await original_population(connection, version, now)
+        population_checked.set()
+        await release_activation.wait()
+        return result
+
+    value._population = pause_after_population
+    activation = asyncio.create_task(
+        value.activate_version(version_id, owner_id, NOW)
+        if transition == "activate"
+        else value.set_mode("active", owner_id, NOW)
+    )
+    await population_checked.wait()
+
+    writer_connection = await asyncpg.connect(migrated_database_url)
+
+    async def revoke():
+        try:
+            connection = writer_connection
+            async with connection.transaction():
+                await connection.execute(
+                    "UPDATE marketing_consents SET active = false, revoked_at = $1, "
+                    "updated_at = $1 WHERE user_id = '123456789'",
+                    NOW + timedelta(seconds=1),
+                )
+        finally:
+            await writer_connection.close()
+
+    writer = asyncio.create_task(revoke())
+    try:
+        done, _ = await asyncio.wait({writer}, timeout=0.2)
+        writer_was_blocked = not done
+    finally:
+        release_activation.set()
+    activated = await activation
+    await writer
+
+    assert writer_was_blocked, "consent writer committed inside activation recheck gap"
+    assert activated["status" if transition == "activate" else "mode"] == "active"
+    async with database.acquire() as connection:
+        assert not await connection.fetchval(
+            "SELECT active FROM marketing_consents WHERE user_id = '123456789'"
+        )
 
 
 async def test_blank_alert_chat_skips_test_gate(database, actors):

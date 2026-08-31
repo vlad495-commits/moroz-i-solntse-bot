@@ -6,6 +6,7 @@ import pytest
 import pytest_asyncio
 
 from moroz.common.db import Database
+from moroz.reactivation.policy import ProgramPolicy
 from moroz.security.consent import ConsentService
 from reactivation_database import (
     activate_version as activate_program_version,
@@ -326,8 +327,12 @@ async def test_v2_admin_wrappers_keep_owner_gate_and_dry_run(monkeypatch, databa
         )
 
     with pytest.raises(PermissionError):
-        await create_draft(database, actor_id=admin_id, now=NOW)
-    version_id = await create_draft(database, actor_id=owner_id, now=NOW)
+        await create_draft(
+            database, policy=ProgramPolicy(), actor_id=admin_id, now=NOW
+        )
+    version_id = await create_draft(
+        database, policy=ProgramPolicy(), actor_id=owner_id, now=NOW
+    )
     preview = await preview_version(
         database, version_id, actor_id=owner_id, now=NOW
     )
