@@ -70,7 +70,7 @@ async def _mark_post_send_unknown(
     now,
 ) -> None:
     try:
-        await asyncio.shield(
+        durable = await asyncio.shield(
             repository.mark_outbound_delivery_unknown(
                 outbound.id,
                 delivery_hook=delivery_hook if managed else None,
@@ -82,6 +82,11 @@ async def _mark_post_send_unknown(
         logger.error(
             "post_send_delivery_unknown_mark_failed code=mark_failed count=1"
         )
+        durable = await asyncio.shield(
+            repository.mark_outbound_delivery_unknown(outbound.id)
+        )
+    if not durable:
+        raise RuntimeError("delivery_unknown was not persisted")
     logger.error(
         "post_send_completion_failed code=post_send_completion count=1"
     )
@@ -98,10 +103,14 @@ async def deliver_claimed_outbound(
     managed_delivery_check: ManagedDeliveryCheck | None = None,
     clock=lambda: datetime.now(UTC),
 ) -> DeliveryResult:
-    managed = bool(
-        managed_delivery_check
-        and await managed_delivery_check(outbound)
-    )
+    try:
+        managed = bool(
+            managed_delivery_check
+            and await managed_delivery_check(outbound)
+        )
+    except BaseException:
+        await asyncio.shield(repository.release_outbound_delivery(outbound.id))
+        raise
     try:
         async with repository.fence_claimed_outbound(
             outbound,

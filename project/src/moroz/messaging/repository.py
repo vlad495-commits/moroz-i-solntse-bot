@@ -23,6 +23,7 @@ from moroz.privacy import customer_lock_subject
 PreSendGuard = Callable[
     [asyncpg.Connection, OutboundMessage], Awaitable[bool]
 ]
+TerminalTransition = Callable[[], Awaitable[OutboundMessage | None]]
 DeliveryHook = Callable[
     [
         asyncpg.Connection,
@@ -30,6 +31,7 @@ DeliveryHook = Callable[
         Literal["sent", "failed", "delivery_unknown"],
         str | None,
         datetime,
+        TerminalTransition,
     ],
     Awaitable[None],
 ]
@@ -288,17 +290,32 @@ class MessageRepository:
     ) -> str | None:
         async with self._database.acquire() as connection:
             async with connection.transaction():
-                outbound = await self._transition_sending_outbound(
-                    connection, outbound_id, "sent", external_message_id
+                outbound = await self._sending_outbound_snapshot(
+                    connection, outbound_id
                 )
                 if outbound is None:
                     return None
+                transitioned = None
+
+                async def transition():
+                    nonlocal transitioned
+                    if transitioned is None:
+                        transitioned = await self._transition_sending_outbound(
+                            connection, outbound_id, "sent", external_message_id
+                        )
+                    return transitioned
+
                 if delivery_hook is not None:
                     if now is None:
                         raise ValueError("delivery hook timestamp is required")
                     await delivery_hook(
-                        connection, outbound, "sent", None, now
+                        connection, outbound, "sent", None, now, transition
                     )
+                else:
+                    await transition()
+                outbound = transitioned
+                if outbound is None:
+                    return None
                 parsed = parse_admin_reply_key(outbound.idempotency_key)
                 if parsed is None:
                     if outbound.idempotency_key.startswith(
@@ -325,20 +342,33 @@ class MessageRepository:
         *,
         delivery_hook: DeliveryHook | None = None,
         now: datetime | None = None,
-    ) -> None:
+    ) -> bool:
         async with self._database.acquire() as connection:
             async with connection.transaction():
-                outbound = await self._transition_sending_outbound(
-                    connection, outbound_id, "failed"
+                outbound = await self._sending_outbound_snapshot(
+                    connection, outbound_id
                 )
                 if outbound is None:
-                    return
+                    return False
+                transitioned = None
+
+                async def transition():
+                    nonlocal transitioned
+                    if transitioned is None:
+                        transitioned = await self._transition_sending_outbound(
+                            connection, outbound_id, "failed"
+                        )
+                    return transitioned
+
                 if delivery_hook is not None:
                     if now is None:
                         raise ValueError("delivery hook timestamp is required")
                     await delivery_hook(
-                        connection, outbound, "failed", error_code, now
+                        connection, outbound, "failed", error_code, now, transition
                     )
+                else:
+                    await transition()
+                return transitioned is not None
 
     async def mark_outbound_delivery_unknown(
         self,
@@ -347,14 +377,30 @@ class MessageRepository:
         delivery_hook: DeliveryHook | None = None,
         error_code: str | None = None,
         now: datetime | None = None,
-    ) -> None:
+    ) -> bool:
         async with self._database.acquire() as connection:
             async with connection.transaction():
-                outbound = await self._transition_sending_outbound(
-                    connection, outbound_id, "delivery_unknown"
+                outbound = await self._sending_outbound_snapshot(
+                    connection, outbound_id
                 )
                 if outbound is None:
-                    return
+                    return bool(
+                        await connection.fetchval(
+                            "SELECT status = 'delivery_unknown' "
+                            "FROM outbound_messages WHERE id = $1",
+                            outbound_id,
+                        )
+                    )
+                transitioned = None
+
+                async def transition():
+                    nonlocal transitioned
+                    if transitioned is None:
+                        transitioned = await self._transition_sending_outbound(
+                            connection, outbound_id, "delivery_unknown"
+                        )
+                    return transitioned
+
                 if delivery_hook is not None:
                     if now is None:
                         raise ValueError("delivery hook timestamp is required")
@@ -364,7 +410,24 @@ class MessageRepository:
                         "delivery_unknown",
                         error_code,
                         now,
+                        transition,
                     )
+                else:
+                    await transition()
+                return transitioned is not None
+
+    @staticmethod
+    async def _sending_outbound_snapshot(connection, outbound_id: UUID):
+        row = await connection.fetchrow(
+            """
+            SELECT id, channel, chat_id, text, delivery_options,
+                   idempotency_key
+            FROM outbound_messages
+            WHERE id = $1 AND status = 'sending'
+            """,
+            outbound_id,
+        )
+        return None if row is None else _outbound_from_row(row)
 
     @staticmethod
     async def _transition_sending_outbound(

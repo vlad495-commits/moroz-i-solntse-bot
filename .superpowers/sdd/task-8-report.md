@@ -107,3 +107,51 @@ Additional changed files in re-review:
 
 - `project/src/moroz/security/consent.py`
 - `project/tests/e2e/test_message_delivery.py`
+
+## Second re-review hardening
+
+- Restored the canonical terminal lock order without weakening the atomic
+  delivery transaction. Messaging supplies a guarded terminal-transition
+  callback; the reactivation hook invokes it only after program, customer,
+  controls, journey and step locks. The generic messaging path invokes the
+  same transition directly without a reactivation dependency.
+- A managed-link lookup failure or cancellation now releases the claimed
+  outbound back to `pending` before the provider seam and propagates the
+  original error. The provider fake proves that no network attempt occurs.
+- A persistent sent-hook failure or cancellation now falls back to a durable
+  bare `delivery_unknown` transition. The reserved step is intentionally left
+  for startup reconciliation, which projects it exactly once. A sender cannot
+  return a terminal result unless the fallback write is proven durable.
+- Confirmed main delivery now materializes `journey.first_sent_at` even when a
+  concurrent terminal control has already closed the journey; no reminder is
+  scheduled in that state.
+
+### Second re-review TDD and concurrency evidence
+
+- RED: managed-check runtime error and cancellation left the outbound in
+  `sending`; both probes now release it to `pending` before the provider seam.
+- RED: persistent sent-hook runtime error left `outbound= sending`; the
+  cancellation variant propagated without a durable terminal row. Both now
+  persist `delivery_unknown`, retain the reserved step and reconcile once.
+- RED: accepted main sends in both consent/revoke start orders left
+  `first_sent_at=NULL`; both now retain the accepted send timestamp.
+- GREEN: managed-check unit matrix: `4 passed, 9 deselected in 4.06s`.
+- GREEN: terminal/reconcile race matrix: `3 passed, 44 deselected in 13.14s`.
+- GREEN: persistent-hook and closed-journey timestamp matrix:
+  `6 passed, 41 deselected in 19.50s`.
+- GREEN: real PostgreSQL canonical-order matrix covering sent, failed and
+  delivery-unknown against deletion, consent, escalation and human-mode
+  writers in both start orders: `24 passed, 47 deselected in 75.17s`; no
+  PostgreSQL `40P01` deadlock occurred.
+- GREEN: expanded Task 8/messaging/worker/consent/e2e regression:
+  `279 passed in 360.45s`.
+- GREEN: broad Task 5–8/reactivation, PostgreSQL race, messaging, e2e and
+  worker regression: `417 passed in 576.16s`.
+- Final Docker `compileall`, Compose config validation and `git diff --check`
+  passed.
+
+One obsolete blocking test process from an interrupted RED probe initially
+held PostgreSQL transactions; only the temporary worktree test containers
+were stopped, then the complete evidence run was repeated from a clean test
+process. No external Telegram, YCLIENTS, LLM, staging or production call was
+made, and Task 9+ remains unchanged.

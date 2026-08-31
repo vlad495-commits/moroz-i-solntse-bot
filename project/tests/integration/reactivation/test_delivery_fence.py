@@ -561,9 +561,14 @@ async def test_terminal_transition_blocks_concurrent_stale_reconcile(
     hook_started = asyncio.Event()
     hook_release = asyncio.Event()
 
-    async def blocking_hook(*_args):
-        hook_started.set()
-        await hook_release.wait()
+    async def blocking_hook(*args):
+        async def blocked_transition():
+            value = await args[-1]()
+            hook_started.set()
+            await hook_release.wait()
+            return value
+
+        await repository.delivery_hook(*args[:-1], blocked_transition)
 
     if outcome == "sent":
         terminal = asyncio.create_task(
@@ -596,6 +601,122 @@ async def test_terminal_transition_blocks_concurrent_stale_reconcile(
         assert await connection.fetchval(
             "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
         ) == outcome
+
+
+async def _apply_terminal_writer(
+    connection, database, writer, user_id, outbound_id
+):
+    await connection.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        customer_lock_subject(user_id),
+    )
+    if writer == "deletion":
+        await connection.execute(
+            "DELETE FROM outbound_messages WHERE id = $1", outbound_id
+        )
+    elif writer == "consent":
+        await ConsentService(database).suppress_marketing(
+            channel="telegram", user_id=user_id, reason="admin_revoke",
+            source="admin_revoke", source_event_id=f"lock-{user_id}",
+            occurred_at=NOW, connection=connection,
+        )
+    elif writer == "escalation":
+        await connection.execute(
+            "INSERT INTO escalations "
+            "(id, source, customer_id, status, reason_code, payload) "
+            "VALUES ($1, 'test', $2, 'open', 'test', '{}'::jsonb)",
+            uuid4(), user_id,
+        )
+    else:
+        await connection.execute(
+            "INSERT INTO human_mode "
+            "(customer_id, enabled, reason_code, enabled_at) "
+            "VALUES ($1, true, 'admin_handoff', $2)", user_id, NOW,
+        )
+
+
+@pytest.mark.parametrize("outcome", ["sent", "failed", "delivery_unknown"])
+@pytest.mark.parametrize("writer", ["deletion", "consent", "escalation", "human"])
+@pytest.mark.parametrize("start_order", ["writer_first", "delivery_first"])
+async def test_terminal_delivery_keeps_canonical_lock_order_against_writers(
+    delivery, outcome, writer, start_order
+):
+    database, repository, _ = delivery
+    user_id = f"89-{outcome}-{writer}-{start_order}"
+    outbound_id = await _seed_and_reserve(database, repository, user_id)
+    messages = MessageRepository(database)
+    assert await messages.claim_outbound_delivery(outbound_id) is not None
+
+    async def finish(hook):
+        if outcome == "sent":
+            return await messages.mark_outbound_sent(
+                outbound_id, "provider-id", delivery_hook=hook, now=NOW
+            )
+        if outcome == "failed":
+            return await messages.mark_outbound_failed(
+                outbound_id, "telegram_bad_request", delivery_hook=hook, now=NOW
+            )
+        return await messages.mark_outbound_delivery_unknown(
+            outbound_id, delivery_hook=hook,
+            error_code="telegram_network", now=NOW,
+        )
+
+    if start_order == "writer_first":
+        async with database.acquire() as connection:
+            transaction = connection.transaction()
+            await transaction.start()
+            await _apply_terminal_writer(
+                connection, database, writer, user_id, outbound_id
+            )
+            delivery_task = asyncio.create_task(finish(repository.delivery_hook))
+            await asyncio.sleep(0.1)
+            assert not delivery_task.done()
+            await transaction.commit()
+        await asyncio.wait_for(delivery_task, timeout=3)
+    else:
+        transition_done = asyncio.Event()
+        release_delivery = asyncio.Event()
+
+        async def blocked_hook(*args):
+            async def blocked_transition():
+                value = await args[-1]()
+                transition_done.set()
+                await release_delivery.wait()
+                return value
+
+            await repository.delivery_hook(*args[:-1], blocked_transition)
+
+        delivery_task = asyncio.create_task(finish(blocked_hook))
+        await asyncio.wait_for(transition_done.wait(), timeout=3)
+
+        async def write():
+            async with database.acquire() as connection:
+                async with connection.transaction():
+                    await _apply_terminal_writer(
+                        connection, database, writer, user_id, outbound_id
+                    )
+
+        writer_task = asyncio.create_task(write())
+        await asyncio.sleep(0.1)
+        assert not writer_task.done()
+        release_delivery.set()
+        await asyncio.wait_for(delivery_task, timeout=3)
+        await asyncio.wait_for(writer_task, timeout=3)
+
+    async with database.acquire() as connection:
+        outbound_status = await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+        )
+        step_status = await connection.fetchval(
+            "SELECT step.status FROM reactivation_journey_steps step "
+            "JOIN reactivation_journeys journey ON journey.id = step.journey_id "
+            "WHERE journey.user_id = $1 AND step.step_kind = 'main'",
+            user_id,
+        )
+    if writer == "deletion":
+        assert outbound_status is None
+    else:
+        assert (outbound_status, step_status) == (outcome, outcome)
 
 
 async def _apply_marketing_stop(service, action, user_id, *, connection=None):
@@ -665,7 +786,8 @@ async def test_accepted_send_survives_concurrent_consent_terminal(
     async with database.acquire() as connection:
         state = await connection.fetchrow(
             "SELECT outbound.status, step.status, step.sent_at, journey.status, "
-            "journey.close_reason FROM outbound_messages AS outbound "
+            "journey.close_reason, journey.first_sent_at "
+            "FROM outbound_messages AS outbound "
             "JOIN reactivation_journey_steps AS step ON step.outbound_id = outbound.id "
             "JOIN reactivation_journeys AS journey ON journey.id = step.journey_id "
             "WHERE outbound.id = $1",
@@ -678,7 +800,9 @@ async def test_accepted_send_survives_concurrent_consent_terminal(
             "AND reminder.status = 'scheduled'",
             user_id,
         )
-    assert tuple(state.values()) == ("sent", "sent", NOW, "closed", "suppressed")
+    assert tuple(state.values()) == (
+        "sent", "sent", NOW, "closed", "suppressed", NOW
+    )
     assert reminder_count == 0
 
 
@@ -862,3 +986,47 @@ async def test_concurrent_unknown_reconcile_reports_one_real_transition(delivery
         assert not first.done() and not second.done()
         await transaction.commit()
     assert sorted(await asyncio.gather(first, second)) == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("hook_error", "propagates"),
+    [(RuntimeError("hook failed"), False), (asyncio.CancelledError(), True)],
+)
+async def test_persistent_sent_hook_failure_durably_falls_back_to_unknown(
+    delivery, hook_error, propagates
+):
+    database, repository, _ = delivery
+    outbound_id = await _seed_and_reserve(database, repository, "88001")
+
+    async def broken_hook(*_args):
+        raise hook_error
+
+    sender = TelegramSender(
+        FakeTelegram(),
+        MessageRepository(database),
+        pre_send_guard=repository.pre_send_guard,
+        delivery_hook=broken_hook,
+        managed_delivery_check=repository.is_linked_outbound,
+        clock=lambda: NOW,
+    )
+    if propagates:
+        with pytest.raises(asyncio.CancelledError):
+            await sender.send(outbound_id)
+    else:
+        assert await sender.send(outbound_id) == DeliveryResult.DELIVERY_UNKNOWN
+
+    async with database.acquire() as connection:
+        before = await connection.fetchrow(
+            "SELECT outbound.status, step.status FROM outbound_messages outbound "
+            "JOIN reactivation_journey_steps step ON step.outbound_id = outbound.id "
+            "WHERE outbound.id = $1",
+            outbound_id,
+        )
+    assert tuple(before.values()) == ("delivery_unknown", "reserved")
+    assert await repository.reconcile_delivery_unknowns(NOW) == 1
+    assert await repository.reconcile_delivery_unknowns(NOW) == 0
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT status FROM reactivation_journey_steps WHERE outbound_id = $1",
+            outbound_id,
+        ) == "delivery_unknown"

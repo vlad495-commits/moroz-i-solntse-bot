@@ -72,25 +72,44 @@ class FakeRepository:
     async def mark_outbound_sent(
         self, outbound_id, external_message_id, *, delivery_hook=None, now=None
     ):
-        self.status = "sent"
+        async def transition():
+            self.status = "sent"
+            return self.outbound
+
         if delivery_hook is not None:
-            await delivery_hook(None, self.outbound, "sent", None, now)
+            await delivery_hook(None, self.outbound, "sent", None, now, transition)
+        else:
+            await transition()
 
     async def mark_outbound_failed(
         self, outbound_id, error_code, *, delivery_hook=None, now=None
     ):
-        self.status = "failed"
+        async def transition():
+            self.status = "failed"
+            return self.outbound
+
         if delivery_hook is not None:
-            await delivery_hook(None, self.outbound, "failed", error_code, now)
+            await delivery_hook(
+                None, self.outbound, "failed", error_code, now, transition
+            )
+        else:
+            await transition()
+        return True
 
     async def mark_outbound_delivery_unknown(
         self, outbound_id, *, delivery_hook=None, error_code=None, now=None
     ):
-        self.status = "delivery_unknown"
+        async def transition():
+            self.status = "delivery_unknown"
+            return self.outbound
+
         if delivery_hook is not None:
             await delivery_hook(
-                None, self.outbound, "delivery_unknown", error_code, now
+                None, self.outbound, "delivery_unknown", error_code, now, transition
             )
+        else:
+            await transition()
+        return True
 
     async def release_outbound_delivery(self, _outbound_id):
         self.status = "pending"
@@ -99,8 +118,10 @@ class FakeRepository:
 class FakeTelegram:
     def __init__(self, error=None):
         self.error = error
+        self.calls = 0
 
     async def send_message(self, **_kwargs):
+        self.calls += 1
         if self.error is not None:
             raise self.error
         return SimpleNamespace(message_id=42)
@@ -135,6 +156,7 @@ async def test_managed_bad_request_is_terminal_and_calls_atomic_hook(caplog):
 
     async def hook(*args):
         hook_calls.append(args[2:4])
+        await args[-1]()
 
     sender = TelegramSender(
         FakeTelegram(_error(TelegramBadRequest)),
@@ -200,3 +222,24 @@ async def test_retry_after_releases_and_reraises_without_delivery_hook():
 
     assert repository.status == "pending"
     assert hook_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("db unavailable"), asyncio.CancelledError()])
+async def test_managed_check_failure_releases_claim_before_provider(error):
+    outbound = _outbound()
+    repository = FakeRepository(outbound)
+    telegram = FakeTelegram()
+
+    async def broken_check(_outbound):
+        raise error
+
+    with pytest.raises(type(error)):
+        await TelegramSender(
+            telegram,
+            repository,
+            managed_delivery_check=broken_check,
+        ).send(outbound.id)
+
+    assert repository.status == "pending"
+    assert telegram.calls == 0

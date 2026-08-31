@@ -915,9 +915,10 @@ class ReactivationRepository:
         outcome: str,
         error_code: str | None,
         now: datetime,
+        transition,
     ) -> None:
         await self._apply_delivery_hook(
-            connection, outbound, outcome, error_code, now
+            connection, outbound, outcome, error_code, now, transition
         )
 
     async def _apply_delivery_hook(
@@ -927,6 +928,7 @@ class ReactivationRepository:
         outcome: str,
         error_code: str | None,
         now: datetime,
+        transition=None,
     ) -> bool:
         current = _aware(now)
         error_code = (
@@ -950,7 +952,9 @@ class ReactivationRepository:
             outbound.id,
         )
         if test_version is None and target is None:
-            return False
+            return bool(
+                transition is not None and await transition() is not None
+            )
         must_pause = outcome == "delivery_unknown" or error_code == "telegram_bad_request"
         await _lock_program(connection, shared=not must_pause)
         if test_version is not None:
@@ -959,6 +963,8 @@ class ReactivationRepository:
                 "WHERE id = $1 FOR UPDATE",
                 test_version["id"],
             )
+            if transition is not None and await transition() is None:
+                return False
             valid = bool(
                 version
                 and version["status"] != "retired"
@@ -1042,6 +1048,8 @@ class ReactivationRepository:
             """,
             outbound.id, target["journey_id"],
         )
+        if transition is not None and await transition() is None:
+            return False
         if journey is None or step is None or step["status"] != "reserved":
             if must_pause:
                 await self._auto_pause(connection, error_code, current)
@@ -1203,6 +1211,13 @@ class ReactivationRepository:
             """,
             step["id"], delivered_at,
         )
+        if step["step_kind"] == "main":
+            await connection.execute(
+                "UPDATE reactivation_journeys "
+                "SET first_sent_at = COALESCE(first_sent_at, $2), updated_at = $2 "
+                "WHERE id = $1",
+                step["journey_id"], delivered_at,
+            )
         if journey["status"] == "closed":
             return
         if step["step_kind"] == "reminder":
@@ -1213,8 +1228,7 @@ class ReactivationRepository:
         await connection.execute(
             """
             UPDATE reactivation_journeys
-            SET status = 'active', first_sent_at = COALESCE(first_sent_at, $2),
-                updated_at = $2
+            SET status = 'active', updated_at = $2
             WHERE id = $1 AND status != 'closed'
             """,
             step["journey_id"], delivered_at,
