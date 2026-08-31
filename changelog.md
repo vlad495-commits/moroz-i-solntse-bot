@@ -3098,3 +3098,4 @@
 [2026-08-31 08:23] Дополнительный `ruff`-чек Task 7 недоступен в штатном test image (`No module named ruff`); compileall, Compose config и git diff-check завершились без ошибок, новую зависимость ради линтера не добавляли.
 [2026-08-31 08:25] Self-review Task 7 после коммита выявил только лишнюю пустую строку в конце unit-теста; whitespace исправлен, commit обновлён без изменения поведения.
 [2026-08-31 08:28] Усилен fail-closed YCLIENTS-контур Task 7: при пустой или частичной конфигурации незавершённые jobs реактивации переводятся в skipped, режим — в dry_run, а админка определяет доступность по свежему системному heartbeat job без передачи YCLIENTS-секретов в admin-контейнер.
+[2026-08-31 08:30] Task 7 финально подтверждён после fail-closed hardening: focused Docker suite — 92 passed за 40.36s; compileall, Compose config и diff-check зелёные, implementation report синхронизирован.

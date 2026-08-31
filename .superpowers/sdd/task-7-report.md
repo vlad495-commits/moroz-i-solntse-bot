@@ -17,7 +17,7 @@ Status: DONE
 - RED: Docker collection failed with `ModuleNotFoundError: No module named 'moroz.reactivation.service'` before production implementation.
 - RED: fail-closed YCLIENTS tests failed with missing repository method and missing explicit admin gate.
 - RED: eligible-limit fairness test returned no journey because an earlier excluded consent consumed the limit.
-- GREEN: focused planner/worker/scheduler/activity/admin suite: `92 passed in 41.20s`.
+- GREEN: final focused planner/worker/scheduler/activity/admin suite after fail-closed hardening: `92 passed in 40.36s`.
 - GREEN: expanded policy/consent/activity/preview/admin/worker safety regression: `200 passed in 178.15s`.
 - GREEN: dedicated PostgreSQL planner suite before final fairness case: `8 passed`; final focused suite includes all 13 planner cases.
 
