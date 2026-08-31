@@ -22,7 +22,13 @@ OUTCOME_FILTERS = {
     "booked": "journey.booked_at IS NOT NULL",
     "completed": "journey.completed_visit_at IS NOT NULL",
     "opted_out": (
-        "journey.close_reason = 'suppressed' AND consent.revoked_at IS NOT NULL"
+        "journey.close_reason = 'suppressed' AND EXISTS (SELECT 1 FROM "
+        "marketing_consent_events AS outcome_event WHERE "
+        "outcome_event.channel = journey.channel AND "
+        "outcome_event.user_id = journey.user_id AND "
+        "outcome_event.action = 'suppressed' AND "
+        "outcome_event.source = 'telegram_explicit' AND "
+        "outcome_event.occurred_at = journey.closed_at)"
     ),
     "escalated": (
         "journey.close_reason = 'escalated' OR journey.escalated_at IS NOT NULL"
@@ -231,9 +237,6 @@ async def get_marketing_page_data(
             FROM reactivation_journeys AS journey
             JOIN reactivation_program_versions AS version
               ON version.id = journey.program_version_id
-            LEFT JOIN marketing_consents AS consent
-              ON consent.channel = journey.channel
-             AND consent.user_id = journey.user_id
             WHERE journey.created_at BETWEEN
                   $1::timestamptz - $2 * interval '1 day' AND $1
               AND ({OUTCOME_FILTERS[outcome]})

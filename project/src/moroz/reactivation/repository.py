@@ -125,6 +125,7 @@ class ReactivationRepository:
         self._secret = session_secret.strip().encode("utf-8")
         self.business_alert_chat_id = business_alert_chat_id.strip()
         self._clock = clock
+        self._outcome_refresh_cursor = None
 
     async def record_inbound(
         self,
@@ -1648,21 +1649,44 @@ class ReactivationRepository:
 
     async def refresh_outcomes(self, now: datetime, *, limit: int = 100) -> int:
         current = _aware(now)
+        bounded_limit = min(max(limit, 0), OUTCOME_REFRESH_LIMIT)
+        cursor_at, cursor_id = self._outcome_refresh_cursor or (None, None)
         async with self._database.acquire() as connection:
             targets = await connection.fetch(
                 """
-                SELECT id, channel, user_id
+                SELECT id, channel, user_id, created_at
                 FROM reactivation_journeys
-                WHERE status != 'closed'
-                   OR first_sent_at >= $2::timestamptz - interval '31 days'
+                WHERE (status != 'closed'
+                   OR first_sent_at >= $2::timestamptz - interval '31 days')
+                  AND ($3::timestamptz IS NULL OR
+                       (created_at, id) > ($3::timestamptz, $4::uuid))
                 ORDER BY created_at, id
                 LIMIT $1
                 """,
-                min(max(limit, 0), OUTCOME_REFRESH_LIMIT),
+                bounded_limit,
                 current,
+                cursor_at,
+                cursor_id,
             )
+            if not targets and self._outcome_refresh_cursor is not None:
+                self._outcome_refresh_cursor = None
+                targets = await connection.fetch(
+                    """
+                    SELECT id, channel, user_id, created_at
+                    FROM reactivation_journeys
+                    WHERE status != 'closed'
+                       OR first_sent_at >= $2::timestamptz - interval '31 days'
+                    ORDER BY created_at, id
+                    LIMIT $1
+                    """,
+                    bounded_limit,
+                    current,
+                )
         for target in targets:
             await self._refresh_journey_outcome(current, target)
+        if targets:
+            last = targets[-1]
+            self._outcome_refresh_cursor = (last["created_at"], last["id"])
         return len(targets)
 
     async def get_outcome_funnel(
@@ -1700,11 +1724,27 @@ class ReactivationRepository:
                        ) AS completed_30d,
                        count(*) FILTER (
                            WHERE journey.close_reason = 'suppressed'
-                             AND consent.revoked_at IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1
+                                 FROM marketing_consent_events AS event
+                                 WHERE event.channel = journey.channel
+                                   AND event.user_id = journey.user_id
+                                   AND event.action = 'suppressed'
+                                   AND event.source = 'telegram_explicit'
+                                   AND event.occurred_at = journey.closed_at
+                             )
                        ) AS opted_out,
                        count(*) FILTER (
                            WHERE journey.close_reason = 'suppressed'
-                             AND consent.revoked_at IS NULL
+                             AND NOT EXISTS (
+                                 SELECT 1
+                                 FROM marketing_consent_events AS event
+                                 WHERE event.channel = journey.channel
+                                   AND event.user_id = journey.user_id
+                                   AND event.action = 'suppressed'
+                                   AND event.source = 'telegram_explicit'
+                                   AND event.occurred_at = journey.closed_at
+                             )
                        ) AS suppressed,
                        count(*) FILTER (
                            WHERE journey.close_reason = 'escalated'
@@ -1727,9 +1767,6 @@ class ReactivationRepository:
                               )
                        ) AS delivery_unknown
                 FROM reactivation_journeys AS journey
-                LEFT JOIN marketing_consents AS consent
-                  ON consent.channel = journey.channel
-                 AND consent.user_id = journey.user_id
                 WHERE journey.created_at BETWEEN
                       $1::timestamptz - $2 * interval '1 day' AND $1
                 """,
@@ -1777,7 +1814,7 @@ class ReactivationRepository:
                              THEN activity.last_meaningful_inbound_at
                            END AS replied_at,
                            booking.booked_at,
-                           completed.completed_at,
+                           booking.completed_at,
                            journey.first_sent_at,
                            journey.status
                     FROM reactivation_journeys AS journey
@@ -1789,7 +1826,14 @@ class ReactivationRepository:
                      AND activity.user_id = journey.user_id
                      AND activity.identity_status = 'verified'
                     LEFT JOIN LATERAL (
-                        SELECT min(projection.record_created_at) AS booked_at
+                        SELECT min(projection.record_created_at) AS booked_at,
+                               min(projection.starts_at) FILTER (
+                                   WHERE projection.status = 'completed'
+                                     AND projection.starts_at >=
+                                         projection.record_created_at
+                                     AND projection.starts_at <=
+                                         journey.first_sent_at + interval '30 days'
+                               ) AS completed_at
                         FROM yclients_booking_projection AS projection
                         WHERE projection.client_id = activity.yclients_client_id
                           AND NOT projection.deleted
@@ -1797,15 +1841,6 @@ class ReactivationRepository:
                           AND projection.record_created_at BETWEEN journey.first_sent_at
                               AND journey.first_sent_at + interval '14 days'
                     ) AS booking ON true
-                    LEFT JOIN LATERAL (
-                        SELECT min(projection.starts_at) AS completed_at
-                        FROM yclients_booking_projection AS projection
-                        WHERE projection.client_id = activity.yclients_client_id
-                          AND NOT projection.deleted
-                          AND projection.status = 'completed'
-                          AND projection.starts_at BETWEEN journey.first_sent_at
-                              AND journey.first_sent_at + interval '30 days'
-                    ) AS completed ON true
                     WHERE journey.id = $1
                     FOR UPDATE OF journey SKIP LOCKED
                     """,
