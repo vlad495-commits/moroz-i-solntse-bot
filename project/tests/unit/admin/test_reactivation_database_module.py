@@ -45,7 +45,7 @@ def test_marketing_screen_exposes_explicit_yclients_unavailable_gate():
         encoding="utf-8"
     )
 
-    assert 'readiness["yclients_available"]' in MODULE.read_text(encoding="utf-8")
+    assert "reactivation_activity_sync" in MODULE.read_text(encoding="utf-8")
     assert "YCLIENTS unavailable" in template
 
 

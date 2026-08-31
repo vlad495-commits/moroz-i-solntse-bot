@@ -9,7 +9,7 @@ Status: DONE
 - Reused Task 4 through a small `ActivitySyncCoordinator.sync_once()` seam, avoiding a duplicate legacy scheduler job.
 - Added transactional planner lifecycle: outcome refresh, global fail-closed gates, SQL-prefiltered eligible population, unique journey/main step creation, `FOR UPDATE SKIP LOCKED` claim, in-transaction eligibility replay, durable outbound enqueue, and reserved step state.
 - Added idempotent delivery acceptance materialization: actual `sent_at`, active/exhausted transitions, at-most-one reminder, and quiet-window scheduling.
-- Added worker routing/seeding only when a valid YCLIENTS reader exists. Missing configuration atomically returns the program to `dry_run`; admin readiness explicitly renders `YCLIENTS unavailable`.
+- Added worker routing/seeding only when a valid YCLIENTS reader exists. Missing/partial configuration atomically returns the program to `dry_run`, terminalizes unfinished reactivation jobs, and admin readiness explicitly renders `YCLIENTS unavailable` from a fresh scheduler heartbeat without receiving provider secrets.
 - Did not add a process, queue, dependency, timer library, external API call, Telegram send, or Task 8 delivery fence/error classifier.
 
 ## TDD evidence

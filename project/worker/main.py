@@ -1028,9 +1028,21 @@ async def run() -> None:
             retention_days=DATA_RETENTION_DAYS,
         )
         await retention_cleanup.ensure_current(datetime.now(UTC))
-        lifecycle, projection_sync, catalog_sync, catalog_repository, admin_booking_commands, activity_sync = (
-            _build_yclients_services(database)
-        )
+        try:
+            (
+                lifecycle,
+                projection_sync,
+                catalog_sync,
+                catalog_repository,
+                admin_booking_commands,
+                activity_sync,
+            ) = _build_yclients_services(database)
+        except ValueError:
+            if hasattr(database, "acquire"):
+                await ReactivationRepository(
+                    database
+                ).fail_closed_yclients_unavailable(datetime.now(UTC))
+            raise
         if projection_sync is not None:
             await projection_sync.ensure_current(datetime.now(UTC))
         if catalog_sync is not None:

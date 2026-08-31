@@ -317,6 +317,17 @@ async def test_outcome_before_delivery_prevents_reminder(planner, reason):
 
 async def test_yclients_unavailable_forces_dry_run_idempotently(planner):
     database, repository, _ = planner
+    job_id = uuid4()
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status, attempts)
+            VALUES ($1, 'reactivation_activity_sync', $2, '{}'::jsonb,
+                    'reactivation_activity_sync:test', 'pending', 0)
+            """,
+            job_id, NOW,
+        )
 
     assert await repository.fail_closed_yclients_unavailable(NOW)
     assert not await repository.fail_closed_yclients_unavailable(
@@ -327,3 +338,6 @@ async def test_yclients_unavailable_forces_dry_run_idempotently(planner):
         assert await connection.fetchval(
             "SELECT mode FROM reactivation_settings WHERE id = 1"
         ) == "dry_run"
+        assert await connection.fetchval(
+            "SELECT status FROM scheduler_jobs WHERE id = $1", job_id
+        ) == "skipped"

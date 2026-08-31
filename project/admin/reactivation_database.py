@@ -157,7 +157,13 @@ async def get_marketing_page_data(
                          AND activity.recent_bookings_synced_at >= now() - interval '15 minutes'
                    ) AS yclients_current,
                    min(activity.history_synced_at) AS oldest_history_synced_at,
-                   min(activity.recent_bookings_synced_at) AS oldest_recent_bookings_synced_at
+                   min(activity.recent_bookings_synced_at) AS oldest_recent_bookings_synced_at,
+                   EXISTS (
+                       SELECT 1 FROM scheduler_jobs
+                       WHERE kind = 'reactivation_activity_sync'
+                         AND status IN ('pending', 'claimed', 'finished')
+                         AND updated_at >= now() - interval '20 minutes'
+                   ) AS yclients_available
             FROM marketing_consents AS consent
             LEFT JOIN customer_activity_projection AS activity
               ON activity.channel = consent.channel
@@ -216,14 +222,6 @@ async def get_marketing_page_data(
         len(rows) > PAGE_SIZE for rows in (consents, consent_events, journeys)
     )
     readiness = dict(readiness_row)
-    readiness["yclients_available"] = all(
-        os.environ.get(name, "").strip()
-        for name in (
-            "YCLIENTS_PARTNER_TOKEN",
-            "YCLIENTS_USER_TOKEN",
-            "YCLIENTS_COMPANY_ID",
-        )
-    )
     readiness["yclients_ready"] = (
         readiness["yclients_available"]
         and readiness["proven_consents"] > 0

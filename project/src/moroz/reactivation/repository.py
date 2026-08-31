@@ -509,6 +509,16 @@ class ReactivationRepository:
                 settings = await connection.fetchrow(
                     "SELECT mode FROM reactivation_settings WHERE id = 1 FOR UPDATE"
                 )
+                await connection.execute(
+                    """
+                    UPDATE scheduler_jobs
+                    SET status = 'skipped', finished_at = $1,
+                        last_error_code = 'yclients_unavailable', updated_at = $1
+                    WHERE kind IN ('reactivation_activity_sync', 'reactivation_tick')
+                      AND status IN ('pending', 'claimed')
+                    """,
+                    current,
+                )
                 if settings is None or settings["mode"] == "dry_run":
                     return False
                 await connection.execute(
