@@ -24,6 +24,7 @@
 
     {% if request.query_params.get('consent') %}<p class="notice success">Согласие отозвано, будущие шаги отменены</p>{% endif %}
     {% if request.query_params.get('activated') %}<p class="notice success">Версия активирована</p>{% endif %}
+    {% if settings.mode == 'paused' %}<p class="notice">Программа остановлена: новые отправки не выполняются.</p>{% endif %}
 
     <section class="card">
         <h2>Готовность к запуску</h2>
@@ -104,7 +105,30 @@
         <section class="card"><h2>Пути реактивации</h2><div class="data-table"><table><thead><tr><th>Клиент</th><th>Версия</th><th>Статус</th><th>Результат</th><th>Старт</th></tr></thead><tbody>
         {% for journey in data.journeys %}<tr><td>{{ journey.customer }}</td><td>v{{ journey.version_number }}</td><td>{{ journey.status }}</td><td>{{ journey.close_reason or 'в процессе' }}</td><td>{{ journey.created_at }}</td></tr>{% else %}<tr><td colspan="5">Путей пока нет</td></tr>{% endfor %}
         </tbody></table></div></section>
-        <section class="card"><h2>Результаты</h2>{% for outcome, total in data.outcomes.items() %}<div class="metric-row"><span>{{ outcome }}</span><strong>{{ total }}</strong></div>{% else %}<p class="muted">Результатов пока нет</p>{% endfor %}</section>
+        <section class="card">
+            <h2>Воронка результата</h2>
+            <form class="inline-form" method="get" action="{{ request.scope.get('root_path', '') }}/marketing/">
+                <label>Период<select name="period">{% for value in [7, 30, 90] %}<option value="{{ value }}" {% if data.filters.period == value %}selected{% endif %}>{{ value }} дней</option>{% endfor %}</select></label>
+                <label>Результат<select name="outcome">{% for value, label in [('all','Все'),('replied','Ответили'),('booked','Записались'),('completed','Завершили визит'),('opted_out','Отписались'),('escalated','Эскалация')] %}<option value="{{ value }}" {% if data.filters.outcome == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                <label>Доставка<select name="delivery">{% for value, label in [('all','Все'),('failed','Ошибка'),('delivery_unknown','Delivery unknown')] %}<option value="{{ value }}" {% if data.filters.delivery == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                <button type="submit">Показать</button>
+            </form>
+            {% set sent = data.funnel.main_sent %}
+            <div class="metric-row"><span>Подойдут по последнему предпросмотру</span><strong>{{ data.latest_preview_eligible if data.latest_preview_eligible is not none else '—' }}</strong></div>
+            <div class="metric-row"><span>Eligible journeys</span><strong>{{ data.funnel.journey_started }}</strong></div>
+            <div class="metric-row"><span>Принято Telegram</span><strong>{{ sent }}</strong></div>
+            <div class="metric-row"><span>Ответили за 7 дней</span><strong>{{ data.funnel.replied_7d }}{% if sent %} · {{ (data.funnel.replied_7d * 100 / sent)|round(1) }}%{% endif %}</strong></div>
+            <div class="metric-row"><span>Записались за 14 дней</span><strong>{{ data.funnel.booked_14d }}{% if sent %} · {{ (data.funnel.booked_14d * 100 / sent)|round(1) }}%{% endif %}</strong></div>
+            <div class="metric-row"><span>Завершили визит за 30 дней</span><strong>{{ data.funnel.completed_30d }}{% if sent %} · {{ (data.funnel.completed_30d * 100 / sent)|round(1) }}%{% endif %}</strong></div>
+            <h3>Операционные сигналы</h3>
+            <div class="metric-row"><span>Напоминание принято Telegram</span><strong>{{ data.funnel.reminder_sent }}</strong></div>
+            <div class="metric-row"><span>Отписались</span><strong>{{ data.funnel.opted_out }}</strong></div>
+            <div class="metric-row"><span>Подавлены</span><strong>{{ data.funnel.suppressed }}</strong></div>
+            <div class="metric-row"><span>Эскалации</span><strong>{{ data.funnel.escalated }}</strong></div>
+            <div class="metric-row"><span>Ошибки доставки</span><strong>{{ data.funnel.failed }}</strong></div>
+            <div class="metric-row"><span class="{% if data.funnel.delivery_unknown %}status-badge status-paused{% endif %}">Delivery unknown</span><strong>{{ data.funnel.delivery_unknown }}</strong></div>
+            <p class="muted">Проценты считаются от сообщений, принятых Telegram. Это атрибуция по временным окнам, а не доказанный причинный эффект.</p>
+        </section>
     </section>
 
     <section class="card">

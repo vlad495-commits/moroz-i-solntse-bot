@@ -1,5 +1,6 @@
 """PostgreSQL access for owner-only reactivation administration."""
 
+from dataclasses import asdict
 from datetime import UTC, datetime
 import json
 import os
@@ -14,6 +15,33 @@ from moroz.privacy import customer_lock_subject
 
 SEGMENTS = {"after_visit", "sleeping", "regular"}
 PAGE_SIZE = 50
+OUTCOME_PERIODS = {7, 30, 90}
+OUTCOME_FILTERS = {
+    "all": "true",
+    "replied": "journey.replied_at IS NOT NULL",
+    "booked": "journey.booked_at IS NOT NULL",
+    "completed": "journey.completed_visit_at IS NOT NULL",
+    "opted_out": (
+        "journey.close_reason = 'suppressed' AND consent.revoked_at IS NOT NULL"
+    ),
+    "escalated": (
+        "journey.close_reason = 'escalated' OR journey.escalated_at IS NOT NULL"
+    ),
+}
+DELIVERY_FILTERS = {
+    "all": "true",
+    "failed": (
+        "journey.close_reason = 'failed' OR EXISTS (SELECT 1 FROM "
+        "reactivation_journey_steps AS filtered_step WHERE "
+        "filtered_step.journey_id = journey.id AND filtered_step.status = 'failed')"
+    ),
+    "delivery_unknown": (
+        "journey.close_reason = 'delivery_unknown' OR EXISTS (SELECT 1 FROM "
+        "reactivation_journey_steps AS filtered_step WHERE "
+        "filtered_step.journey_id = journey.id AND "
+        "filtered_step.status = 'delivery_unknown')"
+    ),
+}
 
 
 def _v2(database) -> ReactivationRepository:
@@ -93,9 +121,24 @@ async def get_dashboard(database, *, actor_id: int):
 
 
 async def get_marketing_page_data(
-    database, *, actor_id: int, consent_id: UUID | None = None, page: int = 1
+    database,
+    *,
+    actor_id: int,
+    consent_id: UUID | None = None,
+    page: int = 1,
+    period: int = 30,
+    outcome: str = "all",
+    delivery: str = "all",
 ):
+    if period not in OUTCOME_PERIODS:
+        raise ValueError("unsupported outcome period")
+    if outcome not in OUTCOME_FILTERS:
+        raise ValueError("unsupported outcome filter")
+    if delivery not in DELIVERY_FILTERS:
+        raise ValueError("unsupported delivery filter")
     data = await get_dashboard(database, actor_id=actor_id)
+    current = datetime.now(UTC)
+    funnel = await _v2(database).get_outcome_funnel(current, period_days=period)
     offset = (page - 1) * PAGE_SIZE
     async with database.acquire() as connection:
         consent_query = """
@@ -179,7 +222,7 @@ async def get_marketing_page_data(
             """
         )
         journeys = await connection.fetch(
-            """
+            f"""
             SELECT journey.id, journey.channel, journey.user_id,
                    journey.status, journey.close_reason, journey.created_at,
                    journey.first_sent_at, journey.replied_at, journey.booked_at,
@@ -188,19 +231,20 @@ async def get_marketing_page_data(
             FROM reactivation_journeys AS journey
             JOIN reactivation_program_versions AS version
               ON version.id = journey.program_version_id
+            LEFT JOIN marketing_consents AS consent
+              ON consent.channel = journey.channel
+             AND consent.user_id = journey.user_id
+            WHERE journey.created_at BETWEEN
+                  $1::timestamptz - $2 * interval '1 day' AND $1
+              AND ({OUTCOME_FILTERS[outcome]})
+              AND ({DELIVERY_FILTERS[delivery]})
             ORDER BY journey.created_at DESC, journey.id DESC
-            LIMIT $1 OFFSET $2
+            LIMIT $3 OFFSET $4
             """,
+            current,
+            period,
             PAGE_SIZE + 1,
             offset,
-        )
-        outcomes = await connection.fetch(
-            """
-            SELECT COALESCE(close_reason, status) AS outcome, count(*) AS total
-            FROM reactivation_journeys
-            GROUP BY COALESCE(close_reason, status)
-            ORDER BY outcome
-            """
         )
         legacy_campaigns = await connection.fetch(
             """
@@ -235,7 +279,10 @@ async def get_marketing_page_data(
         consents=[_masked_row(row) for row in consents[:PAGE_SIZE]],
         consent_events=[_masked_row(row) for row in consent_events[:PAGE_SIZE]],
         journeys=[_masked_row(row) for row in journeys[:PAGE_SIZE]],
-        outcomes={row["outcome"]: row["total"] for row in outcomes},
+        outcomes={},
+        funnel=asdict(funnel),
+        latest_preview_eligible=_latest_preview_eligible(data["versions"]),
+        filters={"period": period, "outcome": outcome, "delivery": delivery},
         readiness=readiness,
         pagination={"page": page, "has_next": has_next},
         legacy={
@@ -244,6 +291,14 @@ async def get_marketing_page_data(
         },
     )
     return data
+
+
+def _latest_preview_eligible(versions) -> int | None:
+    for version in versions:
+        counts = version.get("preview_counts")
+        if counts is not None and "eligible" in counts:
+            return int(counts["eligible"])
+    return None
 
 
 async def revoke_marketing_consent_by_id(

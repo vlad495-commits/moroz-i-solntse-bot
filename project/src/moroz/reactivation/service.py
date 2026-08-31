@@ -77,6 +77,9 @@ class ReactivationCoordinator:
             _aware(self._clock())
         )
 
+    async def refresh_outcomes(self) -> int:
+        return await self._repository.refresh_outcomes(_aware(self._clock()))
+
 
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:

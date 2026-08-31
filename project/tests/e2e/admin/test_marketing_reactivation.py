@@ -51,6 +51,21 @@ def _dashboard():
         "consent_events": [],
         "journeys": [],
         "outcomes": {},
+        "funnel": {
+            "journey_started": 0,
+            "main_sent": 0,
+            "reminder_sent": 0,
+            "replied_7d": 0,
+            "booked_14d": 0,
+            "completed_30d": 0,
+            "opted_out": 0,
+            "suppressed": 0,
+            "escalated": 0,
+            "failed": 0,
+            "delivery_unknown": 0,
+        },
+        "latest_preview_eligible": None,
+        "filters": {"period": 30, "outcome": "all", "delivery": "all"},
         "legacy": {"campaigns": [], "deliveries": []},
         "pagination": {"page": 1, "has_next": False},
     }
@@ -94,7 +109,7 @@ async def test_marketing_page_is_owner_only(monkeypatch, role, expected):
             raise auth._LoginRequired
         return _user(role)
 
-    async def dashboard(_database, *, actor_id, consent_id=None, page=1):
+    async def dashboard(_database, *, actor_id, consent_id=None, page=1, **filters):
         assert actor_id == 7
         assert consent_id is None
         assert page == 1
@@ -121,7 +136,7 @@ async def test_consent_lookup_accepts_only_opaque_consent_id(monkeypatch):
     async def current_user(_request):
         return _user()
 
-    async def page_data(_database, *, actor_id, consent_id, page):
+    async def page_data(_database, *, actor_id, consent_id, page, **filters):
         captured.append((actor_id, consent_id, page))
         return _dashboard()
 
@@ -137,6 +152,53 @@ async def test_consent_lookup_accepts_only_opaque_consent_id(monkeypatch):
 
     assert response.status_code == 200
     assert captured == [(7, consent_id, 2)]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_renders_honest_funnel_and_rejects_unbounded_filters(
+    monkeypatch,
+):
+    captured = []
+
+    async def current_user(_request):
+        return _user()
+
+    async def page_data(*_args, **kwargs):
+        captured.append(kwargs)
+        data = _dashboard()
+        data["latest_preview_eligible"] = 12
+        data["funnel"].update(
+            main_sent=10,
+            replied_7d=4,
+            booked_14d=2,
+            completed_30d=1,
+            failed=1,
+            delivery_unknown=1,
+        )
+        data["settings"]["mode"] = "paused"
+        return data
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "get_marketing_page_data", page_data)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/marketing/?period=7&outcome=booked&delivery=delivery_unknown"
+        )
+        invalid = await client.get("/marketing/?period=365")
+
+    assert response.status_code == 200
+    assert captured[0]["period"] == 7
+    assert captured[0]["outcome"] == "booked"
+    assert captured[0]["delivery"] == "delivery_unknown"
+    assert "Подойдут по последнему предпросмотру" in response.text
+    assert "Принято Telegram" in response.text
+    assert "Delivery unknown" in response.text
+    assert "Программа остановлена" in response.text
+    assert "Прочитано" not in response.text
+    assert invalid.status_code == 422
 
 
 @pytest.mark.asyncio

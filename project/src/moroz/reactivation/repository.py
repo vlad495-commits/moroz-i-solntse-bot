@@ -92,6 +92,21 @@ class PreviewResult:
 
 
 @dataclass(frozen=True, slots=True)
+class OutcomeFunnel:
+    journey_started: int
+    main_sent: int
+    reminder_sent: int
+    replied_7d: int
+    booked_14d: int
+    completed_30d: int
+    opted_out: int
+    suppressed: int
+    escalated: int
+    failed: int
+    delivery_unknown: int
+
+
+@dataclass(frozen=True, slots=True)
 class _Population:
     result: PreviewResult
     checksum: str
@@ -862,7 +877,7 @@ class ReactivationRepository:
         current = _aware(now)
         planner_limit = max(0, min(planner_limit, 100))
         step_claim_limit = max(0, min(step_claim_limit, 100))
-        await self._refresh_journey_outcomes(current, limit=OUTCOME_REFRESH_LIMIT)
+        await self.refresh_outcomes(current, limit=OUTCOME_REFRESH_LIMIT)
         candidates = []
         if planner_limit:
             async with self._database.acquire() as connection:
@@ -1631,20 +1646,97 @@ class ReactivationRepository:
             )
         return True
 
-    async def _refresh_journey_outcomes(self, now: datetime, *, limit: int) -> None:
+    async def refresh_outcomes(self, now: datetime, *, limit: int = 100) -> int:
+        current = _aware(now)
         async with self._database.acquire() as connection:
             targets = await connection.fetch(
                 """
                 SELECT id, channel, user_id
                 FROM reactivation_journeys
                 WHERE status != 'closed'
+                   OR first_sent_at >= $2::timestamptz - interval '31 days'
                 ORDER BY created_at, id
                 LIMIT $1
                 """,
                 min(max(limit, 0), OUTCOME_REFRESH_LIMIT),
+                current,
             )
         for target in targets:
-            await self._refresh_journey_outcome(now, target)
+            await self._refresh_journey_outcome(current, target)
+        return len(targets)
+
+    async def get_outcome_funnel(
+        self, now: datetime, *, period_days: int = 30
+    ) -> OutcomeFunnel:
+        current = _aware(now)
+        if period_days not in {7, 30, 90}:
+            raise ValueError("unsupported outcome period")
+        async with self._database.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT count(*) AS journey_started,
+                       count(*) FILTER (WHERE journey.first_sent_at IS NOT NULL)
+                         AS main_sent,
+                       count(*) FILTER (WHERE EXISTS (
+                           SELECT 1 FROM reactivation_journey_steps AS step
+                           WHERE step.journey_id = journey.id
+                             AND step.step_kind = 'reminder'
+                             AND step.status = 'sent'
+                       )) AS reminder_sent,
+                       count(*) FILTER (
+                           WHERE journey.first_sent_at IS NOT NULL
+                             AND journey.replied_at BETWEEN journey.first_sent_at
+                                 AND journey.first_sent_at + interval '7 days'
+                       ) AS replied_7d,
+                       count(*) FILTER (
+                           WHERE journey.first_sent_at IS NOT NULL
+                             AND journey.booked_at BETWEEN journey.first_sent_at
+                                 AND journey.first_sent_at + interval '14 days'
+                       ) AS booked_14d,
+                       count(*) FILTER (
+                           WHERE journey.first_sent_at IS NOT NULL
+                             AND journey.completed_visit_at BETWEEN journey.first_sent_at
+                                 AND journey.first_sent_at + interval '30 days'
+                       ) AS completed_30d,
+                       count(*) FILTER (
+                           WHERE journey.close_reason = 'suppressed'
+                             AND consent.revoked_at IS NOT NULL
+                       ) AS opted_out,
+                       count(*) FILTER (
+                           WHERE journey.close_reason = 'suppressed'
+                             AND consent.revoked_at IS NULL
+                       ) AS suppressed,
+                       count(*) FILTER (
+                           WHERE journey.close_reason = 'escalated'
+                              OR journey.escalated_at IS NOT NULL
+                       ) AS escalated,
+                       count(*) FILTER (
+                           WHERE journey.close_reason = 'failed'
+                              OR EXISTS (
+                                  SELECT 1 FROM reactivation_journey_steps AS step
+                                  WHERE step.journey_id = journey.id
+                                    AND step.status = 'failed'
+                              )
+                       ) AS failed,
+                       count(*) FILTER (
+                           WHERE journey.close_reason = 'delivery_unknown'
+                              OR EXISTS (
+                                  SELECT 1 FROM reactivation_journey_steps AS step
+                                  WHERE step.journey_id = journey.id
+                                    AND step.status = 'delivery_unknown'
+                              )
+                       ) AS delivery_unknown
+                FROM reactivation_journeys AS journey
+                LEFT JOIN marketing_consents AS consent
+                  ON consent.channel = journey.channel
+                 AND consent.user_id = journey.user_id
+                WHERE journey.created_at BETWEEN
+                      $1::timestamptz - $2 * interval '1 day' AND $1
+                """,
+                current,
+                period_days,
+            )
+        return OutcomeFunnel(**dict(row))
 
     async def _refresh_journey_outcome(self, now: datetime, target) -> None:
         async with self._database.acquire() as connection:
@@ -1666,16 +1758,28 @@ class ReactivationRepository:
                                OR consent.suppressed_at IS NOT NULL THEN 'suppressed'
                              WHEN activity.last_meaningful_inbound_at >
                                   COALESCE(journey.first_sent_at, journey.created_at)
+                              AND (
+                                  journey.first_sent_at IS NULL OR
+                                  activity.last_meaningful_inbound_at <=
+                                      journey.first_sent_at + interval '7 days'
+                              )
                                THEN 'responded'
-                             WHEN activity.next_active_booking_at >
-                                  COALESCE(journey.first_sent_at, journey.created_at)
+                             WHEN booking.booked_at IS NOT NULL OR (
+                                  journey.first_sent_at IS NULL AND
+                                  activity.next_active_booking_at > journey.created_at
+                             )
                                THEN 'booked'
                            END AS reason,
-                           activity.last_meaningful_inbound_at,
-                           activity.next_active_booking_at,
-                           activity.last_completed_visit_at,
+                           CASE
+                             WHEN activity.last_meaningful_inbound_at BETWEEN
+                                  journey.first_sent_at AND
+                                  journey.first_sent_at + interval '7 days'
+                             THEN activity.last_meaningful_inbound_at
+                           END AS replied_at,
+                           booking.booked_at,
+                           completed.completed_at,
                            journey.first_sent_at,
-                           journey.completed_visit_at
+                           journey.status
                     FROM reactivation_journeys AS journey
                     LEFT JOIN marketing_consents AS consent
                       ON consent.channel = journey.channel
@@ -1683,7 +1787,26 @@ class ReactivationRepository:
                     LEFT JOIN customer_activity_projection AS activity
                       ON activity.channel = journey.channel
                      AND activity.user_id = journey.user_id
-                    WHERE journey.id = $1 AND journey.status != 'closed'
+                     AND activity.identity_status = 'verified'
+                    LEFT JOIN LATERAL (
+                        SELECT min(projection.record_created_at) AS booked_at
+                        FROM yclients_booking_projection AS projection
+                        WHERE projection.client_id = activity.yclients_client_id
+                          AND NOT projection.deleted
+                          AND projection.status IN ('confirmed', 'completed')
+                          AND projection.record_created_at BETWEEN journey.first_sent_at
+                              AND journey.first_sent_at + interval '14 days'
+                    ) AS booking ON true
+                    LEFT JOIN LATERAL (
+                        SELECT min(projection.starts_at) AS completed_at
+                        FROM yclients_booking_projection AS projection
+                        WHERE projection.client_id = activity.yclients_client_id
+                          AND NOT projection.deleted
+                          AND projection.status = 'completed'
+                          AND projection.starts_at BETWEEN journey.first_sent_at
+                              AND journey.first_sent_at + interval '30 days'
+                    ) AS completed ON true
+                    WHERE journey.id = $1
                     FOR UPDATE OF journey SKIP LOCKED
                     """,
                     target["id"],
@@ -1695,44 +1818,34 @@ class ReactivationRepository:
                     "WHERE journey_id = $1 FOR UPDATE",
                     row["id"],
                 )
-                if (
-                    row["first_sent_at"] is not None
-                    and row["last_completed_visit_at"] is not None
-                    and row["last_completed_visit_at"] > row["first_sent_at"]
-                    and (
-                        row["completed_visit_at"] is None
-                        or row["last_completed_visit_at"] > row["completed_visit_at"]
-                    )
-                ):
-                    await connection.execute(
-                        """
-                        UPDATE reactivation_journeys
-                        SET completed_visit_at = $2, updated_at = $3
-                        WHERE id = $1
-                        """,
-                        row["id"],
-                        row["last_completed_visit_at"],
-                        now,
-                    )
-                if row["reason"] is None:
-                    return
                 await connection.execute(
                     """
                     UPDATE reactivation_journeys
-                    SET replied_at = CASE
-                            WHEN $2 = 'responded' THEN $3 ELSE replied_at END,
-                        booked_at = CASE
-                            WHEN $2 = 'booked' THEN $4 ELSE booked_at END
+                    SET replied_at = COALESCE(
+                            replied_at,
+                            $2::timestamptz
+                        ),
+                        booked_at = COALESCE(booked_at, $3::timestamptz),
+                        completed_visit_at = COALESCE(
+                            completed_visit_at, $4::timestamptz
+                        ),
+                        updated_at = CASE
+                            WHEN (replied_at IS NULL AND $2 IS NOT NULL)
+                              OR (booked_at IS NULL AND $3 IS NOT NULL)
+                              OR (completed_visit_at IS NULL AND $4 IS NOT NULL)
+                            THEN $5::timestamptz ELSE updated_at END
                     WHERE id = $1
                     """,
                     row["id"],
-                    row["reason"],
-                    row["last_meaningful_inbound_at"],
-                    row["next_active_booking_at"],
+                    row["replied_at"],
+                    row["booked_at"],
+                    row["completed_at"],
+                    now,
                 )
-                await self._close_journey(
-                    connection, row["id"], row["reason"], now
-                )
+                if row["status"] != "closed" and row["reason"] is not None:
+                    await self._close_journey(
+                        connection, row["id"], row["reason"], now
+                    )
 
     @staticmethod
     async def _close_journey(connection, journey_id: UUID, reason: str, now: datetime):

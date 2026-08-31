@@ -1,6 +1,7 @@
 """Owner-only controls for the reactivation marketing program."""
 
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -42,13 +43,23 @@ async def marketing_page(
     consent_id: UUID | None = Query(None),
     preview_version: UUID | None = Query(None),
     page: int = Query(1, ge=1),
+    period: int = Query(30),
+    outcome: Literal[
+        "all", "replied", "booked", "completed", "opted_out", "escalated"
+    ] = Query("all"),
+    delivery: Literal["all", "failed", "delivery_unknown"] = Query("all"),
 ):
+    if period not in {7, 30, 90}:
+        raise HTTPException(status_code=422, detail="unsupported outcome period")
     user = await _owner(request)
     data = await rdb.get_marketing_page_data(
         database.get_database(),
         actor_id=user.id,
         consent_id=consent_id,
         page=page,
+        period=period,
+        outcome=outcome,
+        delivery=delivery,
     )
     if preview_version is not None:
         try:
@@ -60,10 +71,11 @@ async def marketing_page(
         except (ActivationBlocked, ValueError) as error:
             raise _version_http_error(error) from error
     data["pagination"]["previous_url"] = (
-        _page_url(request, page - 1, consent_id) if page > 1 else None
+        _page_url(request, page - 1, consent_id, period, outcome, delivery)
+        if page > 1 else None
     )
     data["pagination"]["next_url"] = (
-        _page_url(request, page + 1, consent_id)
+        _page_url(request, page + 1, consent_id, period, outcome, delivery)
         if data["pagination"]["has_next"]
         else None
     )
@@ -242,10 +254,23 @@ def _redirect(request, suffix: str):
     return RedirectResponse(admin_url(request, f"/marketing{suffix}"), status_code=302)
 
 
-def _page_url(request, page: int, consent_id: UUID | None) -> str:
+def _page_url(
+    request,
+    page: int,
+    consent_id: UUID | None,
+    period: int = 30,
+    outcome: str = "all",
+    delivery: str = "all",
+) -> str:
     query = {"page": page}
     if consent_id is not None:
         query["consent_id"] = str(consent_id)
+    if period != 30:
+        query["period"] = period
+    if outcome != "all":
+        query["outcome"] = outcome
+    if delivery != "all":
+        query["delivery"] = delivery
     return f"{admin_url(request, '/marketing/')}?{urlencode(query)}"
 
 
