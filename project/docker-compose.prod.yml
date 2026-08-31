@@ -29,6 +29,7 @@ services:
     environment:
       ADMIN_ROOT_PATH: /admin
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:?set ADMIN_COOKIE_SECURE outside Git}
+      BUSINESS_ALERT_CHAT_ID: ${BUSINESS_ALERT_CHAT_ID:-}
 
   bot:
     image: ${BOT_IMAGE:-moroz-i-solntse-bot:local}

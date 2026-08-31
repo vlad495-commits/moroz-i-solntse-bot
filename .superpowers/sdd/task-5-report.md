@@ -1,30 +1,33 @@
-# Task 5 report
+# Task 5 report: versioned program, preview and activation gates
 
-- Base reviewed: `76dc989`.
-- Independent ownership review against the approved PostgreSQL design: `0 Critical / 0 Important / 0 Minor`.
-- RED: fresh canonical suite found a documentation-invariant conflict, `1 failed / 465 passed`; `test_documented_compose_commands.py` accepted only `../.env`, contradicting the approved process-only ownership test plan.
-- GREEN: `docker compose --env-file ../tmp/task5-empty.env --profile test run --rm --no-deps test pytest tests/unit/test_documented_compose_commands.py -q` — `4 passed`; its namespace cleanup was `containers=0 volumes=0 networks=0 images=0`.
-- Final namespace: `moroz-ownership-final-480af0f22b4e`. Fresh no-cache images `moroz-ownership-final-480af0f22b4e-test` and `moroz-ownership-final-480af0f22b4e-migrate:local` built successfully.
-- Exact final commands (with generated process-only credentials and no project `.env`):
-  - `docker compose --env-file ../tmp/task5-empty.env --profile migration --profile test build --no-cache migrate test`
-  - `docker compose --env-file ../tmp/task5-empty.env up -d postgres rabbitmq redis`
-  - `docker compose --env-file ../tmp/task5-empty.env --profile migration run --rm migrate`
-  - `docker compose --env-file ../tmp/task5-empty.env --profile migration run --rm --no-deps migrate alembic -c /app/alembic.ini current`
-  - `docker compose --env-file ../tmp/task5-empty.env --profile test run --rm test pytest -q -rs`
-- Standalone migration gate: upgrade only; `0006_yclients_booking_key (head)`. The separate full suite still contains its pre-existing disposable migration downgrade regression tests; the final verification database itself was never downgraded.
-- Full suite: `466 passed in 302.21s`; skipped tests `0`, including ownership tests.
-- Static: `git diff --check` clean; scoped secret-shaped match count `0`; current tracked adapter/smoke ownership `api_id` hit count `0`; temporary env removed.
-- Final cleanup: `containers=0 volumes=0 networks=0 images=0`. Shared/prototype/production/staging resources and live YCLIENTS were untouched.
-- Files: `changelog.md`, `Дорожная карта.md`, `План реализации.md`, `project/tests/unit/test_documented_compose_commands.py`, this report. Commit: `44bd231` (`docs: подтверждён local ownership YCLIENTS`).
-- External blocker: local/fake HTTP work is complete. Before one live lifecycle smoke, configure the test-branch additional field exactly `moroz_booking_key`, give separate cleanup consent for the existing pre-design active synthetic record, then give a new explicit lifecycle-smoke consent. No provider mutation was run here.
+- Base: `8661046`; branch/worktree: `codex/reactivation-v2` / `.worktrees/reactivation-v2`.
+- Scope: только Task 5. UI Task 6, runtime sends/providers, staging/production, deploy и push не затрагивались.
 
-## Final broad review follow-up
+## TDD
 
-- Findings fixed in one wave: post-cancel contradictions now require manual review without another mutation; normal docs require `../.env` while only the exact ownership implementation plan may use the ignored empty env; stale roadmap evidence is labelled pre-0006; the migration/full-suite wording distinguishes standalone upgrade-only verification from existing disposable downgrade regression tests; generic HTTP serialization no longer asserts adapter ownership.
-- Focused RED: `5 failed / 51 passed`; four post-cancel cases lacked `manual_review_required`, and one synthetic normal document incorrectly accepted the ownership empty env. Cleanup: `containers=0 volumes=0 networks=0 images=0`.
-- Focused GREEN: smoke + documented commands + HTTP contract — `56 passed in 2.03s`. Cleanup: `containers=0 volumes=0 networks=0 images=0`.
-- Final namespace: `moroz-ownership-review-final-841639ace4`; fresh no-cache test and migration images built successfully.
-- Standalone migration gate: upgrade only to `0006_yclients_booking_key (head)`.
-- Full suite: `472 passed in 312.18s`; skipped tests `0`. Its pre-existing disposable migration regression tests still exercise downgrade behavior independently of the standalone final database.
-- Static follow-up: `git diff --check` clean; scoped secret-shaped matches `0`; current adapter/smoke `api_id` hits `0`; stale `renewed design approval` hits `0`; exactly one roadmap `428 passed` occurrence remains and is labelled pre-ownership/pre-0006; exactly one current live gate remains.
-- Final cleanup: `containers=0 volumes=0 networks=0 images=0`; project `.env`, live YCLIENTS and shared/prototype/production/staging resources were untouched.
+- Initial RED in Docker: collection failed with expected `ModuleNotFoundError: moroz.reactivation.repository`.
+- Debug GREEN wave: `45 passed / 3 failed`; root causes were wrong Compose service placement, PyYAML `!override` parsing in the test, and an untyped PostgreSQL `CASE`. Each was fixed at source; focused repeat: `3 passed`.
+- Self-review RED: delivery callback could not instantiate the repository without `ADMIN_SESSION_SECRET`; reproduced as the expected constructor `TypeError`.
+- Self-review GREEN: `record_test_sent` works without the admin secret, while preview/HMAC without it fails closed; focused repeat: `2 passed`.
+
+## Implemented contract
+
+- `ReactivationRepository` implements `create_draft`, deterministic `preview_version`, `queue_test_send`, delivery-owned `record_test_sent`, `approve_legal`, transactional `activate_version`, gated `set_mode` and owner-only `get_dashboard`.
+- Preview starts from `marketing_consents LEFT JOIN customer_activity_projection`, applies the existing policy priority, assigns exactly one decision/reason per consent and persists aggregates/checksum/watermarks only.
+- HMAC-SHA256 uses `ADMIN_SESSION_SECRET` and canonical rows with opaque consent UUID plus safe decision/activity/booking/freshness state. A capture regression proves raw Telegram and YCLIENTS identifiers never enter the HMAC payload.
+- Activation and `set_mode("active")` lock settings/version rows and recheck `fresh_preview`, `same_checksum`, `current_watermarks`, `test_sent` and `legal_approved`. The `30:00` boundary is expired.
+- Test send targets only `BUSINESS_ALERT_CHAT_ID`, uses existing `outbound_messages` + `task_outbox`, and only a sent-delivery callback sets `test_sent_at`. Blank alert chat skips the test gate.
+- Preview creates no journey/outbox. Masked samples are response-only. Audits contain safe before/after metadata and no program message text.
+- Admin gets the existing optional `BUSINESS_ALERT_CHAT_ID` mapping in base and production Compose; no second recipient setting was added.
+
+## Verification
+
+- Final Task 5 + existing outbox suite: `54 passed in 107.36s`.
+- Affected admin/RBAC/audit regressions: `28 passed in 5.77s`.
+- Preview security/gate suite after strengthened assertions: `17 passed in 46.75s` before the final full run; the final full run includes the two later callback/secret cases.
+- `python -m compileall -q src/moroz/reactivation admin/reactivation_database.py`: exit `0` in Docker.
+- Merged base+production Compose structural config: `config --no-interpolate --quiet`, exit `0`.
+- Normal production interpolation stopped only because the local file intentionally lacks `BACKUP_ENCRYPTION_KEY`; no secret was invented or persisted.
+- `git diff --check`: clean (only the repository's existing LF/CRLF warnings).
+
+Commit message: `feat: добавить preview и активацию реактивации`.

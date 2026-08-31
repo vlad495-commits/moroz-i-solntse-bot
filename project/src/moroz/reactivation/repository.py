@@ -1,0 +1,755 @@
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+import hmac
+import json
+from hashlib import sha256
+from uuid import UUID, uuid4
+
+from moroz.messaging.repository import MessageRepository
+from moroz.reactivation.policy import (
+    REASON_PRIORITY,
+    EligibilityInput,
+    ProgramPolicy,
+    evaluate_eligibility,
+    template_checksum,
+)
+
+
+PREVIEW_TTL = timedelta(minutes=30)
+MODES = frozenset({"dry_run", "paused", "active"})
+
+
+class ActivationBlocked(ValueError):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewResult:
+    version_id: UUID
+    created_at: datetime
+    template_checksum: str
+    total: int
+    eligible: int
+    planned_main: int
+    planned_reminder: int
+    excluded_by_reason: dict[str, int]
+    population_watermark: datetime | None
+    history_watermark: datetime | None
+    recent_watermark: datetime | None
+    masked_samples: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _Population:
+    result: PreviewResult
+    checksum: str
+
+
+class ReactivationRepository:
+    def __init__(
+        self,
+        database,
+        *,
+        session_secret: str = "",
+        business_alert_chat_id: str = "",
+    ) -> None:
+        self._database = database
+        self._secret = session_secret.strip().encode("utf-8")
+        self.business_alert_chat_id = business_alert_chat_id.strip()
+
+    async def create_draft(
+        self,
+        policy: ProgramPolicy,
+        actor_id: int,
+        now: datetime,
+    ) -> UUID:
+        current = _aware(now)
+        checksum = template_checksum(policy)
+        version_id = uuid4()
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._require_owner(connection, actor_id)
+                await connection.fetchrow(
+                    "SELECT id FROM reactivation_settings WHERE id = 1 FOR UPDATE"
+                )
+                version_number = await connection.fetchval(
+                    "SELECT COALESCE(max(version_number), 0) + 1 "
+                    "FROM reactivation_program_versions"
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO reactivation_program_versions
+                        (id, version_number, status, inactivity_days,
+                         reminder_enabled, reminder_after_days, cooldown_days,
+                         main_text, reminder_text, template_checksum,
+                         created_by, created_at)
+                    VALUES ($1, $2, 'draft', $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    """,
+                    version_id,
+                    version_number,
+                    policy.inactivity_days,
+                    policy.reminder_after_days is not None,
+                    policy.reminder_after_days,
+                    policy.cooldown_days,
+                    policy.main_text,
+                    policy.reminder_text,
+                    checksum,
+                    actor_id,
+                    current,
+                )
+                await _audit(
+                    connection,
+                    actor_id=actor_id,
+                    action="reactivation.version_created",
+                    object_type="reactivation_program_version",
+                    object_id=str(version_id),
+                    before={},
+                    after={
+                        "status": "draft",
+                        "version_number": version_number,
+                        "template_checksum": checksum,
+                    },
+                )
+        return version_id
+
+    async def preview_version(
+        self,
+        version_id: UUID,
+        actor_id: int,
+        now: datetime,
+    ) -> PreviewResult:
+        current = _aware(now)
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._require_owner(connection, actor_id)
+                version = await self._version(connection, version_id, lock=True)
+                if version["status"] == "retired":
+                    raise ValueError("retired reactivation version cannot be previewed")
+                before = _version_audit(version)
+                population = await self._population(connection, version, current)
+                counts = {
+                    "total": population.result.total,
+                    "eligible": population.result.eligible,
+                    "planned_main": population.result.planned_main,
+                    "planned_reminder": population.result.planned_reminder,
+                    "excluded_by_reason": population.result.excluded_by_reason,
+                }
+                await connection.execute(
+                    """
+                    UPDATE reactivation_program_versions
+                    SET preview_created_at = $2,
+                        preview_checksum = $3,
+                        preview_counts = $4::jsonb,
+                        preview_population_watermark = $5,
+                        preview_history_watermark = $6,
+                        preview_recent_watermark = $7
+                    WHERE id = $1
+                    """,
+                    version_id,
+                    current,
+                    population.checksum,
+                    json.dumps(counts, sort_keys=True),
+                    population.result.population_watermark,
+                    population.result.history_watermark,
+                    population.result.recent_watermark,
+                )
+                await _audit(
+                    connection,
+                    actor_id=actor_id,
+                    action="reactivation.version_previewed",
+                    object_type="reactivation_program_version",
+                    object_id=str(version_id),
+                    before=before,
+                    after={
+                        **before,
+                        "preview_created_at": current.isoformat(),
+                        "preview_counts": counts,
+                    },
+                )
+        return population.result
+
+    async def queue_test_send(
+        self,
+        version_id: UUID,
+        actor_id: int,
+        now: datetime,
+    ) -> UUID | None:
+        _aware(now)
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._require_owner(connection, actor_id)
+                version = await self._version(connection, version_id, lock=True)
+                if version["status"] == "retired":
+                    raise ValueError("retired reactivation version cannot be tested")
+                self._require_same_template(version)
+                if not self.business_alert_chat_id:
+                    return None
+                outbound_id = await MessageRepository(
+                    self._database
+                ).enqueue_outbound_in_transaction(
+                    connection,
+                    channel="telegram",
+                    chat_id=self.business_alert_chat_id,
+                    text=version["main_text"],
+                    idempotency_key=(
+                        f"reactivation-test:{version_id}:{version['template_checksum']}"
+                    ),
+                )
+                await connection.execute(
+                    """
+                    UPDATE reactivation_program_versions
+                    SET test_sent_at = CASE
+                            WHEN test_outbound_id = $2 THEN test_sent_at
+                            ELSE NULL
+                        END,
+                        test_outbound_id = $2
+                    WHERE id = $1
+                    """,
+                    version_id,
+                    outbound_id,
+                )
+                await _audit(
+                    connection,
+                    actor_id=actor_id,
+                    action="reactivation.test_queued",
+                    object_type="reactivation_program_version",
+                    object_id=str(version_id),
+                    before={"test_outbound_id": _uuid_text(version["test_outbound_id"])},
+                    after={"test_outbound_id": str(outbound_id), "test_sent": False},
+                )
+        return outbound_id
+
+    async def record_test_sent(self, outbound_id: UUID, now: datetime) -> bool:
+        current = _aware(now)
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    """
+                    UPDATE reactivation_program_versions AS version
+                    SET test_sent_at = COALESCE(version.test_sent_at, $2)
+                    FROM outbound_messages AS outbound
+                    WHERE version.test_outbound_id = $1
+                      AND outbound.id = $1
+                      AND outbound.status = 'sent'
+                    RETURNING version.id, version.test_sent_at
+                    """,
+                    outbound_id,
+                    current,
+                )
+                if row is None:
+                    return False
+                await _audit(
+                    connection,
+                    actor_id=None,
+                    action="reactivation.test_sent",
+                    object_type="reactivation_program_version",
+                    object_id=str(row["id"]),
+                    before={"test_sent": False},
+                    after={"test_sent": True, "test_sent_at": row["test_sent_at"].isoformat()},
+                )
+        return True
+
+    async def approve_legal(
+        self,
+        actor_id: int,
+        reference: str,
+        now: datetime,
+    ) -> dict:
+        current = _aware(now)
+        legal_reference = reference.strip()
+        if not legal_reference or len(legal_reference) > 500:
+            raise ValueError("legal reference is required")
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._require_owner(connection, actor_id)
+                before = await connection.fetchrow(
+                    """
+                    SELECT legal_status, legal_reference, legal_approved_at,
+                           legal_approved_by
+                    FROM reactivation_settings WHERE id = 1 FOR UPDATE
+                    """
+                )
+                if before is None:
+                    raise RuntimeError("reactivation settings are missing")
+                row = await connection.fetchrow(
+                    """
+                    UPDATE reactivation_settings
+                    SET legal_status = 'approved', legal_reference = $1,
+                        legal_approved_at = $2, legal_approved_by = $3,
+                        updated_at = $2
+                    WHERE id = 1
+                    RETURNING legal_status, legal_reference, legal_approved_at,
+                              legal_approved_by
+                    """,
+                    legal_reference,
+                    current,
+                    actor_id,
+                )
+                await _audit(
+                    connection,
+                    actor_id=actor_id,
+                    action="reactivation.legal_approved",
+                    object_type="reactivation_settings",
+                    object_id="1",
+                    before=_legal_audit(before),
+                    after=_legal_audit(row),
+                )
+        return dict(row)
+
+    async def activate_version(
+        self,
+        version_id: UUID,
+        actor_id: int,
+        now: datetime,
+    ) -> dict:
+        current = _aware(now)
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._require_owner(connection, actor_id)
+                settings = await connection.fetchrow(
+                    "SELECT * FROM reactivation_settings WHERE id = 1 FOR UPDATE"
+                )
+                if settings is None:
+                    raise RuntimeError("reactivation settings are missing")
+                version = await self._version(connection, version_id, lock=True)
+                if version["status"] == "retired":
+                    raise ValueError("retired reactivation version cannot be activated")
+                await self._check_activation_gates(
+                    connection, settings, version, current
+                )
+                if not (
+                    version["status"] == "active"
+                    and settings["active_version_id"] == version_id
+                ):
+                    await connection.execute(
+                        """
+                        UPDATE reactivation_program_versions
+                        SET status = 'retired'
+                        WHERE status = 'active' AND id != $1
+                        """,
+                        version_id,
+                    )
+                    await connection.execute(
+                        """
+                        UPDATE reactivation_program_versions
+                        SET status = 'active', activated_by = $2, activated_at = $3
+                        WHERE id = $1
+                        """,
+                        version_id,
+                        actor_id,
+                        current,
+                    )
+                    await connection.execute(
+                        """
+                        UPDATE reactivation_settings
+                        SET active_version_id = $1,
+                            program_revision = program_revision + 1,
+                            updated_at = $2
+                        WHERE id = 1
+                        """,
+                        version_id,
+                        current,
+                    )
+                row = await self._version(connection, version_id)
+                await _audit(
+                    connection,
+                    actor_id=actor_id,
+                    action="reactivation.version_activated",
+                    object_type="reactivation_program_version",
+                    object_id=str(version_id),
+                    before=_version_audit(version),
+                    after=_version_audit(row),
+                )
+        return dict(row)
+
+    async def set_mode(
+        self,
+        mode: str,
+        actor_id: int,
+        now: datetime,
+    ) -> dict:
+        current = _aware(now)
+        if mode not in MODES:
+            raise ValueError("unsupported reactivation mode")
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._require_owner(connection, actor_id)
+                settings = await connection.fetchrow(
+                    "SELECT * FROM reactivation_settings WHERE id = 1 FOR UPDATE"
+                )
+                if settings is None:
+                    raise RuntimeError("reactivation settings are missing")
+                if mode == "active":
+                    if settings["active_version_id"] is None:
+                        raise ActivationBlocked("active_version")
+                    version = await self._version(
+                        connection, settings["active_version_id"], lock=True
+                    )
+                    await self._check_activation_gates(
+                        connection, settings, version, current
+                    )
+                row = await connection.fetchrow(
+                    """
+                    UPDATE reactivation_settings
+                    SET mode = $1,
+                        stopped_at = CASE
+                            WHEN $1 = 'active' THEN NULL
+                            ELSE $2::timestamptz
+                        END,
+                        updated_at = $2
+                    WHERE id = 1
+                    RETURNING *
+                    """,
+                    mode,
+                    current,
+                )
+                await _audit(
+                    connection,
+                    actor_id=actor_id,
+                    action="reactivation.mode_changed",
+                    object_type="reactivation_settings",
+                    object_id="1",
+                    before={"mode": settings["mode"]},
+                    after={"mode": mode},
+                )
+        return dict(row)
+
+    async def get_dashboard(self, actor_id: int) -> dict:
+        async with self._database.acquire() as connection:
+            await self._require_owner(connection, actor_id)
+            settings = await connection.fetchrow(
+                """
+                SELECT mode, active_version_id, legal_status, legal_reference,
+                       legal_approved_at, legal_approved_by, program_revision,
+                       stopped_at, updated_at
+                FROM reactivation_settings WHERE id = 1
+                """
+            )
+            versions = await connection.fetch(
+                """
+                SELECT id, version_number, status, inactivity_days,
+                       reminder_enabled, reminder_after_days, cooldown_days,
+                       main_text, reminder_text, template_checksum, created_by,
+                       created_at, activated_by, activated_at,
+                       preview_created_at, preview_counts,
+                       preview_population_watermark, preview_history_watermark,
+                       preview_recent_watermark, test_outbound_id, test_sent_at
+                FROM reactivation_program_versions
+                ORDER BY version_number DESC
+                """
+            )
+        if settings is None:
+            raise RuntimeError("reactivation settings are missing")
+        return {
+            "settings": dict(settings),
+            "versions": [dict(row) for row in versions],
+        }
+
+    async def _check_activation_gates(
+        self,
+        connection,
+        settings,
+        version,
+        now: datetime,
+    ) -> None:
+        preview_created_at = version["preview_created_at"]
+        if (
+            preview_created_at is None
+            or preview_created_at > now
+            or now - preview_created_at >= PREVIEW_TTL
+        ):
+            raise ActivationBlocked("fresh_preview")
+        self._require_same_template(version)
+        current = await self._population(connection, version, now)
+        stored_watermarks = (
+            version["preview_population_watermark"],
+            version["preview_history_watermark"],
+            version["preview_recent_watermark"],
+        )
+        current_watermarks = (
+            current.result.population_watermark,
+            current.result.history_watermark,
+            current.result.recent_watermark,
+        )
+        if version["preview_checksum"] != current.checksum or stored_watermarks != current_watermarks:
+            raise ActivationBlocked("current_watermarks")
+        if self.business_alert_chat_id:
+            test_ok = await connection.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM outbound_messages AS outbound
+                    WHERE outbound.id = $1
+                      AND outbound.status = 'sent'
+                      AND outbound.idempotency_key = $2
+                )
+                """,
+                version["test_outbound_id"],
+                f"reactivation-test:{version['id']}:{version['template_checksum']}",
+            )
+            if version["test_sent_at"] is None or not test_ok:
+                raise ActivationBlocked("test_sent")
+        if (
+            settings["legal_status"] != "approved"
+            or settings["legal_approved_at"] is None
+            or settings["legal_approved_by"] is None
+            or not settings["legal_reference"]
+        ):
+            raise ActivationBlocked("legal_approved")
+
+    def _require_same_template(self, version) -> None:
+        if version["template_checksum"] != template_checksum(_policy(version)):
+            raise ActivationBlocked("same_checksum")
+
+    async def _population(self, connection, version, now: datetime) -> _Population:
+        if not self._secret:
+            raise ValueError("admin session secret is required for reactivation preview")
+        policy = _policy(version)
+        rows = await connection.fetch(
+            """
+            SELECT consent.id AS consent_id,
+                   consent.channel, consent.user_id, consent.active,
+                   consent.proof_event_id, consent.proof_text_hash,
+                   consent.suppressed_at, consent.updated_at AS consent_updated_at,
+                   activity.identity_status, activity.last_completed_visit_at,
+                   activity.last_meaningful_inbound_at,
+                   activity.next_active_booking_at, activity.history_synced_at,
+                   activity.recent_bookings_synced_at, activity.sync_status,
+                   activity.updated_at AS activity_updated_at,
+                   COALESCE(journey.has_active, false) AS has_active_journey,
+                   journey.latest_started_at, journey.updated_at AS journey_updated_at,
+                   COALESCE(mode.enabled, false) AS human_mode,
+                   mode.mutated_at AS human_mode_updated_at,
+                   COALESCE(escalation.has_open, false) AS has_open_escalation,
+                   escalation.mutated_at AS escalation_updated_at
+            FROM marketing_consents AS consent
+            LEFT JOIN customer_activity_projection AS activity
+              ON activity.channel = consent.channel
+             AND activity.user_id = consent.user_id
+            LEFT JOIN LATERAL (
+                SELECT bool_or(item.status != 'closed') AS has_active,
+                       max(item.created_at) AS latest_started_at,
+                       max(item.updated_at) AS updated_at
+                FROM reactivation_journeys AS item
+                WHERE item.channel = consent.channel
+                  AND item.user_id = consent.user_id
+            ) AS journey ON true
+            LEFT JOIN LATERAL (
+                SELECT bool_or(item.enabled AND
+                               (item.expires_at IS NULL OR item.expires_at >= $1)) AS enabled,
+                       max(GREATEST(item.enabled_at,
+                           COALESCE(item.expires_at, item.enabled_at))) AS mutated_at
+                FROM human_mode AS item
+                WHERE item.customer_id = consent.user_id
+            ) AS mode ON true
+            LEFT JOIN LATERAL (
+                SELECT bool_or(item.status = 'open') AS has_open,
+                       max(GREATEST(item.created_at,
+                           COALESCE(item.resolved_at, item.created_at))) AS mutated_at
+                FROM escalations AS item
+                WHERE item.customer_id = consent.user_id
+            ) AS escalation ON true
+            ORDER BY consent.id
+            """,
+            now,
+        )
+        excluded = {reason: 0 for reason in REASON_PRIORITY}
+        canonical = []
+        samples = []
+        eligible = 0
+        population_watermark = None
+        history_watermark = None
+        recent_watermark = None
+        for row in rows:
+            value = EligibilityInput(
+                identity_status=row["identity_status"] or "unverified",
+                consent_active=bool(row["active"]),
+                consent_proven=(
+                    row["proof_event_id"] is not None
+                    and row["proof_text_hash"] is not None
+                ),
+                suppressed=row["suppressed_at"] is not None,
+                last_completed_visit_at=row["last_completed_visit_at"],
+                last_meaningful_inbound_at=row["last_meaningful_inbound_at"],
+                next_active_booking_at=row["next_active_booking_at"],
+                history_synced_at=row["history_synced_at"],
+                recent_bookings_synced_at=row["recent_bookings_synced_at"],
+                sync_status=row["sync_status"] or "never",
+                has_active_journey=bool(row["has_active_journey"]),
+                latest_journey_started_at=row["latest_started_at"],
+                human_mode=bool(row["human_mode"]),
+                has_open_escalation=bool(row["has_open_escalation"]),
+                deletion_active=False,
+            )
+            decision = evaluate_eligibility(value, policy, now)
+            if decision.eligible:
+                eligible += 1
+                if len(samples) < 5:
+                    samples.append(_mask(row["channel"], row["user_id"]))
+            else:
+                excluded[decision.reason] += 1
+            row_population = _max_timestamp(
+                row["consent_updated_at"],
+                row["activity_updated_at"],
+                row["journey_updated_at"],
+                row["human_mode_updated_at"],
+                row["escalation_updated_at"],
+            )
+            population_watermark = _max_timestamp(population_watermark, row_population)
+            history_watermark = _max_timestamp(history_watermark, row["history_synced_at"])
+            recent_watermark = _max_timestamp(
+                recent_watermark, row["recent_bookings_synced_at"]
+            )
+            canonical.append(
+                {
+                    "consent_id": str(row["consent_id"]),
+                    "decision": "eligible" if decision.eligible else "excluded",
+                    "reason": decision.reason,
+                    "activity_anchor_at": _iso(decision.activity_anchor_at),
+                    "next_active_booking_at": _iso(row["next_active_booking_at"]),
+                    "history_synced_at": _iso(row["history_synced_at"]),
+                    "recent_bookings_synced_at": _iso(row["recent_bookings_synced_at"]),
+                    "identity_status": value.identity_status,
+                    "consent_active": value.consent_active,
+                    "consent_proven": value.consent_proven,
+                    "suppressed": value.suppressed,
+                    "sync_status": value.sync_status,
+                    "has_active_journey": value.has_active_journey,
+                    "latest_journey_started_at": _iso(value.latest_journey_started_at),
+                    "human_mode": value.human_mode,
+                    "has_open_escalation": value.has_open_escalation,
+                    "population_mutated_at": _iso(row_population),
+                }
+            )
+        safe_payload = json.dumps(
+            {"template_checksum": version["template_checksum"], "rows": canonical},
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        checksum = hmac.new(self._secret, safe_payload, sha256).hexdigest()
+        result = PreviewResult(
+            version_id=version["id"],
+            created_at=now,
+            template_checksum=version["template_checksum"],
+            total=len(rows),
+            eligible=eligible,
+            planned_main=eligible,
+            planned_reminder=eligible if version["reminder_enabled"] else 0,
+            excluded_by_reason={key: value for key, value in excluded.items() if value},
+            population_watermark=population_watermark,
+            history_watermark=history_watermark,
+            recent_watermark=recent_watermark,
+            masked_samples=tuple(samples),
+        )
+        return _Population(result, checksum)
+
+    async def _version(self, connection, version_id: UUID, *, lock: bool = False):
+        row = await connection.fetchrow(
+            "SELECT * FROM reactivation_program_versions WHERE id = $1"
+            + (" FOR UPDATE" if lock else ""),
+            version_id,
+        )
+        if row is None:
+            raise ValueError("reactivation version not found")
+        return row
+
+    @staticmethod
+    async def _require_owner(connection, actor_id: int) -> None:
+        owner = await connection.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM admin_users
+                WHERE id = $1 AND role = 'owner' AND enabled = true
+            )
+            """,
+            actor_id,
+        )
+        if not owner:
+            raise PermissionError("reactivation backend is owner-only")
+
+
+def _policy(version) -> ProgramPolicy:
+    return ProgramPolicy(
+        inactivity_days=version["inactivity_days"],
+        reminder_after_days=(
+            version["reminder_after_days"] if version["reminder_enabled"] else None
+        ),
+        cooldown_days=version["cooldown_days"],
+        main_text=version["main_text"],
+        reminder_text=version["reminder_text"],
+    )
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("reactivation timestamp must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _max_timestamp(*values):
+    present = [value for value in values if value is not None]
+    return max(present) if present else None
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.astimezone(UTC).isoformat() if value is not None else None
+
+
+def _mask(channel: str, user_id: str) -> str:
+    visible = user_id[-4:] if len(user_id) > 4 else "*" * len(user_id)
+    return f"{channel}:***{visible}"
+
+
+def _uuid_text(value) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _version_audit(version) -> dict:
+    counts = version.get("preview_counts")
+    if isinstance(counts, str):
+        counts = json.loads(counts)
+    return {
+        "status": version["status"],
+        "version_number": version["version_number"],
+        "template_checksum": version["template_checksum"],
+        "preview_created_at": _iso(version["preview_created_at"]),
+        "preview_counts": counts,
+        "test_outbound_id": _uuid_text(version["test_outbound_id"]),
+        "test_sent": version["test_sent_at"] is not None,
+    }
+
+
+def _legal_audit(settings) -> dict:
+    return {
+        "legal_status": settings["legal_status"],
+        "legal_reference": settings["legal_reference"],
+        "legal_approved_at": _iso(settings["legal_approved_at"]),
+        "legal_approved_by": settings["legal_approved_by"],
+    }
+
+
+async def _audit(
+    connection,
+    *,
+    actor_id,
+    action: str,
+    object_type: str,
+    object_id: str,
+    before: dict,
+    after: dict,
+) -> None:
+    await connection.execute(
+        """
+        INSERT INTO admin_audit_events
+            (actor_id, action, object_type, object_id, before, after)
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+        """,
+        actor_id,
+        action,
+        object_type,
+        object_id,
+        json.dumps(before, ensure_ascii=False, sort_keys=True),
+        json.dumps(after, ensure_ascii=False, sort_keys=True),
+    )

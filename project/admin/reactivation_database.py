@@ -1,12 +1,97 @@
-"""PostgreSQL access for the internal reactivation admin queue."""
+"""PostgreSQL access for owner-only reactivation administration."""
 
 from datetime import UTC, datetime
+import os
 from uuid import UUID, uuid4
 
+from moroz.reactivation.policy import ProgramPolicy
+from moroz.reactivation.repository import ReactivationRepository
 from moroz.security.consent import ConsentService
 
 
 SEGMENTS = {"after_visit", "sleeping", "regular"}
+
+
+def _v2(database) -> ReactivationRepository:
+    return ReactivationRepository(
+        database,
+        session_secret=os.environ.get("ADMIN_SESSION_SECRET", ""),
+        business_alert_chat_id=os.environ.get("BUSINESS_ALERT_CHAT_ID", ""),
+    )
+
+
+async def create_draft(
+    database,
+    *,
+    actor_id: int,
+    policy: ProgramPolicy | None = None,
+    now: datetime | None = None,
+    inactivity_days: int = 90,
+    reminder_after_days: int | None = 5,
+    cooldown_days: int = 90,
+    main_text: str | None = None,
+    reminder_text: str | None = None,
+):
+    values = {}
+    if main_text is not None:
+        values["main_text"] = main_text
+    if reminder_text is not None:
+        values["reminder_text"] = reminder_text
+    selected = policy or ProgramPolicy(
+        inactivity_days=inactivity_days,
+        reminder_after_days=reminder_after_days,
+        cooldown_days=cooldown_days,
+        **values,
+    )
+    return await _v2(database).create_draft(
+        selected, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def preview_version(database, version_id: UUID, *, actor_id: int, now=None):
+    return await _v2(database).preview_version(
+        version_id, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def queue_test_send(database, version_id: UUID, *, actor_id: int, now=None):
+    return await _v2(database).queue_test_send(
+        version_id, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def record_test_sent(database, outbound_id: UUID, *, now=None):
+    return await _v2(database).record_test_sent(
+        outbound_id, now or datetime.now(UTC)
+    )
+
+
+async def approve_legal(
+    database,
+    *,
+    actor_id: int,
+    reference: str,
+    now=None,
+):
+    return await _v2(database).approve_legal(
+        actor_id, reference, now or datetime.now(UTC)
+    )
+
+
+async def activate_version(database, version_id: UUID, *, actor_id: int, now=None):
+    return await _v2(database).activate_version(
+        version_id, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def set_mode(database, mode: str, *, actor_id: int, now=None):
+    return await _v2(database).set_mode(
+        mode, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def get_dashboard(database, *, actor_id: int):
+    return await _v2(database).get_dashboard(actor_id)
 
 
 async def get_settings(database):

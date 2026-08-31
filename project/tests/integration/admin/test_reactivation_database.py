@@ -8,13 +8,18 @@ import pytest_asyncio
 from moroz.common.db import Database
 from moroz.security.consent import ConsentService
 from reactivation_database import (
+    activate_version as activate_program_version,
+    approve_legal,
     create_campaign,
+    create_draft,
+    get_dashboard,
     get_marketing_consent,
     get_page_data,
     get_settings,
     queue_campaign,
     save_settings,
     set_marketing_consent,
+    preview_version,
 )
 
 
@@ -297,3 +302,47 @@ async def test_active_human_mode_is_never_queued(database, migrated_database_url
         assert await connection.fetchval(
             "SELECT count(*) FROM reactivation_deliveries"
         ) == 0
+
+
+async def test_v2_admin_wrappers_keep_owner_gate_and_dry_run(monkeypatch, database):
+    monkeypatch.setenv("ADMIN_SESSION_SECRET", "admin-wrapper-secret")
+    monkeypatch.setenv("BUSINESS_ALERT_CHAT_ID", "")
+    async with database.acquire() as connection:
+        owner_id = await connection.fetchval(
+            """
+            INSERT INTO admin_users
+                (username, role, password_hash, totp_secret, enabled)
+            VALUES ('wrapper-owner', 'owner', 'x', 'x', true)
+            RETURNING id
+            """
+        )
+        admin_id = await connection.fetchval(
+            """
+            INSERT INTO admin_users
+                (username, role, password_hash, totp_secret, enabled)
+            VALUES ('wrapper-admin', 'admin', 'x', 'x', true)
+            RETURNING id
+            """
+        )
+
+    with pytest.raises(PermissionError):
+        await create_draft(database, actor_id=admin_id, now=NOW)
+    version_id = await create_draft(database, actor_id=owner_id, now=NOW)
+    preview = await preview_version(
+        database, version_id, actor_id=owner_id, now=NOW
+    )
+    await approve_legal(
+        database,
+        actor_id=owner_id,
+        reference="wrapper-legal-review",
+        now=NOW,
+    )
+    activated = await activate_program_version(
+        database, version_id, actor_id=owner_id, now=NOW
+    )
+    dashboard = await get_dashboard(database, actor_id=owner_id)
+
+    assert preview.total == 0
+    assert activated["status"] == "active"
+    assert dashboard["settings"]["mode"] == "dry_run"
+    assert dashboard["settings"]["active_version_id"] == version_id
