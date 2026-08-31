@@ -816,11 +816,11 @@ async def _audit(
 async def _lock_population(connection) -> None:
     await connection.execute(
         """
-        LOCK TABLE marketing_consents,
-                   customer_activity_projection,
-                   reactivation_journeys,
+        LOCK TABLE escalations,
                    human_mode,
-                   escalations
+                   marketing_consents,
+                   customer_activity_projection,
+                   reactivation_journeys
         IN SHARE MODE
         """
     )

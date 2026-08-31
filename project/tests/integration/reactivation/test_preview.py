@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -7,6 +8,7 @@ import pytest
 import pytest_asyncio
 
 from moroz.common.db import Database
+from moroz.escalation.service import EscalationService
 from moroz.reactivation.policy import ProgramPolicy
 import moroz.reactivation.repository as repository_module
 from moroz.reactivation.repository import ActivationBlocked, ReactivationRepository
@@ -169,6 +171,76 @@ async def _test_outbound_id(database, version_id):
             "SELECT test_outbound_id FROM reactivation_program_versions WHERE id = $1",
             version_id,
         )
+
+
+class _PauseAfterEscalationWrite:
+    def __init__(self, connection, written, release):
+        self._connection = connection
+        self._written = written
+        self._release = release
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    async def execute(self, query, *args):
+        result = await self._connection.execute(query, *args)
+        if "INSERT INTO escalations" in query:
+            self._written.set()
+            await self._release.wait()
+        return result
+
+
+class _EscalationTestDatabase:
+    def __init__(self, database_url, *, written=None, release=None, pid=None):
+        self._database_url = database_url
+        self._written = written
+        self._release = release
+        self._pid = pid
+
+    @asynccontextmanager
+    async def acquire(self):
+        connection = await asyncpg.connect(self._database_url)
+        try:
+            if self._pid is not None:
+                self._pid.set_result(
+                    await connection.fetchval("SELECT pg_backend_pid()")
+                )
+            if self._written is None:
+                yield connection
+            else:
+                yield _PauseAfterEscalationWrite(
+                    connection, self._written, self._release
+                )
+        finally:
+            await connection.close()
+
+
+def _capture_activation_lock_pid(monkeypatch):
+    pid = asyncio.get_running_loop().create_future()
+    original = repository_module._lock_population
+
+    async def observed(connection):
+        if not pid.done():
+            pid.set_result(await connection.fetchval("SELECT pg_backend_pid()"))
+        await original(connection)
+
+    monkeypatch.setattr(repository_module, "_lock_population", observed)
+    return pid
+
+
+async def _wait_until_lock_wait(database_url, pid):
+    observer = await asyncpg.connect(database_url)
+    try:
+        for _ in range(250):
+            if await observer.fetchval(
+                "SELECT wait_event_type = 'Lock' FROM pg_stat_activity WHERE pid = $1",
+                pid,
+            ):
+                return
+            await asyncio.sleep(0.02)
+    finally:
+        await observer.close()
+    raise AssertionError("backend did not wait for the table lock")
 
 
 async def test_preview_counts_every_consent_once_by_priority(repository, database):
@@ -676,6 +748,173 @@ async def test_activation_fence_serializes_concurrent_consent_writer(
         assert not await connection.fetchval(
             "SELECT active FROM marketing_consents WHERE user_id = '123456789'"
         )
+
+
+@pytest.mark.parametrize("transition", ["activate", "set_mode_active"])
+async def test_escalation_writer_first_never_deadlocks_with_activation_fence(
+    repository, database, migrated_database_url, monkeypatch, transition
+):
+    value, version_id, owner_id = repository
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+    await _ready(value, version_id, owner_id)
+    if transition == "set_mode_active":
+        await value.activate_version(version_id, owner_id, NOW)
+        await value.set_mode("paused", owner_id, NOW)
+
+    escalation_written = asyncio.Event()
+    release_writer = asyncio.Event()
+    writer_database = _EscalationTestDatabase(
+        migrated_database_url,
+        written=escalation_written,
+        release=release_writer,
+    )
+    writer = asyncio.create_task(
+        EscalationService(writer_database).create_low_rating(
+            customer_id="123456789", booking_key=uuid4(), rating=1
+        )
+    )
+    await escalation_written.wait()
+    activation_pid = _capture_activation_lock_pid(monkeypatch)
+    activation = asyncio.create_task(
+        value.activate_version(version_id, owner_id, NOW)
+        if transition == "activate"
+        else value.set_mode("active", owner_id, NOW)
+    )
+    await _wait_until_lock_wait(migrated_database_url, await activation_pid)
+    assert not activation.done()
+
+    release_writer.set()
+    writer_result, activation_result = await asyncio.wait_for(
+        asyncio.gather(writer, activation, return_exceptions=True), timeout=5
+    )
+
+    assert not isinstance(writer_result, asyncpg.DeadlockDetectedError)
+    assert not isinstance(activation_result, asyncpg.DeadlockDetectedError)
+    assert isinstance(writer_result, UUID)
+    assert isinstance(activation_result, ActivationBlocked)
+    assert activation_result.code == "current_watermarks"
+
+
+@pytest.mark.parametrize("transition", ["activate", "set_mode_active"])
+async def test_activation_first_makes_escalation_service_wait_without_deadlock(
+    repository, database, migrated_database_url, transition
+):
+    value, version_id, owner_id = repository
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+    await _ready(value, version_id, owner_id)
+    if transition == "set_mode_active":
+        await value.activate_version(version_id, owner_id, NOW)
+        await value.set_mode("paused", owner_id, NOW)
+
+    population_checked = asyncio.Event()
+    release_activation = asyncio.Event()
+    original_population = value._population
+
+    async def pause_after_population(connection, version, now):
+        result = await original_population(connection, version, now)
+        population_checked.set()
+        await release_activation.wait()
+        return result
+
+    value._population = pause_after_population
+    activation = asyncio.create_task(
+        value.activate_version(version_id, owner_id, NOW)
+        if transition == "activate"
+        else value.set_mode("active", owner_id, NOW)
+    )
+    await population_checked.wait()
+    writer_pid = asyncio.get_running_loop().create_future()
+    writer = asyncio.create_task(
+        EscalationService(
+            _EscalationTestDatabase(migrated_database_url, pid=writer_pid)
+        ).create_low_rating(
+            customer_id="123456789", booking_key=uuid4(), rating=1
+        )
+    )
+    await _wait_until_lock_wait(migrated_database_url, await writer_pid)
+    assert not writer.done()
+    release_activation.set()
+    activation_result, writer_result = await asyncio.wait_for(
+        asyncio.gather(activation, writer, return_exceptions=True), timeout=5
+    )
+
+    assert not isinstance(writer_result, asyncpg.DeadlockDetectedError)
+    assert not isinstance(activation_result, asyncpg.DeadlockDetectedError)
+    assert isinstance(writer_result, UUID)
+    assert activation_result[
+        "status" if transition == "activate" else "mode"
+    ] == "active"
+
+
+async def test_deletion_order_never_deadlocks_with_activation_fence(
+    repository, database, migrated_database_url, monkeypatch
+):
+    value, version_id, owner_id = repository
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+        escalation_id = uuid4()
+        await connection.execute(
+            """
+            INSERT INTO escalations
+                (id, source, customer_id, status, reason_code, payload)
+            VALUES ($1, 'test', '123456789', 'open', 'test', '{}'::jsonb)
+            """,
+            escalation_id,
+        )
+        await connection.execute(
+            """
+            INSERT INTO human_mode
+                (customer_id, enabled, reason_code, escalation_id, enabled_at)
+            VALUES ('123456789', true, 'test', $1, $2)
+            """,
+            escalation_id,
+            NOW,
+        )
+    await _ready(value, version_id, owner_id)
+
+    escalation_deleted = asyncio.Event()
+    release_deletion = asyncio.Event()
+
+    async def deletion_probe():
+        connection = await asyncpg.connect(migrated_database_url)
+        try:
+            async with connection.transaction():
+                await connection.execute(
+                    "DELETE FROM escalations WHERE customer_id = '123456789'"
+                )
+                escalation_deleted.set()
+                await release_deletion.wait()
+                await connection.execute(
+                    "DELETE FROM human_mode WHERE customer_id = '123456789'"
+                )
+                await connection.execute(
+                    "DELETE FROM marketing_consents "
+                    "WHERE channel = 'telegram' AND user_id = '123456789'"
+                )
+        finally:
+            await connection.close()
+
+    deletion = asyncio.create_task(deletion_probe())
+    await escalation_deleted.wait()
+    activation_pid = _capture_activation_lock_pid(monkeypatch)
+    activation = asyncio.create_task(
+        value.activate_version(version_id, owner_id, NOW)
+    )
+    await _wait_until_lock_wait(migrated_database_url, await activation_pid)
+    assert not activation.done()
+
+    release_deletion.set()
+    deletion_result, activation_result = await asyncio.wait_for(
+        asyncio.gather(deletion, activation, return_exceptions=True), timeout=5
+    )
+
+    assert not isinstance(deletion_result, asyncpg.DeadlockDetectedError)
+    assert not isinstance(activation_result, asyncpg.DeadlockDetectedError)
+    assert deletion_result is None
+    assert isinstance(activation_result, ActivationBlocked)
+    assert activation_result.code == "current_watermarks"
 
 
 async def test_blank_alert_chat_skips_test_gate(database, actors):
