@@ -93,7 +93,7 @@ async def reactivation_consent(
     user = await get_current_user(request)
     require_role(user, {"owner"})
     validate_csrf(user, csrf_token)
-    if channel != "telegram" or action not in {"grant", "revoke"}:
+    if channel != "telegram" or action != "revoke":
         raise HTTPException(status_code=422, detail="invalid consent action")
     if not user_id.strip() or not consent_version.strip():
         raise HTTPException(status_code=422, detail="consent fields required")
@@ -104,23 +104,22 @@ async def reactivation_consent(
         channel=channel,
         user_id=user_id.strip(),
         consent_version=consent_version.strip(),
-        active=action == "grant",
+        active=False,
     )
     await _audit(
         request,
         user,
         action=f"reactivation.consent_{action}",
         object_type="marketing_consent",
-        object_id=f"{channel}:{user_id.strip()}",
+        object_id=str(result["id"]),
         before=None,
         after={
             "active": result["active"],
             "consent_version": result["consent_version"],
         },
     )
-    status = "granted" if action == "grant" else "revoked"
     return RedirectResponse(
-        url=admin_url(request, f"/reactivation/?consent={status}"),
+        url=admin_url(request, "/reactivation/?consent=revoked"),
         status_code=302,
     )
 

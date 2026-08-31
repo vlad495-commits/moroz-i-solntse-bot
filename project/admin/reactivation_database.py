@@ -1,7 +1,9 @@
 """PostgreSQL access for the internal reactivation admin queue."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
+
+from moroz.security.consent import ConsentService
 
 
 SEGMENTS = {"after_visit", "sleeping", "regular"}
@@ -88,41 +90,36 @@ async def set_marketing_consent(
 ):
     if not channel.strip() or not user_id.strip() or not consent_version.strip():
         raise ValueError("marketing consent fields are required")
+    if active:
+        raise ValueError("admin cannot grant marketing consent")
+    source_event_id = str(uuid4())
+    occurred_at = datetime.now(UTC)
+    service = ConsentService(database)
     async with database.acquire() as connection:
-        row = await connection.fetchrow(
-            """
-            INSERT INTO marketing_consents
-                (id, channel, user_id, consent_version, active,
-                 granted_at, revoked_at)
-            VALUES (
-                $1, $2, $3, $4, $5,
-                CASE WHEN $5 THEN now() END,
-                CASE WHEN $5 THEN NULL ELSE now() END
+        async with connection.transaction():
+            event = {
+                "channel": channel.strip(),
+                "user_id": user_id.strip(),
+                "source": "admin_revoke",
+                "source_event_id": source_event_id,
+                "occurred_at": occurred_at,
+                "connection": connection,
+            }
+            await service.revoke_marketing(**event)
+            await service.suppress_marketing(
+                **event,
+                reason="admin_revoke",
             )
-            ON CONFLICT (channel, user_id) DO UPDATE SET
-                consent_version = CASE
-                    WHEN EXCLUDED.active THEN EXCLUDED.consent_version
-                    ELSE marketing_consents.consent_version
-                END,
-                active = EXCLUDED.active,
-                granted_at = CASE
-                    WHEN EXCLUDED.active THEN now()
-                    ELSE marketing_consents.granted_at
-                END,
-                revoked_at = CASE
-                    WHEN EXCLUDED.active THEN NULL
-                    ELSE now()
-                END,
-                updated_at = now()
-            RETURNING id, channel, user_id, consent_version, active,
-                      granted_at, revoked_at, updated_at
-            """,
-            uuid4(),
-            channel.strip(),
-            user_id.strip(),
-            consent_version.strip(),
-            active,
-        )
+            row = await connection.fetchrow(
+                """
+                SELECT id, channel, user_id, consent_version, active,
+                       granted_at, revoked_at, updated_at
+                FROM marketing_consents
+                WHERE channel = $1 AND user_id = $2
+                """,
+                channel.strip(),
+                user_id.strip(),
+            )
     return dict(row)
 
 

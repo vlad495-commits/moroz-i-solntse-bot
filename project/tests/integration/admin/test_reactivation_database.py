@@ -6,6 +6,7 @@ import pytest
 import pytest_asyncio
 
 from moroz.common.db import Database
+from moroz.security.consent import ConsentService
 from reactivation_database import (
     create_campaign,
     get_marketing_consent,
@@ -65,6 +66,17 @@ async def _seed_booking(connection, *, customer_id: str, completed_at: datetime)
     )
 
 
+async def _grant_proven_marketing_consent(database, user_id: str):
+    return await ConsentService(database).grant_marketing(
+        channel="telegram",
+        user_id=user_id,
+        proof_text="Точный тестовый текст рекламного согласия",
+        source="telegram_explicit",
+        source_event_id=f"test-callback:{uuid4()}",
+        occurred_at=NOW,
+    )
+
+
 async def test_processing_consent_never_becomes_marketing_consent(
     database,
     migrated_database_url,
@@ -85,17 +97,44 @@ async def test_processing_consent_never_becomes_marketing_consent(
     ) is None
 
 
-async def test_marketing_consent_grant_and_revoke_are_explicit(database):
-    granted = await set_marketing_consent(
-        database,
-        channel="telegram",
-        user_id="42",
-        consent_version="marketing-v1",
-        active=True,
-    )
-    assert granted["active"] is True
-    assert granted["granted_at"] is not None
-    assert granted["revoked_at"] is None
+async def test_admin_cannot_grant_but_can_revoke_marketing_consent(
+    database, migrated_database_url
+):
+    with pytest.raises(ValueError, match="cannot grant"):
+        await set_marketing_consent(
+            database,
+            channel="telegram",
+            user_id="42",
+            consent_version="marketing-v1",
+            active=True,
+        )
+
+    connection = await asyncpg.connect(migrated_database_url)
+    event_id = uuid4()
+    try:
+        await connection.execute(
+            """
+            INSERT INTO marketing_consent_events
+                (id, channel, user_id, action, consent_version,
+                 proof_text_hash, source, source_event_id, occurred_at)
+            VALUES ($1, 'telegram', '42', 'granted', 'marketing-v1',
+                    'proof', 'telegram_explicit', 'callback-42', now())
+            """,
+            event_id,
+        )
+        await connection.execute(
+            """
+            INSERT INTO marketing_consents
+                (id, channel, user_id, consent_version, active, granted_at,
+                 source, proof_event_id, proof_text_hash)
+            VALUES ($1, 'telegram', '42', 'marketing-v1', true, now(),
+                    'telegram_explicit', $2, 'proof')
+            """,
+            uuid4(),
+            event_id,
+        )
+    finally:
+        await connection.close()
 
     revoked = await set_marketing_consent(
         database,
@@ -106,7 +145,6 @@ async def test_marketing_consent_grant_and_revoke_are_explicit(database):
     )
     assert revoked["active"] is False
     assert revoked["consent_version"] == "marketing-v1"
-    assert revoked["granted_at"] == granted["granted_at"]
     assert revoked["revoked_at"] is not None
 
 
@@ -162,13 +200,7 @@ async def test_campaign_queue_uses_deterministic_segments_and_active_consent(
             )
     finally:
         await connection.close()
-    await set_marketing_consent(
-        database,
-        channel="telegram",
-        user_id=customer_id,
-        consent_version="marketing-v1",
-        active=True,
-    )
+    await _grant_proven_marketing_consent(database, customer_id)
     await save_settings(
         database,
         after_visit_days=1,
@@ -205,13 +237,7 @@ async def test_revoked_consent_is_never_queued(database, migrated_database_url):
         )
     finally:
         await connection.close()
-    await set_marketing_consent(
-        database,
-        channel="telegram",
-        user_id="revoked",
-        consent_version="marketing-v1",
-        active=True,
-    )
+    await _grant_proven_marketing_consent(database, "revoked")
     await set_marketing_consent(
         database,
         channel="telegram",
@@ -259,13 +285,7 @@ async def test_active_human_mode_is_never_queued(database, migrated_database_url
         )
     finally:
         await connection.close()
-    await set_marketing_consent(
-        database,
-        channel="telegram",
-        user_id="human-mode",
-        consent_version="marketing-v1",
-        active=True,
-    )
+    await _grant_proven_marketing_consent(database, "human-mode")
 
     campaign_id = await create_campaign(
         database, segment="sleeping", created_by=1

@@ -147,21 +147,22 @@ async def test_valid_settings_are_saved_and_audited(monkeypatch):
 @pytest.mark.asyncio
 async def test_consent_action_is_allowlisted_and_persisted(monkeypatch):
     calls = []
+    audits = []
 
     async def current_user(_request):
         return _user()
 
     async def set_consent(_database, **values):
         calls.append(values)
-        return values
+        return {"id": UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), **values}
 
-    async def no_audit(**_values):
-        return None
+    async def capture_audit(**values):
+        audits.append(values)
 
     monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
     monkeypatch.setattr(reactivation_routes.database, "get_database", lambda: object())
     monkeypatch.setattr(reactivation_routes.rdb, "set_marketing_consent", set_consent)
-    monkeypatch.setattr(reactivation_routes, "record_audit", no_audit)
+    monkeypatch.setattr(reactivation_routes, "record_audit", capture_audit)
 
     with pytest.raises(HTTPException) as invalid:
         await reactivation_routes.reactivation_consent(
@@ -170,6 +171,15 @@ async def test_consent_action_is_allowlisted_and_persisted(monkeypatch):
             user_id="42",
             consent_version="marketing-v1",
             action="private-action",
+            csrf_token="known-csrf",
+        )
+    with pytest.raises(HTTPException) as forbidden_grant:
+        await reactivation_routes.reactivation_consent(
+            _request(),
+            channel="telegram",
+            user_id="42",
+            consent_version="marketing-v1",
+            action="grant",
             csrf_token="known-csrf",
         )
     response = await reactivation_routes.reactivation_consent(
@@ -182,6 +192,7 @@ async def test_consent_action_is_allowlisted_and_persisted(monkeypatch):
     )
 
     assert invalid.value.status_code == 422
+    assert forbidden_grant.value.status_code == 422
     assert response.headers["location"] == "/admin/reactivation/?consent=revoked"
     assert calls == [{
         "channel": "telegram",
@@ -189,6 +200,8 @@ async def test_consent_action_is_allowlisted_and_persisted(monkeypatch):
         "consent_version": "marketing-v1",
         "active": False,
     }]
+    assert audits[0]["object_id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    assert "42" not in repr(audits[0])
 
 
 @pytest.mark.asyncio
