@@ -361,6 +361,8 @@ def test_owner_only_navigation_links_are_hidden_from_admin_role():
     assert "/stats" in base
     assert "/prompt/" in base
     assert "/bot-control/" in base
+    assert "/marketing/" in base
+    assert "Маркетинговые коммуникации" in base
 
 
 def test_review_cases_module_is_not_exposed():

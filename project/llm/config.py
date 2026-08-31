@@ -108,11 +108,14 @@ NON_TEXT_REPLY = os.getenv(
     "Я понимаю только текстовые сообщения. Напишите ваш вопрос текстом, пожалуйста.",
 )
 POLICY_URL = os.getenv("POLICY_URL", "https://example.com/privacy")
-CONSENT_PROMPT = os.getenv("CONSENT_PROMPT") or (
+MARKETING_CONSENT_CLAUSE = (
+    "Хочу получать в этом боте сообщения об акциях, новостях и "
+    "специальных предложениях (включая рекламные)"
+)
+CONSENT_PROMPT = (
     "Чтобы начать, отметьте согласия и нажмите «Готово»\n\n"
     "1) Согласен с политикой конфиденциальности\n"
-    "2) Хочу получать в этом боте сообщения об акциях, новостях и "
-    "специальных предложениях (включая рекламные)\n\n"
+    f"2) {MARKETING_CONSENT_CLAUSE}\n\n"
     '<a href="{policy_url}">Политика конфиденциальности</a>'
 )
 CONSENT_PII_LABEL = os.getenv("CONSENT_PII_LABEL") or "Согласен с политикой"
@@ -124,6 +127,13 @@ CONSENT_NEED_PII_REPLY = os.getenv("CONSENT_NEED_PII_REPLY") or (
 CONSENT_THANKS = os.getenv("CONSENT_THANKS") or (
     "Спасибо! Теперь я могу ответить на ваш вопрос."
 )
+MARKETING_ENABLE_LABEL = "Получать сообщения"
+MARKETING_DISABLE_LABEL = "Не писать"
+MARKETING_STATUS_REPLY = (
+    "Здесь можно включить или отключить рекламные сообщения."
+)
+MARKETING_ENABLED_REPLY = "Рекламные сообщения включены."
+MARKETING_DISABLED_REPLY = "Больше не буду присылать рекламные сообщения."
 
 # --- Логирование ---
 LOG_FILE = os.getenv("LOG_FILE", "/app/logs/bot.log")

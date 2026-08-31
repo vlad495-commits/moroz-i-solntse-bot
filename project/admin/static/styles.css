@@ -1586,6 +1586,31 @@ button:hover {
 
 .reactivation-stack { display: grid; gap: 20px; }
 .reactivation-page > .card { margin-bottom: 20px; }
+.marketing-header,
+.marketing-status,
+.inline-form {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.marketing-columns,
+.gate-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+}
+.gate-grid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.gate-grid > div { display: grid; gap: 6px; }
+.status-badge { padding: 7px 10px; border-radius: 999px; font-weight: 800; }
+.status-dry_run { background: #fffaeb; color: #b54708; }
+.status-active { background: #ecfdf3; color: #067647; }
+.status-paused { background: #f2f4f7; color: #344054; }
+.metric-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; }
+.activation-panel { display: grid; gap: 14px; }
+.legacy-archive { margin-bottom: 20px; }
 .form-card { display: grid; gap: 12px; }
 .form-card label { display: grid; gap: 6px; font-weight: 700; }
 .form-card input,
@@ -1594,6 +1619,7 @@ button:hover {
 
 @media (max-width: 860px) {
     .reactivation-grid { grid-template-columns: 1fr; }
+    .marketing-columns { grid-template-columns: 1fr; }
 }
 
 .statistics-page { display: flex; flex-direction: column; gap: 6px; }

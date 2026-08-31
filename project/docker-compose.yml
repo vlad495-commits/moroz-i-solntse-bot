@@ -22,9 +22,11 @@ services:
       - ../changelog.md:/repo/changelog.md:ro
       - ../checklist.md:/repo/checklist.md:ro
       - ../docs/archive:/repo/docs/archive:ro
+      - ../docs/architecture:/docs/architecture:ro
       - ../docs/audits:/repo/docs/audits:ro
       - ../docs/project:/repo/docs/project:ro
       - ../docs/superpowers/plans:/repo/docs/superpowers/plans:ro
+      - ../moroz-i-solntse-full-architecture.html:/moroz-i-solntse-full-architecture.html:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -263,6 +265,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
       ADMIN_SESSION_TTL_SEC: ${ADMIN_SESSION_TTL_SEC:-86400}
+      BUSINESS_ALERT_CHAT_ID: ${BUSINESS_ALERT_CHAT_ID:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}

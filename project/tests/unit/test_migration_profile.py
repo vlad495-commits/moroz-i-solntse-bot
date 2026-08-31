@@ -142,6 +142,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "DATABASE_URL",
         "REDIS_URL",
         "RABBITMQ_METRICS_URL",
+        "BUSINESS_ALERT_CHAT_ID",
     } <= set(services["admin"]["environment"])
     assert "RABBITMQ_USER" not in services["admin"]["environment"]
     assert "RABBITMQ_PASSWORD" not in services["admin"]["environment"]
@@ -219,6 +220,18 @@ def test_compose_process_environment_overrides_external_test_credentials():
     }
     for name in ("worker", "redis", "postgres"):
         assert "env_file" not in services[name]
+
+
+def test_business_alert_chat_is_available_to_admin_in_base_and_production():
+    base = compose_services()
+    production_source = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    admin_override = production_source.split("\n  admin:\n", 1)[1].split(
+        "\n  bot:\n", 1
+    )[0]
+
+    expected = "${BUSINESS_ALERT_CHAT_ID:-}"
+    assert base["admin"]["environment"]["BUSINESS_ALERT_CHAT_ID"] == expected
+    assert f"BUSINESS_ALERT_CHAT_ID: {expected}" in admin_override
 
 
 def test_retention_setting_is_limited_to_runtime_owners():

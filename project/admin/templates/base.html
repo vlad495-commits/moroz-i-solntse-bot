@@ -36,8 +36,8 @@
                 <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg></span>Эскалации
             </a>
             {% if user.role == 'owner' %}
-                <a href="{{ request.scope.get('root_path', '') }}/reactivation/" class="{% if path.startswith('/reactivation') %}active{% endif %}">
-                    <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M5 4v5h5"/></svg></span>Реактивация
+                <a href="{{ request.scope.get('root_path', '') }}/marketing/" class="{% if path.startswith('/marketing') %}active{% endif %}">
+                    <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M5 4v5h5"/></svg></span>Маркетинговые коммуникации
                 </a>
             {% endif %}
             <a href="{{ request.scope.get('root_path', '') }}/eval/" class="{% if path.startswith('/eval') %}active{% endif %}">

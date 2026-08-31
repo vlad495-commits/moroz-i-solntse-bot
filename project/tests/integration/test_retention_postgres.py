@@ -116,3 +116,132 @@ async def test_second_delete_failure_rolls_back_first_delete(database):
         assert await connection.fetchval(
             "SELECT count(*) FROM messages WHERE chat_id = 8201"
         ) == 1
+
+
+async def test_reactivation_retention_preserves_active_and_fresh_records(database):
+    async with database.acquire() as connection:
+        now = await connection.fetchval("SELECT now()")
+        old = now - timedelta(days=31)
+        fresh = now - timedelta(days=29)
+        version_id = await connection.fetchval(
+            """
+            INSERT INTO reactivation_program_versions
+                (id, version_number, status, inactivity_days, reminder_enabled,
+                 cooldown_days, main_text, reminder_text, template_checksum)
+            VALUES (gen_random_uuid(), 9911, 'retired', 90, false, 90,
+                    'main', 'reminder', 'retention-version')
+            RETURNING id
+            """
+        )
+        old_event = await connection.fetchval(
+            """
+            INSERT INTO marketing_consent_events
+                (id, channel, user_id, action, consent_version,
+                 proof_text_hash, source, source_event_id, occurred_at, created_at)
+            VALUES (gen_random_uuid(), 'telegram', 'retention-inactive', 'revoked',
+                    'marketing-v1', NULL, 'telegram_command', 'old-revoke', $1, $1)
+            RETURNING id
+            """,
+            old,
+        )
+        active_event = await connection.fetchval(
+            """
+            INSERT INTO marketing_consent_events
+                (id, channel, user_id, action, consent_version,
+                 proof_text_hash, source, source_event_id, occurred_at, created_at)
+            VALUES (gen_random_uuid(), 'telegram', 'retention-active', 'granted',
+                    'marketing-v1', 'proof-hash', 'telegram_command',
+                    'old-grant', $1, $1)
+            RETURNING id
+            """,
+            old,
+        )
+        await connection.execute(
+            """
+            INSERT INTO marketing_consents
+                (id, channel, user_id, consent_version, active, granted_at,
+                 revoked_at, source, proof_event_id, proof_text_hash, updated_at)
+            VALUES (gen_random_uuid(), 'telegram', 'retention-inactive',
+                    'marketing-v1', false, $1, $1, 'telegram_command', NULL, NULL, $1),
+                   (gen_random_uuid(), 'telegram', 'retention-active',
+                    'marketing-v1', true, $1, NULL, 'telegram_command', $2,
+                    'proof-hash', $1)
+            """,
+            old,
+            active_event,
+        )
+        await connection.execute(
+            """
+            INSERT INTO customer_activity_projection
+                (channel, user_id, identity_status, sync_status, updated_at)
+            VALUES ('telegram', 'retention-inactive', 'unverified', 'never', $1),
+                   ('telegram', 'retention-active', 'verified', 'current', $1),
+                   ('telegram', 'retention-open', 'verified', 'current', $1)
+            """,
+            old,
+        )
+        old_journey = await connection.fetchval(
+            """
+            INSERT INTO reactivation_journeys
+                (id, channel, user_id, program_version_id, status, close_reason,
+                 activity_anchor_at, created_at, updated_at, closed_at)
+            VALUES (gen_random_uuid(), 'telegram', 'retention-inactive', $1,
+                    'closed', 'exhausted', $2, $2, $2, $2)
+            RETURNING id
+            """,
+            version_id,
+            old,
+        )
+        fresh_journey = await connection.fetchval(
+            """
+            INSERT INTO reactivation_journeys
+                (id, channel, user_id, program_version_id, status, close_reason,
+                 activity_anchor_at, created_at, updated_at, closed_at)
+            VALUES (gen_random_uuid(), 'telegram', 'retention-fresh', $1,
+                    'closed', 'exhausted', $2, $2, $2, $2)
+            RETURNING id
+            """,
+            version_id,
+            fresh,
+        )
+        open_journey = await connection.fetchval(
+            """
+            INSERT INTO reactivation_journeys
+                (id, channel, user_id, program_version_id, status,
+                 activity_anchor_at, created_at, updated_at)
+            VALUES (gen_random_uuid(), 'telegram', 'retention-open', $1,
+                    'active', $2, $2, $2)
+            RETURNING id
+            """,
+            version_id,
+            old,
+        )
+
+    await RetentionCleanupCoordinator(
+        database, Scheduler(), retention_days=30
+    ).run(retention_job(NOW))
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journeys WHERE id = $1", old_journey
+        ) == 0
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journeys WHERE id = $1", fresh_journey
+        ) == 1
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journeys WHERE id = $1", open_journey
+        ) == 1
+        assert await connection.fetchval(
+            "SELECT count(*) FROM customer_activity_projection "
+            "WHERE user_id = 'retention-inactive'"
+        ) == 0
+        assert await connection.fetchval(
+            "SELECT count(*) FROM customer_activity_projection "
+            "WHERE user_id IN ('retention-active', 'retention-open')"
+        ) == 2
+        assert await connection.fetchval(
+            "SELECT count(*) FROM marketing_consent_events WHERE id = $1", old_event
+        ) == 0
+        assert await connection.fetchval(
+            "SELECT count(*) FROM marketing_consent_events WHERE id = $1", active_event
+        ) == 1

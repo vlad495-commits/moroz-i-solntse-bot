@@ -1,10 +1,392 @@
-"""PostgreSQL access for the internal reactivation admin queue."""
+"""PostgreSQL access for owner-only reactivation administration."""
 
-from datetime import datetime
+from dataclasses import asdict
+from datetime import UTC, datetime
+import json
+import os
 from uuid import UUID, uuid4
+
+from audit_repository import record_audit_in_transaction
+from moroz.reactivation.policy import ProgramPolicy
+from moroz.reactivation.repository import ReactivationRepository
+from moroz.security.consent import ConsentService
+from moroz.privacy import customer_lock_subject
 
 
 SEGMENTS = {"after_visit", "sleeping", "regular"}
+PAGE_SIZE = 50
+OUTCOME_PERIODS = {7, 30, 90}
+OUTCOME_FILTERS = {
+    "all": "true",
+    "replied": "journey.replied_at IS NOT NULL",
+    "booked": "journey.booked_at IS NOT NULL",
+    "completed": "journey.completed_visit_at IS NOT NULL",
+    "opted_out": (
+        "journey.close_reason = 'suppressed' AND EXISTS (SELECT 1 FROM "
+        "marketing_consent_events AS outcome_event WHERE "
+        "outcome_event.channel = journey.channel AND "
+        "outcome_event.user_id = journey.user_id AND "
+        "outcome_event.action = 'suppressed' AND "
+        "outcome_event.source = 'telegram_explicit' AND "
+        "outcome_event.occurred_at = journey.closed_at)"
+    ),
+    "escalated": (
+        "journey.close_reason = 'escalated' OR journey.escalated_at IS NOT NULL"
+    ),
+}
+DELIVERY_FILTERS = {
+    "all": "true",
+    "failed": (
+        "journey.close_reason = 'failed' OR EXISTS (SELECT 1 FROM "
+        "reactivation_journey_steps AS filtered_step WHERE "
+        "filtered_step.journey_id = journey.id AND filtered_step.status = 'failed')"
+    ),
+    "delivery_unknown": (
+        "journey.close_reason = 'delivery_unknown' OR EXISTS (SELECT 1 FROM "
+        "reactivation_journey_steps AS filtered_step WHERE "
+        "filtered_step.journey_id = journey.id AND "
+        "filtered_step.status = 'delivery_unknown')"
+    ),
+}
+
+
+def _v2(database) -> ReactivationRepository:
+    return ReactivationRepository(
+        database,
+        session_secret=os.environ.get("ADMIN_SESSION_SECRET", ""),
+        business_alert_chat_id=os.environ.get("BUSINESS_ALERT_CHAT_ID", ""),
+    )
+
+
+async def create_draft(
+    database,
+    *,
+    policy: ProgramPolicy,
+    actor_id: int,
+    now: datetime | None = None,
+):
+    return await _v2(database).create_draft(
+        policy, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def preview_version(database, version_id: UUID, *, actor_id: int, now=None):
+    return await _v2(database).preview_version(
+        version_id, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def preview_samples(database, version_id: UUID, *, actor_id: int, now=None):
+    return await _v2(database).preview_samples(
+        version_id, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def queue_test_send(database, version_id: UUID, *, actor_id: int, now=None):
+    return await _v2(database).queue_test_send(
+        version_id, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def record_test_sent(database, outbound_id: UUID, *, now=None):
+    return await _v2(database).record_test_sent(
+        outbound_id, now or datetime.now(UTC)
+    )
+
+
+async def approve_legal(
+    database,
+    *,
+    actor_id: int,
+    reference: str,
+    now=None,
+):
+    return await _v2(database).approve_legal(
+        actor_id, reference, now or datetime.now(UTC)
+    )
+
+
+async def activate_version(database, version_id: UUID, *, actor_id: int, now=None):
+    return await _v2(database).activate_version(
+        version_id, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def set_mode(database, mode: str, *, actor_id: int, now=None):
+    return await _v2(database).set_mode(
+        mode, actor_id, now or datetime.now(UTC)
+    )
+
+
+async def get_dashboard(database, *, actor_id: int):
+    data = await _v2(database).get_dashboard(actor_id)
+    for version in data["versions"]:
+        if isinstance(version["preview_counts"], str):
+            version["preview_counts"] = json.loads(version["preview_counts"])
+    return data
+
+
+async def get_marketing_page_data(
+    database,
+    *,
+    actor_id: int,
+    consent_id: UUID | None = None,
+    page: int = 1,
+    period: int = 30,
+    outcome: str = "all",
+    delivery: str = "all",
+):
+    if period not in OUTCOME_PERIODS:
+        raise ValueError("unsupported outcome period")
+    if outcome not in OUTCOME_FILTERS:
+        raise ValueError("unsupported outcome filter")
+    if delivery not in DELIVERY_FILTERS:
+        raise ValueError("unsupported delivery filter")
+    data = await get_dashboard(database, actor_id=actor_id)
+    current = datetime.now(UTC)
+    funnel = await _v2(database).get_outcome_funnel(current, period_days=period)
+    offset = (page - 1) * PAGE_SIZE
+    async with database.acquire() as connection:
+        consent_query = """
+            SELECT id, channel, user_id, consent_version, active,
+                   proof_event_id IS NOT NULL AND proof_text_hash IS NOT NULL AS proven,
+                   suppression_reason, granted_at, revoked_at, updated_at
+            FROM marketing_consents
+            {where}
+            ORDER BY updated_at DESC, id DESC
+            {paging}
+            """
+        if consent_id:
+            consents = await connection.fetch(
+                consent_query.format(where="WHERE id = $1", paging=""),
+                consent_id,
+            )
+        else:
+            consents = await connection.fetch(
+                consent_query.format(where="", paging="LIMIT $1 OFFSET $2"),
+                PAGE_SIZE + 1,
+                offset,
+            )
+        if consent_id:
+            consent_events = (
+                await connection.fetch(
+                    """
+                    SELECT channel, user_id, action, source, occurred_at
+                    FROM marketing_consent_events
+                    WHERE channel = $1 AND user_id = $2
+                    ORDER BY occurred_at DESC, id DESC
+                    LIMIT $3 OFFSET $4
+                    """,
+                    consents[0]["channel"],
+                    consents[0]["user_id"],
+                    PAGE_SIZE + 1,
+                    offset,
+                )
+                if consents
+                else []
+            )
+        else:
+            consent_events = await connection.fetch(
+                """
+                SELECT channel, user_id, action, source, occurred_at
+                FROM marketing_consent_events
+                ORDER BY occurred_at DESC, id DESC
+                LIMIT $1 OFFSET $2
+                """
+                ,
+                PAGE_SIZE + 1,
+                offset,
+            )
+        readiness_row = await connection.fetchrow(
+            """
+            SELECT count(*) AS proven_consents,
+                   count(*) FILTER (
+                       WHERE activity.sync_status = 'current'
+                         AND activity.history_synced_at >= now() - interval '24 hours'
+                         AND activity.recent_bookings_synced_at >= now() - interval '15 minutes'
+                   ) AS yclients_current,
+                   min(activity.history_synced_at) AS oldest_history_synced_at,
+                   min(activity.recent_bookings_synced_at) AS oldest_recent_bookings_synced_at,
+                   COALESCE((
+                       SELECT job.status IN ('pending', 'claimed', 'finished')
+                              AND job.updated_at >= now() - interval '20 minutes'
+                       FROM scheduler_jobs AS job
+                       WHERE job.kind = 'reactivation_activity_sync'
+                       ORDER BY job.updated_at DESC,
+                                (job.last_error_code = 'yclients_unavailable') DESC,
+                                job.id DESC
+                       LIMIT 1
+                   ), false) AS yclients_available
+            FROM marketing_consents AS consent
+            LEFT JOIN customer_activity_projection AS activity
+              ON activity.channel = consent.channel
+             AND activity.user_id = consent.user_id
+            WHERE consent.active
+              AND consent.proof_event_id IS NOT NULL
+              AND consent.proof_text_hash IS NOT NULL
+              AND consent.suppressed_at IS NULL
+            """
+        )
+        journeys = await connection.fetch(
+            f"""
+            SELECT journey.id, journey.channel, journey.user_id,
+                   journey.status, journey.close_reason, journey.created_at,
+                   journey.first_sent_at, journey.replied_at, journey.booked_at,
+                   journey.completed_visit_at, journey.escalated_at,
+                   version.version_number
+            FROM reactivation_journeys AS journey
+            JOIN reactivation_program_versions AS version
+              ON version.id = journey.program_version_id
+            WHERE journey.created_at BETWEEN
+                  $1::timestamptz - $2 * interval '1 day' AND $1
+              AND ({OUTCOME_FILTERS[outcome]})
+              AND ({DELIVERY_FILTERS[delivery]})
+            ORDER BY journey.created_at DESC, journey.id DESC
+            LIMIT $3 OFFSET $4
+            """,
+            current,
+            period,
+            PAGE_SIZE + 1,
+            offset,
+        )
+        legacy_campaigns = await connection.fetch(
+            """
+            SELECT status, count(*) AS total,
+                   COALESCE(sum(recipient_count), 0) AS recipients,
+                   COALESCE(sum(sent_count), 0) AS sent,
+                   COALESCE(sum(skipped_count), 0) AS skipped,
+                   COALESCE(sum(error_count), 0) AS errors
+            FROM reactivation_campaigns
+            GROUP BY status
+            ORDER BY status
+            """
+        )
+        legacy_deliveries = await connection.fetch(
+            """
+            SELECT status, count(*) AS total
+            FROM reactivation_deliveries
+            GROUP BY status
+            ORDER BY status
+            """
+        )
+    has_next = any(
+        len(rows) > PAGE_SIZE for rows in (consents, consent_events, journeys)
+    )
+    readiness = dict(readiness_row)
+    readiness["yclients_ready"] = (
+        readiness["yclients_available"]
+        and readiness["proven_consents"] > 0
+        and readiness["yclients_current"] == readiness["proven_consents"]
+    )
+    data.update(
+        consents=[_masked_row(row) for row in consents[:PAGE_SIZE]],
+        consent_events=[_masked_row(row) for row in consent_events[:PAGE_SIZE]],
+        journeys=[_masked_row(row) for row in journeys[:PAGE_SIZE]],
+        outcomes={},
+        funnel=asdict(funnel),
+        latest_preview_eligible=_latest_preview_eligible(data["versions"]),
+        filters={"period": period, "outcome": outcome, "delivery": delivery},
+        readiness=readiness,
+        pagination={"page": page, "has_next": has_next},
+        legacy={
+            "campaigns": [dict(row) for row in legacy_campaigns],
+            "deliveries": [dict(row) for row in legacy_deliveries],
+        },
+    )
+    return data
+
+
+def _latest_preview_eligible(versions) -> int | None:
+    for version in versions:
+        counts = version.get("preview_counts")
+        if counts is not None and "eligible" in counts:
+            return int(counts["eligible"])
+    return None
+
+
+async def revoke_marketing_consent_by_id(
+    database,
+    *,
+    consent_id: UUID,
+    actor_id: int,
+    ip_address: str | None,
+    user_agent: str | None,
+):
+    service = ConsentService(database)
+    source_event_id = str(uuid4())
+    occurred_at = datetime.now(UTC)
+    async with database.acquire() as connection:
+        async with connection.transaction():
+            identity = await connection.fetchrow(
+                """
+                SELECT id, channel, user_id
+                FROM marketing_consents
+                WHERE id = $1
+                """,
+                consent_id,
+            )
+            if identity is None:
+                raise ValueError("marketing consent not found")
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                customer_lock_subject(identity["user_id"]),
+            )
+            current = await connection.fetchrow(
+                """
+                SELECT id, channel, user_id
+                FROM marketing_consents
+                WHERE id = $1 AND channel = $2 AND user_id = $3
+                """,
+                consent_id,
+                identity["channel"],
+                identity["user_id"],
+            )
+            if current is None:
+                raise ValueError("marketing consent not found")
+            event = {
+                "channel": current["channel"],
+                "user_id": current["user_id"],
+                "source": "admin_revoke",
+                "source_event_id": source_event_id,
+                "occurred_at": occurred_at,
+                "connection": connection,
+            }
+            await service.revoke_marketing(**event)
+            await service.suppress_marketing(
+                **event,
+                reason="admin_revoke",
+            )
+            result = await connection.fetchrow(
+                """
+                SELECT id, consent_version, active, revoked_at,
+                       suppression_reason, updated_at
+                FROM marketing_consents
+                WHERE id = $1
+                """,
+                consent_id,
+            )
+            await record_audit_in_transaction(
+                connection,
+                actor_id=actor_id,
+                action="reactivation.consent_revoked",
+                object_type="marketing_consent",
+                object_id=str(consent_id),
+                before=None,
+                after={
+                    "active": result["active"],
+                    "consent_version": result["consent_version"],
+                },
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+    return dict(result)
+
+
+def _masked_row(row):
+    value = dict(row)
+    user_id = value.pop("user_id")
+    value["customer"] = f"***{user_id[-4:]}" if len(user_id) > 4 else "*" * len(user_id)
+    return value
 
 
 async def get_settings(database):
@@ -88,41 +470,36 @@ async def set_marketing_consent(
 ):
     if not channel.strip() or not user_id.strip() or not consent_version.strip():
         raise ValueError("marketing consent fields are required")
+    if active:
+        raise ValueError("admin cannot grant marketing consent")
+    source_event_id = str(uuid4())
+    occurred_at = datetime.now(UTC)
+    service = ConsentService(database)
     async with database.acquire() as connection:
-        row = await connection.fetchrow(
-            """
-            INSERT INTO marketing_consents
-                (id, channel, user_id, consent_version, active,
-                 granted_at, revoked_at)
-            VALUES (
-                $1, $2, $3, $4, $5,
-                CASE WHEN $5 THEN now() END,
-                CASE WHEN $5 THEN NULL ELSE now() END
+        async with connection.transaction():
+            event = {
+                "channel": channel.strip(),
+                "user_id": user_id.strip(),
+                "source": "admin_revoke",
+                "source_event_id": source_event_id,
+                "occurred_at": occurred_at,
+                "connection": connection,
+            }
+            await service.revoke_marketing(**event)
+            await service.suppress_marketing(
+                **event,
+                reason="admin_revoke",
             )
-            ON CONFLICT (channel, user_id) DO UPDATE SET
-                consent_version = CASE
-                    WHEN EXCLUDED.active THEN EXCLUDED.consent_version
-                    ELSE marketing_consents.consent_version
-                END,
-                active = EXCLUDED.active,
-                granted_at = CASE
-                    WHEN EXCLUDED.active THEN now()
-                    ELSE marketing_consents.granted_at
-                END,
-                revoked_at = CASE
-                    WHEN EXCLUDED.active THEN NULL
-                    ELSE now()
-                END,
-                updated_at = now()
-            RETURNING id, channel, user_id, consent_version, active,
-                      granted_at, revoked_at, updated_at
-            """,
-            uuid4(),
-            channel.strip(),
-            user_id.strip(),
-            consent_version.strip(),
-            active,
-        )
+            row = await connection.fetchrow(
+                """
+                SELECT id, channel, user_id, consent_version, active,
+                       granted_at, revoked_at, updated_at
+                FROM marketing_consents
+                WHERE channel = $1 AND user_id = $2
+                """,
+                channel.strip(),
+                user_id.strip(),
+            )
     return dict(row)
 
 

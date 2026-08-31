@@ -1,6 +1,10 @@
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Awaitable, Callable, Literal
 from uuid import UUID, uuid4
+
+import asyncpg
 
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage, OutboundMessage
@@ -14,6 +18,23 @@ from moroz.escalation.service import (
     parse_admin_reply_key,
 )
 from moroz.privacy import customer_lock_subject
+
+
+PreSendGuard = Callable[
+    [asyncpg.Connection, OutboundMessage], Awaitable[bool]
+]
+TerminalTransition = Callable[[], Awaitable[OutboundMessage | None]]
+DeliveryHook = Callable[
+    [
+        asyncpg.Connection,
+        OutboundMessage,
+        Literal["sent", "failed", "delivery_unknown"],
+        str | None,
+        datetime,
+        TerminalTransition,
+    ],
+    Awaitable[None],
+]
 
 
 class OutboundDeliveryBlocked(Exception):
@@ -227,10 +248,32 @@ class MessageRepository:
             return None
         return _outbound_from_row(row)
 
+    async def get_sending_outbound(
+        self, outbound_id: UUID
+    ) -> OutboundMessage | None:
+        async with self._database.acquire() as connection:
+            return await self._sending_outbound_snapshot(connection, outbound_id)
+
+    async def get_outbound_delivery_status(self, outbound_id: UUID) -> str | None:
+        async with self._database.acquire() as connection:
+            return await connection.fetchval(
+                "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+            )
+
     @asynccontextmanager
-    async def fence_claimed_outbound(self, outbound: OutboundMessage):
+    async def fence_claimed_outbound(
+        self,
+        outbound: OutboundMessage,
+        *,
+        pre_send_guard: PreSendGuard | None = None,
+    ):
         async with self._database.acquire() as connection:
             async with connection.transaction():
+                if pre_send_guard is not None and not await pre_send_guard(
+                    connection, outbound
+                ):
+                    yield None
+                    return
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     customer_lock_subject(outbound.chat_id),
@@ -253,64 +296,215 @@ class MessageRepository:
         self,
         outbound_id: UUID,
         external_message_id: str,
+        *,
+        delivery_hook: DeliveryHook | None = None,
+        now: datetime | None = None,
     ) -> str | None:
         async with self._database.acquire() as connection:
             async with connection.transaction():
-                row = await connection.fetchrow(
-                    """
-                    UPDATE outbound_messages
-                    SET status = 'sent', external_message_id = $2
-                    WHERE id = $1 AND status = 'sending'
-                    RETURNING channel, chat_id, text, idempotency_key
-                    """,
-                    outbound_id,
-                    external_message_id,
+                outbound = await self._sending_outbound_snapshot(
+                    connection, outbound_id
                 )
-                if row is None:
+                if outbound is None:
                     return None
-                parsed = parse_admin_reply_key(row["idempotency_key"])
+                outbound = await self._complete_terminal_outbound(
+                    connection,
+                    outbound,
+                    "sent",
+                    external_message_id=external_message_id,
+                    delivery_hook=delivery_hook,
+                    error_code=None,
+                    now=now,
+                )
+                parsed = parse_admin_reply_key(outbound.idempotency_key)
                 if parsed is None:
-                    if row["idempotency_key"].startswith(
+                    if outbound.idempotency_key.startswith(
                         f"{ADMIN_REPLY_PREFIX}:"
                     ):
                         raise ValueError("malformed admin reply key")
                     return None
                 escalation_id, _ = parsed
-                if row["channel"] != "telegram":
+                if outbound.channel != "telegram":
                     raise ValueError("admin reply channel mismatch")
                 await complete_admin_reply_delivery(
                     connection,
                     outbound_id=outbound_id,
                     escalation_id=escalation_id,
-                    chat_id=row["chat_id"],
-                    text=row["text"],
+                    chat_id=outbound.chat_id,
+                    text=outbound.text,
                 )
-                return row["chat_id"]
+                return outbound.chat_id
+
+    async def mark_outbound_failed(
+        self,
+        outbound_id: UUID,
+        error_code: str,
+        *,
+        delivery_hook: DeliveryHook | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                outbound = await self._sending_outbound_snapshot(
+                    connection, outbound_id
+                )
+                if outbound is None:
+                    return False
+                await self._complete_terminal_outbound(
+                    connection,
+                    outbound,
+                    "failed",
+                    delivery_hook=delivery_hook,
+                    error_code=error_code,
+                    now=now,
+                )
+                return True
 
     async def mark_outbound_delivery_unknown(
         self,
         outbound_id: UUID,
-    ) -> None:
+        *,
+        delivery_hook: DeliveryHook | None = None,
+        error_code: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
         async with self._database.acquire() as connection:
-            await connection.execute(
-                """
-                UPDATE outbound_messages
-                SET status = 'delivery_unknown'
-                WHERE id = $1 AND status = 'sending'
-                """,
-                outbound_id,
-            )
+            async with connection.transaction():
+                outbound = await self._sending_outbound_snapshot(
+                    connection, outbound_id
+                )
+                if outbound is None:
+                    if delivery_hook is not None:
+                        outbound = await self._outbound_status_snapshot(
+                            connection, outbound_id, "delivery_unknown"
+                        )
+                if outbound is None:
+                    return bool(
+                        await connection.fetchval(
+                            "SELECT status = 'delivery_unknown' "
+                            "FROM outbound_messages WHERE id = $1",
+                            outbound_id,
+                        )
+                    )
+                await self._complete_terminal_outbound(
+                    connection,
+                    outbound,
+                    "delivery_unknown",
+                    delivery_hook=delivery_hook,
+                    error_code=error_code,
+                    now=now,
+                    allow_existing_terminal=True,
+                )
+                return True
 
-    async def release_outbound_delivery(self, outbound_id: UUID) -> None:
-        async with self._database.acquire() as connection:
-            await connection.execute(
-                """
-                UPDATE outbound_messages
-                SET status = 'pending', claimed_at = NULL
-                WHERE id = $1 AND status = 'sending'
-                """,
-                outbound_id,
+    async def _complete_terminal_outbound(
+        self,
+        connection,
+        outbound: OutboundMessage,
+        status: Literal["sent", "failed", "delivery_unknown"],
+        *,
+        external_message_id: str | None = None,
+        delivery_hook: DeliveryHook | None,
+        error_code: str | None,
+        now: datetime | None,
+        allow_existing_terminal: bool = False,
+    ) -> OutboundMessage:
+        transition_calls = 0
+        transitioned = None
+
+        async def transition():
+            nonlocal transition_calls, transitioned
+            transition_calls += 1
+            if transition_calls != 1:
+                raise RuntimeError("terminal transition must be called exactly once")
+            transitioned = await self._transition_sending_outbound(
+                connection, outbound.id, status, external_message_id
             )
+            if transitioned is None and allow_existing_terminal:
+                transitioned = await self._outbound_status_snapshot(
+                    connection, outbound.id, status
+                )
+            if transitioned is None:
+                raise RuntimeError("terminal transition was not persisted")
+            return transitioned
+
+        if delivery_hook is not None:
+            if now is None:
+                raise ValueError("delivery hook timestamp is required")
+            await delivery_hook(
+                connection, outbound, status, error_code, now, transition
+            )
+        else:
+            await transition()
+        if transition_calls != 1 or transitioned is None:
+            raise RuntimeError("terminal transition must be called exactly once")
+        durable_status = await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id = $1", outbound.id
+        )
+        if durable_status != status:
+            raise RuntimeError("terminal transition status was not persisted")
+        return transitioned
+
+    @staticmethod
+    async def _sending_outbound_snapshot(connection, outbound_id: UUID):
+        return await MessageRepository._outbound_status_snapshot(
+            connection, outbound_id, "sending"
+        )
+
+    @staticmethod
+    async def _outbound_status_snapshot(connection, outbound_id: UUID, status: str):
+        row = await connection.fetchrow(
+            """
+            SELECT id, channel, chat_id, text, delivery_options,
+                   idempotency_key
+            FROM outbound_messages
+            WHERE id = $1 AND status = $2
+            """,
+            outbound_id,
+            status,
+        )
+        return None if row is None else _outbound_from_row(row)
+
+    @staticmethod
+    async def _transition_sending_outbound(
+        connection,
+        outbound_id: UUID,
+        status: Literal["sent", "failed", "delivery_unknown"],
+        external_message_id: str | None = None,
+    ):
+        row = await connection.fetchrow(
+            """
+            UPDATE outbound_messages
+            SET status = $2,
+                external_message_id = COALESCE($3, external_message_id)
+            WHERE id = $1 AND status = 'sending'
+            RETURNING id, channel, chat_id, text, delivery_options,
+                      idempotency_key
+            """,
+            outbound_id,
+            status,
+            external_message_id,
+        )
+        return None if row is None else _outbound_from_row(row)
+
+    async def release_outbound_delivery(self, outbound_id: UUID) -> bool:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    """
+                    UPDATE outbound_messages
+                    SET status = 'pending', claimed_at = NULL
+                    WHERE id = $1 AND status = 'sending'
+                    """,
+                    outbound_id,
+                )
+                return bool(
+                    await connection.fetchval(
+                        "SELECT status = 'pending' FROM outbound_messages "
+                        "WHERE id = $1",
+                        outbound_id,
+                    )
+                )
 
     async def reconcile_stale_outbound_deliveries(self) -> int:
         async with self._database.acquire() as connection:

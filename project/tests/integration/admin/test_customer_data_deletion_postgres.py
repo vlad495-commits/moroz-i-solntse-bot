@@ -23,6 +23,161 @@ pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
 
 
+async def test_deletes_reactivation_v2_graph_and_preserves_legacy_control(
+    migrated_database_url,
+):
+    conn = await asyncpg.connect(migrated_database_url)
+    pool = Database(migrated_database_url, min_size=1, max_size=2)
+    await pool.connect()
+    cache = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    await cache.flushdb()
+    try:
+        version_id = await conn.fetchval(
+            """
+            INSERT INTO reactivation_program_versions
+                (id, version_number, status, inactivity_days, reminder_enabled,
+                 cooldown_days, main_text, reminder_text, template_checksum)
+            VALUES (gen_random_uuid(), 9912, 'retired', 90, false, 90,
+                    'main', 'reminder', 'delete-version') RETURNING id
+            """
+        )
+        target_event = await conn.fetchval(
+            """
+            INSERT INTO marketing_consent_events
+                (id, channel, user_id, action, consent_version, proof_text_hash,
+                 source, source_event_id, occurred_at)
+            VALUES (gen_random_uuid(), 'telegram', '42', 'granted',
+                    'marketing-v1', 'target-proof', 'telegram_callback',
+                    'target-event', now()) RETURNING id
+            """
+        )
+        control_event = await conn.fetchval(
+            """
+            INSERT INTO marketing_consent_events
+                (id, channel, user_id, action, consent_version, proof_text_hash,
+                 source, source_event_id, occurred_at)
+            VALUES (gen_random_uuid(), 'telegram', '84', 'granted',
+                    'marketing-v1', 'control-proof', 'telegram_callback',
+                    'control-event', now()) RETURNING id
+            """
+        )
+        await conn.execute(
+            """
+            INSERT INTO marketing_consents
+                (id, channel, user_id, consent_version, active, granted_at,
+                 source, proof_event_id, proof_text_hash)
+            VALUES (gen_random_uuid(), 'telegram', '42', 'marketing-v1', true,
+                    now(), 'telegram_callback', $1, 'target-proof'),
+                   (gen_random_uuid(), 'telegram', '84', 'marketing-v1', true,
+                    now(), 'telegram_callback', $2, 'control-proof')
+            """,
+            target_event,
+            control_event,
+        )
+        await conn.execute(
+            """
+            INSERT INTO customer_activity_projection
+                (channel, user_id, identity_status, sync_status)
+            VALUES ('telegram', '42', 'verified', 'current'),
+                   ('telegram', '84', 'verified', 'current')
+            """
+        )
+        target_journey = await conn.fetchval(
+            """
+            INSERT INTO reactivation_journeys
+                (id, channel, user_id, program_version_id, status,
+                 activity_anchor_at)
+            VALUES (gen_random_uuid(), 'telegram', '42', $1, 'active', now())
+            RETURNING id
+            """,
+            version_id,
+        )
+        control_journey = await conn.fetchval(
+            """
+            INSERT INTO reactivation_journeys
+                (id, channel, user_id, program_version_id, status,
+                 activity_anchor_at)
+            VALUES (gen_random_uuid(), 'telegram', '84', $1, 'active', now())
+            RETURNING id
+            """,
+            version_id,
+        )
+        target_outbound, control_outbound = uuid4(), uuid4()
+        await conn.execute(
+            """
+            INSERT INTO outbound_messages
+                (id, channel, chat_id, text, idempotency_key, status)
+            VALUES ($1, 'telegram', '999', 'target secret', 'reactivation-target', 'pending'),
+                   ($2, 'telegram', '999', 'control', 'reactivation-control', 'sent')
+            """,
+            target_outbound,
+            control_outbound,
+        )
+        await conn.execute(
+            """
+            INSERT INTO reactivation_journey_steps
+                (id, journey_id, step_kind, status, due_at, outbound_id,
+                 idempotency_key)
+            VALUES (gen_random_uuid(), $1, 'main', 'reserved', now(), $2,
+                    'target-step'),
+                   (gen_random_uuid(), $3, 'main', 'sent', now(), $4,
+                    'control-step')
+            """,
+            target_journey,
+            target_outbound,
+            control_journey,
+            control_outbound,
+        )
+        await conn.execute(
+            """
+            INSERT INTO task_outbox (id, kind, payload, idempotency_key)
+            VALUES (gen_random_uuid(), 'send_outbound', $1::jsonb, 'target-v2-send'),
+                   (gen_random_uuid(), 'send_outbound', $2::jsonb, 'control-v2-send')
+            """,
+            json.dumps({"outbound_id": str(target_outbound)}),
+            json.dumps({"outbound_id": str(control_outbound)}),
+        )
+
+        result = await delete_customer_data(
+            pool=pool,
+            redis_client=cache,
+            chat_id=42,
+            actor_id=1,
+            ip_address=None,
+            user_agent=None,
+        )
+
+        assert result.status == "deleted"
+        for table in (
+            "customer_activity_projection",
+            "marketing_consent_events",
+            "marketing_consents",
+            "reactivation_journeys",
+        ):
+            assert await conn.fetchval(
+                f"SELECT count(*) FROM {table} WHERE channel = 'telegram' AND user_id = '42'"
+            ) == 0
+            assert await conn.fetchval(
+                f"SELECT count(*) FROM {table} WHERE channel = 'telegram' AND user_id = '84'"
+            ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM outbound_messages WHERE id = $1", target_outbound
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM outbound_messages WHERE id = $1", control_outbound
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM task_outbox WHERE idempotency_key = 'target-v2-send'"
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM task_outbox WHERE idempotency_key = 'control-v2-send'"
+        ) == 1
+    finally:
+        await cache.aclose()
+        await pool.close()
+        await conn.close()
+
+
 async def test_deletes_target_postgres_and_redis_but_preserves_control(
     migrated_database_url,
 ):
@@ -63,9 +218,9 @@ async def test_deletes_target_postgres_and_redis_but_preserves_control(
         await conn.execute(
             """
             INSERT INTO marketing_consents
-                (id, channel, user_id, consent_version, active, granted_at)
-            VALUES ($1, 'telegram', '42', 'marketing-v1', true, now()),
-                   ($2, 'telegram', '84', 'marketing-v1', true, now())
+                (id, channel, user_id, consent_version, active, granted_at, source)
+            VALUES ($1, 'telegram', '42', 'marketing-v1', true, now(), 'legacy_unproven'),
+                   ($2, 'telegram', '84', 'marketing-v1', true, now(), 'legacy_unproven')
             """,
             uuid4(),
             uuid4(),
