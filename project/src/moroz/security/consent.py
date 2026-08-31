@@ -16,6 +16,7 @@ _TRUSTED_TELEGRAM_SEQUENCE_SOURCES = frozenset({_EXPLICIT_MARKETING_SOURCE})
 _SUPPRESSION_REASON_BY_SOURCE = {
     _EXPLICIT_MARKETING_SOURCE: "user_stop",
     "admin_revoke": "admin_revoke",
+    "delivery": "telegram_unreachable",
 }
 _MARKETING_ACTION_RANK = {
     "unsuppressed": 0,
@@ -462,19 +463,38 @@ class ConsentService:
             )
             await connection.execute(
                 """
+                UPDATE reactivation_journeys
+                SET status = 'closed', close_reason = 'suppressed',
+                    closed_at = $3, updated_at = $3
+                WHERE channel = $1 AND user_id = $2 AND status != 'closed'
+                """,
+                channel,
+                user_id,
+                occurred_at,
+            )
+            await connection.execute(
+                """
                 UPDATE reactivation_journey_steps AS step
                 SET status = 'cancelled',
                     terminal_reason = $3,
-                    updated_at = now()
+                    updated_at = $4
                 FROM reactivation_journeys AS journey
                 WHERE journey.id = step.journey_id
                   AND journey.channel = $1
                   AND journey.user_id = $2
                   AND step.status IN ('scheduled', 'reserved')
+                  AND (
+                      step.outbound_id IS NULL OR NOT EXISTS (
+                          SELECT 1 FROM outbound_messages AS outbound
+                          WHERE outbound.id = step.outbound_id
+                            AND outbound.status = 'sending'
+                      )
+                  )
                 """,
                 channel,
                 user_id,
                 "suppressed" if action == "suppressed" else "consent_revoked",
+                occurred_at,
             )
 
         return await self._get_marketing_status(connection, channel, user_id)

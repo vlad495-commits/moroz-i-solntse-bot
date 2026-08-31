@@ -58,3 +58,52 @@ All provider behavior was exercised with fake Telegram transports and PostgreSQL
 - Telegram cannot provide transactional exactly-once delivery across a lost response; ambiguous outcomes are intentionally terminal and pause the program for operator review.
 - Real-provider and staging/prod verification is intentionally deferred because Task 8 forbids external calls.
 - Task 9+ outcome analytics and admin presentation were not changed.
+
+## Independent re-review hardening
+
+- Replaced the unlocked read-before-hook sequence with a guarded
+  `sending → terminal` transition that owns the outbound row before invoking
+  the hook; outbound and linked effects still commit or roll back together.
+- Removed `delivery_options` from the trust boundary. The worker now supplies
+  an authoritative repository linkage check; forged or stale JSON remains on
+  generic retry semantics.
+- Test-send failures of every supported Telegram class now affect only the
+  version proof/outbound status and never pause the client program.
+- Preserved an accepted Telegram send across consent, STOP and other terminal
+  controls. The step records `sent/sent_at`, the journey closes with stable
+  precedence, and no reminder is created after consent, inbound, booking,
+  human mode, escalation, deletion, legal or version changes.
+- Delivery suppression now writes one idempotent immutable
+  `marketing_consent_events` record through `ConsentService`, materializes the
+  consent and closes/cancels remaining journey work in the same transaction.
+- Delivery logs contain allowlisted code/count fields only. Raw outbound UUID,
+  chat/user IDs, text and provider details are excluded.
+- Concurrent startup reconciliation increments its count only for the caller
+  that performs the real reserved-step transition.
+- Removed the unused `DeliveryErrorDecision.retry` duplicate. Legacy
+  `record_test_sent`/`record_delivery_sent` APIs remain intentionally because
+  repository and admin compatibility tests still consume them; their later
+  retirement is recorded as Ponytail debt, not expanded into Task 8.
+
+### Re-review TDD and verification
+
+- RED: unit trust/minor matrix produced `10 failed, 1 passed`; forged delivery
+  options had no authoritative checker and `retry` still existed.
+- RED: consent-first accepted-send probe produced
+  `outbound=sent / step=cancelled / sent_at=NULL`.
+- RED: immutable delivery suppression event was absent; terminal/reconcile,
+  test-send program isolation and concurrent count probes also failed.
+- RED: post-network control matrix initially failed 4 of 5 cases, followed by
+  legal/version probes failing 2 of 2 before the final runtime recheck.
+- GREEN: core independent re-review matrix: `28 passed, 21 deselected in 52.05s`.
+- GREEN: expanded Task 8/generic/worker/consent regression:
+  `203 passed in 142.69s`.
+- GREEN: broad Task 5–8, PostgreSQL race, messaging, e2e and worker regression:
+  `387 passed in 436.96s`.
+- GREEN: final focused suite after legal/version and privacy hardening:
+  `168 passed, 83 deselected in 246.02s`.
+
+Additional changed files in re-review:
+
+- `project/src/moroz/security/consent.py`
+- `project/tests/e2e/test_message_delivery.py`

@@ -1378,7 +1378,9 @@ async def test_malformed_admin_reply_key_fails_closed(database):
     assert status == "sending"
 
 
-async def test_post_send_completion_failure_becomes_delivery_unknown(database):
+async def test_post_send_completion_failure_becomes_delivery_unknown(
+    database, caplog
+):
     repository, escalation_id, outbound_id = await _seed_admin_handoff_reply(database)
     async with database.acquire() as connection:
         await connection.execute(
@@ -1415,6 +1417,8 @@ async def test_post_send_completion_failure_becomes_delivery_unknown(database):
         )
     assert result == DeliveryResult.DELIVERY_UNKNOWN
     assert tuple(state.values()) == ("delivery_unknown", "open", True, 0, 0)
+    for private in (str(outbound_id), "42", "forced delivered audit failure"):
+        assert private not in caplog.text
 
 
 async def test_post_send_cancellation_becomes_delivery_unknown(

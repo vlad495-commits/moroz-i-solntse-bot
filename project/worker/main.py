@@ -1105,6 +1105,7 @@ async def run() -> None:
                 context_cache=redis_client,
                 pre_send_guard=reactivation_repository.pre_send_guard,
                 delivery_hook=reactivation_repository.delivery_hook,
+                managed_delivery_check=reactivation_repository.is_linked_outbound,
             ),
             scheduler_repository=scheduler_repository,
             booking_port=LocalBookingPort(database),

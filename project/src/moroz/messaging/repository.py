@@ -288,7 +288,9 @@ class MessageRepository:
     ) -> str | None:
         async with self._database.acquire() as connection:
             async with connection.transaction():
-                outbound = await self._sending_outbound(connection, outbound_id)
+                outbound = await self._transition_sending_outbound(
+                    connection, outbound_id, "sent", external_message_id
+                )
                 if outbound is None:
                     return None
                 if delivery_hook is not None:
@@ -297,36 +299,24 @@ class MessageRepository:
                     await delivery_hook(
                         connection, outbound, "sent", None, now
                     )
-                row = await connection.fetchrow(
-                    """
-                    UPDATE outbound_messages
-                    SET status = 'sent', external_message_id = $2
-                    WHERE id = $1 AND status = 'sending'
-                    RETURNING channel, chat_id, text, idempotency_key
-                    """,
-                    outbound_id,
-                    external_message_id,
-                )
-                if row is None:
-                    return None
-                parsed = parse_admin_reply_key(row["idempotency_key"])
+                parsed = parse_admin_reply_key(outbound.idempotency_key)
                 if parsed is None:
-                    if row["idempotency_key"].startswith(
+                    if outbound.idempotency_key.startswith(
                         f"{ADMIN_REPLY_PREFIX}:"
                     ):
                         raise ValueError("malformed admin reply key")
                     return None
                 escalation_id, _ = parsed
-                if row["channel"] != "telegram":
+                if outbound.channel != "telegram":
                     raise ValueError("admin reply channel mismatch")
                 await complete_admin_reply_delivery(
                     connection,
                     outbound_id=outbound_id,
                     escalation_id=escalation_id,
-                    chat_id=row["chat_id"],
-                    text=row["text"],
+                    chat_id=outbound.chat_id,
+                    text=outbound.text,
                 )
-                return row["chat_id"]
+                return outbound.chat_id
 
     async def mark_outbound_failed(
         self,
@@ -338,7 +328,9 @@ class MessageRepository:
     ) -> None:
         async with self._database.acquire() as connection:
             async with connection.transaction():
-                outbound = await self._sending_outbound(connection, outbound_id)
+                outbound = await self._transition_sending_outbound(
+                    connection, outbound_id, "failed"
+                )
                 if outbound is None:
                     return
                 if delivery_hook is not None:
@@ -347,14 +339,6 @@ class MessageRepository:
                     await delivery_hook(
                         connection, outbound, "failed", error_code, now
                     )
-                await connection.execute(
-                    """
-                    UPDATE outbound_messages
-                    SET status = 'failed'
-                    WHERE id = $1 AND status = 'sending'
-                    """,
-                    outbound_id,
-                )
 
     async def mark_outbound_delivery_unknown(
         self,
@@ -366,7 +350,9 @@ class MessageRepository:
     ) -> None:
         async with self._database.acquire() as connection:
             async with connection.transaction():
-                outbound = await self._sending_outbound(connection, outbound_id)
+                outbound = await self._transition_sending_outbound(
+                    connection, outbound_id, "delivery_unknown"
+                )
                 if outbound is None:
                     return
                 if delivery_hook is not None:
@@ -379,25 +365,26 @@ class MessageRepository:
                         error_code,
                         now,
                     )
-                await connection.execute(
-                    """
-                    UPDATE outbound_messages
-                    SET status = 'delivery_unknown'
-                    WHERE id = $1 AND status = 'sending'
-                    """,
-                    outbound_id,
-                )
 
     @staticmethod
-    async def _sending_outbound(connection, outbound_id: UUID):
+    async def _transition_sending_outbound(
+        connection,
+        outbound_id: UUID,
+        status: Literal["sent", "failed", "delivery_unknown"],
+        external_message_id: str | None = None,
+    ):
         row = await connection.fetchrow(
             """
-            SELECT id, channel, chat_id, text, delivery_options,
-                   idempotency_key
-            FROM outbound_messages
+            UPDATE outbound_messages
+            SET status = $2,
+                external_message_id = COALESCE($3, external_message_id)
             WHERE id = $1 AND status = 'sending'
+            RETURNING id, channel, chat_id, text, delivery_options,
+                      idempotency_key
             """,
             outbound_id,
+            status,
+            external_message_id,
         )
         return None if row is None else _outbound_from_row(row)
 

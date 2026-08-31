@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import logging
 from enum import StrEnum
+from typing import Awaitable, Callable
 from uuid import UUID
 
 from aiogram.exceptions import (
@@ -32,65 +33,57 @@ class DeliveryResult(StrEnum):
 class DeliveryErrorDecision:
     outbound_status: str
     error_code: str
-    retry: bool
 
 
 def classify_delivery_error(
     error: BaseException, *, managed: bool
 ) -> DeliveryErrorDecision:
     if isinstance(error, asyncio.CancelledError):
-        return DeliveryErrorDecision("delivery_unknown", "cancelled", False)
+        return DeliveryErrorDecision("delivery_unknown", "cancelled")
     if isinstance(error, TelegramRetryAfter):
-        return DeliveryErrorDecision("pending", "telegram_retry_after", True)
+        return DeliveryErrorDecision("pending", "telegram_retry_after")
     if isinstance(error, TelegramForbiddenError):
         status = "failed" if managed else "pending"
-        return DeliveryErrorDecision(status, "telegram_forbidden", not managed)
+        return DeliveryErrorDecision(status, "telegram_forbidden")
     if isinstance(error, TelegramNotFound):
         status = "failed" if managed else "pending"
-        return DeliveryErrorDecision(status, "telegram_not_found", not managed)
+        return DeliveryErrorDecision(status, "telegram_not_found")
     if isinstance(error, TelegramBadRequest):
         status = "failed" if managed else "pending"
-        return DeliveryErrorDecision(status, "telegram_bad_request", not managed)
+        return DeliveryErrorDecision(status, "telegram_bad_request")
     if isinstance(error, TelegramNetworkError):
-        return DeliveryErrorDecision(
-            "delivery_unknown", "telegram_network", False
-        )
+        return DeliveryErrorDecision("delivery_unknown", "telegram_network")
     if isinstance(error, TimeoutError):
-        return DeliveryErrorDecision("delivery_unknown", "timeout", False)
-    return DeliveryErrorDecision("pending", "telegram_error", True)
+        return DeliveryErrorDecision("delivery_unknown", "timeout")
+    return DeliveryErrorDecision("pending", "telegram_error")
 
 
-def _is_managed(outbound: OutboundMessage) -> bool:
-    return outbound.delivery_options.get("delivery_policy") == "reactivation"
+ManagedDeliveryCheck = Callable[[OutboundMessage], Awaitable[bool]]
 
 
 async def _mark_post_send_unknown(
     repository,
     outbound,
-    error,
     *,
     delivery_hook,
+    managed,
     now,
 ) -> None:
     try:
         await asyncio.shield(
             repository.mark_outbound_delivery_unknown(
                 outbound.id,
-                delivery_hook=delivery_hook if _is_managed(outbound) else None,
+                delivery_hook=delivery_hook if managed else None,
                 error_code="post_send_completion",
                 now=now,
             )
         )
-    except BaseException as mark_error:
+    except BaseException:
         logger.error(
-            "post_send_delivery_unknown_mark_failed outbound_id=%s error_type=%s",
-            outbound.id,
-            type(mark_error).__name__,
+            "post_send_delivery_unknown_mark_failed code=mark_failed count=1"
         )
     logger.error(
-        "post_send_completion_failed outbound_id=%s error_type=%s",
-        outbound.id,
-        type(error).__name__,
+        "post_send_completion_failed code=post_send_completion count=1"
     )
 
 
@@ -102,9 +95,13 @@ async def deliver_claimed_outbound(
     context_cache=None,
     pre_send_guard: PreSendGuard | None = None,
     delivery_hook: DeliveryHook | None = None,
+    managed_delivery_check: ManagedDeliveryCheck | None = None,
     clock=lambda: datetime.now(UTC),
 ) -> DeliveryResult:
-    managed = _is_managed(outbound)
+    managed = bool(
+        managed_delivery_check
+        and await managed_delivery_check(outbound)
+    )
     try:
         async with repository.fence_claimed_outbound(
             outbound,
@@ -139,8 +136,7 @@ async def deliver_claimed_outbound(
                 now=current_time,
             )
             logger.error(
-                "telegram_delivery_unknown outbound_id=%s code=%s count=1",
-                outbound.id,
+                "telegram_delivery_unknown code=%s count=1",
                 decision.error_code,
             )
             if isinstance(error, asyncio.CancelledError):
@@ -154,8 +150,7 @@ async def deliver_claimed_outbound(
                 now=current_time,
             )
             logger.error(
-                "telegram_delivery_failed outbound_id=%s code=%s count=1",
-                outbound.id,
+                "telegram_delivery_failed code=%s count=1",
                 decision.error_code,
             )
             return DeliveryResult.FAILED
@@ -172,8 +167,8 @@ async def deliver_claimed_outbound(
         await _mark_post_send_unknown(
             repository,
             outbound,
-            error,
             delivery_hook=delivery_hook,
+            managed=managed,
             now=clock(),
         )
         raise
@@ -181,8 +176,8 @@ async def deliver_claimed_outbound(
         await _mark_post_send_unknown(
             repository,
             outbound,
-            error,
             delivery_hook=delivery_hook,
+            managed=managed,
             now=clock(),
         )
         return DeliveryResult.DELIVERY_UNKNOWN
@@ -206,6 +201,7 @@ class TelegramSender:
         context_cache=None,
         pre_send_guard: PreSendGuard | None = None,
         delivery_hook: DeliveryHook | None = None,
+        managed_delivery_check: ManagedDeliveryCheck | None = None,
         clock=lambda: datetime.now(UTC),
     ):
         self._telegram = telegram
@@ -213,6 +209,7 @@ class TelegramSender:
         self._context_cache = context_cache
         self._pre_send_guard = pre_send_guard
         self._delivery_hook = delivery_hook
+        self._managed_delivery_check = managed_delivery_check
         self._clock = clock
 
     async def send(self, outbound_id: UUID) -> DeliveryResult:
@@ -226,5 +223,6 @@ class TelegramSender:
             context_cache=self._context_cache,
             pre_send_guard=self._pre_send_guard,
             delivery_hook=self._delivery_hook,
+            managed_delivery_check=self._managed_delivery_check,
             clock=self._clock,
         )

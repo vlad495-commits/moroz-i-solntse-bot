@@ -17,9 +17,11 @@ from aiogram.exceptions import (
 from moroz.common.db import Database
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import DeliveryResult, TelegramSender
+from moroz.privacy import customer_lock_subject
 from moroz.reactivation.policy import ProgramPolicy, template_checksum
 from moroz.reactivation.repository import ReactivationRepository
 from moroz.reactivation.repository import PROGRAM_LOCK_SUBJECT
+from moroz.security.consent import ConsentService
 
 
 pytest_plugins = ["tests.integration.conftest"]
@@ -152,6 +154,7 @@ def _sender(database, repository, telegram):
         MessageRepository(database),
         pre_send_guard=repository.pre_send_guard,
         delivery_hook=repository.delivery_hook,
+        managed_delivery_check=repository.is_linked_outbound,
         clock=lambda: NOW,
     )
 
@@ -396,8 +399,11 @@ async def test_delivery_error_updates_linked_state_atomically(
             outbound_id,
         )
     assert tuple(state.values()) == (outbound, step, "closed", mode, suppressed)
-    assert "private error" not in caplog.text
-    assert "private timeout" not in caplog.text
+    for private in (
+        str(outbound_id), "82001", ProgramPolicy().main_text,
+        "private error", "private timeout",
+    ):
+        assert private not in caplog.text
     if mode == "paused":
         async with database.acquire() as connection:
             payload = await connection.fetchval(
@@ -408,6 +414,18 @@ async def test_delivery_error_updates_linked_state_atomically(
             payload = json.loads(payload)
         assert set(payload) == {"mode", "code", "count"}
         assert payload["count"] == 1
+    if isinstance(error, (TelegramForbiddenError, TelegramNotFound)):
+        async with database.acquire() as connection:
+            event = await connection.fetchrow(
+                "SELECT action, source, source_event_id, "
+                "count(*) OVER () AS event_count "
+                "FROM marketing_consent_events "
+                "WHERE channel = 'telegram' AND user_id = '82001' "
+                "AND source = 'delivery'"
+            )
+        assert tuple(event.values()) == (
+            "suppressed", "delivery", f"reactivation-delivery:{outbound_id}", 1
+        )
 
 
 async def test_retry_after_is_the_only_managed_provider_retry(delivery):
@@ -484,6 +502,287 @@ async def test_test_send_records_proof_only_after_success(delivery, error):
     assert len(telegram.calls) == 1
 
 
+@pytest.mark.parametrize(
+    ("error", "outbound_status", "result", "raised"),
+    [
+        (_telegram_error(TelegramBadRequest), "failed", DeliveryResult.FAILED, None),
+        (_telegram_error(TelegramForbiddenError), "failed", DeliveryResult.FAILED, None),
+        (_telegram_error(TelegramNotFound), "failed", DeliveryResult.FAILED, None),
+        (_telegram_error(TelegramRetryAfter), "pending", None, TelegramRetryAfter),
+        (_telegram_error(TelegramNetworkError), "delivery_unknown",
+         DeliveryResult.DELIVERY_UNKNOWN, None),
+        (TimeoutError("private timeout"), "delivery_unknown",
+         DeliveryResult.DELIVERY_UNKNOWN, None),
+        (asyncio.CancelledError(), "delivery_unknown", None, asyncio.CancelledError),
+    ],
+)
+async def test_test_send_errors_never_change_program_or_recipient_state(
+    delivery, error, outbound_status, result, raised
+):
+    database, repository, owner_id = delivery
+    async with database.acquire() as connection:
+        version_id = await connection.fetchval(
+            "SELECT active_version_id FROM reactivation_settings WHERE id = 1"
+        )
+    outbound_id = await repository.queue_test_send(version_id, owner_id, NOW)
+    send = _sender(database, repository, FakeTelegram(error)).send(outbound_id)
+    if raised is None:
+        assert await send == result
+    else:
+        with pytest.raises(raised):
+            await send
+
+    async with database.acquire() as connection:
+        state = await connection.fetchrow(
+            "SELECT outbound.status, version.test_sent_at, settings.mode "
+            "FROM outbound_messages AS outbound "
+            "JOIN reactivation_program_versions AS version "
+            "ON version.test_outbound_id = outbound.id "
+            "JOIN reactivation_settings AS settings ON settings.id = 1 "
+            "WHERE outbound.id = $1",
+            outbound_id,
+        )
+        delivery_events = await connection.fetchval(
+            "SELECT count(*) FROM marketing_consent_events "
+            "WHERE source = 'delivery'"
+        )
+    assert tuple(state.values()) == (outbound_status, None, "active")
+    assert delivery_events == 0
+
+
+@pytest.mark.parametrize("outcome", ["sent", "failed", "delivery_unknown"])
+async def test_terminal_transition_blocks_concurrent_stale_reconcile(
+    delivery, outcome
+):
+    database, repository, _ = delivery
+    outbound_id = await _seed_and_reserve(database, repository, f"84{outcome}")
+    messages = MessageRepository(database)
+    assert await messages.claim_outbound_delivery(outbound_id) is not None
+    hook_started = asyncio.Event()
+    hook_release = asyncio.Event()
+
+    async def blocking_hook(*_args):
+        hook_started.set()
+        await hook_release.wait()
+
+    if outcome == "sent":
+        terminal = asyncio.create_task(
+            messages.mark_outbound_sent(
+                outbound_id, "provider-id", delivery_hook=blocking_hook, now=NOW
+            )
+        )
+    elif outcome == "failed":
+        terminal = asyncio.create_task(
+            messages.mark_outbound_failed(
+                outbound_id, "telegram_bad_request",
+                delivery_hook=blocking_hook, now=NOW,
+            )
+        )
+    else:
+        terminal = asyncio.create_task(
+            messages.mark_outbound_delivery_unknown(
+                outbound_id, delivery_hook=blocking_hook,
+                error_code="telegram_network", now=NOW,
+            )
+        )
+    await asyncio.wait_for(hook_started.wait(), timeout=3)
+    reconcile = asyncio.create_task(messages.reconcile_stale_outbound_deliveries())
+    await asyncio.sleep(0.1)
+    assert not reconcile.done()
+    hook_release.set()
+    await asyncio.wait_for(terminal, timeout=3)
+    assert await asyncio.wait_for(reconcile, timeout=3) == 0
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+        ) == outcome
+
+
+async def _apply_marketing_stop(service, action, user_id, *, connection=None):
+    values = dict(
+        channel="telegram", user_id=user_id, source="admin_revoke",
+        source_event_id=f"review-{action}-{user_id}", occurred_at=NOW,
+        connection=connection,
+    )
+    if action == "suppress":
+        await service.suppress_marketing(reason="admin_revoke", **values)
+    else:
+        await service.revoke_marketing(**values)
+
+
+@pytest.mark.parametrize("action", ["revoke", "suppress"])
+@pytest.mark.parametrize("start_order", ["consent_first", "delivery_first"])
+async def test_accepted_send_survives_concurrent_consent_terminal(
+    delivery, action, start_order
+):
+    database, repository, _ = delivery
+    user_id = f"85-{action}-{start_order}"
+    outbound_id = await _seed_and_reserve(database, repository, user_id)
+    messages = MessageRepository(database)
+    service = ConsentService(database)
+    assert await messages.claim_outbound_delivery(outbound_id) is not None
+
+    if start_order == "consent_first":
+        async with database.acquire() as connection:
+            transaction = connection.transaction()
+            await transaction.start()
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                customer_lock_subject(user_id),
+            )
+            await _apply_marketing_stop(
+                service, action, user_id, connection=connection
+            )
+            delivery_task = asyncio.create_task(
+                messages.mark_outbound_sent(
+                    outbound_id, "provider-id",
+                    delivery_hook=repository.delivery_hook, now=NOW,
+                )
+            )
+            await asyncio.sleep(0.1)
+            assert not delivery_task.done()
+            await transaction.commit()
+        await asyncio.wait_for(delivery_task, timeout=3)
+    else:
+        hook_started = asyncio.Event()
+        hook_release = asyncio.Event()
+
+        async def blocked_hook(*args):
+            hook_started.set()
+            await hook_release.wait()
+            await repository.delivery_hook(*args)
+
+        delivery_task = asyncio.create_task(
+            messages.mark_outbound_sent(
+                outbound_id, "provider-id", delivery_hook=blocked_hook, now=NOW
+            )
+        )
+        await asyncio.wait_for(hook_started.wait(), timeout=3)
+        await _apply_marketing_stop(service, action, user_id)
+        hook_release.set()
+        await asyncio.wait_for(delivery_task, timeout=3)
+
+    async with database.acquire() as connection:
+        state = await connection.fetchrow(
+            "SELECT outbound.status, step.status, step.sent_at, journey.status, "
+            "journey.close_reason FROM outbound_messages AS outbound "
+            "JOIN reactivation_journey_steps AS step ON step.outbound_id = outbound.id "
+            "JOIN reactivation_journeys AS journey ON journey.id = step.journey_id "
+            "WHERE outbound.id = $1",
+            outbound_id,
+        )
+        reminder_count = await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journey_steps AS reminder "
+            "JOIN reactivation_journeys AS journey ON journey.id = reminder.journey_id "
+            "WHERE journey.user_id = $1 AND reminder.step_kind = 'reminder' "
+            "AND reminder.status = 'scheduled'",
+            user_id,
+        )
+    assert tuple(state.values()) == ("sent", "sent", NOW, "closed", "suppressed")
+    assert reminder_count == 0
+
+
+@pytest.mark.parametrize(
+    ("mutation", "close_reason"),
+    [
+        ("inbound", "responded"),
+        ("booking", "booked"),
+        ("human", "cancelled"),
+        ("escalation", "escalated"),
+        ("delete", "suppressed"),
+        ("legal", "cancelled"),
+        ("version", "cancelled"),
+    ],
+)
+async def test_accepted_send_rechecks_post_network_terminal_controls(
+    delivery, mutation, close_reason
+):
+    database, repository, _ = delivery
+    user_id = f"87-{mutation}"
+    outbound_id = await _seed_and_reserve(database, repository, user_id)
+    messages = MessageRepository(database)
+    assert await messages.claim_outbound_delivery(outbound_id) is not None
+    hook_started = asyncio.Event()
+    hook_release = asyncio.Event()
+
+    async def blocked_hook(*args):
+        hook_started.set()
+        await hook_release.wait()
+        await repository.delivery_hook(*args)
+
+    delivery_task = asyncio.create_task(
+        messages.mark_outbound_sent(
+            outbound_id, "provider-id", delivery_hook=blocked_hook, now=NOW
+        )
+    )
+    await asyncio.wait_for(hook_started.wait(), timeout=3)
+    async with database.acquire() as connection:
+        if mutation == "inbound":
+            await connection.execute(
+                "UPDATE customer_activity_projection "
+                "SET last_meaningful_inbound_at = $2 WHERE user_id = $1",
+                user_id, NOW,
+            )
+        elif mutation == "booking":
+            await connection.execute(
+                "UPDATE customer_activity_projection "
+                "SET next_active_booking_at = $2 WHERE user_id = $1",
+                user_id, NOW + timedelta(days=1),
+            )
+        elif mutation == "human":
+            await connection.execute(
+                "INSERT INTO human_mode "
+                "(customer_id, enabled, reason_code, enabled_at) "
+                "VALUES ($1, true, 'admin_handoff', $2)",
+                user_id, NOW,
+            )
+        elif mutation == "escalation":
+            await connection.execute(
+                "INSERT INTO escalations "
+                "(id, source, customer_id, status, reason_code, payload) "
+                "VALUES ($1, 'test', $2, 'open', 'test', '{}'::jsonb)",
+                uuid4(), user_id,
+            )
+        elif mutation == "delete":
+            await connection.execute(
+                "DELETE FROM marketing_consents WHERE user_id = $1", user_id
+            )
+        elif mutation == "legal":
+            await connection.execute(
+                "UPDATE reactivation_settings SET legal_status = 'pending' "
+                "WHERE id = 1"
+            )
+        else:
+            await connection.execute(
+                "UPDATE reactivation_program_versions SET status = 'retired' "
+                "WHERE id = (SELECT active_version_id "
+                "FROM reactivation_settings WHERE id = 1)"
+            )
+    hook_release.set()
+    await asyncio.wait_for(delivery_task, timeout=3)
+
+    async with database.acquire() as connection:
+        state = await connection.fetchrow(
+            "SELECT outbound.status, step.status, step.sent_at, "
+            "journey.status, journey.close_reason FROM outbound_messages outbound "
+            "JOIN reactivation_journey_steps step ON step.outbound_id = outbound.id "
+            "JOIN reactivation_journeys journey ON journey.id = step.journey_id "
+            "WHERE outbound.id = $1",
+            outbound_id,
+        )
+        reminder_count = await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journey_steps reminder "
+            "JOIN reactivation_journeys journey ON journey.id = reminder.journey_id "
+            "WHERE journey.user_id = $1 AND reminder.step_kind = 'reminder' "
+            "AND reminder.status = 'scheduled'",
+            user_id,
+        )
+    assert tuple(state.values()) == (
+        "sent", "sent", NOW, "closed", close_reason
+    )
+    assert reminder_count == 0
+
+
 async def test_test_send_guard_rejects_changed_version_text(delivery):
     database, repository, owner_id = delivery
     async with database.acquire() as connection:
@@ -541,3 +840,25 @@ async def test_stale_claim_is_terminalized_and_reconciled_without_resend(deliver
     assert tuple(state.values()) == (
         "delivery_unknown", "delivery_unknown", "delivery_unknown", "paused"
     )
+
+
+async def test_concurrent_unknown_reconcile_reports_one_real_transition(delivery):
+    database, repository, _ = delivery
+    outbound_id = await _seed_and_reserve(database, repository, "86001")
+    messages = MessageRepository(database)
+    assert await messages.claim_outbound_delivery(outbound_id) is not None
+    assert await messages.reconcile_stale_outbound_deliveries() == 1
+
+    async with database.acquire() as connection:
+        transaction = connection.transaction()
+        await transaction.start()
+        await connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            PROGRAM_LOCK_SUBJECT,
+        )
+        first = asyncio.create_task(repository.reconcile_delivery_unknowns(NOW))
+        second = asyncio.create_task(repository.reconcile_delivery_unknowns(NOW))
+        await asyncio.sleep(0.1)
+        assert not first.done() and not second.done()
+        await transaction.commit()
+    assert sorted(await asyncio.gather(first, second)) == [0, 1]

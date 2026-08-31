@@ -32,23 +32,23 @@ def _error(kind):
 
 
 @pytest.mark.parametrize(
-    ("error", "status", "code", "retry"),
+    ("error", "status", "code"),
     [
-        (_error(TelegramForbiddenError), "failed", "telegram_forbidden", False),
-        (_error(TelegramNotFound), "failed", "telegram_not_found", False),
-        (_error(TelegramBadRequest), "failed", "telegram_bad_request", False),
-        (_error(TelegramRetryAfter), "pending", "telegram_retry_after", True),
-        (_error(TelegramNetworkError), "delivery_unknown", "telegram_network", False),
-        (TimeoutError("private timeout"), "delivery_unknown", "timeout", False),
-        (asyncio.CancelledError(), "delivery_unknown", "cancelled", False),
+        (_error(TelegramForbiddenError), "failed", "telegram_forbidden"),
+        (_error(TelegramNotFound), "failed", "telegram_not_found"),
+        (_error(TelegramBadRequest), "failed", "telegram_bad_request"),
+        (_error(TelegramRetryAfter), "pending", "telegram_retry_after"),
+        (_error(TelegramNetworkError), "delivery_unknown", "telegram_network"),
+        (TimeoutError("private timeout"), "delivery_unknown", "timeout"),
+        (asyncio.CancelledError(), "delivery_unknown", "cancelled"),
     ],
 )
-def test_managed_delivery_error_matrix(error, status, code, retry):
+def test_managed_delivery_error_matrix(error, status, code):
     decision = classify_delivery_error(error, managed=True)
 
     assert decision.outbound_status == status
     assert decision.error_code == code
-    assert decision.retry is retry
+    assert not hasattr(decision, "retry")
 
 
 class FakeRepository:
@@ -106,6 +106,14 @@ class FakeTelegram:
         return SimpleNamespace(message_id=42)
 
 
+async def _managed(_outbound):
+    return True
+
+
+async def _generic(_outbound):
+    return False
+
+
 def _outbound(*, managed=True):
     return OutboundMessage(
         id=uuid4(),
@@ -132,13 +140,17 @@ async def test_managed_bad_request_is_terminal_and_calls_atomic_hook(caplog):
         FakeTelegram(_error(TelegramBadRequest)),
         repository,
         delivery_hook=hook,
+        managed_delivery_check=_managed,
         clock=lambda: NOW,
     )
 
     assert await sender.send(outbound.id) == DeliveryResult.FAILED
     assert repository.status == "failed"
     assert hook_calls == [("failed", "telegram_bad_request")]
-    assert "private provider detail" not in caplog.text
+    for private in (
+        str(outbound.id), outbound.chat_id, outbound.text, "private provider detail"
+    ):
+        assert private not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -149,6 +161,21 @@ async def test_unmanaged_bad_request_keeps_existing_retry_semantics():
     with pytest.raises(TelegramBadRequest):
         await TelegramSender(
             FakeTelegram(_error(TelegramBadRequest)), repository
+        ).send(outbound.id)
+
+    assert repository.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_forged_reactivation_delivery_option_is_not_authoritative():
+    outbound = _outbound(managed=True)
+    repository = FakeRepository(outbound)
+
+    with pytest.raises(TelegramBadRequest):
+        await TelegramSender(
+            FakeTelegram(_error(TelegramBadRequest)),
+            repository,
+            managed_delivery_check=_generic,
         ).send(outbound.id)
 
     assert repository.status == "pending"
@@ -168,6 +195,7 @@ async def test_retry_after_releases_and_reraises_without_delivery_hook():
             FakeTelegram(_error(TelegramRetryAfter)),
             repository,
             delivery_hook=hook,
+            managed_delivery_check=_managed,
         ).send(outbound.id)
 
     assert repository.status == "pending"
