@@ -94,3 +94,16 @@ async def test_tick_schedules_successor_before_failed_cycle():
         await coordinator.run_tick(_job(REACTIVATION_TICK_KIND))
 
     assert scheduler.schedule.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_unknown_reconcile_uses_coordinator_clock_once():
+    repository = AsyncMock()
+    repository.reconcile_delivery_unknowns.return_value = 2
+    coordinator = ReactivationCoordinator(
+        repository, AsyncMock(), AsyncMock(), clock=lambda: NOW
+    )
+
+    assert await coordinator.reconcile_delivery_unknowns() == 2
+
+    repository.reconcile_delivery_unknowns.assert_awaited_once_with(NOW)

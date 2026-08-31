@@ -1047,24 +1047,44 @@ async def run() -> None:
             await projection_sync.ensure_current(datetime.now(UTC))
         if catalog_sync is not None:
             await catalog_sync.ensure_current(datetime.now(UTC))
+        reactivation_repository = ReactivationRepository(
+            database,
+            business_alert_chat_id=os.environ.get(
+                "BUSINESS_ALERT_CHAT_ID", ""
+            ),
+        )
         reactivation = None
         if activity_sync is not None:
             reactivation = ReactivationCoordinator(
-                ReactivationRepository(database),
+                reactivation_repository,
                 scheduler_repository,
                 activity_sync,
                 clock=lambda: datetime.now(UTC),
             )
             await reactivation.ensure_current(datetime.now(UTC))
         elif hasattr(database, "acquire"):
-            await ReactivationRepository(
-                database
-            ).fail_closed_yclients_unavailable(datetime.now(UTC))
+            await reactivation_repository.fail_closed_yclients_unavailable(
+                datetime.now(UTC)
+            )
         repository = MessageRepository(database)
         reconciled = await repository.reconcile_stale_outbound_deliveries()
         if reconciled:
             logger.warning(
                 "stale_outbound_deliveries_terminalized count=%d", reconciled
+            )
+        reactivation_unknowns = 0
+        if hasattr(database, "acquire"):
+            reactivation_unknowns = (
+                await reactivation.reconcile_delivery_unknowns()
+                if reactivation is not None
+                else await reactivation_repository.reconcile_delivery_unknowns(
+                    datetime.now(UTC)
+                )
+            )
+        if reactivation_unknowns:
+            logger.error(
+                "reactivation_delivery_unknowns_reconciled count=%d",
+                reactivation_unknowns,
             )
         await queue.connect()
         alert_router = _build_alert_router(redis_client, telegram)
@@ -1079,7 +1099,13 @@ async def run() -> None:
         task_handler = MessageTaskHandler(
             database,
             generate_response,
-            TelegramSender(telegram, repository, context_cache=redis_client),
+            TelegramSender(
+                telegram,
+                repository,
+                context_cache=redis_client,
+                pre_send_guard=reactivation_repository.pre_send_guard,
+                delivery_hook=reactivation_repository.delivery_hook,
+            ),
             scheduler_repository=scheduler_repository,
             booking_port=LocalBookingPort(database),
             notification_outbox=NotificationOutbox(

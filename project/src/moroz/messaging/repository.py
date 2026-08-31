@@ -1,6 +1,10 @@
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Awaitable, Callable, Literal
 from uuid import UUID, uuid4
+
+import asyncpg
 
 from moroz.common.db import Database
 from moroz.messaging.models import IncomingMessage, OutboundMessage
@@ -14,6 +18,21 @@ from moroz.escalation.service import (
     parse_admin_reply_key,
 )
 from moroz.privacy import customer_lock_subject
+
+
+PreSendGuard = Callable[
+    [asyncpg.Connection, OutboundMessage], Awaitable[bool]
+]
+DeliveryHook = Callable[
+    [
+        asyncpg.Connection,
+        OutboundMessage,
+        Literal["sent", "failed", "delivery_unknown"],
+        str | None,
+        datetime,
+    ],
+    Awaitable[None],
+]
 
 
 class OutboundDeliveryBlocked(Exception):
@@ -228,9 +247,19 @@ class MessageRepository:
         return _outbound_from_row(row)
 
     @asynccontextmanager
-    async def fence_claimed_outbound(self, outbound: OutboundMessage):
+    async def fence_claimed_outbound(
+        self,
+        outbound: OutboundMessage,
+        *,
+        pre_send_guard: PreSendGuard | None = None,
+    ):
         async with self._database.acquire() as connection:
             async with connection.transaction():
+                if pre_send_guard is not None and not await pre_send_guard(
+                    connection, outbound
+                ):
+                    yield None
+                    return
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     customer_lock_subject(outbound.chat_id),
@@ -253,9 +282,21 @@ class MessageRepository:
         self,
         outbound_id: UUID,
         external_message_id: str,
+        *,
+        delivery_hook: DeliveryHook | None = None,
+        now: datetime | None = None,
     ) -> str | None:
         async with self._database.acquire() as connection:
             async with connection.transaction():
+                outbound = await self._sending_outbound(connection, outbound_id)
+                if outbound is None:
+                    return None
+                if delivery_hook is not None:
+                    if now is None:
+                        raise ValueError("delivery hook timestamp is required")
+                    await delivery_hook(
+                        connection, outbound, "sent", None, now
+                    )
                 row = await connection.fetchrow(
                     """
                     UPDATE outbound_messages
@@ -287,19 +328,78 @@ class MessageRepository:
                 )
                 return row["chat_id"]
 
+    async def mark_outbound_failed(
+        self,
+        outbound_id: UUID,
+        error_code: str,
+        *,
+        delivery_hook: DeliveryHook | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                outbound = await self._sending_outbound(connection, outbound_id)
+                if outbound is None:
+                    return
+                if delivery_hook is not None:
+                    if now is None:
+                        raise ValueError("delivery hook timestamp is required")
+                    await delivery_hook(
+                        connection, outbound, "failed", error_code, now
+                    )
+                await connection.execute(
+                    """
+                    UPDATE outbound_messages
+                    SET status = 'failed'
+                    WHERE id = $1 AND status = 'sending'
+                    """,
+                    outbound_id,
+                )
+
     async def mark_outbound_delivery_unknown(
         self,
         outbound_id: UUID,
+        *,
+        delivery_hook: DeliveryHook | None = None,
+        error_code: str | None = None,
+        now: datetime | None = None,
     ) -> None:
         async with self._database.acquire() as connection:
-            await connection.execute(
-                """
-                UPDATE outbound_messages
-                SET status = 'delivery_unknown'
-                WHERE id = $1 AND status = 'sending'
-                """,
-                outbound_id,
-            )
+            async with connection.transaction():
+                outbound = await self._sending_outbound(connection, outbound_id)
+                if outbound is None:
+                    return
+                if delivery_hook is not None:
+                    if now is None:
+                        raise ValueError("delivery hook timestamp is required")
+                    await delivery_hook(
+                        connection,
+                        outbound,
+                        "delivery_unknown",
+                        error_code,
+                        now,
+                    )
+                await connection.execute(
+                    """
+                    UPDATE outbound_messages
+                    SET status = 'delivery_unknown'
+                    WHERE id = $1 AND status = 'sending'
+                    """,
+                    outbound_id,
+                )
+
+    @staticmethod
+    async def _sending_outbound(connection, outbound_id: UUID):
+        row = await connection.fetchrow(
+            """
+            SELECT id, channel, chat_id, text, delivery_options,
+                   idempotency_key
+            FROM outbound_messages
+            WHERE id = $1 AND status = 'sending'
+            """,
+            outbound_id,
+        )
+        return None if row is None else _outbound_from_row(row)
 
     async def release_outbound_delivery(self, outbound_id: UUID) -> None:
         async with self._database.acquire() as connection:

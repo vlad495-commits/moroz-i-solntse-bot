@@ -72,6 +72,11 @@ class ReactivationCoordinator:
         )
         return JobResult.sent()
 
+    async def reconcile_delivery_unknowns(self) -> int:
+        return await self._repository.reconcile_delivery_unknowns(
+            _aware(self._clock())
+        )
+
 
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:

@@ -5,6 +5,7 @@ import json
 from hashlib import sha256
 from uuid import UUID, uuid4
 
+from moroz.messaging.models import OutboundMessage
 from moroz.messaging.repository import MessageRepository
 from moroz.privacy import customer_lock_subject
 from moroz.reactivation.policy import (
@@ -20,6 +21,19 @@ from moroz.reactivation.policy import (
 PREVIEW_TTL = timedelta(minutes=30)
 MODES = frozenset({"dry_run", "paused", "active"})
 OUTCOME_REFRESH_LIMIT = 100
+PROGRAM_LOCK_SUBJECT = "reactivation:program"
+DELIVERY_ERROR_CODES = frozenset(
+    {
+        "cancelled",
+        "post_send_completion",
+        "stale_delivery",
+        "telegram_bad_request",
+        "telegram_forbidden",
+        "telegram_network",
+        "telegram_not_found",
+        "timeout",
+    }
+)
 _ELIGIBILITY_SELECT = """
     SELECT consent.channel, consent.user_id, consent.active,
            consent.proof_event_id, consent.proof_text_hash,
@@ -88,10 +102,12 @@ class ReactivationRepository:
         *,
         session_secret: str = "",
         business_alert_chat_id: str = "",
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._database = database
         self._secret = session_secret.strip().encode("utf-8")
         self.business_alert_chat_id = business_alert_chat_id.strip()
+        self._clock = clock
 
     async def create_draft(
         self,
@@ -230,6 +246,7 @@ class ReactivationRepository:
                     idempotency_key=(
                         f"reactivation-test:{version_id}:{version['template_checksum']}"
                     ),
+                    delivery_options={"delivery_policy": "reactivation"},
                 )
                 if (
                     version["test_outbound_id"] == outbound_id
@@ -363,6 +380,7 @@ class ReactivationRepository:
         async with self._database.acquire() as connection:
             async with connection.transaction():
                 await self._require_owner(connection, actor_id)
+                await _lock_program(connection, shared=False)
                 settings = await connection.fetchrow(
                     "SELECT * FROM reactivation_settings WHERE id = 1 FOR UPDATE"
                 )
@@ -429,9 +447,12 @@ class ReactivationRepository:
         current = _aware(now)
         if mode not in MODES:
             raise ValueError("unsupported reactivation mode")
+        if mode == "paused":
+            return await self.emergency_stop(actor_id, current)
         async with self._database.acquire() as connection:
             async with connection.transaction():
                 await self._require_owner(connection, actor_id)
+                await _lock_program(connection, shared=False)
                 settings = await connection.fetchrow(
                     "SELECT * FROM reactivation_settings WHERE id = 1 FOR UPDATE"
                 )
@@ -473,6 +494,120 @@ class ReactivationRepository:
                 )
         return dict(row)
 
+    async def emergency_stop(
+        self, actor_id: int, now: datetime
+    ) -> dict:
+        current = _aware(now)
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._require_owner(connection, actor_id)
+                await _lock_program(connection, shared=False)
+                settings = await connection.fetchrow(
+                    "SELECT * FROM reactivation_settings WHERE id = 1 FOR UPDATE"
+                )
+                if settings is None:
+                    raise RuntimeError("reactivation settings are missing")
+                targets = await connection.fetch(
+                    """
+                    SELECT id, channel, user_id
+                    FROM reactivation_journeys
+                    WHERE status != 'closed'
+                    ORDER BY channel, user_id, id
+                    """
+                )
+                cancelled_outbound = 0
+                cancelled_steps = 0
+                for target in targets:
+                    await self._lock_recipient_controls(
+                        connection, target["channel"], target["user_id"]
+                    )
+                    await connection.fetchrow(
+                        "SELECT id FROM reactivation_journeys "
+                        "WHERE id = $1 FOR UPDATE",
+                        target["id"],
+                    )
+                    await connection.fetch(
+                        "SELECT id FROM reactivation_journey_steps "
+                        "WHERE journey_id = $1 FOR UPDATE",
+                        target["id"],
+                    )
+                    result = await connection.execute(
+                        """
+                        UPDATE outbound_messages AS outbound
+                        SET status = 'cancelled'
+                        FROM reactivation_journey_steps AS step
+                        WHERE step.journey_id = $1
+                          AND step.outbound_id = outbound.id
+                          AND outbound.status = 'pending'
+                        """,
+                        target["id"],
+                    )
+                    cancelled_outbound += _command_count(result)
+                    result = await connection.execute(
+                        """
+                        UPDATE reactivation_journey_steps AS step
+                        SET status = 'cancelled',
+                            terminal_reason = 'program_paused', updated_at = $2
+                        WHERE step.journey_id = $1
+                          AND step.status IN ('scheduled', 'reserved')
+                          AND (
+                              step.outbound_id IS NULL OR EXISTS (
+                                  SELECT 1 FROM outbound_messages AS outbound
+                                  WHERE outbound.id = step.outbound_id
+                                    AND outbound.status IN ('pending', 'cancelled')
+                              )
+                          )
+                        """,
+                        target["id"], current,
+                    )
+                    count = _command_count(result)
+                    cancelled_steps += count
+                    if count:
+                        await self._close_journey(
+                            connection, target["id"], "cancelled", current
+                        )
+                test_result = await connection.execute(
+                    """
+                    UPDATE outbound_messages AS outbound
+                    SET status = 'cancelled'
+                    FROM reactivation_program_versions AS version
+                    WHERE version.test_outbound_id = outbound.id
+                      AND outbound.status = 'pending'
+                    """
+                )
+                cancelled_outbound += _command_count(test_result)
+                if (
+                    settings["mode"] == "paused"
+                    and cancelled_outbound == 0
+                    and cancelled_steps == 0
+                ):
+                    return dict(settings)
+                row = await connection.fetchrow(
+                    """
+                    UPDATE reactivation_settings
+                    SET mode = 'paused', stopped_at = $1,
+                        program_revision = program_revision + 1,
+                        updated_at = $1
+                    WHERE id = 1
+                    RETURNING *
+                    """,
+                    current,
+                )
+                await _audit(
+                    connection,
+                    actor_id=actor_id,
+                    action="reactivation.emergency_stopped",
+                    object_type="reactivation_settings",
+                    object_id="1",
+                    before={"mode": settings["mode"]},
+                    after={
+                        "mode": "paused",
+                        "cancelled_outbound_count": cancelled_outbound,
+                        "cancelled_step_count": cancelled_steps,
+                    },
+                )
+        return dict(row)
+
     async def get_dashboard(self, actor_id: int) -> dict:
         async with self._database.acquire() as connection:
             await self._require_owner(connection, actor_id)
@@ -508,6 +643,7 @@ class ReactivationRepository:
         current = _aware(now)
         async with self._database.acquire() as connection:
             async with connection.transaction():
+                await _lock_program(connection, shared=False)
                 settings = await connection.fetchrow(
                     "SELECT mode FROM reactivation_settings WHERE id = 1 FOR UPDATE"
                 )
@@ -560,6 +696,48 @@ class ReactivationRepository:
                 )
         return True
 
+    async def reconcile_delivery_unknowns(self, now: datetime) -> int:
+        current = _aware(now)
+        async with self._database.acquire() as connection:
+            rows = await connection.fetch(
+                """
+                SELECT outbound.id, outbound.channel, outbound.chat_id,
+                       outbound.text, outbound.delivery_options,
+                       outbound.idempotency_key
+                FROM outbound_messages AS outbound
+                WHERE outbound.status = 'delivery_unknown'
+                  AND EXISTS (
+                    SELECT 1 FROM reactivation_journey_steps AS step
+                    WHERE step.outbound_id = outbound.id
+                      AND step.status = 'reserved'
+                  )
+                ORDER BY outbound.created_at, outbound.id
+                """
+            )
+        reconciled = 0
+        for row in rows:
+            async with self._database.acquire() as connection:
+                async with connection.transaction():
+                    value = OutboundMessage(
+                        id=row["id"], channel=row["channel"],
+                        chat_id=row["chat_id"], text=row["text"],
+                        delivery_options=(
+                            json.loads(row["delivery_options"])
+                            if isinstance(row["delivery_options"], str)
+                            else row["delivery_options"]
+                        ),
+                        idempotency_key=row["idempotency_key"],
+                    )
+                    await self.delivery_hook(
+                        connection,
+                        value,
+                        "delivery_unknown",
+                        "stale_delivery",
+                        current,
+                    )
+                    reconciled += 1
+        return reconciled
+
     async def recover_yclients_unavailable_jobs(
         self, idempotency_keys: tuple[str, ...]
     ) -> None:
@@ -602,6 +780,275 @@ class ReactivationRepository:
                 await self._plan_recipient(current, row["channel"], row["user_id"])
         return await self._reserve_due_steps(current, limit=step_claim_limit)
 
+    async def pre_send_guard(self, connection, outbound) -> bool:
+        current = _aware(self._clock())
+        test_version = await connection.fetchrow(
+            "SELECT id FROM reactivation_program_versions "
+            "WHERE test_outbound_id = $1",
+            outbound.id,
+        )
+        target = await connection.fetchrow(
+            """
+            SELECT step.id AS step_id, step.journey_id, journey.channel,
+                   journey.user_id
+            FROM reactivation_journey_steps AS step
+            JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
+            WHERE step.outbound_id = $1
+            """,
+            outbound.id,
+        )
+        if test_version is None and target is None:
+            return True
+        await _lock_program(connection, shared=True)
+        if test_version is not None:
+            version = await connection.fetchrow(
+                "SELECT * FROM reactivation_program_versions "
+                "WHERE id = $1 FOR SHARE",
+                test_version["id"],
+            )
+            allowed = bool(
+                version
+                and version["status"] != "retired"
+                and outbound.channel == "telegram"
+                and outbound.chat_id == self.business_alert_chat_id
+                and outbound.text == version["main_text"]
+                and outbound.idempotency_key
+                == f"reactivation-test:{version['id']}:{version['template_checksum']}"
+            )
+            if not allowed:
+                await connection.execute(
+                    "UPDATE outbound_messages SET status = 'cancelled' "
+                    "WHERE id = $1 AND status = 'sending'",
+                    outbound.id,
+                )
+            return allowed
+
+        settings, version = await self._locked_settings_version(
+            connection, program_locked=True
+        )
+        _, state = await self._locked_recipient_state(
+            connection,
+            current,
+            target["channel"],
+            target["user_id"],
+        )
+        step = await connection.fetchrow(
+            """
+            SELECT step.id, step.status, step.terminal_reason,
+                   journey.id AS journey_id, journey.status AS journey_status,
+                   journey.program_version_id
+            FROM reactivation_journey_steps AS step
+            JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
+            WHERE step.id = $1
+            FOR UPDATE OF step, journey
+            """,
+            target["step_id"],
+        )
+        reason = None
+        if not _runtime_gates_open(settings):
+            reason = (
+                "program_paused"
+                if settings is not None and settings["mode"] != "active"
+                else "legal_unavailable"
+            )
+        elif version is None or version["status"] != "active" or step is None or (
+            step["program_version_id"] != version["id"]
+        ):
+            reason = "version_changed"
+        elif step["journey_status"] == "closed":
+            reason = step["terminal_reason"] or "journey_closed"
+        else:
+            decision = (
+                _eligibility(state, _policy(version), current, existing_journey=True)
+                if state is not None
+                else None
+            )
+            if decision is None or not decision.eligible:
+                reason = (
+                    decision.reason if decision is not None else "consent_revoked"
+                )
+            elif step["status"] != "reserved":
+                reason = step["terminal_reason"] or "step_not_reserved"
+        if reason is None:
+            return True
+        await connection.execute(
+            "UPDATE outbound_messages SET status = 'cancelled' "
+            "WHERE id = $1 AND status = 'sending'",
+            outbound.id,
+        )
+        if step is not None:
+            await connection.execute(
+                """
+                UPDATE reactivation_journey_steps
+                SET status = 'cancelled', terminal_reason = $2, updated_at = $3
+                WHERE id = $1 AND status IN ('reserved', 'cancelled')
+                """,
+                step["id"], reason, current,
+            )
+            await self._close_journey(
+                connection, step["journey_id"], _close_reason(reason), current
+            )
+        return False
+
+    async def delivery_hook(
+        self,
+        connection,
+        outbound,
+        outcome: str,
+        error_code: str | None,
+        now: datetime,
+    ) -> None:
+        current = _aware(now)
+        error_code = (
+            error_code
+            if error_code is None or error_code in DELIVERY_ERROR_CODES
+            else "telegram_delivery_failure"
+        )
+        test_version = await connection.fetchrow(
+            "SELECT * FROM reactivation_program_versions "
+            "WHERE test_outbound_id = $1",
+            outbound.id,
+        )
+        target = await connection.fetchrow(
+            """
+            SELECT step.journey_id, journey.channel, journey.user_id
+            FROM reactivation_journey_steps AS step
+            JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
+            WHERE step.outbound_id = $1
+            """,
+            outbound.id,
+        )
+        if test_version is None and target is None:
+            return
+        must_pause = outcome == "delivery_unknown" or error_code == "telegram_bad_request"
+        await _lock_program(connection, shared=not must_pause)
+        if test_version is not None:
+            version = await connection.fetchrow(
+                "SELECT * FROM reactivation_program_versions "
+                "WHERE id = $1 FOR UPDATE",
+                test_version["id"],
+            )
+            valid = bool(
+                version
+                and version["status"] != "retired"
+                and outbound.channel == "telegram"
+                and outbound.chat_id == self.business_alert_chat_id
+                and outbound.text == version["main_text"]
+                and outbound.idempotency_key
+                == f"reactivation-test:{version['id']}:{version['template_checksum']}"
+            )
+            if outcome == "sent" and valid and version["test_sent_at"] is None:
+                await connection.execute(
+                    "UPDATE reactivation_program_versions SET test_sent_at = $2 "
+                    "WHERE id = $1",
+                    version["id"], current,
+                )
+                await _audit(
+                    connection,
+                    actor_id=None,
+                    action="reactivation.test_sent",
+                    object_type="reactivation_program_version",
+                    object_id=str(version["id"]),
+                    before={"test_sent": False},
+                    after={"test_sent": True},
+                )
+            elif outcome != "sent":
+                await connection.execute(
+                    "UPDATE reactivation_program_versions SET test_sent_at = NULL "
+                    "WHERE id = $1",
+                    version["id"],
+                )
+            if must_pause:
+                await self._auto_pause(connection, error_code, current)
+            return
+
+        program_active = await connection.fetchval(
+            "SELECT mode = 'active' FROM reactivation_settings "
+            "WHERE id = 1 FOR SHARE"
+        )
+        await self._lock_recipient_controls(
+            connection, target["channel"], target["user_id"]
+        )
+        journey = await connection.fetchrow(
+            "SELECT * FROM reactivation_journeys WHERE id = $1 FOR UPDATE",
+            target["journey_id"],
+        )
+        step = await connection.fetchrow(
+            """
+            SELECT step.id, step.journey_id, step.step_kind, step.status,
+                   version.reminder_enabled, version.reminder_after_days
+            FROM reactivation_journey_steps AS step
+            JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
+            JOIN reactivation_program_versions AS version
+              ON version.id = journey.program_version_id
+            WHERE step.outbound_id = $1 AND step.journey_id = $2
+            FOR UPDATE OF step
+            """,
+            outbound.id, target["journey_id"],
+        )
+        if journey is None or step is None or step["status"] != "reserved":
+            if must_pause:
+                await self._auto_pause(connection, error_code, current)
+            return
+        if outcome == "sent":
+            await self._record_delivery_sent_locked(
+                connection,
+                journey,
+                step,
+                current,
+                allow_reminder=bool(program_active),
+            )
+            return
+        terminal = error_code or outcome
+        await connection.execute(
+            """
+            UPDATE reactivation_journey_steps
+            SET status = $2, terminal_reason = $3, updated_at = $4
+            WHERE id = $1
+            """,
+            step["id"], outcome, terminal, current,
+        )
+        await self._close_journey(connection, step["journey_id"], outcome, current)
+        if error_code in {"telegram_forbidden", "telegram_not_found"}:
+            await connection.execute(
+                """
+                UPDATE marketing_consents
+                SET active = false, revoked_at = COALESCE(revoked_at, $3),
+                    suppressed_at = COALESCE(suppressed_at, $3),
+                    suppression_reason = 'telegram_unreachable',
+                    suppression_source = 'delivery', updated_at = $3
+                WHERE channel = $1 AND user_id = $2
+                """,
+                target["channel"], target["user_id"], current,
+            )
+        if must_pause:
+            await self._auto_pause(connection, error_code, current)
+
+    async def _auto_pause(self, connection, error_code: str | None, now: datetime):
+        before = await connection.fetchrow(
+            "SELECT mode FROM reactivation_settings WHERE id = 1 FOR UPDATE"
+        )
+        if before is None or before["mode"] == "paused":
+            return
+        await connection.execute(
+            """
+            UPDATE reactivation_settings
+            SET mode = 'paused', stopped_at = $1,
+                program_revision = program_revision + 1, updated_at = $1
+            WHERE id = 1
+            """,
+            now,
+        )
+        await _audit(
+            connection,
+            actor_id=None,
+            action="reactivation.delivery_auto_paused",
+            object_type="reactivation_settings",
+            object_id="1",
+            before={"mode": before["mode"]},
+            after={"mode": "paused", "code": error_code or "delivery_unknown", "count": 1},
+        )
+
     async def record_delivery_sent(
         self, outbound_id: UUID, sent_at: datetime
     ) -> bool:
@@ -620,6 +1067,7 @@ class ReactivationRepository:
             return False
         async with self._database.acquire() as connection:
             async with connection.transaction():
+                await _lock_program(connection, shared=True)
                 await self._lock_recipient_controls(
                     connection, target["channel"], target["user_id"]
                 )
@@ -646,50 +1094,68 @@ class ReactivationRepository:
                 )
                 if step is None or step["status"] != "reserved":
                     return False
-                await connection.execute(
-                    """
-                    UPDATE reactivation_journey_steps
-                    SET status = 'sent', sent_at = $2, updated_at = $2
-                    WHERE id = $1
-                    """,
-                    step["id"], delivered_at,
-                )
-                if journey["status"] == "closed":
-                    return True
-                if step["step_kind"] == "reminder":
-                    await self._close_journey(
-                        connection, step["journey_id"], "exhausted", delivered_at
-                    )
-                    return True
-                await connection.execute(
-                    """
-                    UPDATE reactivation_journeys
-                    SET status = 'active', first_sent_at = COALESCE(first_sent_at, $2),
-                        updated_at = $2
-                    WHERE id = $1 AND status != 'closed'
-                    """,
-                    step["journey_id"], delivered_at,
-                )
-                if not step["reminder_enabled"]:
-                    await self._close_journey(
-                        connection, step["journey_id"], "exhausted", delivered_at
-                    )
-                    return True
-                due_at = next_send_at(
-                    delivered_at + timedelta(days=step["reminder_after_days"])
-                )
-                await connection.execute(
-                    """
-                    INSERT INTO reactivation_journey_steps
-                        (id, journey_id, step_kind, status, due_at,
-                         idempotency_key, created_at, updated_at)
-                    VALUES ($1, $2, 'reminder', 'scheduled', $3, $4, $5, $5)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    uuid4(), step["journey_id"], due_at,
-                    f"reactivation:{step['journey_id']}:reminder", delivered_at,
+                await self._record_delivery_sent_locked(
+                    connection, journey, step, delivered_at
                 )
         return True
+
+    async def _record_delivery_sent_locked(
+        self,
+        connection,
+        journey,
+        step,
+        delivered_at: datetime,
+        *,
+        allow_reminder: bool = True,
+    ) -> None:
+        await connection.execute(
+            """
+            UPDATE reactivation_journey_steps
+            SET status = 'sent', sent_at = $2, updated_at = $2
+            WHERE id = $1
+            """,
+            step["id"], delivered_at,
+        )
+        if journey["status"] == "closed":
+            return
+        if step["step_kind"] == "reminder":
+            await self._close_journey(
+                connection, step["journey_id"], "exhausted", delivered_at
+            )
+            return
+        await connection.execute(
+            """
+            UPDATE reactivation_journeys
+            SET status = 'active', first_sent_at = COALESCE(first_sent_at, $2),
+                updated_at = $2
+            WHERE id = $1 AND status != 'closed'
+            """,
+            step["journey_id"], delivered_at,
+        )
+        if not allow_reminder:
+            await self._close_journey(
+                connection, step["journey_id"], "cancelled", delivered_at
+            )
+            return
+        if not step["reminder_enabled"]:
+            await self._close_journey(
+                connection, step["journey_id"], "exhausted", delivered_at
+            )
+            return
+        due_at = next_send_at(
+            delivered_at + timedelta(days=step["reminder_after_days"])
+        )
+        await connection.execute(
+            """
+            INSERT INTO reactivation_journey_steps
+                (id, journey_id, step_kind, status, due_at,
+                 idempotency_key, created_at, updated_at)
+            VALUES ($1, $2, 'reminder', 'scheduled', $3, $4, $5, $5)
+            ON CONFLICT DO NOTHING
+            """,
+            uuid4(), step["journey_id"], due_at,
+            f"reactivation:{step['journey_id']}:reminder", delivered_at,
+        )
 
     async def _planner_candidates(
         self, connection, now: datetime, policy: ProgramPolicy, *, limit: int
@@ -876,6 +1342,7 @@ class ReactivationRepository:
                     chat_id=step["user_id"],
                     text=step["text"],
                     idempotency_key=key,
+                    delivery_options={"delivery_policy": "reactivation"},
                 )
                 await connection.execute(
                     """
@@ -915,7 +1382,9 @@ class ReactivationRepository:
         )
 
     @staticmethod
-    async def _locked_settings_version(connection):
+    async def _locked_settings_version(connection, *, program_locked=False):
+        if not program_locked:
+            await _lock_program(connection, shared=True)
         settings = await connection.fetchrow(
             "SELECT * FROM reactivation_settings WHERE id = 1 FOR SHARE"
         )
@@ -1509,3 +1978,17 @@ async def _lock_population(connection) -> None:
         IN SHARE MODE
         """
     )
+
+
+async def _lock_program(connection, *, shared: bool) -> None:
+    function = (
+        "pg_advisory_xact_lock_shared" if shared else "pg_advisory_xact_lock"
+    )
+    await connection.execute(
+        f"SELECT {function}(hashtextextended($1, 0))",
+        PROGRAM_LOCK_SUBJECT,
+    )
+
+
+def _command_count(result: str) -> int:
+    return int(result.rsplit(" ", 1)[-1])
