@@ -495,6 +495,9 @@ class ActivitySyncCoordinator:
 
     async def run(self, job: PlannedSchedulerJob) -> JobResult:
         await self._scheduler.schedule(activity_job(job.run_at + ACTIVITY_SYNC_INTERVAL))
+        return await self.sync_once()
+
+    async def sync_once(self) -> JobResult:
         now = _aware_utc(self._clock())
         async with self._repository.serialized() as connection:
             if connection is None:

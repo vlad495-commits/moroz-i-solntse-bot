@@ -40,6 +40,15 @@ def test_v2_admin_backend_uses_one_repository_and_existing_environment_names():
     assert "REACTIVATION_TEST_CHAT_ID" not in text
 
 
+def test_marketing_screen_exposes_explicit_yclients_unavailable_gate():
+    template = Path("/workspace/admin/templates/reactivation.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'readiness["yclients_available"]' in MODULE.read_text(encoding="utf-8")
+    assert "YCLIENTS unavailable" in template
+
+
 def test_create_draft_wrapper_has_one_policy_input():
     signature = inspect.signature(reactivation_database.create_draft)
 

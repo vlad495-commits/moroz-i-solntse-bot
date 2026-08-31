@@ -216,8 +216,17 @@ async def get_marketing_page_data(
         len(rows) > PAGE_SIZE for rows in (consents, consent_events, journeys)
     )
     readiness = dict(readiness_row)
+    readiness["yclients_available"] = all(
+        os.environ.get(name, "").strip()
+        for name in (
+            "YCLIENTS_PARTNER_TOKEN",
+            "YCLIENTS_USER_TOKEN",
+            "YCLIENTS_COMPANY_ID",
+        )
+    )
     readiness["yclients_ready"] = (
-        readiness["proven_consents"] > 0
+        readiness["yclients_available"]
+        and readiness["proven_consents"] > 0
         and readiness["yclients_current"] == readiness["proven_consents"]
     )
     data.update(

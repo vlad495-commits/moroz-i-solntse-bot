@@ -28,7 +28,7 @@
     <section class="card">
         <h2>Готовность к запуску</h2>
         <div class="gate-grid">
-            <div><strong>YCLIENTS freshness</strong><span>{{ data.readiness.yclients_current }} из {{ data.readiness.proven_consents }} актуальны</span></div>
+            <div><strong>YCLIENTS freshness</strong><span>{% if not data.readiness.yclients_available %}YCLIENTS unavailable{% else %}{{ data.readiness.yclients_current }} из {{ data.readiness.proven_consents }} актуальны{% endif %}</span></div>
             <div><strong>Доказанные согласия</strong><span>{{ data.readiness.proven_consents }} подтверждено</span></div>
             <div><strong>Свежий предпросмотр</strong><span>{{ draft.preview_created_at if draft and draft.preview_created_at else 'не готов' }}</span></div>
             <div><strong>Тестовая доставка</strong><span>{{ draft.test_sent_at if draft and draft.test_sent_at else 'не подтверждена' }}</span></div>
