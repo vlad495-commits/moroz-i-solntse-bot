@@ -15,6 +15,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import InlineKeyboardMarkup
 
+from moroz.common.queue import TaskRecoveryRequired
 from moroz.messaging.models import OutboundMessage
 from moroz.messaging.repository import DeliveryHook, MessageRepository, PreSendGuard
 
@@ -67,18 +68,21 @@ async def _recover_post_provider(
     *,
     retry_safe: bool,
 ) -> None:
-    if retry_safe:
-        durable = await asyncio.shield(
-            repository.release_outbound_delivery(outbound.id)
-        )
-        recovery = "pending"
-    else:
-        durable = await asyncio.shield(
-            repository.mark_outbound_delivery_unknown(outbound.id)
-        )
-        recovery = "delivery_unknown"
+    try:
+        if retry_safe:
+            durable = await asyncio.shield(
+                repository.release_outbound_delivery(outbound.id)
+            )
+            recovery = "pending"
+        else:
+            durable = await asyncio.shield(
+                repository.mark_outbound_delivery_unknown(outbound.id)
+            )
+            recovery = "delivery_unknown"
+    except BaseException as error:
+        raise TaskRecoveryRequired("delivery recovery requires redelivery") from error
     if not durable:
-        raise RuntimeError("post-provider recovery was not persisted")
+        raise TaskRecoveryRequired("delivery recovery requires redelivery")
     logger.error(
         "post_provider_completion_recovered code=%s count=1", recovery
     )
@@ -234,6 +238,23 @@ class TelegramSender:
         self._delivery_hook = delivery_hook
         self._managed_delivery_check = managed_delivery_check
         self._clock = clock
+
+    async def recover(self, outbound_id: UUID) -> None:
+        try:
+            durable = await asyncio.shield(
+                self._repository.mark_outbound_delivery_unknown(
+                    outbound_id,
+                    delivery_hook=self._delivery_hook,
+                    error_code="post_provider_recovery",
+                    now=self._clock(),
+                )
+            )
+        except BaseException as error:
+            raise TaskRecoveryRequired(
+                "delivery recovery requires redelivery"
+            ) from error
+        if not durable:
+            raise TaskRecoveryRequired("delivery recovery requires redelivery")
 
     async def send(self, outbound_id: UUID) -> DeliveryResult:
         outbound = await self._repository.claim_outbound_delivery(outbound_id)

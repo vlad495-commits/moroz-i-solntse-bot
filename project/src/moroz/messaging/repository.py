@@ -362,6 +362,11 @@ class MessageRepository:
                     connection, outbound_id
                 )
                 if outbound is None:
+                    if delivery_hook is not None:
+                        outbound = await self._outbound_status_snapshot(
+                            connection, outbound_id, "delivery_unknown"
+                        )
+                if outbound is None:
                     return bool(
                         await connection.fetchval(
                             "SELECT status = 'delivery_unknown' "
@@ -376,6 +381,7 @@ class MessageRepository:
                     delivery_hook=delivery_hook,
                     error_code=error_code,
                     now=now,
+                    allow_existing_terminal=True,
                 )
                 return True
 
@@ -389,6 +395,7 @@ class MessageRepository:
         delivery_hook: DeliveryHook | None,
         error_code: str | None,
         now: datetime | None,
+        allow_existing_terminal: bool = False,
     ) -> OutboundMessage:
         transition_calls = 0
         transitioned = None
@@ -401,6 +408,10 @@ class MessageRepository:
             transitioned = await self._transition_sending_outbound(
                 connection, outbound.id, status, external_message_id
             )
+            if transitioned is None and allow_existing_terminal:
+                transitioned = await self._outbound_status_snapshot(
+                    connection, outbound.id, status
+                )
             if transitioned is None:
                 raise RuntimeError("terminal transition was not persisted")
             return transitioned
@@ -424,14 +435,21 @@ class MessageRepository:
 
     @staticmethod
     async def _sending_outbound_snapshot(connection, outbound_id: UUID):
+        return await MessageRepository._outbound_status_snapshot(
+            connection, outbound_id, "sending"
+        )
+
+    @staticmethod
+    async def _outbound_status_snapshot(connection, outbound_id: UUID, status: str):
         row = await connection.fetchrow(
             """
             SELECT id, channel, chat_id, text, delivery_options,
                    idempotency_key
             FROM outbound_messages
-            WHERE id = $1 AND status = 'sending'
+            WHERE id = $1 AND status = $2
             """,
             outbound_id,
+            status,
         )
         return None if row is None else _outbound_from_row(row)
 

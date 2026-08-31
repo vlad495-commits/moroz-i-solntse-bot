@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 import aio_pika
@@ -26,9 +26,14 @@ DEAD_LETTER_ROUTING_KEY = "tasks.dlq"
 DEAD_LETTER_TTL_MS = 2_592_000_000
 MAX_RETRIES = 3
 RETRY_HEADER = "x-retry-count"
+RECOVERY_REQUIRED_HEADER = "x-recovery-required"
 DEFAULT_RETRY_DELAYS = (1, 5, 30)
 DEFAULT_DRAIN_TIMEOUT = 20.0
 DEFAULT_CANCEL_TIMEOUT = 1.0
+
+
+class TaskRecoveryRequired(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +43,7 @@ class QueueTask:
     kind: str
     payload: dict[str, Any]
     idempotency_key: str
+    recovery_required: bool = field(default=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, str) or not self.kind:
@@ -315,8 +321,14 @@ class RabbitQueue(QueuePort):
     ) -> None:
         try:
             task = QueueTask.from_json(message.body.decode())
+            if (
+                message.headers
+                and message.headers.get(RECOVERY_REQUIRED_HEADER) == 1
+                and self._retry_count(message) > 0
+            ):
+                task = replace(task, recovery_required=True)
             await handler(task)
-        except Exception:
+        except Exception as error:
             retry_count = self._retry_count(message)
             try:
                 if retry_count < MAX_RETRIES:
@@ -326,6 +338,9 @@ class RabbitQueue(QueuePort):
                         self._require(self._exchange),
                         TASKS_ROUTING_KEY,
                         retry_count + 1,
+                        recovery_required=isinstance(
+                            error, TaskRecoveryRequired
+                        ),
                     )
                 else:
                     await self._republish(
@@ -333,6 +348,9 @@ class RabbitQueue(QueuePort):
                         self._require(self._dead_letter_exchange),
                         DEAD_LETTER_ROUTING_KEY,
                         retry_count,
+                        recovery_required=isinstance(
+                            error, TaskRecoveryRequired
+                        ),
                     )
             except Exception as republish_error:
                 try:
@@ -350,9 +368,13 @@ class RabbitQueue(QueuePort):
         exchange: AbstractRobustExchange,
         routing_key: str,
         retry_count: int,
+        *,
+        recovery_required: bool = False,
     ) -> None:
         headers = dict(original.headers or {})
         headers[RETRY_HEADER] = retry_count
+        if recovery_required:
+            headers[RECOVERY_REQUIRED_HEADER] = 1
         await self._confirmed_publish(
             exchange,
             aio_pika.Message(

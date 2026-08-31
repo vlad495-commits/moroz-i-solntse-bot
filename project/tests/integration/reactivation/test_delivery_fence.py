@@ -1194,3 +1194,158 @@ async def test_rabbit_redelivery_reclaims_pending_after_failed_hook(delivery):
     finally:
         await queue.close()
         await admin_connection.close()
+
+
+class RecoveryFailingRepository:
+    def __init__(self, repository, outcome, recovery_error):
+        self._repository = repository
+        self._outcome = outcome
+        self._recovery_error = recovery_error
+        self._failed = False
+
+    def __getattr__(self, name):
+        return getattr(self._repository, name)
+
+    async def mark_outbound_delivery_unknown(self, *args, **kwargs):
+        if (
+            self._outcome != "failed"
+            and kwargs.get("delivery_hook") is None
+            and not self._failed
+        ):
+            self._failed = True
+            raise self._recovery_error
+        return await self._repository.mark_outbound_delivery_unknown(
+            *args, **kwargs
+        )
+
+    async def release_outbound_delivery(self, *args, **kwargs):
+        if self._outcome == "failed" and not self._failed:
+            self._failed = True
+            raise self._recovery_error
+        return await self._repository.release_outbound_delivery(*args, **kwargs)
+
+
+@pytest.mark.parametrize("outcome", ["sent", "failed", "delivery_unknown"])
+@pytest.mark.parametrize("recovery_kind", ["exception", "cancellation"])
+async def test_rabbit_recovery_redelivery_never_repeats_provider(
+    delivery, outcome, recovery_kind
+):
+    database, repository, _ = delivery
+    outcome_index = ["sent", "failed", "delivery_unknown"].index(outcome)
+    recovery_index = ["exception", "cancellation"].index(recovery_kind)
+    outbound_id = await _seed_and_reserve(
+        database, repository, f"94{outcome_index}{recovery_index}01"
+    )
+    if outcome == "failed":
+        telegram = FakeTelegram(_telegram_error(TelegramBadRequest))
+    elif outcome == "delivery_unknown":
+        telegram = FakeTelegram(_telegram_error(TelegramNetworkError))
+    else:
+        telegram = FakeTelegram()
+    recovery_error = (
+        RuntimeError("recovery database unavailable")
+        if recovery_kind == "exception"
+        else asyncio.CancelledError()
+    )
+    messages = RecoveryFailingRepository(
+        MessageRepository(database), outcome, recovery_error
+    )
+
+    hook_calls = 0
+
+    async def transient_hook(*args):
+        nonlocal hook_calls
+        hook_calls += 1
+        if hook_calls == 1:
+            raise RuntimeError("completion hook unavailable")
+        await repository.delivery_hook(*args)
+
+    sender = TelegramSender(
+        telegram,
+        messages,
+        pre_send_guard=repository.pre_send_guard,
+        delivery_hook=transient_hook,
+        managed_delivery_check=repository.is_linked_outbound,
+        clock=lambda: NOW,
+    )
+    handler = MessageTaskHandler(database, object(), sender)
+    queue = RabbitQueue(os.environ["RABBITMQ_URL"], retry_delays=(0, 0, 0))
+    await queue.connect()
+    admin_connection = await aio_pika.connect_robust(os.environ["RABBITMQ_URL"])
+    admin_channel = await admin_connection.channel()
+    tasks = await admin_channel.get_queue("tasks")
+    dead_letters = await admin_channel.get_queue("tasks.dlq")
+    await tasks.purge()
+    await dead_letters.purge()
+    task = QueueTask(
+        kind="send_outbound",
+        payload={"outbound_id": str(outbound_id)},
+        idempotency_key=f"send_outbound:{outbound_id}",
+    )
+    try:
+        await queue.publish(task)
+        try:
+            await queue.consume_one(handler.handle)
+        except asyncio.CancelledError:
+            await queue.close()
+            await queue.connect()
+        async with database.acquire() as connection:
+            assert await connection.fetchval(
+                "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+            ) == "sending"
+        assert len(telegram.calls) == 1
+
+        await queue.consume_one(handler.handle)
+        async with database.acquire() as connection:
+            state = await connection.fetchrow(
+                "SELECT outbound.status, step.status "
+                "FROM outbound_messages outbound "
+                "JOIN reactivation_journey_steps step "
+                "ON step.outbound_id = outbound.id "
+                "WHERE outbound.id = $1",
+                outbound_id,
+            )
+        assert tuple(state.values()) == (
+            "delivery_unknown", "delivery_unknown"
+        )
+        assert hook_calls == 2
+        assert len(telegram.calls) == 1
+        assert await tasks.get(fail=False) is None
+        assert await dead_letters.get(fail=False) is None
+    finally:
+        await queue.close()
+        await admin_connection.close()
+
+
+async def test_ordinary_duplicate_does_not_recover_inflight_send(delivery):
+    database, repository, _ = delivery
+    outbound_id = await _seed_and_reserve(database, repository, "95001")
+    messages = MessageRepository(database)
+    assert await messages.claim_outbound_delivery(outbound_id) is not None
+    telegram = FakeTelegram()
+    sender = TelegramSender(
+        telegram,
+        messages,
+        pre_send_guard=repository.pre_send_guard,
+        delivery_hook=repository.delivery_hook,
+        managed_delivery_check=repository.is_linked_outbound,
+        clock=lambda: NOW,
+    )
+    handler = MessageTaskHandler(database, object(), sender)
+    queue = RabbitQueue(os.environ["RABBITMQ_URL"], retry_delays=(0, 0, 0))
+    await queue.connect()
+    task = QueueTask(
+        kind="send_outbound",
+        payload={"outbound_id": str(outbound_id)},
+        idempotency_key=f"send_outbound:{outbound_id}",
+    )
+    try:
+        await queue.publish(task)
+        await queue.consume_one(handler.handle)
+        async with database.acquire() as connection:
+            assert await connection.fetchval(
+                "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
+            ) == "sending"
+        assert telegram.calls == []
+    finally:
+        await queue.close()

@@ -194,3 +194,40 @@ made, and Task 9+ remains unchanged.
 - Final Docker `compileall`, Compose config validation and `git diff --check`
   passed. No external provider, staging or production call was made, and Task
   9+ was not changed.
+
+## Fourth re-review hardening
+
+- Added one explicit `TaskRecoveryRequired` signal to the existing Rabbit
+  retry envelope. A confirmed republish adds an internal
+  `x-recovery-required` header; only a broker retry with `x-retry-count > 0`
+  hydrates non-serialized `QueueTask` metadata. The JSON payload cannot forge
+  the signal, and an ordinary duplicate cannot trigger recovery.
+- Recovery redelivery bypasses claim and provider execution for that specific
+  outbound. It uses the existing atomic delivery hook/callback to persist and
+  project `delivery_unknown`, including the case where a cancelled shielded
+  write committed the outbound status but not the domain projection.
+- If recovery storage is still unavailable, the dedicated signal is
+  republished again. It is also retained on the last retry's durable DLQ
+  message for safe replay instead of degrading into an ordinary claim-skip.
+
+### Fourth re-review TDD evidence
+
+- RED: real RabbitMQ/PostgreSQL recovery exception and cancellation after
+  sent, permanent-rejection and ambiguous provider outcomes left all six
+  outbounds in `sending` after the second delivery; the ordinary duplicate
+  control correctly remained untouched (`6 failed, 1 passed`).
+- GREEN: the same six-outcome recovery matrix plus the ordinary-duplicate
+  control: `7 passed, 93 deselected in 25.45s`; the exact rebuilt rerun was
+  `7 passed, 169 deselected in 27.89s`. Every recovery used one provider call,
+  reached outbound/step `delivery_unknown`, and needed no restart.
+- GREEN: callback, real Rabbit and canonical lock-order closure matrix:
+  `53 passed, 122 deselected in 153.22s`.
+- GREEN: exact queue/Rabbit/worker suite, including last-retry DLQ signal
+  retention: `76 passed in 5.17s`.
+- GREEN: combined Task 8/queue/messaging/worker/consent/e2e regression:
+  `331 passed in 483.05s`.
+- GREEN: broad exact-tree Task 5–8/reactivation, PostgreSQL race, messaging,
+  e2e and worker regression: `446 passed in 694.18s`.
+- Final Docker `compileall`, Compose config validation and `git diff --check`
+  passed. No external provider, staging or production call was made, and Task
+  9+ was not changed.
