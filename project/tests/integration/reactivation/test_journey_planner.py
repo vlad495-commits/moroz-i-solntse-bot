@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -124,6 +125,12 @@ async def test_tick_creates_one_main_step_and_outbox(planner):
         keys = await connection.fetch(
             "SELECT idempotency_key FROM task_outbox ORDER BY created_at, id"
         )
+        delivery_options = await connection.fetchval(
+            "SELECT delivery_options FROM outbound_messages WHERE id = $1",
+            steps[0]["outbound_id"],
+        )
+        if isinstance(delivery_options, str):
+            delivery_options = json.loads(delivery_options)
     assert journey["status"] == "scheduled"
     assert [row["step_kind"] for row in steps] == ["main"]
     assert steps[0]["status"] == "reserved"
@@ -131,6 +138,11 @@ async def test_tick_creates_one_main_step_and_outbox(planner):
     assert steps[0]["idempotency_key"] == f"reactivation:{journey['id']}:main"
     assert [row["idempotency_key"] for row in keys] == [
         f"send_outbound:{steps[0]['outbound_id']}"
+    ]
+    assert delivery_options["reply_markup"]["inline_keyboard"] == [
+        [{"text": "Записаться", "callback_data": "reactivation:book"}],
+        [{"text": "Задать вопрос", "callback_data": "reactivation:ask"}],
+        [{"text": "Не писать", "callback_data": "marketing:disable"}],
     ]
 
 

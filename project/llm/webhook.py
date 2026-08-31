@@ -48,6 +48,7 @@ from moroz.messaging.telegram import deliver_claimed_outbound
 from moroz.privacy import deletion_marker_key
 from moroz.privacy import customer_lock_subject
 from moroz.reactivation.policy import is_stop_request
+from moroz.reactivation.repository import ReactivationRepository
 from moroz.security.consent import (
     PROCESSING_CONSENT_VERSION,
     ConsentService,
@@ -62,6 +63,15 @@ CONSENT_DONE_CALLBACK_DATA = "consent:done"
 MARKETING_ENABLE_CALLBACK_DATA = "marketing:enable"
 MARKETING_DISABLE_CALLBACK_DATA = "marketing:disable"
 MARKETING_SOURCE = "telegram_explicit"
+REACTIVATION_BOOK_CALLBACK_DATA = "reactivation:book"
+REACTIVATION_ASK_CALLBACK_DATA = "reactivation:ask"
+REACTIVATION_CALLBACK_REPLIES = {
+    REACTIVATION_BOOK_CALLBACK_DATA: (
+        "Напишите, пожалуйста, какую процедуру хотите и на какой день — "
+        "помогу подобрать время."
+    ),
+    REACTIVATION_ASK_CALLBACK_DATA: "Напишите, пожалуйста, ваш вопрос — я помогу.",
+}
 _LEGACY_CONSENT_PII_CALLBACK_DATA = "consent:t:pii"
 _LEGACY_CONSENT_ADS_CALLBACK_DATA = "consent:t:ads"
 _CONSENT_CALLBACK_TARGETS = {
@@ -173,6 +183,9 @@ def create_app(
             webhook_app.state.redis = redis_client
             webhook_app.state.consent_service = ConsentService(database)
             webhook_app.state.message_repository = MessageRepository(database)
+            webhook_app.state.reactivation_repository = ReactivationRepository(
+                database
+            )
             webhook_app.state.message_service = MessageService(
                 webhook_app.state.message_repository,
                 MessageBuffer(redis_client, database),
@@ -340,6 +353,25 @@ def create_app(
             connection=connection,
         )
 
+    async def record_customer_inbound(
+        *, chat_id: int, user_id: int, occurred_at: datetime, kind: str
+    ) -> bool:
+        async with webhook_app.state.database.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    customer_lock_subject(str(chat_id)),
+                )
+                if await is_customer_deletion_active(chat_id, fail_closed=True):
+                    return False
+                return await webhook_app.state.reactivation_repository.record_inbound(
+                    "telegram",
+                    str(user_id),
+                    occurred_at,
+                    kind,
+                    connection=connection,
+                )
+
     @webhook_app.post("/telegram/webhook")
     async def telegram_webhook(request: Request) -> Response:
         supplied_secret = request.headers.get(
@@ -363,6 +395,21 @@ def create_app(
             ):
                 return Response(status_code=200)
             if await is_customer_deletion_active(callback.message.chat.id):
+                return Response(status_code=200)
+            if callback.data in REACTIVATION_CALLBACK_REPLIES:
+                await record_customer_inbound(
+                    chat_id=callback.message.chat.id,
+                    user_id=callback.from_user.id,
+                    occurred_at=_callback_occurred_at(callback.message),
+                    kind="button",
+                )
+                reply_kind = callback.data.replace(":", "_")
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=callback.message.chat.id,
+                    text=REACTIVATION_CALLBACK_REPLIES[callback.data],
+                    reply_kind=reply_kind,
+                )
                 return Response(status_code=200)
             if callback.data in {
                 MARKETING_ENABLE_CALLBACK_DATA,
@@ -395,6 +442,13 @@ def create_app(
                             reply = MARKETING_ENABLED_REPLY
                             reply_kind = "marketing_enabled"
                         else:
+                            await webhook_app.state.reactivation_repository.record_inbound(
+                                "telegram",
+                                str(callback.from_user.id),
+                                event["occurred_at"],
+                                "marketing_disable",
+                                connection=connection,
+                            )
                             await opt_out_marketing(connection, **event)
                             reply = MARKETING_DISABLED_REPLY
                             reply_kind = "marketing_disabled"
@@ -519,6 +573,17 @@ def create_app(
             return Response(status_code=200)
         if await is_customer_deletion_active(message.chat.id):
             return Response(status_code=200)
+        if message.from_user is not None:
+            await record_customer_inbound(
+                chat_id=message.chat.id,
+                user_id=message.from_user.id,
+                occurred_at=message.date,
+                kind=(
+                    "stop"
+                    if message.text is not None and is_stop_request(message.text)
+                    else "message"
+                ),
+            )
         if (
             message.from_user is not None
             and message.text is not None

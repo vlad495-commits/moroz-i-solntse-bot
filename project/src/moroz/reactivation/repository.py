@@ -9,6 +9,7 @@ from moroz.messaging.models import OutboundMessage
 from moroz.messaging.repository import MessageRepository
 from moroz.privacy import customer_lock_subject
 from moroz.reactivation.policy import (
+    MAIN_BUTTONS,
     REASON_PRIORITY,
     EligibilityInput,
     ProgramPolicy,
@@ -109,6 +110,101 @@ class ReactivationRepository:
         self._secret = session_secret.strip().encode("utf-8")
         self.business_alert_chat_id = business_alert_chat_id.strip()
         self._clock = clock
+
+    async def record_inbound(
+        self,
+        channel: str,
+        user_id: str,
+        occurred_at: datetime,
+        kind: str,
+        *,
+        connection=None,
+    ) -> bool:
+        """Advance activity and stop an attributable open reactivation."""
+        current = _aware(occurred_at)
+        if connection is not None:
+            return await self._record_inbound_locked(
+                connection, channel, user_id, current, kind
+            )
+        async with self._database.acquire() as owned_connection:
+            async with owned_connection.transaction():
+                return await self._record_inbound_locked(
+                    owned_connection, channel, user_id, current, kind
+                )
+
+    async def _record_inbound_locked(
+        self, connection, channel: str, user_id: str, occurred_at: datetime, kind: str
+    ) -> bool:
+        await self._lock_recipient_controls(connection, channel, user_id)
+        await connection.execute(
+            """
+            INSERT INTO customer_activity_projection
+                (channel, user_id, identity_status,
+                 last_meaningful_inbound_at, sync_status, updated_at)
+            VALUES ($1, $2, 'unverified', $3, 'never', $3)
+            ON CONFLICT (channel, user_id) DO UPDATE SET
+                last_meaningful_inbound_at = GREATEST(
+                    customer_activity_projection.last_meaningful_inbound_at,
+                    EXCLUDED.last_meaningful_inbound_at
+                ),
+                updated_at = GREATEST(
+                    customer_activity_projection.updated_at,
+                    EXCLUDED.updated_at
+                )
+            """,
+            channel,
+            user_id,
+            occurred_at,
+        )
+        if kind in {"stop", "marketing_disable"}:
+            return False
+        journey = await connection.fetchrow(
+            """
+            SELECT id, first_sent_at
+            FROM reactivation_journeys
+            WHERE channel = $1 AND user_id = $2 AND status != 'closed'
+            FOR UPDATE
+            """,
+            channel,
+            user_id,
+        )
+        if (
+            journey is None
+            or journey["first_sent_at"] is None
+            or occurred_at < journey["first_sent_at"]
+            or occurred_at > journey["first_sent_at"] + timedelta(days=7)
+        ):
+            return False
+        await connection.fetch(
+            "SELECT 1 FROM reactivation_journey_steps "
+            "WHERE journey_id = $1 FOR UPDATE",
+            journey["id"],
+        )
+        await connection.execute(
+            """
+            UPDATE outbound_messages AS outbound
+            SET status = 'cancelled'
+            FROM reactivation_journey_steps AS step
+            WHERE step.journey_id = $1
+              AND step.step_kind = 'reminder'
+              AND step.outbound_id = outbound.id
+              AND outbound.status = 'pending'
+            """,
+            journey["id"],
+        )
+        await connection.execute(
+            """
+            UPDATE reactivation_journeys
+            SET replied_at = COALESCE(replied_at, $2), updated_at = $2
+            WHERE id = $1
+            """,
+            journey["id"],
+            occurred_at,
+        )
+        await self._close_journey(
+            connection, journey["id"], "responded", occurred_at
+        )
+        return True
 
     async def create_draft(
         self,
@@ -247,7 +343,7 @@ class ReactivationRepository:
                     idempotency_key=(
                         f"reactivation-test:{version_id}:{version['template_checksum']}"
                     ),
-                    delivery_options={"delivery_policy": "reactivation"},
+                    delivery_options=_reactivation_delivery_options(),
                 )
                 if (
                     version["test_outbound_id"] == outbound_id
@@ -1443,7 +1539,7 @@ class ReactivationRepository:
                     chat_id=step["user_id"],
                     text=step["text"],
                     idempotency_key=key,
-                    delivery_options={"delivery_policy": "reactivation"},
+                    delivery_options=_reactivation_delivery_options(),
                 )
                 await connection.execute(
                     """
@@ -1943,6 +2039,18 @@ def _policy(version) -> ProgramPolicy:
         main_text=version["main_text"],
         reminder_text=version["reminder_text"],
     )
+
+
+def _reactivation_delivery_options() -> dict[str, object]:
+    return {
+        "delivery_policy": "reactivation",
+        "reply_markup": {
+            "inline_keyboard": [
+                [{"text": label, "callback_data": callback_data}]
+                for label, callback_data in MAIN_BUTTONS
+            ]
+        },
+    }
 
 
 def _runtime_gates_open(settings) -> bool:
