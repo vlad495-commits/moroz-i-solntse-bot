@@ -14,12 +14,14 @@ from reactivation_database import (
     create_campaign,
     create_draft,
     get_dashboard,
+    get_marketing_page_data,
     get_marketing_consent,
     get_page_data,
     get_settings,
     queue_campaign,
     save_settings,
     set_marketing_consent,
+    revoke_marketing_consent_by_id,
     preview_version,
 )
 
@@ -152,6 +154,36 @@ async def test_admin_cannot_grant_but_can_revoke_marketing_consent(
     assert revoked["active"] is False
     assert revoked["consent_version"] == "marketing-v1"
     assert revoked["revoked_at"] is not None
+
+
+async def test_marketing_page_masks_identity_and_revoke_resolves_opaque_id(database):
+    async with database.acquire() as connection:
+        owner_id = await connection.fetchval(
+            """
+            INSERT INTO admin_users
+                (username, role, password_hash, totp_secret, enabled)
+            VALUES ('marketing-page-owner', 'owner', 'x', 'x', true)
+            RETURNING id
+            """
+        )
+    consent = await _grant_proven_marketing_consent(database, "1234567890")
+
+    page = await get_marketing_page_data(database, actor_id=owner_id)
+
+    assert page["settings"]["mode"] == "dry_run"
+    assert page["consents"][0]["customer"] == "***7890"
+    assert page["consent_events"][0]["customer"] == "***7890"
+    assert "1234567890" not in repr(page)
+    missing = await get_marketing_page_data(
+        database, actor_id=owner_id, consent_id=uuid4()
+    )
+    assert missing["consents"] == []
+    assert missing["consent_events"] == []
+    revoked = await revoke_marketing_consent_by_id(
+        database, consent_id=consent.consent_id
+    )
+    assert revoked["active"] is False
+    assert revoked["suppression_reason"] == "admin_revoke"
 
 
 async def test_reactivation_settings_round_trip(database):
@@ -351,3 +383,4 @@ async def test_v2_admin_wrappers_keep_owner_gate_and_dry_run(monkeypatch, databa
     assert activated["status"] == "active"
     assert dashboard["settings"]["mode"] == "dry_run"
     assert dashboard["settings"]["active_version_id"] == version_id
+    assert dashboard["versions"][0]["preview_counts"]["masked_samples"] == []
