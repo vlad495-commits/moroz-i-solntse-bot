@@ -8,6 +8,7 @@ import pytest_asyncio
 import reactivation_database as rdb
 from moroz.common.db import Database
 from moroz.reactivation.policy import ProgramPolicy
+from moroz.reactivation.repository import ReactivationRepository
 from moroz.security.consent import ConsentService
 from reactivation_database import (
     activate_version as activate_program_version,
@@ -220,6 +221,15 @@ async def test_readiness_is_global_and_lookup_history_paginates(database):
             VALUES ('telegram', 'readiness-123456', 'verified', now(), now(), 'current')
             """
         )
+        await connection.execute(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status, attempts)
+            VALUES ($1, 'reactivation_activity_sync', now(), '{}'::jsonb,
+                    'reactivation_activity_sync:readiness', 'pending', 0)
+            """,
+            uuid4(),
+        )
         await connection.executemany(
             """
             INSERT INTO marketing_consent_events
@@ -248,6 +258,69 @@ async def test_readiness_is_global_and_lookup_history_paginates(database):
     assert len(filtered_page_2["consent_events"]) == 6
     assert filtered_page_1["pagination"]["has_next"] is True
     assert filtered_page_2["pagination"]["has_next"] is False
+
+
+@pytest.mark.parametrize(
+    ("status", "age", "expected"),
+    [("pending", 0, True), ("finished", 21, False), ("skipped", 0, False)],
+)
+async def test_yclients_readiness_uses_latest_authoritative_heartbeat(
+    database, status, age, expected
+):
+    async with database.acquire() as connection:
+        owner_id = await connection.fetchval(
+            """
+            INSERT INTO admin_users
+                (username, role, password_hash, totp_secret, enabled)
+            VALUES ('heartbeat-owner', 'owner', 'x', 'x', true)
+            RETURNING id
+            """
+        )
+        await connection.execute(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status, attempts,
+                 finished_at, last_error_code, updated_at)
+            VALUES ($1, 'reactivation_activity_sync', now(), '{}'::jsonb,
+                    'reactivation_activity_sync:heartbeat', $2, 0,
+                    CASE WHEN $2 IN ('finished', 'skipped') THEN now() END,
+                    CASE WHEN $2 = 'skipped' THEN 'yclients_unavailable' END,
+                    now() - $3 * interval '1 minute')
+            """,
+            uuid4(), status, age,
+        )
+
+    page = await get_marketing_page_data(database, actor_id=owner_id)
+    assert page["readiness"]["yclients_available"] is expected
+
+
+async def test_unavailable_marker_beats_prior_recent_success(database):
+    async with database.acquire() as connection:
+        owner_id = await connection.fetchval(
+            """
+            INSERT INTO admin_users
+                (username, role, password_hash, totp_secret, enabled)
+            VALUES ('unavailable-owner', 'owner', 'x', 'x', true)
+            RETURNING id
+            """
+        )
+        await connection.execute(
+            """
+            INSERT INTO scheduler_jobs
+                (id, kind, run_at, payload, idempotency_key, status, attempts,
+                 finished_at, updated_at)
+            VALUES ($1, 'reactivation_activity_sync', now(), '{}'::jsonb,
+                    'reactivation_activity_sync:prior-success', 'finished', 0,
+                    now(), now())
+            """,
+            uuid4(),
+        )
+    await ReactivationRepository(database).fail_closed_yclients_unavailable(
+        datetime.now(UTC)
+    )
+
+    page = await get_marketing_page_data(database, actor_id=owner_id)
+    assert page["readiness"]["yclients_available"] is False
 
 
 async def test_revoke_rolls_back_when_opaque_admin_audit_fails(monkeypatch, database):

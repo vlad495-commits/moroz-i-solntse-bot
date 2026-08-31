@@ -2,12 +2,14 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import asyncpg
 import pytest
 import pytest_asyncio
 
 from moroz.common.db import Database
+from moroz.privacy import customer_lock_subject
 from moroz.reactivation.policy import ProgramPolicy, next_send_at, template_checksum
-from moroz.reactivation.repository import ReactivationRepository
+from moroz.reactivation.repository import ActivationBlocked, ReactivationRepository
 
 
 NOW = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
@@ -341,3 +343,237 @@ async def test_yclients_unavailable_forces_dry_run_idempotently(planner):
         assert await connection.fetchval(
             "SELECT status FROM scheduler_jobs WHERE id = $1", job_id
         ) == "skipped"
+
+
+async def test_booking_writer_commit_before_fenced_recheck_prevents_enqueue(planner):
+    database, repository, _ = planner
+    user_id = "race-booking"
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, user_id)
+    writer = await database._pool.acquire()
+    transaction = writer.transaction()
+    await transaction.start()
+    await writer.execute(
+        "UPDATE customer_activity_projection SET next_active_booking_at = $2 "
+        "WHERE user_id = $1",
+        user_id, NOW + timedelta(days=1),
+    )
+    task = asyncio.create_task(repository.run_planner_cycle(NOW))
+    await asyncio.sleep(0.1)
+    assert not task.done()
+    await transaction.commit()
+    await database._pool.release(writer)
+
+    assert await asyncio.wait_for(task, 3) == 0
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journeys WHERE user_id = $1", user_id
+        ) == 0
+        assert await connection.fetchval(
+            "SELECT count(*) FROM outbound_messages WHERE chat_id = $1", user_id
+        ) == 0
+
+
+@pytest.mark.parametrize("writer_kind", ["stop", "escalation", "deletion"])
+async def test_customer_writer_commit_before_fenced_recheck_never_resurrects(
+    planner, writer_kind
+):
+    database, repository, _ = planner
+    user_id = f"race-{writer_kind}"
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, user_id)
+    writer = await database._pool.acquire()
+    transaction = writer.transaction()
+    await transaction.start()
+    await writer.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        customer_lock_subject(user_id),
+    )
+    if writer_kind == "stop":
+        await writer.execute(
+            "UPDATE marketing_consents SET active = false, revoked_at = $2, "
+            "updated_at = $2 WHERE user_id = $1",
+            user_id, NOW + timedelta(seconds=1),
+        )
+    elif writer_kind == "escalation":
+        await writer.execute(
+            "INSERT INTO escalations "
+            "(id, source, customer_id, status, reason_code, payload) "
+            "VALUES ($1, 'test', $2, 'open', 'test', '{}'::jsonb)",
+            uuid4(), user_id,
+        )
+    else:
+        await writer.execute(
+            "DELETE FROM marketing_consents WHERE user_id = $1", user_id
+        )
+        await writer.execute(
+            "DELETE FROM customer_activity_projection WHERE user_id = $1", user_id
+        )
+    task = asyncio.create_task(repository.run_planner_cycle(NOW))
+    await asyncio.sleep(0.1)
+    assert not task.done()
+    await transaction.commit()
+    await database._pool.release(writer)
+
+    assert await asyncio.wait_for(task, 3) == 0
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journeys WHERE user_id = $1", user_id
+        ) == 0
+        assert await connection.fetchval(
+            "SELECT count(*) FROM outbound_messages WHERE chat_id = $1", user_id
+        ) == 0
+
+
+async def test_due_step_claim_skips_row_locked_by_another_transaction(planner):
+    database, repository, _ = planner
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "step-lock-1")
+        await _seed_eligible(connection, "step-lock-2")
+    await repository.run_planner_cycle(NOW, step_claim_limit=0)
+    locker = await database._pool.acquire()
+    transaction = locker.transaction()
+    await transaction.start()
+    locked = await locker.fetchrow(
+        "SELECT step.id, journey.user_id FROM reactivation_journey_steps AS step "
+        "JOIN reactivation_journeys AS journey ON journey.id = step.journey_id "
+        "WHERE step.status = 'scheduled' ORDER BY step.id LIMIT 1"
+    )
+    await locker.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        customer_lock_subject(locked["user_id"]),
+    )
+    await locker.execute(
+        "SELECT 1 FROM reactivation_journey_steps WHERE id = $1 FOR UPDATE",
+        locked["id"],
+    )
+
+    assert await asyncio.wait_for(
+        repository.run_planner_cycle(NOW, planner_limit=0, step_claim_limit=1),
+        3,
+    ) == 1
+    async with database.acquire() as connection:
+        reserved = await connection.fetchval(
+            "SELECT id FROM reactivation_journey_steps WHERE status = 'reserved'"
+        )
+    assert reserved != locked["id"]
+    await transaction.rollback()
+    await database._pool.release(locker)
+
+
+async def test_outcome_refresh_is_deterministically_bounded_to_one_hundred(planner):
+    database, repository, version_id = planner
+    async with database.acquire() as connection:
+        await connection.executemany(
+            """
+            INSERT INTO reactivation_journeys
+                (id, channel, user_id, program_version_id, status,
+                 activity_anchor_at, created_at, updated_at)
+            VALUES ($1, 'telegram', $2, $3, 'scheduled', $4, $5, $5)
+            """,
+            [
+                (
+                    uuid4(), f"bounded-{index:03d}", version_id,
+                    NOW - timedelta(days=200), NOW + timedelta(seconds=index),
+                )
+                for index in range(101)
+            ],
+        )
+
+    await repository.run_planner_cycle(NOW + timedelta(minutes=5), planner_limit=0)
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journeys WHERE status = 'closed'"
+        ) == 100
+        assert await connection.fetchval(
+            "SELECT count(*) FROM reactivation_journeys WHERE status != 'closed'"
+        ) == 1
+
+
+@pytest.mark.parametrize("transition", ["activate", "mode"])
+async def test_planner_first_serializes_with_owner_transition_without_deadlock(
+    planner, transition
+):
+    database, repository, version_id = planner
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, f"lock-{transition}")
+        owner_id = await connection.fetchval(
+            "SELECT id FROM admin_users WHERE username = 'planner-owner'"
+        )
+    owner = ReactivationRepository(database, session_secret="lock-test")
+    await owner.preview_version(version_id, owner_id, NOW)
+    if transition == "mode":
+        await owner.set_mode("paused", owner_id, NOW)
+    planner_has_fence = asyncio.Event()
+    release_planner = asyncio.Event()
+    original = repository._refresh_journey_outcomes
+
+    async def paused_refresh(connection, now, *, limit):
+        planner_has_fence.set()
+        await release_planner.wait()
+        return await original(connection, now, limit=limit)
+
+    repository._refresh_journey_outcomes = paused_refresh
+    planner_task = asyncio.create_task(repository.run_planner_cycle(NOW))
+    await planner_has_fence.wait()
+    transition_task = asyncio.create_task(
+        owner.activate_version(version_id, owner_id, NOW)
+        if transition == "activate"
+        else owner.set_mode("active", owner_id, NOW)
+    )
+    await asyncio.sleep(0.1)
+    assert not transition_task.done()
+    release_planner.set()
+    results = await asyncio.wait_for(
+        asyncio.gather(planner_task, transition_task, return_exceptions=True), 5
+    )
+
+    assert not any(isinstance(item, asyncpg.DeadlockDetectedError) for item in results)
+    assert not isinstance(results[0], Exception)
+    assert not isinstance(results[1], Exception) or isinstance(
+        results[1], ActivationBlocked
+    )
+
+
+@pytest.mark.parametrize("transition", ["activate", "mode"])
+async def test_owner_transition_first_serializes_planner_without_deadlock(
+    planner, transition
+):
+    database, repository, version_id = planner
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, f"reverse-{transition}")
+        owner_id = await connection.fetchval(
+            "SELECT id FROM admin_users WHERE username = 'planner-owner'"
+        )
+    owner = ReactivationRepository(database, session_secret="lock-test")
+    await owner.preview_version(version_id, owner_id, NOW)
+    if transition == "mode":
+        await owner.set_mode("paused", owner_id, NOW)
+    transition_has_fence = asyncio.Event()
+    release_transition = asyncio.Event()
+    original = owner._population
+
+    async def paused_population(connection, version, now):
+        result = await original(connection, version, now)
+        transition_has_fence.set()
+        await release_transition.wait()
+        return result
+
+    owner._population = paused_population
+    transition_task = asyncio.create_task(
+        owner.activate_version(version_id, owner_id, NOW)
+        if transition == "activate"
+        else owner.set_mode("active", owner_id, NOW)
+    )
+    await transition_has_fence.wait()
+    planner_task = asyncio.create_task(repository.run_planner_cycle(NOW))
+    await asyncio.sleep(0.1)
+    assert not planner_task.done()
+    release_transition.set()
+    results = await asyncio.wait_for(
+        asyncio.gather(transition_task, planner_task, return_exceptions=True), 5
+    )
+
+    assert not any(isinstance(item, asyncpg.DeadlockDetectedError) for item in results)
+    assert not any(isinstance(item, Exception) for item in results)

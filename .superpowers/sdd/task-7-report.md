@@ -36,6 +36,39 @@ Status: DONE
 - Task 7 intentionally does not cancel a pending outbound after a later state change and does not classify Telegram failures; Task 8's pre-send fence/result hook owns that atomic delivery behavior.
 - No raw Telegram/YCLIENTS identifiers or message bodies were added to logs/audit records.
 
+## Post-review concurrency hardening
+
+- Reproduced the independent review failures before changing production code: the
+  planner deadlocked with activation (`40P01`), and stale booking/deletion state
+  could create or resurrect a journey; a previous successful sync also masked a
+  newer unavailable state.
+- Unified the global order with Task 5: settings and active-version fences are
+  acquired before outcome, journey, or outbound writes. Real PostgreSQL probes
+  exercise both start orders against both activation and mode transitions.
+- Added the existing per-customer advisory fence and canonical row-lock order
+  (escalation, human mode, consent, activity, journey) before the final
+  eligibility replay. Booking, STOP, escalation, and deletion commits are now
+  visible before any journey/outbound insert.
+- Due-step workers use a non-blocking customer advisory claim followed by the
+  canonical control/journey locks and `FOR UPDATE OF step SKIP LOCKED`; a real
+  two-transaction probe proves a worker skips a claimed recipient and reserves
+  another step.
+- Outcome refresh is deterministic and bounded to 100 open journeys per cycle;
+  busy recipients and journey rows are skipped instead of globally serializing
+  the planner.
+- YCLIENTS readiness now follows the latest authoritative heartbeat/status. The
+  fail-closed path publishes an observable `yclients_unavailable` marker, so an
+  earlier success cannot mask the transition.
+
+### Post-review verification
+
+- Focused PostgreSQL race/lock probes after the final lock-order change:
+  `10 passed, 14 deselected in 25.38s`.
+- Full journey planner suite after the final non-blocking advisory refinement:
+  `24 passed in 57.55s`.
+- Expanded worker/scheduler/activity/consent/admin regression:
+  `155 passed in 189.84s`.
+
 ## Changed files
 
 - `project/src/moroz/reactivation/service.py`

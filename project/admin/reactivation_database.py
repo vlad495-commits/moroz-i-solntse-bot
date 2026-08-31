@@ -158,12 +158,16 @@ async def get_marketing_page_data(
                    ) AS yclients_current,
                    min(activity.history_synced_at) AS oldest_history_synced_at,
                    min(activity.recent_bookings_synced_at) AS oldest_recent_bookings_synced_at,
-                   EXISTS (
-                       SELECT 1 FROM scheduler_jobs
-                       WHERE kind = 'reactivation_activity_sync'
-                         AND status IN ('pending', 'claimed', 'finished')
-                         AND updated_at >= now() - interval '20 minutes'
-                   ) AS yclients_available
+                   COALESCE((
+                       SELECT job.status IN ('pending', 'claimed', 'finished')
+                              AND job.updated_at >= now() - interval '20 minutes'
+                       FROM scheduler_jobs AS job
+                       WHERE job.kind = 'reactivation_activity_sync'
+                       ORDER BY job.updated_at DESC,
+                                (job.last_error_code = 'yclients_unavailable') DESC,
+                                job.id DESC
+                       LIMIT 1
+                   ), false) AS yclients_available
             FROM marketing_consents AS consent
             LEFT JOIN customer_activity_projection AS activity
               ON activity.channel = consent.channel
