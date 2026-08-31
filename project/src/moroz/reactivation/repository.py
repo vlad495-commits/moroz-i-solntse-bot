@@ -560,6 +560,23 @@ class ReactivationRepository:
                 )
         return True
 
+    async def recover_yclients_unavailable_jobs(
+        self, idempotency_keys: tuple[str, ...]
+    ) -> None:
+        async with self._database.acquire() as connection:
+            await connection.execute(
+                """
+                UPDATE scheduler_jobs
+                SET status = 'pending', attempts = 0, claimed_at = NULL,
+                    finished_at = NULL, last_error_code = NULL, updated_at = now()
+                WHERE idempotency_key = ANY($1::text[])
+                  AND kind IN ('reactivation_activity_sync', 'reactivation_tick')
+                  AND status = 'skipped'
+                  AND last_error_code = 'yclients_unavailable'
+                """,
+                list(idempotency_keys),
+            )
+
     async def run_planner_cycle(
         self,
         now: datetime,
@@ -570,105 +587,62 @@ class ReactivationRepository:
         current = _aware(now)
         planner_limit = max(0, min(planner_limit, 100))
         step_claim_limit = max(0, min(step_claim_limit, 100))
-        async with self._database.acquire() as connection:
-            async with connection.transaction():
-                settings = await connection.fetchrow(
-                    "SELECT * FROM reactivation_settings WHERE id = 1 FOR SHARE"
-                )
-                version = (
-                    await connection.fetchrow(
-                        "SELECT * FROM reactivation_program_versions "
-                        "WHERE id = $1 FOR SHARE",
-                        settings["active_version_id"],
-                    )
-                    if settings and settings["active_version_id"] is not None
-                    else None
-                )
-                await self._refresh_journey_outcomes(
-                    connection, current, limit=OUTCOME_REFRESH_LIMIT
-                )
-                if (
-                    not _runtime_gates_open(settings)
-                    or version is None
-                    or version["status"] != "active"
-                ):
-                    return 0
-                policy = _policy(version)
-                if planner_limit:
-                    candidates = await self._planner_candidates(
-                        connection, current, policy, limit=planner_limit
-                    )
-                    for row in candidates:
-                        _, state = await self._locked_recipient_state(
-                            connection, current, row["channel"], row["user_id"]
+        await self._refresh_journey_outcomes(current, limit=OUTCOME_REFRESH_LIMIT)
+        candidates = []
+        if planner_limit:
+            async with self._database.acquire() as connection:
+                async with connection.transaction():
+                    runtime = await self._locked_runtime(connection)
+                    if runtime is not None:
+                        _, policy = runtime
+                        candidates = await self._planner_candidates(
+                            connection, current, policy, limit=planner_limit
                         )
-                        decision = (
-                            _eligibility(state, policy, current)
-                            if state is not None
-                            else None
-                        )
-                        if (
-                            decision is None
-                            or not decision.eligible
-                            or decision.activity_anchor_at is None
-                        ):
-                            continue
-                        journey_id = uuid4()
-                        inserted = await connection.fetchval(
-                            """
-                            INSERT INTO reactivation_journeys
-                                (id, channel, user_id, program_version_id, status,
-                                 activity_anchor_at, created_at, updated_at)
-                            VALUES ($1, $2, $3, $4, 'scheduled', $5, $6, $6)
-                            ON CONFLICT DO NOTHING
-                            RETURNING id
-                            """,
-                            journey_id,
-                            state["channel"],
-                            state["user_id"],
-                            version["id"],
-                            decision.activity_anchor_at,
-                            current,
-                        )
-                        if inserted is None:
-                            continue
-                        await connection.execute(
-                            """
-                            INSERT INTO reactivation_journey_steps
-                                (id, journey_id, step_kind, status, due_at,
-                                 idempotency_key, created_at, updated_at)
-                            VALUES ($1, $2, 'main', 'scheduled', $3, $4, $5, $5)
-                            ON CONFLICT DO NOTHING
-                            """,
-                            uuid4(),
-                            journey_id,
-                            next_send_at(current),
-                            f"reactivation:{journey_id}:main",
-                            current,
-                        )
-                return await self._reserve_due_steps(
-                    connection, policy, current, limit=step_claim_limit
-                )
+            for row in candidates:
+                await self._plan_recipient(current, row["channel"], row["user_id"])
+        return await self._reserve_due_steps(current, limit=step_claim_limit)
 
     async def record_delivery_sent(
         self, outbound_id: UUID, sent_at: datetime
     ) -> bool:
         delivered_at = _aware(sent_at)
         async with self._database.acquire() as connection:
+            target = await connection.fetchrow(
+                """
+                SELECT step.journey_id, journey.channel, journey.user_id
+                FROM reactivation_journey_steps AS step
+                JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
+                WHERE step.outbound_id = $1
+                """,
+                outbound_id,
+            )
+        if target is None:
+            return False
+        async with self._database.acquire() as connection:
             async with connection.transaction():
+                await self._lock_recipient_controls(
+                    connection, target["channel"], target["user_id"]
+                )
+                journey = await connection.fetchrow(
+                    "SELECT status FROM reactivation_journeys "
+                    "WHERE id = $1 FOR UPDATE",
+                    target["journey_id"],
+                )
+                if journey is None:
+                    return False
                 step = await connection.fetchrow(
                     """
                     SELECT step.id, step.journey_id, step.step_kind, step.status,
-                           journey.status AS journey_status,
                            version.reminder_enabled, version.reminder_after_days
                     FROM reactivation_journey_steps AS step
                     JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
                     JOIN reactivation_program_versions AS version
                       ON version.id = journey.program_version_id
-                    WHERE step.outbound_id = $1
-                    FOR UPDATE OF step, journey
+                    WHERE step.outbound_id = $1 AND step.journey_id = $2
+                    FOR UPDATE OF step
                     """,
                     outbound_id,
+                    target["journey_id"],
                 )
                 if step is None or step["status"] != "reserved":
                     return False
@@ -680,7 +654,7 @@ class ReactivationRepository:
                     """,
                     step["id"], delivered_at,
                 )
-                if step["journey_status"] == "closed":
+                if journey["status"] == "closed":
                     return True
                 if step["step_kind"] == "reminder":
                     await self._close_journey(
@@ -754,96 +728,165 @@ class ReactivationRepository:
             limit,
         )
 
+    async def _plan_recipient(self, now: datetime, channel: str, user_id: str) -> None:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                runtime = await self._locked_runtime(connection)
+                if runtime is None:
+                    return
+                version, policy = runtime
+                _, state = await self._locked_recipient_state(
+                    connection, now, channel, user_id
+                )
+                decision = (
+                    _eligibility(state, policy, now) if state is not None else None
+                )
+                if (
+                    decision is None
+                    or not decision.eligible
+                    or decision.activity_anchor_at is None
+                ):
+                    return
+                journey_id = uuid4()
+                inserted = await connection.fetchval(
+                    """
+                    INSERT INTO reactivation_journeys
+                        (id, channel, user_id, program_version_id, status,
+                         activity_anchor_at, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, 'scheduled', $5, $6, $6)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id
+                    """,
+                    journey_id,
+                    state["channel"],
+                    state["user_id"],
+                    version["id"],
+                    decision.activity_anchor_at,
+                    now,
+                )
+                if inserted is None:
+                    return
+                await connection.execute(
+                    """
+                    INSERT INTO reactivation_journey_steps
+                        (id, journey_id, step_kind, status, due_at,
+                         idempotency_key, created_at, updated_at)
+                    VALUES ($1, $2, 'main', 'scheduled', $3, $4, $5, $5)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    uuid4(),
+                    journey_id,
+                    next_send_at(now),
+                    f"reactivation:{journey_id}:main",
+                    now,
+                )
+
     async def _reserve_due_steps(
-        self, connection, policy: ProgramPolicy, now: datetime, *, limit: int
+        self, now: datetime, *, limit: int
     ) -> int:
         if limit <= 0:
             return 0
-        targets = await connection.fetch(
-            """
-            SELECT step.id, journey.channel, journey.user_id
-            FROM reactivation_journey_steps AS step
-            JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
-            WHERE step.status = 'scheduled' AND step.due_at <= $1
-              AND journey.status != 'closed'
-            ORDER BY step.due_at, step.id
-            LIMIT 100
-            """,
-            now,
-        )
-        reserved = 0
-        claimed = 0
-        messages = MessageRepository(self._database)
-        for target in targets:
-            locked, state = await self._locked_recipient_state(
-                connection,
-                now,
-                target["channel"],
-                target["user_id"],
-                skip_locked=True,
-            )
-            if not locked:
-                continue
-            step = await connection.fetchrow(
+        async with self._database.acquire() as connection:
+            targets = await connection.fetch(
                 """
-                SELECT step.id, step.journey_id, step.step_kind,
-                       journey.channel, journey.user_id,
-                       CASE WHEN step.step_kind = 'main'
-                            THEN version.main_text ELSE version.reminder_text END AS text
+                SELECT step.id, journey.channel, journey.user_id
                 FROM reactivation_journey_steps AS step
                 JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
-                JOIN reactivation_program_versions AS version
-                  ON version.id = journey.program_version_id
-                WHERE step.id = $1 AND step.status = 'scheduled'
-                  AND step.due_at <= $2 AND journey.status != 'closed'
-                FOR UPDATE OF step SKIP LOCKED
+                WHERE step.status = 'scheduled' AND step.due_at <= $1
+                  AND journey.status != 'closed'
+                ORDER BY step.due_at, step.id
+                LIMIT 100
                 """,
-                target["id"],
                 now,
             )
-            if step is None:
-                continue
-            claimed += 1
-            decision = (
-                _eligibility(state, policy, now, existing_journey=True)
-                if state is not None
-                else None
+        reserved = 0
+        claimed = 0
+        for target in targets:
+            was_claimed, was_reserved = await self._reserve_due_step(
+                now, target
             )
-            if decision is None or not decision.eligible:
-                reason = decision.reason if decision is not None else "consent_revoked"
-                await connection.execute(
-                    """
-                    UPDATE reactivation_journey_steps
-                    SET status = 'cancelled', terminal_reason = $2, updated_at = $3
-                    WHERE id = $1
-                    """,
-                    step["id"], reason, now,
-                )
-                await self._close_journey(connection, step["journey_id"], _close_reason(reason), now)
-                if claimed >= limit:
-                    break
-                continue
-            key = f"reactivation:{step['journey_id']}:{step['step_kind']}"
-            outbound_id = await messages.enqueue_outbound_in_transaction(
-                connection,
-                channel=step["channel"],
-                chat_id=step["user_id"],
-                text=step["text"],
-                idempotency_key=key,
-            )
-            await connection.execute(
-                """
-                UPDATE reactivation_journey_steps
-                SET status = 'reserved', reserved_at = $2,
-                    outbound_id = $3, updated_at = $2
-                WHERE id = $1 AND status = 'scheduled'
-                """,
-                step["id"], now, outbound_id,
-            )
-            reserved += 1
+            claimed += int(was_claimed)
+            reserved += int(was_reserved)
             if claimed >= limit:
                 break
         return reserved
+
+    async def _reserve_due_step(self, now: datetime, target) -> tuple[bool, bool]:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                runtime = await self._locked_runtime(connection)
+                if runtime is None:
+                    return False, False
+                _, policy = runtime
+                locked, state = await self._locked_recipient_state(
+                    connection,
+                    now,
+                    target["channel"],
+                    target["user_id"],
+                    skip_locked=True,
+                )
+                if not locked:
+                    return False, False
+                step = await connection.fetchrow(
+                    """
+                    SELECT step.id, step.journey_id, step.step_kind,
+                           journey.channel, journey.user_id,
+                           CASE WHEN step.step_kind = 'main'
+                                THEN version.main_text ELSE version.reminder_text END AS text
+                    FROM reactivation_journey_steps AS step
+                    JOIN reactivation_journeys AS journey ON journey.id = step.journey_id
+                    JOIN reactivation_program_versions AS version
+                      ON version.id = journey.program_version_id
+                    WHERE step.id = $1 AND step.status = 'scheduled'
+                      AND step.due_at <= $2 AND journey.status != 'closed'
+                    FOR UPDATE OF step SKIP LOCKED
+                    """,
+                    target["id"],
+                    now,
+                )
+                if step is None:
+                    return False, False
+                decision = (
+                    _eligibility(state, policy, now, existing_journey=True)
+                    if state is not None
+                    else None
+                )
+                if decision is None or not decision.eligible:
+                    reason = (
+                        decision.reason if decision is not None else "consent_revoked"
+                    )
+                    await connection.execute(
+                        """
+                        UPDATE reactivation_journey_steps
+                        SET status = 'cancelled', terminal_reason = $2, updated_at = $3
+                        WHERE id = $1
+                        """,
+                        step["id"], reason, now,
+                    )
+                    await self._close_journey(
+                        connection, step["journey_id"], _close_reason(reason), now
+                    )
+                    return True, False
+                key = f"reactivation:{step['journey_id']}:{step['step_kind']}"
+                outbound_id = await MessageRepository(
+                    self._database
+                ).enqueue_outbound_in_transaction(
+                    connection,
+                    channel=step["channel"],
+                    chat_id=step["user_id"],
+                    text=step["text"],
+                    idempotency_key=key,
+                )
+                await connection.execute(
+                    """
+                    UPDATE reactivation_journey_steps
+                    SET status = 'reserved', reserved_at = $2,
+                        outbound_id = $3, updated_at = $2
+                    WHERE id = $1 AND status = 'scheduled'
+                    """,
+                    step["id"], now, outbound_id,
+                )
+                return True, True
 
     async def _locked_recipient_state(
         self, connection, now: datetime, channel: str, user_id: str, *,
@@ -872,6 +915,32 @@ class ReactivationRepository:
         )
 
     @staticmethod
+    async def _locked_settings_version(connection):
+        settings = await connection.fetchrow(
+            "SELECT * FROM reactivation_settings WHERE id = 1 FOR SHARE"
+        )
+        version = (
+            await connection.fetchrow(
+                "SELECT * FROM reactivation_program_versions "
+                "WHERE id = $1 FOR SHARE",
+                settings["active_version_id"],
+            )
+            if settings and settings["active_version_id"] is not None
+            else None
+        )
+        return settings, version
+
+    async def _locked_runtime(self, connection):
+        settings, version = await self._locked_settings_version(connection)
+        if (
+            not _runtime_gates_open(settings)
+            or version is None
+            or version["status"] != "active"
+        ):
+            return None
+        return version, _policy(version)
+
+    @staticmethod
     async def _lock_recipient_controls(
         connection, channel: str, user_id: str, *, skip_locked: bool = False
     ) -> bool:
@@ -896,88 +965,108 @@ class ReactivationRepository:
             )
         return True
 
-    async def _refresh_journey_outcomes(
-        self, connection, now: datetime, *, limit: int
-    ) -> None:
-        targets = await connection.fetch(
-            """
-            SELECT id, channel, user_id
-            FROM reactivation_journeys
-            WHERE status != 'closed'
-            ORDER BY created_at, id
-            LIMIT $1
-            """,
-            min(max(limit, 0), OUTCOME_REFRESH_LIMIT),
-        )
+    async def _refresh_journey_outcomes(self, now: datetime, *, limit: int) -> None:
+        async with self._database.acquire() as connection:
+            targets = await connection.fetch(
+                """
+                SELECT id, channel, user_id
+                FROM reactivation_journeys
+                WHERE status != 'closed'
+                ORDER BY created_at, id
+                LIMIT $1
+                """,
+                min(max(limit, 0), OUTCOME_REFRESH_LIMIT),
+            )
         for target in targets:
-            locked = await self._lock_recipient_controls(
-                connection, target["channel"], target["user_id"], skip_locked=True
-            )
-            if not locked:
-                continue
-            row = await connection.fetchrow(
-            """
-            SELECT journey.id,
-                   CASE
-                     WHEN consent.id IS NULL OR NOT consent.active
-                       OR consent.suppressed_at IS NOT NULL THEN 'suppressed'
-                     WHEN activity.last_meaningful_inbound_at >
-                          COALESCE(journey.first_sent_at, journey.created_at)
-                       THEN 'responded'
-                     WHEN activity.next_active_booking_at >
-                          COALESCE(journey.first_sent_at, journey.created_at)
-                       THEN 'booked'
-                   END AS reason,
-                   activity.last_meaningful_inbound_at,
-                   activity.next_active_booking_at,
-                   activity.last_completed_visit_at,
-                   journey.first_sent_at,
-                   journey.completed_visit_at
-            FROM reactivation_journeys AS journey
-            LEFT JOIN marketing_consents AS consent
-              ON consent.channel = journey.channel AND consent.user_id = journey.user_id
-            LEFT JOIN customer_activity_projection AS activity
-              ON activity.channel = journey.channel AND activity.user_id = journey.user_id
-            WHERE journey.id = $1 AND journey.status != 'closed'
-            FOR UPDATE OF journey
-            SKIP LOCKED
-            """,
-                target["id"],
-            )
-            if row is None:
-                continue
-            if (
-                row["first_sent_at"] is not None
-                and row["last_completed_visit_at"] is not None
-                and row["last_completed_visit_at"] > row["first_sent_at"]
-                and (
-                    row["completed_visit_at"] is None
-                    or row["last_completed_visit_at"] > row["completed_visit_at"]
+            await self._refresh_journey_outcome(now, target)
+
+    async def _refresh_journey_outcome(self, now: datetime, target) -> None:
+        async with self._database.acquire() as connection:
+            async with connection.transaction():
+                await self._locked_settings_version(connection)
+                locked = await self._lock_recipient_controls(
+                    connection,
+                    target["channel"],
+                    target["user_id"],
+                    skip_locked=True,
                 )
-            ):
+                if not locked:
+                    return
+                row = await connection.fetchrow(
+                    """
+                    SELECT journey.id,
+                           CASE
+                             WHEN consent.id IS NULL OR NOT consent.active
+                               OR consent.suppressed_at IS NOT NULL THEN 'suppressed'
+                             WHEN activity.last_meaningful_inbound_at >
+                                  COALESCE(journey.first_sent_at, journey.created_at)
+                               THEN 'responded'
+                             WHEN activity.next_active_booking_at >
+                                  COALESCE(journey.first_sent_at, journey.created_at)
+                               THEN 'booked'
+                           END AS reason,
+                           activity.last_meaningful_inbound_at,
+                           activity.next_active_booking_at,
+                           activity.last_completed_visit_at,
+                           journey.first_sent_at,
+                           journey.completed_visit_at
+                    FROM reactivation_journeys AS journey
+                    LEFT JOIN marketing_consents AS consent
+                      ON consent.channel = journey.channel
+                     AND consent.user_id = journey.user_id
+                    LEFT JOIN customer_activity_projection AS activity
+                      ON activity.channel = journey.channel
+                     AND activity.user_id = journey.user_id
+                    WHERE journey.id = $1 AND journey.status != 'closed'
+                    FOR UPDATE OF journey SKIP LOCKED
+                    """,
+                    target["id"],
+                )
+                if row is None:
+                    return
+                await connection.fetch(
+                    "SELECT 1 FROM reactivation_journey_steps "
+                    "WHERE journey_id = $1 FOR UPDATE",
+                    row["id"],
+                )
+                if (
+                    row["first_sent_at"] is not None
+                    and row["last_completed_visit_at"] is not None
+                    and row["last_completed_visit_at"] > row["first_sent_at"]
+                    and (
+                        row["completed_visit_at"] is None
+                        or row["last_completed_visit_at"] > row["completed_visit_at"]
+                    )
+                ):
+                    await connection.execute(
+                        """
+                        UPDATE reactivation_journeys
+                        SET completed_visit_at = $2, updated_at = $3
+                        WHERE id = $1
+                        """,
+                        row["id"],
+                        row["last_completed_visit_at"],
+                        now,
+                    )
+                if row["reason"] is None:
+                    return
                 await connection.execute(
                     """
                     UPDATE reactivation_journeys
-                    SET completed_visit_at = $2, updated_at = $3
+                    SET replied_at = CASE
+                            WHEN $2 = 'responded' THEN $3 ELSE replied_at END,
+                        booked_at = CASE
+                            WHEN $2 = 'booked' THEN $4 ELSE booked_at END
                     WHERE id = $1
                     """,
                     row["id"],
-                    row["last_completed_visit_at"],
-                    now,
+                    row["reason"],
+                    row["last_meaningful_inbound_at"],
+                    row["next_active_booking_at"],
                 )
-            if row["reason"] is None:
-                continue
-            await connection.execute(
-                """
-                UPDATE reactivation_journeys
-                SET replied_at = CASE WHEN $2 = 'responded' THEN $3 ELSE replied_at END,
-                    booked_at = CASE WHEN $2 = 'booked' THEN $4 ELSE booked_at END
-                WHERE id = $1
-                """,
-                row["id"], row["reason"], row["last_meaningful_inbound_at"],
-                row["next_active_booking_at"],
-            )
-            await self._close_journey(connection, row["id"], row["reason"], now)
+                await self._close_journey(
+                    connection, row["id"], row["reason"], now
+                )
 
     @staticmethod
     async def _close_journey(connection, journey_id: UUID, reason: str, now: datetime):

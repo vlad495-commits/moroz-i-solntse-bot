@@ -46,8 +46,12 @@ class ReactivationCoordinator:
         self._clock = clock
 
     async def ensure_current(self, now: datetime) -> None:
-        await self._scheduler.schedule(reactivation_activity_sync_job(now))
-        await self._scheduler.schedule(reactivation_tick_job(now))
+        jobs = (reactivation_activity_sync_job(now), reactivation_tick_job(now))
+        await self._repository.recover_yclients_unavailable_jobs(
+            tuple(job.idempotency_key for job in jobs)
+        )
+        for job in jobs:
+            await self._scheduler.schedule(job)
 
     async def run_activity_sync(self, job: SchedulerJob) -> JobResult:
         await self._scheduler.schedule(

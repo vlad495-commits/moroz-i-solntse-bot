@@ -7,9 +7,16 @@ import pytest
 import pytest_asyncio
 
 from moroz.common.db import Database
+from moroz.notifications.repository import SchedulerJobRepository
 from moroz.privacy import customer_lock_subject
+from moroz.reactivation.activity import ActivityCandidate, ActivityRepository
 from moroz.reactivation.policy import ProgramPolicy, next_send_at, template_checksum
 from moroz.reactivation.repository import ActivationBlocked, ReactivationRepository
+from moroz.reactivation.service import (
+    ReactivationCoordinator,
+    reactivation_activity_sync_job,
+    reactivation_tick_job,
+)
 
 
 NOW = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
@@ -507,14 +514,15 @@ async def test_planner_first_serializes_with_owner_transition_without_deadlock(
         await owner.set_mode("paused", owner_id, NOW)
     planner_has_fence = asyncio.Event()
     release_planner = asyncio.Event()
-    original = repository._refresh_journey_outcomes
+    original = repository._locked_runtime
 
-    async def paused_refresh(connection, now, *, limit):
+    async def paused_runtime(connection):
+        result = await original(connection)
         planner_has_fence.set()
         await release_planner.wait()
-        return await original(connection, now, limit=limit)
+        return result
 
-    repository._refresh_journey_outcomes = paused_refresh
+    repository._locked_runtime = paused_runtime
     planner_task = asyncio.create_task(repository.run_planner_cycle(NOW))
     await planner_has_fence.wait()
     transition_task = asyncio.create_task(
@@ -577,3 +585,215 @@ async def test_owner_transition_first_serializes_planner_without_deadlock(
 
     assert not any(isinstance(item, asyncpg.DeadlockDetectedError) for item in results)
     assert not any(isinstance(item, Exception) for item in results)
+
+
+@pytest.mark.parametrize("start_order", ["planner", "identity"])
+async def test_planner_and_identity_collision_never_deadlock(planner, start_order):
+    database, repository, _ = planner
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "identity-b", now=NOW - timedelta(seconds=1))
+        await _seed_eligible(connection, "identity-a")
+        await connection.execute(
+            "UPDATE customer_activity_projection "
+            "SET yclients_client_id = CASE user_id "
+            "WHEN 'identity-a' THEN '1' ELSE '2' END "
+            "WHERE user_id IN ('identity-a', 'identity-b')"
+        )
+    first_locked = asyncio.Event()
+    release_planner = asyncio.Event()
+    original = repository._locked_recipient_state
+    calls = 0
+
+    async def pause_after_first(*args, **kwargs):
+        nonlocal calls
+        result = await original(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            first_locked.set()
+            await release_planner.wait()
+        return result
+
+    repository._locked_recipient_state = pause_after_first
+    activity = ActivityRepository(database)
+
+    async def collide(connection):
+        return await activity.resolve_identity(
+            connection,
+            ActivityCandidate(
+                "telegram", "identity-a", "verified", "1"
+            ),
+            ("2",),
+            now=NOW + timedelta(seconds=1),
+        )
+
+    if start_order == "identity":
+        identity_has_a = asyncio.Event()
+
+        async def identity_first():
+            async with database.acquire() as connection:
+                async with connection.transaction():
+                    await connection.execute(
+                        "SET LOCAL deadlock_timeout = '100ms'"
+                    )
+                    await connection.fetch(
+                        "SELECT 1 FROM customer_activity_projection "
+                        "WHERE user_id = 'identity-a' FOR UPDATE"
+                    )
+                    identity_has_a.set()
+                    await first_locked.wait()
+                    return await collide(connection)
+
+        identity_task = asyncio.create_task(identity_first())
+        await identity_has_a.wait()
+        planner_task = asyncio.create_task(
+            repository.run_planner_cycle(NOW, step_claim_limit=0)
+        )
+    else:
+        planner_task = asyncio.create_task(
+            repository.run_planner_cycle(NOW, step_claim_limit=0)
+        )
+        await first_locked.wait()
+
+        async def planner_first_identity():
+            async with database.acquire() as connection:
+                await connection.execute("SET deadlock_timeout = '100ms'")
+                return await collide(connection)
+
+        identity_task = asyncio.create_task(planner_first_identity())
+
+    await first_locked.wait()
+    await asyncio.sleep(0.2)
+    identity_was_waiting = not identity_task.done()
+    release_planner.set()
+    results = await asyncio.wait_for(
+        asyncio.gather(planner_task, identity_task, return_exceptions=True), 5
+    )
+    assert identity_was_waiting, results
+    assert not any(isinstance(item, asyncpg.DeadlockDetectedError) for item in results)
+    assert not any(isinstance(item, Exception) for item in results)
+
+
+@pytest.mark.parametrize("start_order", ["outcome", "delivery"])
+async def test_outcome_close_and_delivery_acceptance_never_deadlock(
+    planner, start_order
+):
+    database, repository, version_id = planner
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "outcome-delivery")
+        if start_order == "delivery":
+            await connection.execute(
+                "UPDATE reactivation_program_versions "
+                "SET reminder_enabled = false, reminder_after_days = NULL WHERE id = $1",
+                version_id,
+            )
+    assert await repository.run_planner_cycle(NOW) == 1
+    async with database.acquire() as connection:
+        outbound_id = await connection.fetchval(
+            "SELECT outbound_id FROM reactivation_journey_steps "
+            "WHERE status = 'reserved'"
+        )
+        await connection.execute(
+            "UPDATE marketing_consents SET active = false, revoked_at = $1 "
+            "WHERE user_id = 'outcome-delivery'",
+            NOW + timedelta(seconds=1),
+        )
+    first_at_close = asyncio.Event()
+    release_first = asyncio.Event()
+    original = repository._close_journey
+    calls = 0
+
+    async def pause_first_close(connection, journey_id, reason, now):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_at_close.set()
+            await release_first.wait()
+        return await original(connection, journey_id, reason, now)
+
+    repository._close_journey = pause_first_close
+    delivery_repository = (
+        repository
+        if start_order == "delivery"
+        else ReactivationRepository(database)
+    )
+    delivery_repository._close_journey = pause_first_close
+
+    outcome = lambda: repository.run_planner_cycle(
+        NOW + timedelta(minutes=1), planner_limit=0, step_claim_limit=0
+    )
+    delivery = lambda: delivery_repository.record_delivery_sent(
+        outbound_id, NOW + timedelta(minutes=1)
+    )
+    first = asyncio.create_task(delivery() if start_order == "delivery" else outcome())
+    await asyncio.wait_for(first_at_close.wait(), 3)
+    second = asyncio.create_task(outcome() if start_order == "delivery" else delivery())
+    await asyncio.sleep(0.2)
+    second_was_waiting = not second.done()
+    release_first.set()
+    results = await asyncio.wait_for(
+        asyncio.gather(first, second, return_exceptions=True), 5
+    )
+    if start_order == "outcome":
+        assert second_was_waiting, results
+    assert not any(isinstance(item, asyncpg.DeadlockDetectedError) for item in results)
+    assert not any(isinstance(item, Exception) for item in results)
+
+
+@pytest.mark.parametrize("recovery_minutes", [2, 11])
+async def test_yclients_recovery_reopens_only_current_bucket_jobs(
+    planner, recovery_minutes
+):
+    database, repository, _ = planner
+    scheduler = SchedulerJobRepository(database)
+    await scheduler.schedule(reactivation_activity_sync_job(NOW))
+    await scheduler.schedule(reactivation_tick_job(NOW))
+    await repository.fail_closed_yclients_unavailable(NOW + timedelta(minutes=1))
+    recovery_at = NOW + timedelta(minutes=recovery_minutes)
+    coordinator = ReactivationCoordinator(
+        repository, scheduler, object(), clock=lambda: recovery_at
+    )
+
+    await coordinator.ensure_current(recovery_at)
+    await coordinator.ensure_current(recovery_at)
+
+    expected = (
+        reactivation_activity_sync_job(recovery_at).idempotency_key,
+        reactivation_tick_job(recovery_at).idempotency_key,
+    )
+    async with database.acquire() as connection:
+        rows = await connection.fetch(
+            "SELECT idempotency_key, status, last_error_code FROM scheduler_jobs "
+            "WHERE idempotency_key = ANY($1::text[]) ORDER BY idempotency_key",
+            list(expected),
+        )
+    assert len(rows) == 2
+    assert {row["status"] for row in rows} == {"pending"}
+    assert {row["last_error_code"] for row in rows} == {None}
+
+
+async def test_yclients_recovery_never_reopens_unrelated_terminal_job(planner):
+    database, repository, _ = planner
+    scheduler = SchedulerJobRepository(database)
+    job = reactivation_tick_job(NOW)
+    await scheduler.schedule(job)
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE scheduler_jobs SET status = 'failed', "
+            "last_error_code = 'database_unavailable', finished_at = $2 "
+            "WHERE idempotency_key = $1",
+            job.idempotency_key,
+            NOW,
+        )
+    coordinator = ReactivationCoordinator(
+        repository, scheduler, object(), clock=lambda: NOW
+    )
+
+    await coordinator.ensure_current(NOW)
+
+    async with database.acquire() as connection:
+        row = await connection.fetchrow(
+            "SELECT status, last_error_code FROM scheduler_jobs "
+            "WHERE idempotency_key = $1",
+            job.idempotency_key,
+        )
+    assert tuple(row) == ("failed", "database_unavailable")

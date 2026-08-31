@@ -69,6 +69,34 @@ Status: DONE
 - Expanded worker/scheduler/activity/consent/admin regression:
   `155 passed in 189.84s`.
 
+## Final re-review hardening
+
+- Reproduced both Task 4 identity-collision start orders with the real
+  `ActivityRepository.resolve_identity`: the previous multi-recipient planner
+  transaction produced `40P01` in both directions.
+- Reproduced outcome-close versus `record_delivery_sent`: outcome-first
+  produced `40P01`, while delivery-first exposed the inconsistent lock seam.
+- Split each planner cycle into bounded read phases plus one short transaction
+  per recipient. Every create/reserve transaction freshly locks and rechecks
+  settings and the active version before customer advisory, escalation, human
+  mode, consent/activity, journey, and step state.
+- Outcome refresh remains deterministic and capped at 100 but now commits one
+  recipient at a time in customer → controls → journey → step order.
+  `record_delivery_sent` uses the same customer → journey → step order, without
+  adding Task 8 pre-send behavior.
+- Recovery now reopens only the two exact current-bucket scheduler keys when
+  they are `skipped` specifically with `yclients_unavailable`. Same-bucket,
+  later-bucket, repeated ensure and unrelated-terminal cases are covered.
+
+### Final re-review verification
+
+- RED: exact Task 4 probe returned `DeadlockDetectedError` for both start
+  orders; outcome-first delivery returned the same; same-bucket jobs remained
+  `skipped`.
+- GREEN: full planner and coordinator suite: `35 passed in 75.52s`.
+- GREEN: expanded Task 4/5, worker, scheduler, consent and admin regression:
+  `151 passed in 191.75s`.
+
 ## Changed files
 
 - `project/src/moroz/reactivation/service.py`
