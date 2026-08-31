@@ -278,3 +278,59 @@ made, and Task 9+ remains unchanged.
 - Final Docker `compileall`, Compose config validation and `git diff --check`
   passed. No external provider, Telegram, YCLIENTS, LLM, staging or production
   call was made, and Task 9+ was not changed.
+
+## Sixth re-review hardening
+
+- The first recovery-candidate lookup is now inside the same explicit recovery
+  boundary as the managed-link check and durable recovery write. A runtime
+  failure or `asyncio.CancelledError` becomes `TaskRecoveryRequired`, so the
+  existing Rabbit retry path adds the recovery marker instead of degrading to
+  an ordinary claim-skip.
+- Normal DB-authoritative decisions are unchanged: no row, `pending` or a
+  terminal row follows the existing normal path; only the exact linked
+  `sending` outbound is recovered. Generic delivery failures do not become
+  recovery attempts.
+- Recovery catches are limited to `Exception` and `asyncio.CancelledError`.
+  `SystemExit` and `KeyboardInterrupt` remain process-control signals and are
+  not converted into queue recovery.
+
+### Sixth re-review TDD and verification evidence
+
+- The first test run had an invalid four-item retry-delay tuple and failed in
+  test setup before exercising production behavior. After correcting the test
+  to the queue's existing three-retry contract, the real Rabbit/PostgreSQL RED
+  reproduced all three required cases: runtime lookup failure stranded
+  `sending/reserved`, cancellation escaped raw, and repeated lookup plus
+  confirmed-publish failure also stranded the delivery (`3 failed`).
+- GREEN: lookup exception, cancellation, repeated lookup failure and confirmed
+  republish failure all preserve recovery and finish outbound/step as
+  `delivery_unknown` without restart or a second provider call:
+  `3 passed, 108 deselected in 17.39s`.
+- GREEN: v5/v6 fallback and DB-authoritative negative/positive matrix:
+  `12 passed, 99 deselected in 39.65s`.
+- GREEN: explicit process-control boundary:
+  `3 passed, 13 deselected in 4.12s`.
+- GREEN: callback/recovery plus all 24 canonical PostgreSQL lock-order cases:
+  `63 passed, 48 deselected in 203.15s`, with no `40P01`.
+- GREEN: expanded delivery/messaging/worker/consent/e2e regression:
+  `346 passed in 516.65s`.
+- GREEN: the single final broad exact-tree reactivation/messaging/e2e/worker
+  regression: `460 passed in 717.35s`.
+- Final Docker `compileall`, Compose config validation and `git diff --check`
+  passed. No external provider, Telegram, YCLIENTS, LLM, staging or production
+  call was made, and Task 9+ was not changed.
+
+### Final conservative delivery contract
+
+- `sent` is recorded only when provider acceptance and the durable terminal
+  projection are proven; `failed` is recorded only for a proven permanent
+  rejection whose terminal projection completes.
+- If provider acceptance or terminal persistence is ambiguous, delivery is
+  durably classified as `delivery_unknown`. The worker does not call the
+  provider again for that recovery attempt, the journey stops, no automatic
+  reminder is scheduled, and the case remains visible for operator handling.
+- This is an at-most-one-provider-call safety policy for the covered recovery
+  window, not an absolute exactly-once guarantee across an external provider
+  and PostgreSQL. A live-attempt broker redelivery can conservatively choose
+  `delivery_unknown`; that documented false-unknown trade-off is preferred to
+  a duplicate customer message.

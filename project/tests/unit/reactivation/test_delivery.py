@@ -270,3 +270,22 @@ async def test_candidate_managed_check_failure_keeps_recovery_signal():
         await sender.recover_candidate(outbound.id)
 
     assert repository.status == "sending"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control_error", [SystemExit(), KeyboardInterrupt()])
+async def test_candidate_lookup_does_not_mask_process_control(control_error):
+    outbound = _outbound()
+    repository = FakeRepository(outbound)
+    repository.status = "sending"
+
+    async def interrupted_lookup(_outbound_id):
+        raise control_error
+
+    repository.get_sending_outbound = interrupted_lookup
+    sender = TelegramSender(
+        FakeTelegram(), repository, managed_delivery_check=_managed
+    )
+
+    with pytest.raises(type(control_error)):
+        await sender.recover_candidate(outbound.id)

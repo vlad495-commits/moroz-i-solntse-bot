@@ -1197,11 +1197,16 @@ async def test_rabbit_redelivery_reclaims_pending_after_failed_hook(delivery):
 
 
 class RecoveryFailingRepository:
-    def __init__(self, repository, outcome, recovery_error, *, failures=1):
+    def __init__(
+        self, repository, outcome, recovery_error, *, failures=1,
+        lookup_failures=0, lookup_error=None,
+    ):
         self._repository = repository
         self._outcome = outcome
         self._recovery_error = recovery_error
         self._remaining_failures = failures
+        self._lookup_failures = lookup_failures
+        self._lookup_error = lookup_error
 
     def __getattr__(self, name):
         return getattr(self._repository, name)
@@ -1226,6 +1231,12 @@ class RecoveryFailingRepository:
             self._remaining_failures -= 1
             raise self._recovery_error
         return await self._repository.release_outbound_delivery(*args, **kwargs)
+
+    async def get_sending_outbound(self, *args, **kwargs):
+        if self._lookup_failures:
+            self._lookup_failures -= 1
+            raise self._lookup_error
+        return await self._repository.get_sending_outbound(*args, **kwargs)
 
 
 @pytest.mark.parametrize("outcome", ["sent", "failed", "delivery_unknown"])
@@ -1569,6 +1580,91 @@ async def test_candidate_recovery_failure_keeps_explicit_signal(delivery):
             assert await connection.fetchval(
                 "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
             ) == "delivery_unknown"
+        assert len(telegram.calls) == 1
+        assert await tasks.get(fail=False) is None
+    finally:
+        await queue.close()
+        await admin_connection.close()
+
+
+@pytest.mark.parametrize(
+    ("lookup_error", "lookup_failures", "publish_failures"),
+    [
+        (RuntimeError("lookup unavailable"), 1, 1),
+        (asyncio.CancelledError(), 1, 1),
+        (RuntimeError("lookup unavailable"), 2, 2),
+    ],
+)
+async def test_candidate_lookup_failure_preserves_recovery_signal(
+    delivery, lookup_error, lookup_failures, publish_failures
+):
+    database, repository, _ = delivery
+    outbound_id = await _seed_and_reserve(database, repository, "99001")
+    telegram = FakeTelegram()
+    messages = RecoveryFailingRepository(
+        MessageRepository(database), "sent",
+        RuntimeError("recovery database unavailable"),
+        lookup_failures=lookup_failures, lookup_error=lookup_error,
+    )
+    hook_calls = 0
+
+    async def transient_hook(*args):
+        nonlocal hook_calls
+        hook_calls += 1
+        if hook_calls == 1:
+            raise RuntimeError("completion hook unavailable")
+        await repository.delivery_hook(*args)
+
+    sender = TelegramSender(
+        telegram, messages,
+        pre_send_guard=repository.pre_send_guard,
+        delivery_hook=transient_hook,
+        managed_delivery_check=repository.is_linked_outbound,
+        clock=lambda: NOW,
+    )
+    handler = MessageTaskHandler(database, object(), sender)
+    queue = RabbitQueue(os.environ["RABBITMQ_URL"], retry_delays=(0, 0, 0))
+    await queue.connect()
+    admin_connection = await aio_pika.connect_robust(os.environ["RABBITMQ_URL"])
+    admin_channel = await admin_connection.channel()
+    tasks = await admin_channel.get_queue("tasks")
+    await tasks.purge()
+    task = QueueTask(
+        kind="send_outbound",
+        payload={"outbound_id": str(outbound_id)},
+        idempotency_key=f"send_outbound:{outbound_id}",
+    )
+    try:
+        await queue.publish(task)
+        confirmed_publish = queue._confirmed_publish
+        remaining_publish_failures = publish_failures
+
+        async def fail_republish(*args, **kwargs):
+            nonlocal remaining_publish_failures
+            if remaining_publish_failures:
+                remaining_publish_failures -= 1
+                raise RuntimeError("confirmed republish unavailable")
+            return await confirmed_publish(*args, **kwargs)
+
+        queue._confirmed_publish = fail_republish
+        for _ in range(publish_failures):
+            with pytest.raises(RuntimeError, match="confirmed republish"):
+                await queue.consume_one(handler.handle)
+        queue._confirmed_publish = confirmed_publish
+        await queue.consume_one(handler.handle)
+        await queue.consume_one(handler.handle)
+
+        async with database.acquire() as connection:
+            state = await connection.fetchrow(
+                "SELECT outbound.status, step.status "
+                "FROM outbound_messages outbound "
+                "JOIN reactivation_journey_steps step "
+                "ON step.outbound_id = outbound.id WHERE outbound.id = $1",
+                outbound_id,
+            )
+        assert tuple(state.values()) == (
+            "delivery_unknown", "delivery_unknown"
+        )
         assert len(telegram.calls) == 1
         assert await tasks.get(fail=False) is None
     finally:

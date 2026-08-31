@@ -249,7 +249,7 @@ class TelegramSender:
                     now=self._clock(),
                 )
             )
-        except BaseException as error:
+        except (Exception, asyncio.CancelledError) as error:
             raise TaskRecoveryRequired(
                 "delivery recovery requires redelivery"
             ) from error
@@ -258,7 +258,7 @@ class TelegramSender:
                 status = await self._repository.get_outbound_delivery_status(
                     outbound_id
                 )
-            except BaseException as error:
+            except (Exception, asyncio.CancelledError) as error:
                 raise TaskRecoveryRequired(
                     "delivery recovery requires redelivery"
                 ) from error
@@ -267,12 +267,17 @@ class TelegramSender:
             raise TaskRecoveryRequired("delivery recovery requires redelivery")
 
     async def recover_candidate(self, outbound_id: UUID) -> bool:
-        outbound = await self._repository.get_sending_outbound(outbound_id)
+        try:
+            outbound = await self._repository.get_sending_outbound(outbound_id)
+        except (Exception, asyncio.CancelledError) as error:
+            raise TaskRecoveryRequired(
+                "delivery recovery requires redelivery"
+            ) from error
         if outbound is None or self._managed_delivery_check is None:
             return False
         try:
             managed = await self._managed_delivery_check(outbound)
-        except BaseException as error:
+        except (Exception, asyncio.CancelledError) as error:
             raise TaskRecoveryRequired(
                 "delivery recovery requires redelivery"
             ) from error
@@ -285,7 +290,7 @@ class TelegramSender:
                 status = await self._repository.get_outbound_delivery_status(
                     outbound_id
                 )
-            except BaseException as status_error:
+            except (Exception, asyncio.CancelledError) as status_error:
                 raise recovery_error from status_error
             if status == "pending":
                 return False
