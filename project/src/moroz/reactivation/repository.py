@@ -226,6 +226,21 @@ class ReactivationRepository:
                 )
         return outbound_id
 
+    async def preview_samples(
+        self,
+        version_id: UUID,
+        actor_id: int,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        current = _aware(now)
+        async with self._database.acquire() as connection:
+            await self._require_owner(connection, actor_id)
+            version = await self._version(connection, version_id)
+            if version["status"] == "retired":
+                raise ValueError("retired reactivation version cannot be previewed")
+            population = await self._population(connection, version, current)
+        return population.result.masked_samples
+
     async def record_test_sent(self, outbound_id: UUID, now: datetime) -> bool:
         current = _aware(now)
         async with self._database.acquire() as connection:

@@ -42,6 +42,12 @@ async def preview_version(database, version_id: UUID, *, actor_id: int, now=None
     )
 
 
+async def preview_samples(database, version_id: UUID, *, actor_id: int, now=None):
+    return await _v2(database).preview_samples(
+        version_id, actor_id, now or datetime.now(UTC)
+    )
+
+
 async def queue_test_send(database, version_id: UUID, *, actor_id: int, now=None):
     return await _v2(database).queue_test_send(
         version_id, actor_id, now or datetime.now(UTC)

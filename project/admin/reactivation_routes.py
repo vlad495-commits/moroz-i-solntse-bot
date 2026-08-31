@@ -1,6 +1,7 @@
 """Owner-only controls for the reactivation marketing program."""
 
 from pathlib import Path
+from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request
@@ -39,6 +40,7 @@ async def legacy_reactivation(request: Request) -> RedirectResponse:
 async def marketing_page(
     request: Request,
     consent_id: UUID | None = Query(None),
+    preview_version: UUID | None = Query(None),
     page: int = Query(1, ge=1),
 ):
     user = await _owner(request)
@@ -48,11 +50,31 @@ async def marketing_page(
         consent_id=consent_id,
         page=page,
     )
-    return templates.TemplateResponse(
+    if preview_version is not None:
+        try:
+            data["preview_samples"] = list(
+                await rdb.preview_samples(
+                    database.get_database(), preview_version, actor_id=user.id
+                )
+            )
+        except (ActivationBlocked, ValueError) as error:
+            raise _version_http_error(error) from error
+    data["pagination"]["previous_url"] = (
+        _page_url(request, page - 1, consent_id) if page > 1 else None
+    )
+    data["pagination"]["next_url"] = (
+        _page_url(request, page + 1, consent_id)
+        if data["pagination"]["has_next"]
+        else None
+    )
+    response = templates.TemplateResponse(
         request,
         "reactivation.html",
         {"user": user, "csrf_token": user.csrf_token, "data": data},
     )
+    if preview_version is not None:
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.post("/versions")
@@ -98,19 +120,20 @@ async def marketing_version_preview(
 ):
     user = await _owner_write(request, csrf_token)
     try:
-        result = await rdb.preview_version(
+        await rdb.preview_version(
             database.get_database(), version_id, actor_id=user.id
         )
     except (ActivationBlocked, ValueError) as error:
         raise _version_http_error(error) from error
-    data = await rdb.get_marketing_page_data(
-        database.get_database(), actor_id=user.id
-    )
-    data["preview_samples"] = list(result.masked_samples)
-    return templates.TemplateResponse(
-        request,
-        "reactivation.html",
-        {"user": user, "csrf_token": user.csrf_token, "data": data},
+    return RedirectResponse(
+        admin_url(
+            request,
+            "/marketing/?"
+            + urlencode(
+                {"preview": "ready", "preview_version": str(version_id)}
+            ),
+        ),
+        status_code=303,
     )
 
 
@@ -217,6 +240,13 @@ async def _owner_write(request, csrf_token: str):
 
 def _redirect(request, suffix: str):
     return RedirectResponse(admin_url(request, f"/marketing{suffix}"), status_code=302)
+
+
+def _page_url(request, page: int, consent_id: UUID | None) -> str:
+    query = {"page": page}
+    if consent_id is not None:
+        query["consent_id"] = str(consent_id)
+    return f"{admin_url(request, '/marketing/')}?{urlencode(query)}"
 
 
 def _version_http_error(error: Exception) -> HTTPException:

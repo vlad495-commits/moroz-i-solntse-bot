@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -49,6 +48,7 @@ def _dashboard():
         "versions": [],
         "readiness": {"proven_consents": 0, "yclients_current": 0, "yclients_ready": False},
         "consents": [],
+        "consent_events": [],
         "journeys": [],
         "outcomes": {},
         "legacy": {"campaigns": [], "deliveries": []},
@@ -301,37 +301,94 @@ async def test_activation_gate_failures_return_conflict(monkeypatch, gate):
 
 @pytest.mark.asyncio
 async def test_preview_samples_are_rendered_only_from_current_response(monkeypatch):
-    captured = {}
+    captured = []
+    preview_calls = []
+    sample_calls = []
 
     async def current_user(_request):
         return _user()
 
     async def preview(*_args, **_kwargs):
-        return SimpleNamespace(masked_samples=("telegram:***6789",))
+        preview_calls.append(True)
+
+    async def preview_samples(_database, version_id, *, actor_id):
+        sample_calls.append((version_id, actor_id))
+        return ("telegram:***6789",)
 
     async def page_data(*_args, **_kwargs):
         return _dashboard()
 
     def render(request, name, context):
-        captured.update(context)
+        captured.append(context)
         return RedirectResponse("/captured", status_code=200)
 
     monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
     monkeypatch.setattr(reactivation_routes.database, "get_database", object)
     monkeypatch.setattr(reactivation_routes.rdb, "preview_version", preview)
+    monkeypatch.setattr(reactivation_routes.rdb, "preview_samples", preview_samples)
     monkeypatch.setattr(reactivation_routes.rdb, "get_marketing_page_data", page_data)
     monkeypatch.setattr(reactivation_routes.templates, "TemplateResponse", render)
+    parent = FastAPI()
+    parent.mount("/admin", _app())
     async with AsyncClient(
-        transport=ASGITransport(app=_app()), base_url="http://test"
+        transport=ASGITransport(app=parent), base_url="http://test"
     ) as client:
-        response = await client.post(
-            "/marketing/versions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/preview",
+        posted = await client.post(
+            "/admin/marketing/versions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/preview",
             data={"csrf_token": "known-csrf"},
             follow_redirects=False,
         )
+        first_get = await client.get(posted.headers["location"])
+        refreshed = await client.get(posted.headers["location"])
+
+    assert posted.status_code == 303
+    assert posted.headers["location"] == (
+        "/admin/marketing/?preview=ready&preview_version="
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    )
+    assert "telegram" not in posted.headers["location"]
+    assert first_get.status_code == 200
+    assert first_get.headers["cache-control"] == "no-store"
+    assert refreshed.status_code == 200
+    assert preview_calls == [True]
+    assert len(sample_calls) == 2
+    assert captured[-1]["data"]["preview_samples"] == ["telegram:***6789"]
+
+
+@pytest.mark.asyncio
+async def test_pagination_links_are_canonical_under_admin_root(monkeypatch):
+    consent_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    async def current_user(_request):
+        return _user()
+
+    async def page_data(*_args, **_kwargs):
+        data = _dashboard()
+        data["pagination"] = {"page": 2, "has_next": True}
+        return data
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "get_marketing_page_data", page_data)
+    parent = FastAPI()
+    parent.mount("/admin", _app())
+    async with AsyncClient(
+        transport=ASGITransport(app=parent), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            f"/admin/marketing/?page=2&consent_id={consent_id}"
+        )
 
     assert response.status_code == 200
-    assert captured["data"]["preview_samples"] == ["telegram:***6789"]
+    assert (
+        f'href="/admin/marketing/?page=1&amp;consent_id={consent_id}"'
+        in response.text
+    )
+    assert (
+        f'href="/admin/marketing/?page=3&amp;consent_id={consent_id}"'
+        in response.text
+    )
+    assert "/versions/" not in response.text.split("customer-events-pagination", 1)[1]
 
 
 @pytest.mark.asyncio

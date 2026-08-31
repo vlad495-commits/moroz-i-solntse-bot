@@ -323,10 +323,19 @@ async def test_preview_is_deterministic_and_dry_run_has_no_side_effects(
 
     first = await value.preview_version(version_id, actor_id=owner_id, now=NOW)
     second = await value.preview_version(version_id, actor_id=owner_id, now=NOW)
+    async with database.acquire() as connection:
+        audit_count = await connection.fetchval(
+            "SELECT count(*) FROM admin_audit_events"
+        )
+    samples = await value.preview_samples(version_id, actor_id=owner_id, now=NOW)
 
     assert first == second
     assert first.masked_samples == ("telegram:***6789",)
+    assert samples == first.masked_samples
     async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT count(*) FROM admin_audit_events"
+        ) == audit_count
         assert await connection.fetchval("SELECT count(*) FROM reactivation_journeys") == 0
         assert await connection.fetchval("SELECT count(*) FROM task_outbox") == 0
         assert await connection.fetchval("SELECT count(*) FROM outbound_messages") == 0

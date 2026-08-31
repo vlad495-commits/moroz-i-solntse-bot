@@ -129,9 +129,9 @@
         {% for row in data.legacy.deliveries %}<p>{{ row.status }}: {{ row.total }}</p>{% else %}<p class="muted">Записей нет</p>{% endfor %}
     </details>
     <nav class="customer-events-pagination" aria-label="Страницы маркетинговых данных">
-        {% if data.pagination.page > 1 %}<a href="?page={{ data.pagination.page - 1 }}{% if request.query_params.get('consent_id') %}&consent_id={{ request.query_params.get('consent_id') }}{% endif %}">← Новее</a>{% endif %}
+        {% if data.pagination.previous_url %}<a href="{{ data.pagination.previous_url }}">← Новее</a>{% endif %}
         <span>Страница {{ data.pagination.page }}</span>
-        {% if data.pagination.has_next %}<a href="?page={{ data.pagination.page + 1 }}{% if request.query_params.get('consent_id') %}&consent_id={{ request.query_params.get('consent_id') }}{% endif %}">Раньше →</a>{% endif %}
+        {% if data.pagination.next_url %}<a href="{{ data.pagination.next_url }}">Раньше →</a>{% endif %}
     </nav>
 </section>
 {% endblock %}
