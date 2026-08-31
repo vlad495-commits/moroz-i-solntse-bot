@@ -137,7 +137,7 @@ def test_owner_sidebar_follows_customer_workflow_order():
         "Статистика",
         "Записи",
         "Эскалации",
-        "Реактивация",
+        "Маркетинговые коммуникации",
         "Evaluations / Эвалы",
         "Промпт",
         "Управление",

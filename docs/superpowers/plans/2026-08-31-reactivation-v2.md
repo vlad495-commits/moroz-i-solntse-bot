@@ -1159,7 +1159,7 @@ git commit -m "feat: закрыть privacy lifecycle реактивации"
 - Consumes: all Tasks 1–11.
 - Produces: release evidence for a local dry-run candidate; real-provider/staging activation remains a separately authorized gate.
 
-- [ ] **Step 1: Add the final real-pipeline E2E matrix**
+- [x] **Step 1: Add the final real-pipeline E2E matrix**
 
 Use local fakes for Telegram/YCLIENTS but real FastAPI handlers, worker handler, Rabbit task shape and Postgres:
 
@@ -1187,7 +1187,7 @@ async def test_reactivation_v2_case(case, reactivation_harness):
 
 The harness must assert DB state, outbox/task counts, Telegram fake calls, callback acknowledgements, audit actions and absence of raw PII in captured logs.
 
-- [ ] **Step 2: Run the focused final gate**
+- [x] **Step 2: Run the focused final gate**
 
 ```powershell
 docker compose --env-file ../.env build test admin worker scheduler migrate
@@ -1196,7 +1196,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/reactivatio
 
 Expected: all focused tests pass with zero warnings attributable to Reactivation V2.
 
-- [ ] **Step 3: Update the owner documents with the implemented contract**
+- [x] **Step 3: Update the owner documents with the implemented contract**
 
 Document only verified behavior:
 
@@ -1216,7 +1216,7 @@ changelog.md:
 
 Add an explicit rollout checklist: migration backup/compatibility; staging `dry_run`; real read-only YCLIENTS sync authorization; preview review; test message; legal reference; at least 14 days dry-run observation; owner activation; first batch observation; emergency-stop rehearsal. The first production activation under this plan is allowed only when the fresh preview has at most `25` eligible recipients; if it has more, remain in `dry_run` until a separate audited pilot-cap/allowlist decision is approved. Do not activate or deploy while writing docs.
 
-- [ ] **Step 4: Run complete Docker verification**
+- [x] **Step 4: Run complete Docker verification**
 
 ```powershell
 docker compose --env-file ../.env config --quiet
@@ -1230,7 +1230,7 @@ git status --short
 
 Expected: Compose/compile/diff checks exit `0`; full suite passes; current/heads both show only `0023_reactivation_v2`; status contains only the intended documentation/test changes before the final commit.
 
-- [ ] **Step 5: Perform final self-review and commit**
+- [x] **Step 5: Perform final self-review and commit**
 
 Review the complete diff for correctness, authorization boundaries, PII leakage, migration downgrade, idempotency and over-engineering. Fix every finding test-first, rerun its focused test, then rerun Step 4.
 

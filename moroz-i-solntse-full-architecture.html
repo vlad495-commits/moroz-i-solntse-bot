@@ -276,16 +276,17 @@
   </section>
 
   <section id="campaigns-reactivation">
-    <h2 class="sect wide">8.1 · Реактивация и ручные кампании</h2>
+    <h2 class="sect wide">8.1 · Маркетинговые коммуникации: реактивация</h2>
     <div class="wide"><div class="branches">
-      <div class="bcol"><div id="campaign-builder" class="node future" data-status="planned"><b>Draft → preview → test-send</b><small>владелец видит итоговый текст и тестовую доставку до запуска</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="marketing-consent-audience" class="node future" data-status="planned"><b>Consent + audience</b><small>только marketing consent; unsubscribe и запреты действуют во всех связанных каналах</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="reactivation-selector" class="node future" data-status="planned"><b>Reactivation selector</b><small>90 дней без визита или содержательного диалога; не более одного follow-up через 5 дней</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="campaign-scheduler" class="node future" data-status="planned"><b>Campaign scheduler</b><small>лимиты скорости/дня, stop/pause и unique campaign × customer key</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="campaign-outbox-delivery" class="node future" data-status="planned"><b>Campaign → durable outbox</b><small>повторно использует существующую надёжную доставку и адаптер выбранного канала</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="campaign-stop-feedback" class="node future" data-status="planned"><b>Ответ / стоп</b><small>любой ответ возвращается в общий inbox и останавливает следующие сообщения кампании</small><span class="ph">ПЛАН</span></div></div>
-      <div class="bcol"><div id="campaign-analytics" class="node future" data-status="planned"><b>Аудит и аналитика</b><small>sent/delivered/replied/stopped/error без дублей и с понятной причиной остановки</small><span class="ph">ПЛАН</span></div></div>
+      <div class="bcol"><div id="campaign-builder" class="node proc" data-status="implemented"><b>Owner gates</b><small>versioned static text → preview → test-send → legal reference → owner confirmation; default dry_run</small><span class="status done">РАБОТАЕТ ЛОКАЛЬНО</span></div></div>
+      <div class="bcol"><div id="marketing-consent-audience" class="node local" data-status="implemented"><b>Consent + identity</b><small>отдельный proof marketing consent и verified YCLIENTS client_id; STOP/revoke/suppression fail closed</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="reactivation-selector" class="node proc" data-status="implemented"><b>Eligibility + pre-send fence</b><small>90 дней от max(visit,inbound), fresh history/recent bookings, без future booking, human mode, escalation или deletion</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="campaign-scheduler" class="node store" data-status="implemented"><b>scheduler_jobs → worker</b><small>bounded sync/tick, main + максимум один reminder, quiet hours 10:30–20:00 MSK</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="campaign-outbox-delivery" class="node store" data-status="implemented"><b>outbound_messages → task_outbox → Telegram</b><small>shared program lock + customer delivery fence; delivery_unknown без resend ставит программу на паузу</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="campaign-stop-feedback" class="node proc" data-status="implemented"><b>Inbound / YCLIENTS outcomes</b><small>reply или booking отменяет reminder; STOP suppresses до LLM; completed visit связывается с attributable booking</small><span class="status done">РАБОТАЕТ</span></div></div>
+      <div class="bcol"><div id="campaign-analytics" class="node proc" data-status="implemented"><b>Audit + funnel</b><small>accepted/replied/booked/completed/opt-out/failed/unknown без raw phone, message text и provider payload</small><span class="status done">РАБОТАЕТ</span></div></div>
     </div></div>
+    <p class="bnote" style="text-align:center;margin-top:12px">Ручные массовые рассылки остаются отдельным будущим scope. Реальная YCLIENTS-синхронизация, staging dry-run и owner activation не выполнялись.</p>
   </section>
 
   <section id="admin-evals">
