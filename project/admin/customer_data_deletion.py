@@ -185,6 +185,25 @@ async def _delete_customer_data(
                         [str(value) for value in booking_keys],
                     )
                 ]
+                outbound_ids = sorted(
+                    set(outbound_ids)
+                    | {
+                        str(row["outbound_id"])
+                        for row in await conn.fetch(
+                            """
+                            SELECT step.outbound_id
+                            FROM reactivation_journey_steps AS step
+                            JOIN reactivation_journeys AS journey
+                              ON journey.id = step.journey_id
+                            WHERE journey.channel = $1
+                              AND journey.user_id = ANY($2::text[])
+                              AND step.outbound_id IS NOT NULL
+                            """,
+                            DELETION_CHANNEL,
+                            sorted(user_ids),
+                        )
+                    }
+                )
 
                 await _clear_redis(redis_client, chat, user_ids)
 
@@ -295,6 +314,24 @@ async def _delete_customer_data(
                     outbound_ids,
                 )
                 await _delete(
+                    conn,
+                    counts,
+                    "reactivation_journeys",
+                    "DELETE FROM reactivation_journeys "
+                    "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                    DELETION_CHANNEL,
+                    sorted(user_ids),
+                )
+                await _delete(
+                    conn,
+                    counts,
+                    "customer_activity_projection",
+                    "DELETE FROM customer_activity_projection "
+                    "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                    DELETION_CHANNEL,
+                    sorted(user_ids),
+                )
+                await _delete(
                     conn, counts, "message_inbox",
                     "DELETE FROM message_inbox WHERE channel = $1 AND chat_id = $2",
                     DELETION_CHANNEL,
@@ -309,6 +346,15 @@ async def _delete_customer_data(
                 await _delete(
                     conn, counts, "marketing_consents",
                     "DELETE FROM marketing_consents "
+                    "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                    DELETION_CHANNEL,
+                    sorted(user_ids),
+                )
+                await _delete(
+                    conn,
+                    counts,
+                    "marketing_consent_events",
+                    "DELETE FROM marketing_consent_events "
                     "WHERE channel = $1 AND user_id = ANY($2::text[])",
                     DELETION_CHANNEL,
                     sorted(user_ids),
@@ -385,6 +431,24 @@ async def _delete_customer_data(
                         ),
                         await conn.fetchval(
                             "SELECT count(*) FROM marketing_consents "
+                            "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                            DELETION_CHANNEL,
+                            sorted(user_ids),
+                        ),
+                        await conn.fetchval(
+                            "SELECT count(*) FROM marketing_consent_events "
+                            "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                            DELETION_CHANNEL,
+                            sorted(user_ids),
+                        ),
+                        await conn.fetchval(
+                            "SELECT count(*) FROM customer_activity_projection "
+                            "WHERE channel = $1 AND user_id = ANY($2::text[])",
+                            DELETION_CHANNEL,
+                            sorted(user_ids),
+                        ),
+                        await conn.fetchval(
+                            "SELECT count(*) FROM reactivation_journeys "
                             "WHERE channel = $1 AND user_id = ANY($2::text[])",
                             DELETION_CHANNEL,
                             sorted(user_ids),

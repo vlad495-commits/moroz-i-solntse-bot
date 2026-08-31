@@ -48,7 +48,15 @@ class Connection:
 
     async def execute(self, query, retention_days):
         self.queries.append((query, retention_days))
-        return "DELETE 2" if "messages" in query else "DELETE 3"
+        counts = {
+            "messages": 2,
+            "token_usage": 3,
+            "reactivation_journeys": 4,
+            "customer_activity_projection": 5,
+            "marketing_consent_events": 6,
+        }
+        table = next(name for name in counts if f"DELETE FROM {name}" in query)
+        return f"DELETE {counts[table]}"
 
 
 class Database:
@@ -88,7 +96,7 @@ async def test_positive_retention_schedules_current_and_next_day_and_cleans():
         "retention_cleanup:2026-08-19",
         "retention_cleanup:2026-08-20",
     ]
-    assert [days for _, days in connection.queries] == [1095, 1095]
+    assert [days for _, days in connection.queries] == [1095] * 5
 
 
 @pytest.mark.asyncio
@@ -130,7 +138,11 @@ async def test_shared_delete_contract_returns_only_counts():
     assert await delete_expired_records(connection, 1095) == {
         "messages": 2,
         "token_usage": 3,
+        "reactivation_journeys": 4,
+        "customer_activity_projection": 5,
+        "marketing_consent_events": 6,
     }
+    assert all("LIMIT 1000" in query for query, _ in connection.queries)
 
 
 def test_legacy_cleanup_delegates_to_shared_retention_contract():
