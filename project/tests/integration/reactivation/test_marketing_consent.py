@@ -1,5 +1,4 @@
-from datetime import UTC, datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
 
@@ -310,3 +309,172 @@ async def test_older_non_numeric_event_cannot_override_newer_occurred_at(
         "SELECT count(*) FROM marketing_consent_events "
         "WHERE source_event_id = 'admin-old' AND action = 'revoked'"
     ) == 1
+
+
+@pytest.mark.parametrize("processing_order", ["grant_first", "safety_first"])
+@pytest.mark.parametrize(
+    ("safety_occurred_at", "safety_source_event_id"),
+    [
+        (NOW + timedelta(minutes=1), "admin-later"),
+        (NOW, "1"),
+    ],
+    ids=["newer-nonnumeric", "numeric-looking-non-telegram"],
+)
+async def test_total_event_order_is_independent_of_processing_order(
+    database,
+    connection,
+    processing_order,
+    safety_occurred_at,
+    safety_source_event_id,
+):
+    service = ConsentService(database)
+
+    async def grant():
+        await service.grant_marketing(
+            channel="telegram",
+            user_id="total-order",
+            proof_text=CLAUSE,
+            source="telegram_explicit",
+            source_event_id="9" * 80,
+            occurred_at=NOW,
+        )
+
+    async def suppress():
+        common = {
+            "channel": "telegram",
+            "user_id": "total-order",
+            "source": "admin_revoke",
+            "source_event_id": safety_source_event_id,
+            "occurred_at": safety_occurred_at,
+        }
+        await service.revoke_marketing(**common)
+        await service.suppress_marketing(**common, reason="admin_revoke")
+
+    actions = (grant, suppress)
+    if processing_order == "safety_first":
+        actions = tuple(reversed(actions))
+    for action in actions:
+        await action()
+
+    state = await service.get_marketing_status("telegram", "total-order")
+    assert (
+        state.active,
+        state.suppressed,
+        state.suppression_reason,
+    ) == (False, True, "admin_revoke")
+    materialized = await connection.fetchrow(
+        """
+        SELECT granted_at, proof_event_id, proof_text_hash
+        FROM marketing_consents
+        WHERE channel = 'telegram' AND user_id = 'total-order'
+        """
+    )
+    assert tuple(materialized.values()) == (None, None, None)
+
+
+async def test_trusted_telegram_sequence_supports_eighty_digit_ids(
+    database,
+):
+    service = ConsentService(database)
+    lower_id = "9" * 79
+    higher_id = "1" + "0" * 79
+    stop = {
+        "channel": "telegram",
+        "user_id": "large-sequence",
+        "source": "telegram_explicit",
+        "source_event_id": lower_id,
+        "occurred_at": NOW,
+    }
+    await service.revoke_marketing(**stop)
+    await service.suppress_marketing(**stop, reason="user_stop")
+    enable = {
+        **stop,
+        "proof_text": CLAUSE,
+        "source_event_id": higher_id,
+    }
+    await service.unsuppress_marketing(**enable)
+    state = await service.grant_marketing(**enable)
+
+    assert (state.active, state.suppressed) == (True, False)
+
+
+async def test_equal_id_grant_pair_converges_when_processed_in_reverse(
+    database,
+):
+    service = ConsentService(database)
+    stop = {
+        "channel": "telegram",
+        "user_id": "reverse-pair",
+        "source": "telegram_explicit",
+        "source_event_id": "200",
+        "occurred_at": NOW,
+    }
+    await service.revoke_marketing(**stop)
+    await service.suppress_marketing(**stop, reason="user_stop")
+    enable = {
+        **stop,
+        "proof_text": CLAUSE,
+        "source_event_id": "201",
+        "occurred_at": NOW + timedelta(minutes=1),
+    }
+
+    await service.grant_marketing(**enable)
+    state = await service.unsuppress_marketing(**enable)
+
+    assert (state.active, state.suppressed) == (True, False)
+
+
+@pytest.mark.parametrize(
+    "processing_order",
+    [
+        ("grant199", "admin", "grant200"),
+        ("admin", "grant199", "grant200"),
+    ],
+)
+async def test_new_sequence_rematerializes_actual_durable_winner(
+    database,
+    connection,
+    processing_order,
+):
+    service = ConsentService(database)
+
+    async def grant(source_event_id, occurred_at):
+        await service.grant_marketing(
+            channel="telegram",
+            user_id="winner-triad",
+            proof_text=CLAUSE,
+            source="telegram_explicit",
+            source_event_id=source_event_id,
+            occurred_at=occurred_at,
+        )
+
+    async def admin():
+        common = {
+            "channel": "telegram",
+            "user_id": "winner-triad",
+            "source": "admin_revoke",
+            "source_event_id": "admin-triad",
+            "occurred_at": NOW + timedelta(minutes=15),
+        }
+        await service.revoke_marketing(**common)
+        await service.suppress_marketing(**common, reason="admin_revoke")
+
+    actions = {
+        "grant199": lambda: grant("199", NOW + timedelta(minutes=20)),
+        "grant200": lambda: grant("200", NOW + timedelta(minutes=10)),
+        "admin": admin,
+    }
+    for action in processing_order:
+        await actions[action]()
+
+    state = await service.get_marketing_status("telegram", "winner-triad")
+    assert (
+        state.active,
+        state.suppressed,
+        state.suppression_reason,
+        state.source,
+    ) == (False, True, "admin_revoke", "admin_revoke")
+    assert await connection.fetchval(
+        "SELECT proof_event_id IS NULL AND proof_text_hash IS NULL "
+        "FROM marketing_consents WHERE user_id = 'winner-triad'"
+    ) is True

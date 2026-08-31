@@ -2,7 +2,7 @@ import asyncio
 from hashlib import sha256
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import asyncpg
@@ -128,6 +128,7 @@ def telegram_consent_callback(
     user_id=7,
     data=CONSENT_DONE_CALLBACK_DATA,
     callback_id="callback-1",
+    message_date=1_768_478_400,
 ):
     return {
         "update_id": update_id,
@@ -142,7 +143,7 @@ def telegram_consent_callback(
             "data": data,
             "message": {
                 "message_id": 99,
-                "date": 1_768_478_400,
+                "date": message_date,
                 "chat": {"id": chat_id, "type": chat_type},
             },
         },
@@ -634,8 +635,13 @@ async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
     )
     assert command.status_code == 200
     marketing_screen = fake_telegram.last_text
-    assert MARKETING_CONSENT_CLAUSE in marketing_screen
-    assert marketing_screen.index(MARKETING_CONSENT_CLAUSE) < (
+    visible_clause = next(
+        line
+        for line in marketing_screen.splitlines()
+        if "сообщения об акциях" in line
+    )
+    assert visible_clause == MARKETING_CONSENT_CLAUSE
+    assert marketing_screen.index(visible_clause) < (
         marketing_screen.index(MARKETING_DISABLED_REPLY)
     )
     keyboard = fake_telegram.sent_messages[-1]["reply_markup"].inline_keyboard
@@ -654,6 +660,24 @@ async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
     assert await db.fetchval(
         "SELECT count(*) FROM marketing_consent_events WHERE action = 'granted'"
     ) == 1
+    proof = await db.fetchrow(
+        """
+        SELECT event.proof_text_hash AS event_hash,
+               consent.proof_text_hash AS materialized_hash,
+               event.occurred_at
+        FROM marketing_consent_events AS event
+        JOIN marketing_consents AS consent ON consent.proof_event_id = event.id
+        WHERE event.action = 'granted'
+        """
+    )
+    visible_hash = sha256(visible_clause.encode()).hexdigest()
+    assert (proof["event_hash"], proof["materialized_hash"]) == (
+        visible_hash,
+        visible_hash,
+    )
+    assert proof["occurred_at"] == datetime.fromtimestamp(
+        1_768_478_400, UTC
+    )
 
     disable = telegram_consent_callback(
         update_id=122,
@@ -689,6 +713,32 @@ async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
         "callback-disable",
         "callback-reenable",
     ]
+
+
+async def test_inaccessible_callback_message_uses_stable_epoch_fallback(
+    client, db, fake_telegram
+):
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_text_update("/marketing", update_id=124),
+        )
+    ).status_code == 200
+    callback = telegram_consent_callback(
+        update_id=125,
+        data=MARKETING_ENABLE_CALLBACK_DATA,
+        callback_id="callback-inaccessible",
+        message_date=0,
+    )
+
+    assert (
+        await client.post("/telegram/webhook", json=callback)
+    ).status_code == 200
+    assert await db.fetchval(
+        "SELECT occurred_at FROM marketing_consent_events "
+        "WHERE action = 'granted'"
+    ) == datetime.fromtimestamp(0, UTC)
+    assert "callback-inaccessible" in fake_telegram.answered_callback_ids
 
 
 async def test_stop_revokes_and_suppresses_before_pause_or_llm(

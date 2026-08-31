@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -12,6 +12,58 @@ from moroz.privacy import customer_lock_subject
 PROCESSING_CONSENT_VERSION = "v1"
 MARKETING_CONSENT_VERSION = "marketing-v1"
 _EXPLICIT_MARKETING_SOURCE = "telegram_explicit"
+_TRUSTED_TELEGRAM_SEQUENCE_SOURCES = frozenset({_EXPLICIT_MARKETING_SOURCE})
+_SUPPRESSION_REASON_BY_SOURCE = {
+    _EXPLICIT_MARKETING_SOURCE: "user_stop",
+    "admin_revoke": "admin_revoke",
+}
+_MARKETING_ACTION_RANK = {
+    "unsuppressed": 0,
+    "granted": 1,
+    "revoked": 2,
+    "suppressed": 3,
+}
+
+
+def _trusted_telegram_sequence(
+    source: str,
+    source_event_id: str,
+) -> int | None:
+    if (
+        source in _TRUSTED_TELEGRAM_SEQUENCE_SOURCES
+        and source_event_id.isascii()
+        and source_event_id.isdigit()
+    ):
+        return int(source_event_id)
+    return None
+
+
+def _marketing_event_order_key(
+    *,
+    occurred_at: datetime,
+    action: str,
+    source: str,
+    source_event_id: str,
+    maximum_trusted_sequence: int | None,
+) -> tuple:
+    trusted_sequence = _trusted_telegram_sequence(source, source_event_id)
+    sequence_is_current = (
+        trusted_sequence is None
+        or trusted_sequence == maximum_trusted_sequence
+    )
+    is_non_telegram_safety = (
+        trusted_sequence is None
+        and action in {"revoked", "suppressed"}
+    )
+    return (
+        int(sequence_is_current),
+        occurred_at.astimezone(UTC),
+        int(is_non_telegram_safety),
+        trusted_sequence or 0,
+        _MARKETING_ACTION_RANK[action],
+        source,
+        source_event_id,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,8 +209,9 @@ class ConsentService:
         self._validate_event(
             channel, user_id, source, source_event_id, occurred_at
         )
-        if not reason.strip():
-            raise ValueError("marketing suppression reason is required")
+        normalized_reason = reason.strip()
+        if _SUPPRESSION_REASON_BY_SOURCE.get(source) != normalized_reason:
+            raise ValueError("unsupported marketing suppression source/reason")
         return await self._run_marketing_event(
             connection,
             channel=channel,
@@ -168,7 +221,6 @@ class ConsentService:
             source=source,
             source_event_id=source_event_id,
             occurred_at=occurred_at,
-            suppression_reason=reason.strip(),
         )
 
     async def unsuppress_marketing(
@@ -242,7 +294,6 @@ class ConsentService:
         source: str,
         source_event_id: str,
         occurred_at: datetime,
-        suppression_reason: str | None = None,
     ) -> MarketingConsentState:
         await connection.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -279,45 +330,43 @@ class ConsentService:
                 connection, channel, user_id
             )
 
-        if source_event_id.isascii() and source_event_id.isdigit():
-            has_newer_event = await connection.fetchval(
-                """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM marketing_consent_events
-                    WHERE channel = $1
-                      AND user_id = $2
-                      AND id <> $3
-                      AND source_event_id ~ '^[0-9]+$'
-                      AND source_event_id::numeric > $4::numeric
-                )
-                """,
-                channel,
-                user_id,
-                inserted_event_id,
-                source_event_id,
+        event_rows = await connection.fetch(
+            """
+            SELECT id, consent_version, proof_text_hash, occurred_at,
+                   action, source, source_event_id
+            FROM marketing_consent_events
+            WHERE channel = $1 AND user_id = $2
+            """,
+            channel,
+            user_id,
+        )
+        trusted_sequences = []
+        for row in event_rows:
+            sequence = _trusted_telegram_sequence(
+                row["source"], row["source_event_id"]
             )
-        else:
-            has_newer_event = await connection.fetchval(
-                """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM marketing_consent_events
-                    WHERE channel = $1
-                      AND user_id = $2
-                      AND id <> $3
-                      AND occurred_at > $4
-                )
-                """,
-                channel,
-                user_id,
-                inserted_event_id,
-                occurred_at,
-            )
-        if has_newer_event:
-            return await self._get_marketing_status(
-                connection, channel, user_id
-            )
+            if sequence is not None:
+                trusted_sequences.append(sequence)
+        maximum_trusted_sequence = max(trusted_sequences, default=None)
+        winner = max(
+            event_rows,
+            key=lambda row: _marketing_event_order_key(
+                occurred_at=row["occurred_at"],
+                action=row["action"],
+                source=row["source"],
+                source_event_id=row["source_event_id"],
+                maximum_trusted_sequence=maximum_trusted_sequence,
+            ),
+        )
+        action = winner["action"]
+        occurred_at = winner["occurred_at"]
+        source = winner["source"]
+        proof_text_hash = winner["proof_text_hash"]
+        proof_event_id = winner["id"]
+        consent_version = winner["consent_version"]
+        suppression_reason = _SUPPRESSION_REASON_BY_SOURCE.get(
+            source, "suppressed"
+        )
 
         if action == "granted":
             await connection.execute(
@@ -329,21 +378,24 @@ class ConsentService:
                 VALUES ($1, $2, $3, $4, true, $5, NULL, $6, $7, $8)
                 ON CONFLICT (channel, user_id) DO UPDATE SET
                     consent_version = EXCLUDED.consent_version,
-                    active = marketing_consents.suppressed_at IS NULL,
+                    active = true,
                     granted_at = EXCLUDED.granted_at,
                     revoked_at = NULL,
                     source = EXCLUDED.source,
                     proof_event_id = EXCLUDED.proof_event_id,
                     proof_text_hash = EXCLUDED.proof_text_hash,
+                    suppressed_at = NULL,
+                    suppression_reason = NULL,
+                    suppression_source = NULL,
                     updated_at = now()
                 """,
                 uuid4(),
                 channel,
                 user_id,
-                MARKETING_CONSENT_VERSION,
+                consent_version,
                 occurred_at,
                 source,
-                inserted_event_id,
+                proof_event_id,
                 proof_text_hash,
             )
         elif action == "unsuppressed":
@@ -354,7 +406,13 @@ class ConsentService:
                      revoked_at, source)
                 VALUES ($1, $2, $3, $4, false, $5, $6)
                 ON CONFLICT (channel, user_id) DO UPDATE SET
+                    consent_version = EXCLUDED.consent_version,
                     active = false,
+                    granted_at = NULL,
+                    revoked_at = EXCLUDED.revoked_at,
+                    source = EXCLUDED.source,
+                    proof_event_id = NULL,
+                    proof_text_hash = NULL,
                     suppressed_at = NULL,
                     suppression_reason = NULL,
                     suppression_source = NULL,
@@ -363,7 +421,7 @@ class ConsentService:
                 uuid4(),
                 channel,
                 user_id,
-                MARKETING_CONSENT_VERSION,
+                consent_version,
                 occurred_at,
                 source,
             )
@@ -381,26 +439,22 @@ class ConsentService:
                     CASE WHEN $7 = 'suppressed' THEN $6 END
                 )
                 ON CONFLICT (channel, user_id) DO UPDATE SET
+                    consent_version = EXCLUDED.consent_version,
                     active = false,
+                    granted_at = NULL,
                     revoked_at = EXCLUDED.revoked_at,
-                    suppressed_at = CASE
-                        WHEN $7 = 'suppressed' THEN EXCLUDED.suppressed_at
-                        ELSE marketing_consents.suppressed_at
-                    END,
-                    suppression_reason = CASE
-                        WHEN $7 = 'suppressed' THEN EXCLUDED.suppression_reason
-                        ELSE marketing_consents.suppression_reason
-                    END,
-                    suppression_source = CASE
-                        WHEN $7 = 'suppressed' THEN EXCLUDED.suppression_source
-                        ELSE marketing_consents.suppression_source
-                    END,
+                    source = EXCLUDED.source,
+                    proof_event_id = NULL,
+                    proof_text_hash = NULL,
+                    suppressed_at = EXCLUDED.suppressed_at,
+                    suppression_reason = EXCLUDED.suppression_reason,
+                    suppression_source = EXCLUDED.suppression_source,
                     updated_at = now()
                 """,
                 uuid4(),
                 channel,
                 user_id,
-                MARKETING_CONSENT_VERSION,
+                consent_version,
                 occurred_at,
                 source,
                 action,

@@ -121,6 +121,13 @@ def _consent_prompt() -> str:
     return CONSENT_PROMPT.replace("{policy_url}", POLICY_URL)
 
 
+def _callback_occurred_at(callback_message) -> datetime:
+    # Inaccessible Telegram callback messages carry Unix epoch. Keeping that
+    # stable old value is deterministic and safer than inventing handler time.
+    occurred_at = getattr(callback_message, "date", None)
+    return occurred_at or datetime.fromtimestamp(0, UTC)
+
+
 def _marketing_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -377,7 +384,9 @@ def create_app(
                         event = {
                             "user_id": str(callback.from_user.id),
                             "source_event_id": str(update.update_id),
-                            "occurred_at": datetime.now(UTC),
+                            "occurred_at": _callback_occurred_at(
+                                callback.message
+                            ),
                         }
                         if callback.data == MARKETING_ENABLE_CALLBACK_DATA:
                             await grant_explicit_marketing(
@@ -479,7 +488,9 @@ def create_app(
                                 connection,
                                 user_id=str(callback.from_user.id),
                                 source_event_id=str(update.update_id),
-                                occurred_at=datetime.now(UTC),
+                                occurred_at=_callback_occurred_at(
+                                    callback.message
+                                ),
                             )
                         await webhook_app.state.redis.delete(
                             _consent_state_key(
