@@ -12,7 +12,9 @@ from moroz.reactivation.activity import (
     ACTIVITY_SOURCE_VERSION,
     ActivityCandidate,
     ActivityRepository,
+    ActivitySyncCoordinator,
     ClientActivitySnapshot,
+    activity_job,
 )
 
 
@@ -183,6 +185,75 @@ async def test_claim_batch_does_not_starve_verified_history_behind_unverified_ro
     assert "verified-due" in {item.user_id for item in claimed}
 
 
+async def test_partial_and_error_attempt_cursor_rotates_26_due_verified_rows(database):
+    repository = ActivityRepository(database)
+    successful_watermark = NOW - timedelta(days=2)
+    completed = NOW - timedelta(days=100)
+    async with database.acquire() as connection:
+        await connection.executemany(
+            """
+            INSERT INTO customer_activity_projection
+                (channel, user_id, yclients_client_id, identity_status,
+                 last_completed_visit_at, history_synced_at, source_version,
+                 sync_status, created_at, updated_at)
+            VALUES ('telegram', $1, $2, 'verified', $3, $4, 'old-source',
+                    'current', $4, $4)
+            """,
+            [
+                (f"verified-{index:02d}", str(index + 1), completed, successful_watermark)
+                for index in range(26)
+            ],
+        )
+
+    async with repository.serialized() as connection:
+        first = await repository.claim_candidates(connection, now=NOW, limit=25)
+        for index, item in enumerate(first):
+            if index % 2:
+                await repository.record_error(
+                    connection, item, "yclients_transport", now=NOW
+                )
+            else:
+                await repository.apply_snapshot(
+                    connection,
+                    item,
+                    ClientActivitySnapshot(
+                        yclients_client_id=item.yclients_client_id,
+                        last_completed_visit_at=NOW,
+                        next_active_booking_at=None,
+                        history_synced_at=NOW,
+                        source_version=ACTIVITY_SOURCE_VERSION,
+                        sync_status="partial",
+                        error_code="history_page_limit",
+                    ),
+                )
+        second = await repository.claim_candidates(
+            connection, now=NOW + timedelta(minutes=10), limit=25
+        )
+
+    assert len(first) == 25
+    assert len(second) == 25
+    assert "verified-25" not in {item.user_id for item in first}
+    assert "verified-25" in {item.user_id for item in second}
+    async with database.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            SELECT last_completed_visit_at, history_synced_at, source_version,
+                   sync_status, sync_error_code
+            FROM customer_activity_projection
+            WHERE user_id != 'verified-25'
+            """
+        )
+    assert len(rows) == 25
+    assert all(row["last_completed_visit_at"] == completed for row in rows)
+    assert all(row["history_synced_at"] == successful_watermark for row in rows)
+    assert all(row["source_version"] == "old-source" for row in rows)
+    assert {row["sync_status"] for row in rows} == {"partial", "error"}
+    assert {row["sync_error_code"] for row in rows} == {
+        "history_page_limit",
+        "yclients_transport",
+    }
+
+
 async def test_current_projection_proof_requires_same_local_owner_and_booking_key(database):
     repository = ActivityRepository(database)
     key = uuid4()
@@ -278,6 +349,91 @@ async def test_changed_verified_identity_fails_closed(database):
         ) == "conflict"
 
 
+async def test_verified_latest_owned_booking_reverification_conflicts_all_rows(database):
+    repository = ActivityRepository(database)
+    key = uuid4()
+    async with database.acquire() as connection:
+        await connection.executemany(
+            """
+            INSERT INTO customer_activity_projection
+                (channel, user_id, yclients_client_id, identity_status,
+                 identity_source, identity_verified_at, sync_status)
+            VALUES ('telegram', $1, $2, 'verified',
+                    'moroz_booking_key', $3, 'current')
+            """,
+            [("42", "55", NOW), ("84", "66", NOW)],
+        )
+        await _booking(connection, "42", "9001", key)
+
+    class Scheduler:
+        async def schedule(self, _job):
+            return True
+
+    class Reader:
+        history_reads = []
+
+        async def read_record(self, external_id):
+            assert external_id == "9001"
+            return _projection_record(
+                external_id="9001", booking_key=key, client_id="66"
+            )
+
+        async def read_history(self, client_id, *, now):
+            self.history_reads.append((client_id, now))
+            raise AssertionError("conflicted identity reached history")
+
+    reader = Reader()
+    coordinator = ActivitySyncCoordinator(
+        repository, reader, Scheduler(), clock=lambda: NOW
+    )
+
+    await coordinator.run(activity_job(NOW))
+
+    async with database.acquire() as connection:
+        rows = await connection.fetch(
+            "SELECT user_id, identity_status FROM customer_activity_projection ORDER BY user_id"
+        )
+    assert [tuple(row) for row in rows] == [("42", "conflict"), ("84", "conflict")]
+    assert reader.history_reads == []
+
+
+async def test_verified_identity_without_proof_keeps_identity_but_blocks_history(database):
+    repository = ActivityRepository(database)
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO customer_activity_projection
+                (channel, user_id, yclients_client_id, identity_status,
+                 identity_source, identity_verified_at, sync_status)
+            VALUES ('telegram', '42', '55', 'verified',
+                    'moroz_booking_key', $1, 'current')
+            """,
+            NOW,
+        )
+
+    class Scheduler:
+        async def schedule(self, _job):
+            return True
+
+    class Reader:
+        async def read_record(self, _external_id):
+            raise AssertionError("missing local booking reached provider")
+
+        async def read_history(self, _client_id, *, now):
+            raise AssertionError("unproven verified identity reached history")
+
+    await ActivitySyncCoordinator(
+        repository, Reader(), Scheduler(), clock=lambda: NOW
+    ).run(activity_job(NOW))
+
+    async with database.acquire() as connection:
+        row = await connection.fetchrow(
+            "SELECT identity_status, yclients_client_id, sync_status, sync_error_code "
+            "FROM customer_activity_projection"
+        )
+    assert tuple(row) == ("verified", "55", "error", "yclients_identity_missing")
+
+
 async def test_partial_and_error_never_advance_successful_history_watermark(database):
     repository = ActivityRepository(database)
     watermark = NOW - timedelta(hours=3)
@@ -322,18 +478,21 @@ async def test_partial_and_error_never_advance_successful_history_watermark(data
 async def test_recent_projection_owns_future_booking_and_preserves_history_columns(database):
     history = NOW - timedelta(hours=1)
     inbound = NOW - timedelta(minutes=5)
+    attempt_cursor = NOW - timedelta(minutes=30)
     async with database.acquire() as connection:
         await connection.execute(
             """
             INSERT INTO customer_activity_projection
                 (channel, user_id, yclients_client_id, identity_status,
                  last_completed_visit_at, last_meaningful_inbound_at,
-                 history_synced_at, sync_status)
-            VALUES ('telegram', '42', '55', 'verified', $1, $2, $3, 'current')
+                 history_synced_at, sync_status, created_at, updated_at)
+            VALUES ('telegram', '42', '55', 'verified', $1, $2, $3,
+                    'current', $4, $4)
             """,
             NOW - timedelta(days=100),
             inbound,
             history,
+            attempt_cursor,
         )
     key = uuid4()
     future = NOW + timedelta(days=2)
@@ -353,7 +512,8 @@ async def test_recent_projection_owns_future_booking_and_preserves_history_colum
     async with database.acquire() as connection:
         row = await connection.fetchrow(
             "SELECT last_completed_visit_at, last_meaningful_inbound_at, "
-            "history_synced_at, next_active_booking_at, recent_bookings_synced_at "
+            "history_synced_at, next_active_booking_at, recent_bookings_synced_at, "
+            "updated_at "
             "FROM customer_activity_projection"
         )
         stored = await connection.fetchrow(
@@ -365,5 +525,6 @@ async def test_recent_projection_owns_future_booking_and_preserves_history_colum
         history,
         future,
         NOW,
+        attempt_cursor,
     )
     assert tuple(stored) == ("55", NOW - timedelta(days=100))

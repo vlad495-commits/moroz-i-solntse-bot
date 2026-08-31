@@ -193,7 +193,11 @@ async def test_phone_or_name_without_exact_booking_key_never_proves_identity():
 @pytest.mark.asyncio
 async def test_verified_history_error_is_allowlisted_and_does_not_apply_snapshot():
     item = candidate(status="verified", client_id="55")
-    repository = FakeRepository([item])
+    repository = FakeRepository(
+        [item],
+        current_ids=("55",),
+        resolved=ResolvedIdentity("verified", "55"),
+    )
     reader = FakeReader(history=YclientsProjectionError("yclients_transport"))
     coordinator = ActivitySyncCoordinator(
         repository, reader, FakeScheduler(), clock=lambda: NOW
@@ -206,9 +210,68 @@ async def test_verified_history_error_is_allowlisted_and_does_not_apply_snapshot
 
 
 @pytest.mark.asyncio
-async def test_unknown_provider_error_is_collapsed_to_safe_code():
+async def test_verified_identity_reuses_latest_owned_booking_fallback_and_conflicts():
+    item = candidate(status="verified", client_id="55")
+    repository = FakeRepository(
+        [item],
+        local=LocalBookingProof("9001", BOOKING_KEY),
+        resolved=ResolvedIdentity("conflict", "55"),
+    )
+    reader = FakeReader(record=record(client_id="66"), history=snapshot())
+    coordinator = ActivitySyncCoordinator(
+        repository, reader, FakeScheduler(), clock=lambda: NOW
+    )
+
+    await coordinator.run(activity_job(NOW))
+
+    assert reader.record_reads == ["9001"]
+    assert repository.resolutions == [(item, ("66",), NOW)]
+    assert reader.history_reads == []
+    assert repository.snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_verified_identity_without_current_or_owned_fallback_fails_closed():
     item = candidate(status="verified", client_id="55")
     repository = FakeRepository([item])
+    reader = FakeReader(history=snapshot())
+    coordinator = ActivitySyncCoordinator(
+        repository, reader, FakeScheduler(), clock=lambda: NOW
+    )
+
+    await coordinator.run(activity_job(NOW))
+
+    assert repository.errors == [(item, "yclients_identity_missing", NOW)]
+    assert reader.history_reads == []
+    assert repository.resolutions == []
+
+
+@pytest.mark.asyncio
+async def test_verified_identity_fallback_provider_error_is_allowlisted():
+    item = candidate(status="verified", client_id="55")
+    repository = FakeRepository(
+        [item],
+        local=LocalBookingProof("9001", BOOKING_KEY),
+    )
+    reader = FakeReader(record=YclientsProjectionError("yclients_transport"))
+    coordinator = ActivitySyncCoordinator(
+        repository, reader, FakeScheduler(), clock=lambda: NOW
+    )
+
+    await coordinator.run(activity_job(NOW))
+
+    assert repository.errors == [(item, "yclients_transport", NOW)]
+    assert reader.history_reads == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_error_is_collapsed_to_safe_code():
+    item = candidate(status="verified", client_id="55")
+    repository = FakeRepository(
+        [item],
+        current_ids=("55",),
+        resolved=ResolvedIdentity("verified", "55"),
+    )
     reader = FakeReader(history=YclientsProjectionError("secret-provider-detail"))
     coordinator = ActivitySyncCoordinator(
         repository, reader, FakeScheduler(), clock=lambda: NOW

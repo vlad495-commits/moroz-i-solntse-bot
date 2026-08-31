@@ -98,8 +98,7 @@ class ProjectionRepository:
                               AND NOT projection.deleted
                               AND projection.starts_at >= $1
                         ),
-                        recent_bookings_synced_at = $1,
-                        updated_at = $1
+                        recent_bookings_synced_at = $1
                     WHERE activity.identity_status = 'verified'
                       AND activity.yclients_client_id IS NOT NULL
                     """,

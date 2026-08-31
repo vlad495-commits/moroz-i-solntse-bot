@@ -235,9 +235,7 @@ class ActivityRepository:
                OR (identity_status = 'verified'
                    AND (history_synced_at IS NULL OR history_synced_at <= $1))
             ORDER BY (identity_status = 'verified') DESC,
-                     CASE WHEN identity_status = 'verified'
-                          THEN history_synced_at ELSE updated_at END NULLS FIRST,
-                     channel, user_id
+                     updated_at, channel, user_id
             FOR UPDATE SKIP LOCKED
             LIMIT $2
             """,
@@ -514,50 +512,41 @@ class ActivitySyncCoordinator:
     async def _sync_candidate(self, connection, candidate: ActivityCandidate, now: datetime) -> None:
         if candidate.identity_status == "conflict":
             return
-        client_id = candidate.yclients_client_id
-        if candidate.identity_status == "unverified":
-            try:
-                client_ids = await self._identity_client_ids(connection, candidate)
-            except ValueError:
-                await self._repository.record_error(
-                    connection,
-                    candidate,
-                    "yclients_identity_missing",
-                    now=now,
-                )
-                return
-            except YclientsProjectionError as error:
-                await self._repository.record_error(
-                    connection,
-                    candidate,
-                    _safe_error_code(error.code),
-                    now=now,
-                )
-                return
-            resolved = await self._repository.resolve_identity(
+        try:
+            client_ids = await self._identity_client_ids(connection, candidate)
+        except ValueError:
+            await self._repository.record_error(
                 connection,
                 candidate,
-                client_ids,
+                "yclients_identity_missing",
                 now=now,
             )
-            if resolved.status != "verified":
-                return
-            client_id = resolved.yclients_client_id
-        else:
-            current_ids = await self._repository.current_identity_client_ids(
+            return
+        except YclientsProjectionError as error:
+            await self._repository.record_error(
                 connection,
                 candidate,
+                _safe_error_code(error.code),
+                now=now,
             )
-            if current_ids:
-                resolved = await self._repository.resolve_identity(
-                    connection,
-                    candidate,
-                    current_ids,
-                    now=now,
-                )
-                if resolved.status != "verified":
-                    return
-                client_id = resolved.yclients_client_id
+            return
+        if candidate.identity_status == "verified" and not client_ids:
+            await self._repository.record_error(
+                connection,
+                candidate,
+                "yclients_identity_missing",
+                now=now,
+            )
+            return
+        resolved = await self._repository.resolve_identity(
+            connection,
+            candidate,
+            client_ids,
+            now=now,
+        )
+        if resolved.status != "verified":
+            return
+        client_id = resolved.yclients_client_id
         if client_id is None:
             await self._repository.record_error(
                 connection,
