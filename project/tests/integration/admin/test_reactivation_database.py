@@ -5,6 +5,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+import reactivation_database as rdb
 from moroz.common.db import Database
 from moroz.reactivation.policy import ProgramPolicy
 from moroz.security.consent import ConsentService
@@ -180,10 +181,95 @@ async def test_marketing_page_masks_identity_and_revoke_resolves_opaque_id(datab
     assert missing["consents"] == []
     assert missing["consent_events"] == []
     revoked = await revoke_marketing_consent_by_id(
-        database, consent_id=consent.consent_id
+        database, consent_id=consent.consent_id, actor_id=owner_id,
+        ip_address="127.0.0.1", user_agent="test",
     )
     assert revoked["active"] is False
     assert revoked["suppression_reason"] == "admin_revoke"
+    async with database.acquire() as connection:
+        audit = await connection.fetchrow(
+            """
+            SELECT object_id, before, after
+            FROM admin_audit_events
+            WHERE action = 'reactivation.consent_revoked'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        )
+    assert audit["object_id"] == str(consent.consent_id)
+    assert "1234567890" not in repr(dict(audit))
+
+
+async def test_readiness_is_global_and_lookup_history_paginates(database):
+    async with database.acquire() as connection:
+        owner_id = await connection.fetchval(
+            """
+            INSERT INTO admin_users
+                (username, role, password_hash, totp_secret, enabled)
+            VALUES ('readiness-owner', 'owner', 'x', 'x', true)
+            RETURNING id
+            """
+        )
+    consent = await _grant_proven_marketing_consent(database, "readiness-123456")
+    async with database.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO customer_activity_projection
+                (channel, user_id, identity_status, history_synced_at,
+                 recent_bookings_synced_at, sync_status)
+            VALUES ('telegram', 'readiness-123456', 'verified', now(), now(), 'current')
+            """
+        )
+        await connection.executemany(
+            """
+            INSERT INTO marketing_consent_events
+                (id, channel, user_id, action, consent_version, source,
+                 source_event_id, occurred_at)
+            VALUES ($1, 'telegram', 'readiness-123456', 'revoked',
+                    'marketing-v1', 'admin_revoke', $2, now())
+            """,
+            [(uuid4(), f"history-{index}") for index in range(55)],
+        )
+
+    unfiltered = await get_marketing_page_data(database, actor_id=owner_id)
+    filtered_page_1 = await get_marketing_page_data(
+        database, actor_id=owner_id, consent_id=consent.consent_id
+    )
+    filtered_page_2 = await get_marketing_page_data(
+        database, actor_id=owner_id, consent_id=consent.consent_id, page=2
+    )
+
+    assert unfiltered["readiness"] == filtered_page_1["readiness"]
+    assert filtered_page_1["readiness"] == filtered_page_2["readiness"]
+    assert unfiltered["readiness"]["proven_consents"] == 1
+    assert unfiltered["readiness"]["yclients_current"] == 1
+    assert unfiltered["readiness"]["yclients_ready"] is True
+    assert len(filtered_page_1["consent_events"]) == 50
+    assert len(filtered_page_2["consent_events"]) == 6
+    assert filtered_page_1["pagination"]["has_next"] is True
+    assert filtered_page_2["pagination"]["has_next"] is False
+
+
+async def test_revoke_rolls_back_when_opaque_admin_audit_fails(monkeypatch, database):
+    consent = await _grant_proven_marketing_consent(database, "audit-rollback")
+
+    async def fail_audit(*_args, **_kwargs):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(rdb, "record_audit_in_transaction", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        await revoke_marketing_consent_by_id(
+            database,
+            consent_id=consent.consent_id,
+            actor_id=7,
+            ip_address="127.0.0.1",
+            user_agent="test",
+        )
+
+    state = await ConsentService(database).get_marketing_status(
+        "telegram", "audit-rollback"
+    )
+    assert state.active is True
 
 
 async def test_reactivation_settings_round_trip(database):
@@ -383,4 +469,4 @@ async def test_v2_admin_wrappers_keep_owner_gate_and_dry_run(monkeypatch, databa
     assert activated["status"] == "active"
     assert dashboard["settings"]["mode"] == "dry_run"
     assert dashboard["settings"]["active_version_id"] == version_id
-    assert dashboard["versions"][0]["preview_counts"]["masked_samples"] == []
+    assert "masked_samples" not in dashboard["versions"][0]["preview_counts"]

@@ -19,6 +19,7 @@ DEFAULT_REMINDER_TEXT = (
     "Если такие сообщения не нужны, нажмите «Не писать»."
 )
 REACTIVATION_RENDERER_VERSION = "reactivation-renderer-v1"
+TELEGRAM_MESSAGE_MAX_LENGTH = 4096
 _MOSCOW = ZoneInfo("Europe/Moscow")
 _STOP_PHRASES = frozenset({"стоп", "stop", "не писать", "отписаться", "не присылайте"})
 MAIN_BUTTONS = (
@@ -91,6 +92,15 @@ def validate_policy(policy: ProgramPolicy) -> None:
         raise ValueError("reminder_after_days must be None, 3, 5, or 7")
     if policy.cooldown_days < policy.inactivity_days:
         raise ValueError("cooldown_days must not be less than inactivity_days")
+    if not policy.main_text.strip():
+        raise ValueError("main_text must not be empty")
+    if len(policy.main_text) > TELEGRAM_MESSAGE_MAX_LENGTH:
+        raise ValueError("main_text exceeds Telegram message limit")
+    if policy.reminder_after_days is not None:
+        if not policy.reminder_text.strip():
+            raise ValueError("reminder_text must not be empty when reminder is enabled")
+        if len(policy.reminder_text) > TELEGRAM_MESSAGE_MAX_LENGTH:
+            raise ValueError("reminder_text exceeds Telegram message limit")
 
 
 def template_checksum(policy: ProgramPolicy) -> str:

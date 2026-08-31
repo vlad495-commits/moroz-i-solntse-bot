@@ -37,20 +37,45 @@ async def record_audit(
     if not database._pool:
         return
     async with database._pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO admin_audit_events (
-                actor_id, action, object_type, object_id,
-                before, after, ip_address, user_agent
-            )
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
-            """,
-            actor_id,
-            action,
-            object_type,
-            object_id,
-            json.dumps(before, ensure_ascii=False) if before is not None else None,
-            json.dumps(after, ensure_ascii=False) if after is not None else None,
-            ip_address,
-            user_agent,
+        await record_audit_in_transaction(
+            conn,
+            actor_id=actor_id,
+            action=action,
+            object_type=object_type,
+            object_id=object_id,
+            before=before,
+            after=after,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
+
+
+async def record_audit_in_transaction(
+    connection,
+    *,
+    actor_id: int | None,
+    action: str,
+    object_type: str,
+    object_id: str | None,
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+    ip_address: str | None,
+    user_agent: str | None,
+) -> None:
+    await connection.execute(
+        """
+        INSERT INTO admin_audit_events (
+            actor_id, action, object_type, object_id,
+            before, after, ip_address, user_agent
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
+        """,
+        actor_id,
+        action,
+        object_type,
+        object_id,
+        json.dumps(before, ensure_ascii=False) if before is not None else None,
+        json.dumps(after, ensure_ascii=False) if after is not None else None,
+        ip_address,
+        user_agent,
+    )

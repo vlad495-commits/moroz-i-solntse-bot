@@ -5,6 +5,7 @@ import json
 import os
 from uuid import UUID, uuid4
 
+from audit_repository import record_audit_in_transaction
 from moroz.reactivation.policy import ProgramPolicy
 from moroz.reactivation.repository import ReactivationRepository
 from moroz.security.consent import ConsentService
@@ -119,10 +120,12 @@ async def get_marketing_page_data(
                     FROM marketing_consent_events
                     WHERE channel = $1 AND user_id = $2
                     ORDER BY occurred_at DESC, id DESC
-                    LIMIT 100
+                    LIMIT $3 OFFSET $4
                     """,
                     consents[0]["channel"],
                     consents[0]["user_id"],
+                    PAGE_SIZE + 1,
+                    offset,
                 )
                 if consents
                 else []
@@ -139,6 +142,26 @@ async def get_marketing_page_data(
                 PAGE_SIZE + 1,
                 offset,
             )
+        readiness_row = await connection.fetchrow(
+            """
+            SELECT count(*) AS proven_consents,
+                   count(*) FILTER (
+                       WHERE activity.sync_status = 'current'
+                         AND activity.history_synced_at >= now() - interval '24 hours'
+                         AND activity.recent_bookings_synced_at >= now() - interval '15 minutes'
+                   ) AS yclients_current,
+                   min(activity.history_synced_at) AS oldest_history_synced_at,
+                   min(activity.recent_bookings_synced_at) AS oldest_recent_bookings_synced_at
+            FROM marketing_consents AS consent
+            LEFT JOIN customer_activity_projection AS activity
+              ON activity.channel = consent.channel
+             AND activity.user_id = consent.user_id
+            WHERE consent.active
+              AND consent.proof_event_id IS NOT NULL
+              AND consent.proof_text_hash IS NOT NULL
+              AND consent.suppressed_at IS NULL
+            """
+        )
         journeys = await connection.fetch(
             """
             SELECT journey.id, journey.channel, journey.user_id,
@@ -186,11 +209,17 @@ async def get_marketing_page_data(
     has_next = any(
         len(rows) > PAGE_SIZE for rows in (consents, consent_events, journeys)
     )
+    readiness = dict(readiness_row)
+    readiness["yclients_ready"] = (
+        readiness["proven_consents"] > 0
+        and readiness["yclients_current"] == readiness["proven_consents"]
+    )
     data.update(
         consents=[_masked_row(row) for row in consents[:PAGE_SIZE]],
         consent_events=[_masked_row(row) for row in consent_events[:PAGE_SIZE]],
         journeys=[_masked_row(row) for row in journeys[:PAGE_SIZE]],
         outcomes={row["outcome"]: row["total"] for row in outcomes},
+        readiness=readiness,
         pagination={"page": page, "has_next": has_next},
         legacy={
             "campaigns": [dict(row) for row in legacy_campaigns],
@@ -200,7 +229,14 @@ async def get_marketing_page_data(
     return data
 
 
-async def revoke_marketing_consent_by_id(database, *, consent_id: UUID):
+async def revoke_marketing_consent_by_id(
+    database,
+    *,
+    consent_id: UUID,
+    actor_id: int,
+    ip_address: str | None,
+    user_agent: str | None,
+):
     service = ConsentService(database)
     source_event_id = str(uuid4())
     occurred_at = datetime.now(UTC)
@@ -253,6 +289,20 @@ async def revoke_marketing_consent_by_id(database, *, consent_id: UUID):
                 WHERE id = $1
                 """,
                 consent_id,
+            )
+            await record_audit_in_transaction(
+                connection,
+                actor_id=actor_id,
+                action="reactivation.consent_revoked",
+                object_type="marketing_consent",
+                object_id=str(consent_id),
+                before=None,
+                after={
+                    "active": result["active"],
+                    "consent_version": result["consent_version"],
+                },
+                ip_address=ip_address,
+                user_agent=user_agent,
             )
     return dict(result)
 

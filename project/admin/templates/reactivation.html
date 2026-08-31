@@ -28,8 +28,8 @@
     <section class="card">
         <h2>Готовность к запуску</h2>
         <div class="gate-grid">
-            <div><strong>YCLIENTS freshness</strong><span>{{ draft.preview_history_watermark if draft else 'нет предпросмотра' }}</span></div>
-            <div><strong>Доказанные согласия</strong><span>{{ data.consents | selectattr('proven') | list | length }} подтверждено</span></div>
+            <div><strong>YCLIENTS freshness</strong><span>{{ data.readiness.yclients_current }} из {{ data.readiness.proven_consents }} актуальны</span></div>
+            <div><strong>Доказанные согласия</strong><span>{{ data.readiness.proven_consents }} подтверждено</span></div>
             <div><strong>Свежий предпросмотр</strong><span>{{ draft.preview_created_at if draft and draft.preview_created_at else 'не готов' }}</span></div>
             <div><strong>Тестовая доставка</strong><span>{{ draft.test_sent_at if draft and draft.test_sent_at else 'не подтверждена' }}</span></div>
             <div><strong>Юридическое согласование</strong><span>{{ settings.legal_status }}{% if settings.legal_reference %}: {{ settings.legal_reference }}{% endif %}</span></div>
@@ -64,7 +64,7 @@
             <h3>Исключены по причинам</h3>
             <ul>{% for reason, count in (draft.preview_counts.excluded_by_reason.items() if draft.preview_counts else []) %}<li>{{ reason }} — {{ count }}</li>{% else %}<li>Предпросмотр ещё не рассчитан</li>{% endfor %}</ul>
             <h3>Замаскированные примеры</h3>
-            <ul>{% for sample in (draft.preview_counts.masked_samples if draft.preview_counts else []) %}<li>{{ sample }}</li>{% else %}<li>Подходящих примеров нет</li>{% endfor %}</ul>
+            <ul>{% for sample in data.get('preview_samples', []) %}<li>{{ sample }}</li>{% else %}<li>Образцы показываются только сразу после предпросмотра</li>{% endfor %}</ul>
             <p class="muted">Обновлено: {{ draft.preview_created_at or '—' }} · watermark истории: {{ draft.preview_history_watermark or '—' }} · ближайших записей: {{ draft.preview_recent_watermark or '—' }}</p>
             <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/versions/{{ draft.id }}/preview">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Обновить предпросмотр</button>

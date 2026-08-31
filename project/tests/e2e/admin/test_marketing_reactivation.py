@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -9,6 +10,7 @@ import auth
 import reactivation_database as rdb
 import reactivation_routes
 from moroz.privacy import customer_lock_subject
+from moroz.reactivation.repository import ActivationBlocked
 
 
 def _user(role="owner"):
@@ -45,6 +47,7 @@ def _dashboard():
             "updated_at": None,
         },
         "versions": [],
+        "readiness": {"proven_consents": 0, "yclients_current": 0, "yclients_ready": False},
         "consents": [],
         "journeys": [],
         "outcomes": {},
@@ -64,6 +67,21 @@ async def test_legacy_route_preserves_query():
 
     assert response.status_code == 307
     assert response.headers["location"] == "/marketing/?status=active"
+
+
+@pytest.mark.asyncio
+async def test_legacy_route_preserves_mounted_admin_root_and_query():
+    parent = FastAPI()
+    parent.mount("/admin", _app())
+    async with AsyncClient(
+        transport=ASGITransport(app=parent), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/admin/reactivation/?status=active", follow_redirects=False
+        )
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/admin/marketing/?status=active"
 
 
 @pytest.mark.asyncio
@@ -182,6 +200,141 @@ async def test_version_form_rejects_invalid_reminder_without_database(monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "form",
+    [
+        {"main_text": " "},
+        {"main_text": "x" * 4097},
+        {"reminder_after_days": "5", "reminder_text": " "},
+        {"reminder_after_days": "5", "reminder_text": "x" * 4097},
+    ],
+)
+async def test_crafted_version_form_rejects_unusable_templates(
+    monkeypatch, form
+):
+    async def current_user(_request):
+        return _user()
+
+    async def create_must_not_run(*_args, **_kwargs):
+        raise AssertionError("invalid policy reached persistence")
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "create_draft", create_must_not_run)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/marketing/versions",
+            data={"csrf_token": "known-csrf", **form},
+        )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["preview", "test", "activate"])
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ValueError("reactivation version not found"), 404),
+        (ValueError("retired reactivation version cannot be used"), 409),
+    ],
+)
+async def test_version_actions_translate_missing_and_retired_to_4xx(
+    monkeypatch, operation, error, expected
+):
+    async def current_user(_request):
+        return _user()
+
+    async def fail(*_args, **_kwargs):
+        raise error
+
+    function_name = {
+        "preview": "preview_version",
+        "test": "queue_test_send",
+        "activate": "activate_version",
+    }[operation]
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, function_name, fail)
+    data = {"csrf_token": "known-csrf"}
+    if operation == "activate":
+        data["confirmation"] = "АКТИВИРОВАТЬ"
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/marketing/versions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/{operation}",
+            data=data,
+        )
+
+    assert response.status_code == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "gate",
+    ["fresh_preview", "current_watermarks", "test_sent", "legal_approved", "same_checksum"],
+)
+async def test_activation_gate_failures_return_conflict(monkeypatch, gate):
+    async def current_user(_request):
+        return _user()
+
+    async def fail(*_args, **_kwargs):
+        raise ActivationBlocked(gate)
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "activate_version", fail)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/marketing/versions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/activate",
+            data={"csrf_token": "known-csrf", "confirmation": "АКТИВИРОВАТЬ"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == f"activation_blocked:{gate}"
+
+
+@pytest.mark.asyncio
+async def test_preview_samples_are_rendered_only_from_current_response(monkeypatch):
+    captured = {}
+
+    async def current_user(_request):
+        return _user()
+
+    async def preview(*_args, **_kwargs):
+        return SimpleNamespace(masked_samples=("telegram:***6789",))
+
+    async def page_data(*_args, **_kwargs):
+        return _dashboard()
+
+    def render(request, name, context):
+        captured.update(context)
+        return RedirectResponse("/captured", status_code=200)
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "preview_version", preview)
+    monkeypatch.setattr(reactivation_routes.rdb, "get_marketing_page_data", page_data)
+    monkeypatch.setattr(reactivation_routes.templates, "TemplateResponse", render)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/marketing/versions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/preview",
+            data={"csrf_token": "known-csrf"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 200
+    assert captured["data"]["preview_samples"] == ["telegram:***6789"]
+
+
+@pytest.mark.asyncio
 async def test_activation_requires_exact_fresh_confirmation(monkeypatch):
     calls = []
 
@@ -259,23 +412,19 @@ async def test_consent_revoke_uses_only_opaque_consent_id(monkeypatch):
     async def current_user(_request):
         return _user()
 
-    async def revoke(_database, *, consent_id):
-        calls.append(consent_id)
+    async def revoke(_database, **values):
+        calls.append(values)
         return {
-            "id": consent_id,
+            "id": values["consent_id"],
             "active": False,
             "consent_version": "marketing-v1",
         }
-
-    async def audit(**_values):
-        return None
 
     monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
     monkeypatch.setattr(reactivation_routes.database, "get_database", object)
     monkeypatch.setattr(
         reactivation_routes.rdb, "revoke_marketing_consent_by_id", revoke
     )
-    monkeypatch.setattr(reactivation_routes, "record_audit", audit)
     async with AsyncClient(
         transport=ASGITransport(app=_app()), base_url="http://test"
     ) as client:
@@ -287,7 +436,10 @@ async def test_consent_revoke_uses_only_opaque_consent_id(monkeypatch):
 
     assert response.status_code == 302
     assert response.headers["location"] == "/marketing/?consent=revoked"
-    assert calls == [consent_id]
+    assert calls[0]["consent_id"] == consent_id
+    assert calls[0]["actor_id"] == 7
+    assert calls[0]["ip_address"] == "127.0.0.1"
+    assert calls[0]["user_agent"]
     assert "telegram" not in response.headers["location"]
 
 
@@ -299,10 +451,15 @@ async def test_consent_revoke_resolves_identity_and_applies_both_events_in_one_t
     transaction = SimpleTransaction()
     connection = SimpleConnection(consent_id, transaction)
     service = SimpleConsentService()
+    audits = []
     monkeypatch.setattr(rdb, "ConsentService", lambda _database: service)
+    async def audit(connection, **values):
+        audits.append((connection, values))
+    monkeypatch.setattr(rdb, "record_audit_in_transaction", audit)
 
     result = await rdb.revoke_marketing_consent_by_id(
-        SimpleDatabase(connection), consent_id=consent_id
+        SimpleDatabase(connection), consent_id=consent_id, actor_id=7,
+        ip_address="127.0.0.1", user_agent="test",
     )
 
     assert transaction.entered and transaction.exited
@@ -313,6 +470,9 @@ async def test_consent_revoke_resolves_identity_and_applies_both_events_in_one_t
     assert all(call[1]["user_id"] == "42" for call in service.calls)
     assert all(call[1]["connection"] is connection for call in service.calls)
     assert service.calls[1][1]["reason"] == "admin_revoke"
+    assert audits[0][0] is connection
+    assert audits[0][1]["object_id"] == str(consent_id)
+    assert "user_id" not in repr(audits)
     assert result["id"] == consent_id
 
 

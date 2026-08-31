@@ -9,13 +9,15 @@ from fastapi.templating import Jinja2Templates
 
 import database
 import reactivation_database as rdb
-from audit_repository import record_audit, request_ip_address, request_user_agent
+from audit_repository import request_ip_address, request_user_agent
 from auth import get_current_user
 from moroz.reactivation.policy import (
     DEFAULT_MAIN_TEXT,
     DEFAULT_REMINDER_TEXT,
     ProgramPolicy,
+    validate_policy,
 )
+from moroz.reactivation.repository import ActivationBlocked
 from paths import admin_url
 from rbac import require_role, validate_csrf
 
@@ -28,7 +30,9 @@ templates = Jinja2Templates(directory=Path(__file__).resolve().parent / "templat
 @legacy_router.get("/")
 async def legacy_reactivation(request: Request) -> RedirectResponse:
     suffix = f"?{request.url.query}" if request.url.query else ""
-    return RedirectResponse(f"/marketing/{suffix}", status_code=307)
+    return RedirectResponse(
+        f"{admin_url(request, '/marketing/')}{suffix}", status_code=307
+    )
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -68,15 +72,17 @@ async def marketing_version_create(
             if reminder_after_days in {"", "off"}
             else int(reminder_after_days)
         )
+        policy = ProgramPolicy(
+            inactivity_days=inactivity_days,
+            reminder_after_days=reminder,
+            cooldown_days=cooldown_days,
+            main_text=main_text.strip(),
+            reminder_text=reminder_text.strip(),
+        )
+        validate_policy(policy)
         version_id = await rdb.create_draft(
             database.get_database(),
-            policy=ProgramPolicy(
-                inactivity_days=inactivity_days,
-                reminder_after_days=reminder,
-                cooldown_days=cooldown_days,
-                main_text=main_text.strip(),
-                reminder_text=reminder_text.strip(),
-            ),
+            policy=policy,
             actor_id=user.id,
         )
     except (TypeError, ValueError) as error:
@@ -91,10 +97,21 @@ async def marketing_version_preview(
     csrf_token: str = Form(""),
 ):
     user = await _owner_write(request, csrf_token)
-    await rdb.preview_version(
-        database.get_database(), version_id, actor_id=user.id
+    try:
+        result = await rdb.preview_version(
+            database.get_database(), version_id, actor_id=user.id
+        )
+    except (ActivationBlocked, ValueError) as error:
+        raise _version_http_error(error) from error
+    data = await rdb.get_marketing_page_data(
+        database.get_database(), actor_id=user.id
     )
-    return _redirect(request, "/?preview=ready")
+    data["preview_samples"] = list(result.masked_samples)
+    return templates.TemplateResponse(
+        request,
+        "reactivation.html",
+        {"user": user, "csrf_token": user.csrf_token, "data": data},
+    )
 
 
 @router.post("/versions/{version_id}/test")
@@ -104,9 +121,12 @@ async def marketing_version_test(
     csrf_token: str = Form(""),
 ):
     user = await _owner_write(request, csrf_token)
-    outbound_id = await rdb.queue_test_send(
-        database.get_database(), version_id, actor_id=user.id
-    )
+    try:
+        outbound_id = await rdb.queue_test_send(
+            database.get_database(), version_id, actor_id=user.id
+        )
+    except (ActivationBlocked, ValueError) as error:
+        raise _version_http_error(error) from error
     status = "queued" if outbound_id is not None else "not_configured"
     return _redirect(request, f"/?test={status}")
 
@@ -121,9 +141,12 @@ async def marketing_version_activate(
     user = await _owner_write(request, csrf_token)
     if confirmation != "АКТИВИРОВАТЬ":
         raise HTTPException(status_code=400, detail="invalid activation confirmation")
-    await rdb.activate_version(
-        database.get_database(), version_id, actor_id=user.id
-    )
+    try:
+        await rdb.activate_version(
+            database.get_database(), version_id, actor_id=user.id
+        )
+    except (ActivationBlocked, ValueError) as error:
+        raise _version_http_error(error) from error
     return _redirect(request, "/?activated=1")
 
 
@@ -168,23 +191,15 @@ async def marketing_consent_revoke(
 ):
     user = await _owner_write(request, csrf_token)
     try:
-        result = await rdb.revoke_marketing_consent_by_id(
-            database.get_database(), consent_id=consent_id
+        await rdb.revoke_marketing_consent_by_id(
+            database.get_database(),
+            consent_id=consent_id,
+            actor_id=user.id,
+            ip_address=request_ip_address(request),
+            user_agent=request_user_agent(request),
         )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    await _audit(
-        request,
-        user,
-        action="reactivation.consent_revoked",
-        object_type="marketing_consent",
-        object_id=str(consent_id),
-        before=None,
-        after={
-            "active": result["active"],
-            "consent_version": result["consent_version"],
-        },
-    )
     return _redirect(request, "/?consent=revoked")
 
 
@@ -204,10 +219,8 @@ def _redirect(request, suffix: str):
     return RedirectResponse(admin_url(request, f"/marketing{suffix}"), status_code=302)
 
 
-async def _audit(request, user, **values) -> None:
-    await record_audit(
-        actor_id=user.id,
-        ip_address=request_ip_address(request),
-        user_agent=request_user_agent(request),
-        **values,
-    )
+def _version_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, ActivationBlocked):
+        return HTTPException(status_code=409, detail=f"activation_blocked:{error.code}")
+    status_code = 404 if "not found" in str(error).lower() else 409
+    return HTTPException(status_code=status_code, detail=str(error))

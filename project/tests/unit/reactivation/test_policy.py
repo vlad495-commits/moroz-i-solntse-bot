@@ -142,6 +142,24 @@ def test_validate_policy_accepts_the_fixed_product_options() -> None:
     validate_policy(ProgramPolicy(inactivity_days=60, reminder_after_days=None, cooldown_days=120))
 
 
+@pytest.mark.parametrize(
+    "policy",
+    [
+        ProgramPolicy(main_text=" "),
+        ProgramPolicy(main_text="x" * 4097),
+        ProgramPolicy(reminder_after_days=5, reminder_text=" "),
+        ProgramPolicy(reminder_after_days=5, reminder_text="x" * 4097),
+    ],
+)
+def test_validate_policy_rejects_unusable_telegram_templates(policy: ProgramPolicy) -> None:
+    with pytest.raises(ValueError):
+        validate_policy(policy)
+
+
+def test_disabled_reminder_does_not_require_reminder_text() -> None:
+    validate_policy(ProgramPolicy(reminder_after_days=None, reminder_text=""))
+
+
 def test_template_checksum_is_stable_and_covers_policy_and_text() -> None:
     policy = ProgramPolicy()
 

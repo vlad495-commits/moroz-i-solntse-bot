@@ -135,7 +135,6 @@ class ReactivationRepository:
                     "planned_main": population.result.planned_main,
                     "planned_reminder": population.result.planned_reminder,
                     "excluded_by_reason": population.result.excluded_by_reason,
-                    "masked_samples": list(population.result.masked_samples),
                 }
                 await connection.execute(
                     """
