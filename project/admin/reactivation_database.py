@@ -106,9 +106,19 @@ async def approve_legal(
     )
 
 
-async def activate_version(database, version_id: UUID, *, actor_id: int, now=None):
+async def activate_version(
+    database,
+    version_id: UUID,
+    *,
+    actor_id: int,
+    start_program: bool = False,
+    now=None,
+):
     return await _v2(database).activate_version(
-        version_id, actor_id, now or datetime.now(UTC)
+        version_id,
+        actor_id,
+        now or datetime.now(UTC),
+        start_program=start_program,
     )
 
 

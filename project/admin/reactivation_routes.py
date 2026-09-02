@@ -170,19 +170,19 @@ async def marketing_version_test(
 async def marketing_version_activate(
     request: Request,
     version_id: UUID,
-    confirmation: str = Form(""),
     csrf_token: str = Form(""),
 ):
     user = await _owner_write(request, csrf_token)
-    if confirmation != "АКТИВИРОВАТЬ":
-        raise HTTPException(status_code=400, detail="invalid activation confirmation")
     try:
         await rdb.activate_version(
-            database.get_database(), version_id, actor_id=user.id
+            database.get_database(),
+            version_id,
+            actor_id=user.id,
+            start_program=True,
         )
     except (ActivationBlocked, ValueError) as error:
         raise _version_http_error(error) from error
-    return _redirect(request, "/?activated=1")
+    return _redirect(request, "/?started=1")
 
 
 @router.post("/legal")
@@ -205,12 +205,9 @@ async def marketing_legal_approve(
 async def marketing_mode_set(
     request: Request,
     mode: str = Form(""),
-    confirmation: str = Form(""),
     csrf_token: str = Form(""),
 ):
     user = await _owner_write(request, csrf_token)
-    if mode == "active" and confirmation != "АКТИВИРОВАТЬ":
-        raise HTTPException(status_code=400, detail="invalid activation confirmation")
     try:
         await rdb.set_mode(database.get_database(), mode, actor_id=user.id)
     except ValueError as error:

@@ -96,7 +96,7 @@ git commit -m "refactor: убран legal reference из gate реактивац
 - Consumes: `activate_version(version_id, actor_id, now)` и POST `/marketing/versions/{version_id}/activate`.
 - Produces: `activate_version(version_id, actor_id, now, *, start_program: bool = False)`; admin wrapper передаёт `start_program=True`.
 
-- [ ] **Step 1: Write failing atomic-launch tests**
+- [x] **Step 1: Write failing atomic-launch tests**
 
 Integration test вызывает `activate_version(version_id, owner_id, NOW, start_program=True)` и проверяет одной выборкой, что version status и settings mode стали `active`, а audit содержит владельца и `preview_eligible`. Admin E2E отправляет только CSRF, без `confirmation`, и проверяет один вызов wrapper с `start_program=True`.
 
@@ -112,7 +112,7 @@ assert await connection.fetchval(
 
 Добавить RED на `eligible=0` с ожидаемым `ActivationBlocked("eligible_recipients")`.
 
-- [ ] **Step 2: Verify RED in Docker**
+- [x] **Step 2: Verify RED in Docker**
 
 Run:
 
@@ -122,7 +122,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/integration/reac
 
 Expected: `start_program` ещё не поддерживается, route всё ещё требует `АКТИВИРОВАТЬ`, нулевая аудитория не блокируется.
 
-- [ ] **Step 3: Implement atomic launch**
+- [x] **Step 3: Implement atomic launch**
 
 Добавить keyword-only `start_program=False`. При `True` в той же транзакции записать `mode='active'`, `stopped_at=NULL`, active version и increment `program_revision`. В `reactivation.version_activated` добавить безопасные audit-поля `mode` и `preview_eligible`, без текста сообщения и recipient IDs. В wrapper admin передать `start_program=True`; из routes удалить проверку слова `АКТИВИРОВАТЬ`. Для resume оставить owner-only + CSRF + те же repository gates, но убрать текстовую фразу.
 
@@ -138,11 +138,11 @@ if start_program and preview_eligible == 0:
 start_mode = "active" if start_program else settings["mode"]
 ```
 
-- [ ] **Step 4: Verify GREEN in Docker**
+- [x] **Step 4: Verify GREEN in Docker**
 
 Повторить команду Step 2. Expected: focused integration/admin E2E проходит.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add project/src/moroz/reactivation/repository.py project/admin/reactivation_database.py project/admin/reactivation_routes.py project/tests

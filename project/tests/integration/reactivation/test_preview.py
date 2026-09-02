@@ -1,4 +1,5 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -446,6 +447,42 @@ async def test_activation_does_not_require_deprecated_legal_fields(
     activated = await value.activate_version(version_id, owner_id, NOW)
 
     assert activated["status"] == "active"
+
+
+async def test_owner_launches_version_and_program_atomically(repository, database):
+    value, version_id, owner_id = repository
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+    await _ready(value, version_id, owner_id)
+
+    launched = await value.activate_version(
+        version_id, owner_id, NOW, start_program=True
+    )
+
+    async with database.acquire() as connection:
+        settings = await connection.fetchrow(
+            "SELECT mode, active_version_id FROM reactivation_settings WHERE id = 1"
+        )
+        event = await connection.fetchrow(
+            "SELECT actor_id, after FROM admin_audit_events "
+            "WHERE action = 'reactivation.version_activated' ORDER BY id DESC LIMIT 1"
+        )
+    assert launched["status"] == "active"
+    assert tuple(settings.values()) == ("active", version_id)
+    assert event["actor_id"] == owner_id
+    after = json.loads(event["after"]) if isinstance(event["after"], str) else event["after"]
+    assert after["mode"] == "active"
+    assert after["preview_counts"]["eligible"] == 1
+
+
+async def test_owner_cannot_launch_empty_audience(repository):
+    value, version_id, owner_id = repository
+    await _ready(value, version_id, owner_id)
+
+    with pytest.raises(ActivationBlocked) as error:
+        await value.activate_version(version_id, owner_id, NOW, start_program=True)
+
+    assert error.value.code == "eligible_recipients"
 
 
 @pytest.mark.parametrize("mutation", ["consent", "inbound", "booking", "journey"])
