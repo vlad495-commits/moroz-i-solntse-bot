@@ -606,12 +606,6 @@ def create_app(
                                     connection=connection,
                                 )
                                 await opt_out_marketing(connection, **event)
-                            await webhook_app.state.redis.delete(
-                                _consent_state_key(
-                                    callback.message.chat.id,
-                                    callback.from_user.id,
-                                )
-                            )
                             if not processing_active:
                                 reply = CONSENT_THANKS
                             elif wants_marketing:
@@ -637,6 +631,18 @@ def create_app(
                     )
                     return Response(status_code=200)
                 if outbound_id is not None:
+                    try:
+                        await webhook_app.state.redis.delete(
+                            _consent_state_key(
+                                callback.message.chat.id,
+                                callback.from_user.id,
+                            )
+                        )
+                    except RedisError as error:
+                        logger.warning(
+                            "consent_state_cleanup_failed error_type=%s",
+                            type(error).__name__,
+                        )
                     await deliver_static_reply(outbound_id)
             return Response(status_code=200)
 

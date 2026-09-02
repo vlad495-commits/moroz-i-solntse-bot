@@ -684,6 +684,44 @@ async def test_old_consent_card_can_grant_marketing_later(
     ) == 1
 
 
+async def test_late_marketing_draft_survives_database_rollback(
+    client, db, redis_client, monkeypatch
+):
+    await grant_policy_consent(client, update_id=145)
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=147,
+                data=CONSENT_ADS_CALLBACK_DATA,
+            ),
+        )
+    ).status_code == 200
+
+    async def fail_enqueue(*_args, **_kwargs):
+        raise RuntimeError("outbox unavailable")
+
+    monkeypatch.setattr(
+        MessageRepository,
+        "enqueue_outbound_in_transaction",
+        fail_enqueue,
+    )
+    with pytest.raises(RuntimeError, match="outbox unavailable"):
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(update_id=148),
+        )
+
+    assert (
+        await redis_client.get("consent:state:telegram:42:7")
+        == "ads,pii"
+    )
+    assert await db.fetchval("SELECT count(*) FROM marketing_consents") == 0
+    assert await db.fetchval(
+        "SELECT count(*) FROM marketing_consent_events"
+    ) == 0
+
+
 async def test_old_consent_card_can_revoke_marketing_later(
     client, db, redis_client, fake_telegram
 ):
