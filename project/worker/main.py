@@ -60,6 +60,17 @@ from moroz.retention import (
     RetentionCleanupError,
     RetentionCleanupCoordinator,
 )
+from moroz.reactivation.activity import (
+    ActivityRepository,
+    ActivitySyncCoordinator,
+    YclientsClientHistoryReader,
+)
+from moroz.reactivation.repository import ReactivationRepository
+from moroz.reactivation.service import (
+    REACTIVATION_ACTIVITY_SYNC_KIND,
+    REACTIVATION_TICK_KIND,
+    ReactivationCoordinator,
+)
 from moroz.security.llm_gateway import LLMUsage
 
 
@@ -225,6 +236,7 @@ class MessageTaskHandler:
         catalog_sync=None,
         admin_booking_commands=None,
         retention_cleanup=None,
+        reactivation=None,
         catalog_repository=None,
         catalog_grounding_enabled=False,
         clock=None,
@@ -242,6 +254,7 @@ class MessageTaskHandler:
         self._catalog_sync = catalog_sync
         self._admin_booking_commands = admin_booking_commands
         self._retention_cleanup = retention_cleanup
+        self._reactivation = reactivation
         self._catalog_repository = (
             catalog_repository if catalog_grounding_enabled else None
         )
@@ -257,6 +270,13 @@ class MessageTaskHandler:
             outbound_id = task.payload.get("outbound_id")
             if not isinstance(outbound_id, str):
                 raise ValueError("send_outbound requires outbound_id")
+            if task.recovery_required:
+                await self._telegram.recover(UUID(outbound_id))
+                return
+            if task.recovery_candidate and await self._telegram.recover_candidate(
+                UUID(outbound_id)
+            ):
+                return
             await self._telegram.send(UUID(outbound_id))
             return
         if task.kind == "scheduler_job":
@@ -286,6 +306,31 @@ class MessageTaskHandler:
                     return
                 try:
                     result = await self._admin_booking_commands.handle(job)
+                except Exception as error:
+                    await self._scheduler_repository.record_failure(
+                        job,
+                        error_code=_scheduler_error_code(error),
+                        terminal=job.attempts >= MAX_RETRIES,
+                    )
+                    raise
+                await self._scheduler_repository.complete(job, result)
+            return
+        if job.kind in {
+            REACTIVATION_ACTIVITY_SYNC_KIND,
+            REACTIVATION_TICK_KIND,
+        }:
+            if self._reactivation is None:
+                raise RuntimeError("reactivation coordinator is not configured")
+            async with self._system_scheduler_lock:
+                job = await self._scheduler_repository.get_claimed(job_id)
+                if job is None:
+                    return
+                try:
+                    result = (
+                        await self._reactivation.run_activity_sync(job)
+                        if job.kind == REACTIVATION_ACTIVITY_SYNC_KIND
+                        else await self._reactivation.run_tick(job)
+                    )
                 except Exception as error:
                     await self._scheduler_repository.record_failure(
                         job,
@@ -903,6 +948,7 @@ def _build_yclients_services(
     CatalogSyncCoordinator | None,
     CatalogRepository | None,
     AdminBookingCommandService | None,
+    ActivitySyncCoordinator | None,
 ]:
     required = (
         "YCLIENTS_PARTNER_TOKEN",
@@ -911,7 +957,7 @@ def _build_yclients_services(
     )
     present = tuple(bool(os.environ.get(name, "").strip()) for name in required)
     if not any(present):
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     if not all(present):
         raise ValueError("YCLIENTS lifecycle configuration is incomplete")
     config = YclientsConfig.from_env(os.environ)
@@ -944,12 +990,19 @@ def _build_yclients_services(
         scheduler_repository,
         clock=lambda: datetime.now(UTC),
     )
+    activity_sync = ActivitySyncCoordinator(
+        ActivityRepository(database),
+        YclientsClientHistoryReader(config),
+        SchedulerJobRepository(database),
+        clock=lambda: datetime.now(UTC),
+    )
     return (
         lifecycle,
         projection_sync,
         catalog_sync,
         catalog_repository,
         admin_booking_commands,
+        activity_sync,
     )
 
 
@@ -982,18 +1035,63 @@ async def run() -> None:
             retention_days=DATA_RETENTION_DAYS,
         )
         await retention_cleanup.ensure_current(datetime.now(UTC))
-        lifecycle, projection_sync, catalog_sync, catalog_repository, admin_booking_commands = (
-            _build_yclients_services(database)
-        )
+        try:
+            (
+                lifecycle,
+                projection_sync,
+                catalog_sync,
+                catalog_repository,
+                admin_booking_commands,
+                activity_sync,
+            ) = _build_yclients_services(database)
+        except ValueError:
+            if hasattr(database, "acquire"):
+                await ReactivationRepository(
+                    database
+                ).fail_closed_yclients_unavailable(datetime.now(UTC))
+            raise
         if projection_sync is not None:
             await projection_sync.ensure_current(datetime.now(UTC))
         if catalog_sync is not None:
             await catalog_sync.ensure_current(datetime.now(UTC))
+        reactivation_repository = ReactivationRepository(
+            database,
+            business_alert_chat_id=os.environ.get(
+                "BUSINESS_ALERT_CHAT_ID", ""
+            ),
+        )
+        reactivation = None
+        if activity_sync is not None:
+            reactivation = ReactivationCoordinator(
+                reactivation_repository,
+                scheduler_repository,
+                activity_sync,
+                clock=lambda: datetime.now(UTC),
+            )
+            await reactivation.ensure_current(datetime.now(UTC))
+        elif hasattr(database, "acquire"):
+            await reactivation_repository.fail_closed_yclients_unavailable(
+                datetime.now(UTC)
+            )
         repository = MessageRepository(database)
         reconciled = await repository.reconcile_stale_outbound_deliveries()
         if reconciled:
             logger.warning(
                 "stale_outbound_deliveries_terminalized count=%d", reconciled
+            )
+        reactivation_unknowns = 0
+        if hasattr(database, "acquire"):
+            reactivation_unknowns = (
+                await reactivation.reconcile_delivery_unknowns()
+                if reactivation is not None
+                else await reactivation_repository.reconcile_delivery_unknowns(
+                    datetime.now(UTC)
+                )
+            )
+        if reactivation_unknowns:
+            logger.error(
+                "reactivation_delivery_unknowns_reconciled count=%d",
+                reactivation_unknowns,
             )
         await queue.connect()
         alert_router = _build_alert_router(redis_client, telegram)
@@ -1008,7 +1106,14 @@ async def run() -> None:
         task_handler = MessageTaskHandler(
             database,
             generate_response,
-            TelegramSender(telegram, repository, context_cache=redis_client),
+            TelegramSender(
+                telegram,
+                repository,
+                context_cache=redis_client,
+                pre_send_guard=reactivation_repository.pre_send_guard,
+                delivery_hook=reactivation_repository.delivery_hook,
+                managed_delivery_check=reactivation_repository.is_linked_outbound,
+            ),
             scheduler_repository=scheduler_repository,
             booking_port=LocalBookingPort(database),
             notification_outbox=NotificationOutbox(
@@ -1020,6 +1125,7 @@ async def run() -> None:
             catalog_sync=catalog_sync,
             admin_booking_commands=admin_booking_commands,
             retention_cleanup=retention_cleanup,
+            reactivation=reactivation,
             catalog_repository=catalog_repository,
             catalog_grounding_enabled=YCLIENTS_CATALOG_GROUNDING_ENABLED,
         )

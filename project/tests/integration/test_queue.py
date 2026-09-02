@@ -8,7 +8,12 @@ import pytest
 import pytest_asyncio
 from aio_pika.exceptions import ChannelInvalidStateError
 
-from moroz.common.queue import QueueTask, RabbitQueue
+from moroz.common.queue import (
+    RECOVERY_REQUIRED_HEADER,
+    QueueTask,
+    RabbitQueue,
+    TaskRecoveryRequired,
+)
 from worker.main import handle as worker_handle
 
 
@@ -106,6 +111,35 @@ async def test_failed_task_is_retried_three_times_then_sent_to_dlq(rabbit_queue)
     assert QueueTask.from_json(dead_letter.body.decode()) == task
     await dead_letter.ack()
     assert await dead_letters.get(fail=False) is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_signal_is_preserved_when_last_retry_reaches_dlq(
+    rabbit_queue,
+):
+    queue, _, dead_letters = rabbit_queue
+    calls = 0
+    task = QueueTask(
+        kind="recovery",
+        payload={},
+        idempotency_key="recovery:1",
+    )
+
+    async def fail_on_last_retry(_task):
+        nonlocal calls
+        calls += 1
+        if calls < 4:
+            raise RuntimeError("ordinary retry")
+        raise TaskRecoveryRequired("recovery required")
+
+    await queue.publish(task)
+    for _ in range(4):
+        await queue.consume_one(fail_on_last_retry)
+
+    dead_letter = await dead_letters.get(fail=False)
+    assert dead_letter is not None
+    assert dead_letter.headers[RECOVERY_REQUIRED_HEADER] == 1
+    await dead_letter.ack()
 
 
 @pytest.mark.asyncio

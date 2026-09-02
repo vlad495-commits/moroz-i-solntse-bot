@@ -43,7 +43,10 @@ from metrics_routes import router as metrics_router  # noqa: E402
 from customer_data_routes import router as customer_data_router  # noqa: E402
 from escalation_routes import router as escalation_router  # noqa: E402
 from booking_routes import router as booking_router  # noqa: E402
-from reactivation_routes import router as reactivation_router  # noqa: E402
+from reactivation_routes import (  # noqa: E402
+    legacy_router as reactivation_legacy_router,
+    router as reactivation_router,
+)
 from statistics_routes import router as statistics_router  # noqa: E402
 from paths import admin_url  # noqa: E402
 
@@ -86,6 +89,7 @@ app.include_router(customer_data_router)
 app.include_router(escalation_router)
 app.include_router(booking_router)
 app.include_router(reactivation_router)
+app.include_router(reactivation_legacy_router)
 app.include_router(statistics_router)
 
 

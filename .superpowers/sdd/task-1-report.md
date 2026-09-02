@@ -1,123 +1,61 @@
-# Task 1 Report: Domain, Migration, and Provider Mapping
+# Task 1 Report: Additive Reactivation V2 schema
 
-## Scope
+## Status
 
-- Worktree: `D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.worktrees\yclients-lifecycle-0008`
-- Branch: `codex/yclients-lifecycle-0008`
-- No YCLIENTS, Telegram, staging, production, or main worktree requests were made.
+Completed and committed on `codex/reactivation-v2`.
 
-## Delivered
+Commit: `4f2ba1d41896f676f30f7cb58522d34c80e9a545`
 
-- Added `BookingStatus` with `confirmed`, `cancelled`, `completed`, `no_show`, and `unknown`.
-- Added validated optional `ExternalBooking.scheduled_end_at`.
-- Added YCLIENTS visit lifecycle mapping, including strict validation of `deleted` and `attendance`.
-- Calculated scheduled end from provider `seance_length` and preserved it in the mock adapter.
-- Added Alembic revision `0008_yclients_lifecycle`, durable `bookings.scheduled_end_at`, extended status constraint, and downgrade normalization.
-- Persisted scheduled end in booking INSERT/UPDATE, snapshots, and database-to-domain mapping.
-
-## RED Evidence
-
-1. Adapter RED:
+## RED evidence
 
 ```powershell
-Set-Location <worktree>\project
-$env:COMPOSE_PROJECT_NAME='moroz_lifecycle_0008'
-docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py -k lifecycle
+docker compose -p codex-reactivation-v2 --env-file D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env run --rm test pytest -q tests/unit/admin/test_migration_0023_reactivation_v2.py tests/integration/reactivation/test_schema.py
 ```
 
-Result: `7 failed, 90 deselected`. Failures showed lifecycle values collapsed to `confirmed`, missing `scheduled_end_at`, and no rejection for string attendance.
+Result: `3 errors, 1 failed`. The source fixture could not find
+`/workspace/migrations/versions/0023_reactivation_v2.py`, and Alembic head
+remained `0022_admin_statistics`; this proved the migration was absent.
 
-2. Migration RED:
+## GREEN evidence
 
 ```powershell
-docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm test pytest -q tests/integration/test_migrations.py -k lifecycle
+docker compose -p codex-reactivation-v2 --env-file D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env build test migrate
+docker compose -p codex-reactivation-v2 --env-file D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env run --rm test pytest -q tests/unit/admin/test_migration_0021_reactivation.py tests/unit/admin/test_migration_0023_reactivation_v2.py tests/integration/reactivation/test_schema.py
+docker compose -p codex-reactivation-v2 --env-file D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env run --rm migrate alembic upgrade head
+docker compose -p codex-reactivation-v2 --env-file D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env run --rm migrate alembic current
+docker compose -p codex-reactivation-v2 --env-file D:\AI_Projects\moroz_i_solntse\moroz-i-solntse-bot\.env run --rm migrate alembic heads
 ```
 
-Result: `1 failed, 22 deselected`; `bookings.scheduled_end_at` did not exist.
+Result: `6 passed in 6.98s`; both `current` and `heads` reported the sole head
+`0023_reactivation_v2`. `git diff --check` and staged `git diff --cached --check`
+completed without errors.
 
-3. Repository RED:
+## Changed files
 
-```powershell
-docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm test pytest -q tests/integration/booking/test_booking_repository.py -k scheduled_end
-```
-
-Result: `1 failed, 11 deselected`; readback returned `scheduled_end_at=None`.
-
-## GREEN Evidence
-
-1. Adapter lifecycle slice: `7 passed, 90 deselected`.
-2. Booking regression slice:
-
-```powershell
-docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py tests/unit/booking tests/integration/booking
-```
-
-Result: `159 passed in 76.03s`.
-
-3. Lifecycle migration slice: `1 passed, 22 deselected`.
-4. Final focused Task 1 gate:
-
-```powershell
-docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/contract/booking/test_yclients_adapter.py tests/integration/test_migrations.py tests/integration/booking
-```
-
-Result: `133 passed in 137.74s`.
-
-All Compose invocations set the requested synthetic process-local credentials for Telegram webhook, RabbitMQ, PostgreSQL, and Redis before execution.
-
-## Files
-
-- `project/migrations/versions/0008_yclients_lifecycle.py`
-- `project/src/moroz/booking/models.py`
-- `project/src/moroz/booking/yclients.py`
-- `project/src/moroz/booking/mock_yclients.py`
-- `project/src/moroz/booking/repository.py`
-- `project/tests/contract/booking/test_yclients_adapter.py`
-- `project/tests/unit/booking/test_mock_adapter.py`
-- `project/tests/integration/test_migrations.py`
-- `project/tests/integration/booking/test_booking_repository.py`
+- `project/migrations/versions/0023_reactivation_v2.py`
+- `project/tests/unit/admin/test_migration_0023_reactivation_v2.py`
+- `project/tests/integration/reactivation/test_schema.py`
+- `project/tests/integration/conftest.py`
 - `changelog.md`
 
-## Self-review and Concerns
+## Concerns
 
-- Self-review found the read/write/snapshot paths consistent and all Task 1 focused tests green.
-- Follow-up correction: downgrade preserves existing `cancelled` records and normalizes only `completed`, `no_show`, and `unknown` to `confirmed`, matching the approved spec and Task 1 migration sample.
-- A legacy fake YCLIENTS record omitted `attendance`; the shared fixture now explicitly represents confirmed records with `attendance=0`, while `attendance=None` is covered as `unknown`.
+None. The scope is schema-only: no runtime flow, staging/production, provider
+call, or real message was touched. `Дорожная карта.md` remains unchanged because
+completion of Task 1 does not complete the overarching Reactivation V2 item.
 
-## Follow-up RED/GREEN: Downgrade Cancellation Preservation
+## Review follow-up
 
-1. RED changed the lifecycle migration assertion to require grouped results
-   `cancelled=1` and `confirmed=4` after downgrade. The focused Docker command
-   below failed with `('confirmed', 5)`, proving the old predicate incorrectly
-   normalized the existing cancellation:
+The accepted review found incomplete acceptance coverage, not a migration or
+runtime defect. The PostgreSQL test now verifies all nine new foreign keys with
+their exact target table and `ON DELETE` policy. It also seeds representative
+pre-0023 rows for `marketing_consents`, `reactivation_settings`,
+`reactivation_campaigns`, `reactivation_deliveries`, and
+`yclients_booking_projection`; after downgrade it verifies their original
+columns and values, including the mandated legacy-consent deactivation.
 
-```powershell
-docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/test_migrations.py -k lifecycle
-```
-
-2. GREEN replaced the downgrade predicate with
-   `status IN ('completed', 'no_show', 'unknown')` and reran the same command.
-   Result: `1 passed, 22 deselected in 6.89s`.
-
-## Follow-up RED/GREEN: LocalBookingPort Scheduled End
-
-1. RED added a real database-backed `LocalBookingPort` read-path regression.
-   It inserted a booking with `scheduled_end_at` and failed because the port
-   returned `None`:
-
-```powershell
-docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/notifications/test_jobs.py -k scheduled_end_at
-```
-
-Result: `1 failed, 3 deselected`; expected the durable scheduled end but read
-back `None`.
-
-2. GREEN added `scheduled_end_at` to the LocalBookingPort SELECT and
-   `ExternalBooking` mapping, then ran the affected notification and booking
-   suites:
-
-```powershell
-docker compose --project-name moroz_lifecycle_0008 --env-file ../../../.env run --rm --build test pytest -q tests/integration/notifications/test_jobs.py tests/unit/notifications tests/integration/booking
-```
-
-Result: `20 passed in 31.91s`.
+RED used an intentionally incorrect expected `ON DELETE RESTRICT` for the
+journey-step FK and failed against PostgreSQL's actual `ON DELETE CASCADE`.
+After restoring the contract, the full focused Docker gate passed: `6 passed
+in 7.65s`; `alembic current` and `alembic heads` both returned only
+`0023_reactivation_v2 (head)`.

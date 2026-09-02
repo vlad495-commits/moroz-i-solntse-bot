@@ -57,6 +57,8 @@ class ProjectionRepository:
                 record.staff_name,
                 list(record.service_names),
                 snapshot.synced_at,
+                record.client_id,
+                record.record_created_at,
             )
             for record in snapshot.records
         ]
@@ -79,11 +81,29 @@ class ProjectionRepository:
                         INSERT INTO yclients_booking_projection
                             (external_id, booking_key, bot_marker_state, starts_at,
                              scheduled_end_at, status, deleted, client_name, staff_name,
-                             service_names, synced_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                             service_names, synced_at, client_id, record_created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                                $11, $12, $13)
                         """,
                         rows,
                     )
+                await connection.execute(
+                    """
+                    UPDATE customer_activity_projection AS activity
+                    SET next_active_booking_at = (
+                            SELECT min(projection.starts_at)
+                            FROM yclients_booking_projection AS projection
+                            WHERE projection.client_id = activity.yclients_client_id
+                              AND projection.status = 'confirmed'
+                              AND NOT projection.deleted
+                              AND projection.starts_at >= $1
+                        ),
+                        recent_bookings_synced_at = $1
+                    WHERE activity.identity_status = 'verified'
+                      AND activity.yclients_client_id IS NOT NULL
+                    """,
+                    snapshot.synced_at,
+                )
         except asyncpg.PostgresError as error:
             raise YclientsProjectionError("yclients_projection_write") from error
 

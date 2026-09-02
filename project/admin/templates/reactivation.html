@@ -1,85 +1,367 @@
 {% extends "base.html" %}
-{% block title %}Реактивация — Admin{% endblock %}
+{% block title %}Маркетинговые коммуникации — Admin{% endblock %}
 {% block content %}
+{% set settings = data.settings %}
+{% set draft = data.versions[0] if data.versions else none %}
+{% set active = namespace(value=none) %}
+{% for version in data.versions %}{% if version.status == 'active' %}{% set active.value = version %}{% endif %}{% endfor %}
+{% set mode_labels = {'dry_run': 'Только расчёт', 'paused': 'Остановлена', 'active': 'Активна'} %}
+{% set legal_labels = {'pending': 'Ожидает подтверждения', 'approved': 'Подтверждено', 'rejected': 'Отклонено'} %}
+{% set journey_status_labels = {'scheduled': 'Ожидает отправки', 'active': 'В работе', 'closed': 'Завершена'} %}
+{% set close_reason_labels = {'responded': 'Клиент ответил', 'booked': 'Клиент записался', 'suppressed': 'Исключён из рассылки', 'exhausted': 'Цепочка завершена', 'failed': 'Ошибка отправки', 'cancelled': 'Отменена', 'delivery_unknown': 'Статус доставки неизвестен', 'escalated': 'Передано администратору'} %}
+{% set consent_action_labels = {'granted': 'Согласие получено', 'revoked': 'Согласие отозвано', 'suppressed': 'Рассылка запрещена', 'unsuppressed': 'Запрет снят'} %}
+{% set proven_consents = data.readiness.proven_consents %}
+{% set preview_ready = draft and draft.preview_created_at %}
+{% set test_ready = draft and draft.test_sent_at %}
+{% set legal_ready = settings.legal_status == 'approved' %}
+{% set reminder_enabled = draft and draft.reminder_after_days %}
 <section class="reactivation-page">
-    <div class="row-between">
+    <header class="marketing-header card">
         <div>
-            <p class="page-eyebrow">Внутренняя очередь</p>
-            <h1>Реактивация</h1>
-            <p class="page-note">Отправка не подключена. Кампании и получатели остаются только во внутреннем журнале.</p>
+            <p class="page-eyebrow">Маркетинговые коммуникации</p>
+            <h1>Реактивация клиентов</h1>
+            <p class="page-note">Возвращаем уснувших клиентов только при доказанном согласии и актуальных данных.</p>
         </div>
-    </div>
-
-    {% if request.query_params.get('saved') %}<p class="notice success">Настройки сохранены</p>{% endif %}
-    {% if request.query_params.get('consent') %}<p class="notice success">Согласие обновлено</p>{% endif %}
-    {% if request.query_params.get('campaign') %}<p class="notice success">Кампания сохранена</p>{% endif %}
-
-    <div class="reactivation-grid">
-        <form class="card form-card" method="post" action="{{ request.scope.get('root_path', '') }}/reactivation/settings">
-            <h2>Настройки</h2>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label>Дней после визита<input type="number" name="after_visit_days" min="0" max="3650" required value="{{ data.settings.after_visit_days }}"></label>
-            <label>Дней без визита для спящих<input type="number" name="sleeping_days" min="1" max="3650" required value="{{ data.settings.sleeping_days }}"></label>
-            <label>Скидка, %<input type="number" name="discount_percent" min="0" max="100" required value="{{ data.settings.discount_percent }}"></label>
-            <label>Месячный лимит сообщений<input type="number" name="monthly_message_limit" min="0" max="100" required value="{{ data.settings.monthly_message_limit }}"></label>
-            <label>Лимит игноров<input type="number" name="ignore_limit" min="0" max="100" required value="{{ data.settings.ignore_limit }}"></label>
-            <label>Базовый оффер<textarea name="base_offer" rows="4" maxlength="4000">{{ data.settings.base_offer }}</textarea></label>
-            <label>Инструкция для LLM<textarea name="llm_instruction" rows="4" maxlength="4000">{{ data.settings.llm_instruction }}</textarea></label>
-            <button type="submit">Сохранить настройки</button>
-        </form>
-
-        <div class="reactivation-stack">
-            <form class="card form-card" method="post" action="{{ request.scope.get('root_path', '') }}/reactivation/consent">
-                <h2>Marketing consent</h2>
-                <p class="muted">Processing consent не считается согласием на маркетинг.</p>
+        <div class="marketing-status">
+            <span class="status-badge status-{{ settings.mode }}">{{ mode_labels.get(settings.mode, settings.mode) }}</span>
+            {% if settings.mode == 'active' %}
+            <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/mode">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="channel" value="telegram">
-                <label>Telegram user ID<input name="user_id" maxlength="128" required></label>
-                <label>Версия текста согласия<input name="consent_version" maxlength="128" required></label>
+                <input type="hidden" name="mode" value="paused">
+                <button class="danger-button" type="submit">Экстренная остановка</button>
+            </form>
+            {% elif settings.mode == 'paused' and active.value %}
+            <a class="btn-primary header-action" href="#program-start">Возобновить программу</a>
+            {% else %}
+            <a class="btn-secondary header-action" href="#settings-message">Продолжить настройку</a>
+            {% endif %}
+        </div>
+    </header>
+
+    {% if request.query_params.get('consent') %}<p class="notice success">Согласие отозвано, будущие шаги отменены.</p>{% endif %}
+    {% if request.query_params.get('activated') %}<p class="notice success">Версия активирована.</p>{% endif %}
+    {% if settings.mode == 'paused' %}<p class="notice">Программа остановлена: новые отправки не выполняются.</p>{% endif %}
+
+    <section class="card launch-readiness" aria-labelledby="launch-readiness-title">
+        <div class="section-heading">
+            <div>
+                <p class="section-eyebrow">Порядок действий</p>
+                <h2 id="launch-readiness-title">Подготовка к запуску</h2>
+            </div>
+            <p class="muted">Выполняйте шаги по порядку. Запуск останется заблокирован, пока обязательные проверки не готовы.</p>
+        </div>
+        <ol class="readiness-list">
+            <li class="readiness-step {% if draft %}is-ready{% else %}needs-action{% endif %}">
+                <span class="step-index">1</span>
+                <div><strong>Настройки</strong><span>{% if draft %}Версия сохранена{% else %}Сохраните правила и сообщение{% endif %}</span></div>
+                <a href="#settings-message">{% if draft %}Проверить{% else %}Настроить{% endif %}</a>
+            </li>
+            <li class="readiness-step {% if preview_ready %}is-ready{% elif draft %}needs-action{% else %}is-blocked{% endif %}">
+                <span class="step-index">2</span>
+                <div><strong>Аудитория</strong><span>{% if preview_ready %}Рассчитана {{ draft.preview_created_at }}{% elif draft %}Требуется свежий расчёт{% else %}Сначала сохраните настройки{% endif %}</span></div>
+                {% if draft %}<a href="#audience-preview">Рассчитать</a>{% endif %}
+            </li>
+            <li class="readiness-step {% if test_ready %}is-ready{% elif draft %}needs-action{% else %}is-blocked{% endif %}">
+                <span class="step-index">3</span>
+                <div><strong>Тестовое сообщение</strong><span>{% if test_ready %}Подтверждено {{ draft.test_sent_at }}{% elif draft %}Не отправлено владельцу{% else %}Сначала сохраните настройки{% endif %}</span></div>
+                {% if draft %}<a href="#program-start">Отправить тест</a>{% endif %}
+            </li>
+            <li class="readiness-step {% if legal_ready %}is-ready{% elif draft %}needs-action{% else %}is-blocked{% endif %}">
+                <span class="step-index">4</span>
+                <div><strong>Юридическое подтверждение</strong><span>{{ legal_labels.get(settings.legal_status, settings.legal_status) }}</span></div>
+                {% if draft %}<a href="#program-start">Подтвердить</a>{% endif %}
+            </li>
+            <li class="readiness-step {% if settings.mode == 'active' %}is-ready{% elif active.value %}needs-action{% else %}is-blocked{% endif %}">
+                <span class="step-index">5</span>
+                <div><strong>Запуск</strong><span>{% if settings.mode == 'active' %}Программа работает{% elif active.value %}Версия готова к запуску{% else %}Требуется активная версия{% endif %}</span></div>
+                {% if active.value and settings.mode != 'active' %}<a href="#program-start">{% if settings.mode == 'paused' %}Возобновить{% else %}Запустить{% endif %}</a>{% endif %}
+            </li>
+        </ol>
+        {% if proven_consents == 0 %}
+        <p class="readiness-explanation"><strong>Нет клиентов с подтверждённым рекламным согласием.</strong> Проверять актуальность данных YCLIENTS пока не для кого. Согласие клиент даёт самостоятельно в Telegram.</p>
+        {% elif not data.readiness.get('yclients_available', false) %}
+        <p class="notice error"><strong>Данные YCLIENTS недоступны.</strong> Новые отправки заблокированы до восстановления синхронизации.</p>
+        {% elif not data.readiness.yclients_ready %}
+        <p class="notice"><strong>Актуальность данных YCLIENTS:</strong> {{ data.readiness.yclients_current }} из {{ proven_consents }} клиентов проверены.</p>
+        {% else %}
+        <p class="notice success">Данные YCLIENTS актуальны для всех {{ proven_consents }} клиентов с подтверждённым согласием.</p>
+        {% endif %}
+    </section>
+
+    <section class="card settings-message" id="settings-message">
+        <div class="section-heading">
+            <div>
+                <p class="section-eyebrow">Шаг 1</p>
+                <h2>Настройки и сообщение</h2>
+            </div>
+            {% if draft %}<span class="status-badge status-{{ draft.status }}">Версия {{ draft.version_number }} · {{ 'активная' if draft.status == 'active' else 'черновик' }}</span>{% endif %}
+        </div>
+        <div class="workspace-grid">
+            <form class="form-card settings-form" id="reactivation-settings-form" method="post" action="{{ request.scope.get('root_path', '') }}/marketing/versions">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label>Неактивность клиента
+                    <select name="inactivity_days">
+                        {% for value in [60, 90, 120] %}<option value="{{ value }}" {% if (draft and draft.inactivity_days == value) or (not draft and value == 90) %}selected{% endif %}>{{ value }} дней без визита или обращения</option>{% endfor %}
+                    </select>
+                </label>
+                <label>Напоминание
+                    <select name="reminder_after_days" id="reminder-after-days">
+                        <option value="off" {% if not reminder_enabled %}selected{% endif %}>Выключено</option>
+                        {% for value in [3, 5, 7] %}<option value="{{ value }}" {% if draft and draft.reminder_after_days == value %}selected{% endif %}>Через {{ value }} дней</option>{% endfor %}
+                    </select>
+                </label>
+                <label>Повторная реактивация не раньше чем через
+                    <input type="number" name="cooldown_days" min="60" required value="{{ draft.cooldown_days if draft else 90 }}">
+                </label>
+                <p class="field-hint">Интервал не может быть меньше периода неактивности.</p>
+                <label>Основное сообщение
+                    <textarea name="main_text" maxlength="4000" rows="7" required>{{ draft.main_text if draft else '' }}</textarea>
+                </label>
+                <div id="reminder-fields" {% if not reminder_enabled %}hidden{% endif %}>
+                    <label>Текст напоминания
+                        <textarea name="reminder_text" maxlength="4000" rows="5" required {% if not reminder_enabled %}disabled{% endif %}>{{ draft.reminder_text if draft else '' }}</textarea>
+                    </label>
+                    <p class="field-hint">Отправляется только если клиент не ответил и по-прежнему подходит под правила.</p>
+                </div>
+                <p class="unsaved-note" id="unsaved-settings-note" hidden>Есть несохранённые изменения.</p>
                 <div class="form-actions">
-                    <button type="submit" name="action" value="grant">Записать согласие</button>
-                    <button class="btn-secondary" type="submit" name="action" value="revoke">Отозвать согласие</button>
+                    <button class="btn-primary" type="submit">Сохранить настройки</button>
+                    <span class="muted">Будет создана новая проверяемая версия. Активная версия не изменится.</span>
                 </div>
             </form>
 
-            <form class="card form-card" method="post" action="{{ request.scope.get('root_path', '') }}/reactivation/campaigns">
-                <h2>Новая кампания</h2>
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <label>Сегмент<select name="segment">
-                    <option value="after_visit">После визита</option>
-                    <option value="sleeping">Спящие</option>
-                    <option value="regular">Постоянные (2+ визита)</option>
-                </select></label>
-                <div class="form-actions">
-                    <button class="btn-secondary" type="submit" name="action" value="draft">Создать черновик</button>
-                    <button type="submit" name="action" value="queue">Создать и поставить в очередь</button>
-                </div>
+            <div class="message-preview-column">
+                <section class="telegram-preview" aria-labelledby="telegram-preview-title">
+                    <div class="telegram-preview-head">
+                        <div>
+                            <span class="telegram-avatar" aria-hidden="true">М</span>
+                            <div><strong id="telegram-preview-title">Мороз и Солнце</strong><span>Telegram-превью</span></div>
+                        </div>
+                        <span class="preview-version">Основное сообщение</span>
+                    </div>
+                    <div class="telegram-chat">
+                        <div class="telegram-bubble">{{ draft.main_text if draft and draft.main_text else 'Здесь появится текст сообщения после сохранения настроек.' }}</div>
+                        <div class="telegram-actions" aria-label="Кнопки сообщения">
+                            <span>Записаться</span>
+                            <span>Задать вопрос</span>
+                            <span class="telegram-action-muted">Не писать</span>
+                        </div>
+                        {% if reminder_enabled %}
+                        <div class="telegram-bubble telegram-reminder">
+                            <small>Напоминание через {{ draft.reminder_after_days }} дней</small>
+                            {{ draft.reminder_text }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </section>
+
+                <section class="audience-preview" id="audience-preview">
+                    <div class="subsection-heading">
+                        <div><p class="section-eyebrow">Шаг 2</p><h3>Предпросмотр аудитории</h3></div>
+                        {% if draft and draft.preview_created_at %}<span class="preview-updated">Обновлено {{ draft.preview_created_at }}</span>{% endif %}
+                    </div>
+                    {% if draft %}
+                    <div class="preview-stats">
+                        <div><span>Всего проверено</span><strong>{{ draft.preview_counts.total if draft.preview_counts else '—' }}</strong></div>
+                        <div><span>Подходят</span><strong>{{ draft.preview_counts.eligible if draft.preview_counts else '—' }}</strong></div>
+                        <div><span>Основное сообщение</span><strong>{{ draft.preview_counts.planned_main if draft.preview_counts else '—' }}</strong></div>
+                        <div><span>Напоминание</span><strong>{{ draft.preview_counts.planned_reminder if draft.preview_counts else '—' }}</strong></div>
+                    </div>
+                    <details class="inset-details">
+                        <summary>Исключены по причинам</summary>
+                        <ul>{% for reason, count in (draft.preview_counts.excluded_by_reason.items() if draft.preview_counts else []) %}<li>{{ reason }} — {{ count }}</li>{% else %}<li>Предпросмотр ещё не рассчитан.</li>{% endfor %}</ul>
+                    </details>
+                    <details class="inset-details">
+                        <summary>Замаскированные примеры</summary>
+                        <ul>{% for sample in data.get('preview_samples', []) %}<li>{{ sample }}</li>{% else %}<li>Примеры показываются только сразу после расчёта.</li>{% endfor %}</ul>
+                    </details>
+                    <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/versions/{{ draft.id }}/preview">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="btn-secondary" type="submit">Рассчитать аудиторию</button>
+                    </form>
+                    {% else %}
+                    <div class="empty-state"><strong>Сначала сохраните настройки.</strong><span>После этого можно будет рассчитать аудиторию и увидеть причины исключения.</span></div>
+                    {% endif %}
+                </section>
+            </div>
+        </div>
+        {% if draft %}
+        <details class="version-diff inset-details">
+            <summary>Изменения относительно активной версии</summary>
+            <div class="data-table"><table><thead><tr><th>Поле</th><th>Активная</th><th>Черновик</th></tr></thead><tbody>
+                {% for label, field in [('Неактивность','inactivity_days'),('Напоминание','reminder_after_days'),('Интервал','cooldown_days'),('Основной текст','main_text'),('Текст напоминания','reminder_text')] %}
+                <tr><td>{{ label }}</td><td>{{ active.value[field] if active.value else 'нет' }}</td><td>{{ draft[field] }}</td></tr>
+                {% endfor %}
+            </tbody></table></div>
+        </details>
+        {% endif %}
+    </section>
+
+    {% if draft %}
+    <section class="card activation-panel" id="program-start">
+        <div class="section-heading">
+            <div><p class="section-eyebrow">Шаги 3–5</p><h2>Проверка и запуск</h2></div>
+            <p class="muted">Каждое действие защищено отдельно. Клиентские сообщения не начнут отправляться без активной версии и режима «Активна».</p>
+        </div>
+        <div class="launch-actions">
+            <section class="launch-action">
+                <span class="step-index">3</span>
+                <div><h3>Проверить сообщение</h3><p>Отправьте тест только на заранее настроенный аккаунт владельца.</p></div>
+                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/versions/{{ draft.id }}/test">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button class="btn-secondary" type="submit">Отправить тест владельцу</button>
+                </form>
+            </section>
+            <section class="launch-action">
+                <span class="step-index">4</span>
+                <div><h3>Подтвердить основание</h3><p>Укажите реальную ссылку или номер юридического решения.</p></div>
+                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/legal">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <label>Ссылка или номер документа<input name="reference" maxlength="500" required></label>
+                    <button type="submit">Подтвердить согласование</button>
+                </form>
+            </section>
+            {% if draft.status != 'active' %}
+            <section class="launch-action">
+                <span class="step-index">5</span>
+                <div><h3>Активировать версию</h3><p>Активация фиксирует проверенные настройки, но сама по себе не включает программу.</p></div>
+                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/versions/{{ draft.id }}/activate">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <label>Введите АКТИВИРОВАТЬ<input name="confirmation" autocomplete="off" required></label>
+                    <button type="submit">Активировать версию</button>
+                </form>
+            </section>
+            {% endif %}
+            {% if settings.mode != 'active' and active.value %}
+            <section class="launch-action launch-action-primary">
+                <span class="step-index">5</span>
+                <div><h3>{% if settings.mode == 'paused' %}Возобновить программу{% else %}Запустить программу{% endif %}</h3><p>После подтверждения разрешаются реальные отправки подходящим клиентам.</p></div>
+                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/mode">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="mode" value="active">
+                    <label>Введите АКТИВИРОВАТЬ<input name="confirmation" autocomplete="off" required></label>
+                    <button class="btn-primary" type="submit">{% if settings.mode == 'paused' %}Возобновить программу{% else %}Запустить программу{% endif %}</button>
+                </form>
+            </section>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="card results-card">
+        <div class="section-heading results-heading">
+            <div><p class="section-eyebrow">Эффект программы</p><h2>Результаты реактивации</h2></div>
+            <form class="results-filters" method="get" action="{{ request.scope.get('root_path', '') }}/marketing/">
+                <label>Период<select name="period">{% for value in [7, 30, 90] %}<option value="{{ value }}" {% if data.filters.period == value %}selected{% endif %}>{{ value }} дней</option>{% endfor %}</select></label>
+                <label>Результат<select name="outcome">{% for value, label in [('all','Все'),('replied','Ответили'),('booked','Записались'),('completed','Пришли'),('opted_out','Отписались'),('escalated','Переданы администратору')] %}<option value="{{ value }}" {% if data.filters.outcome == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                <label>Отправка<select name="delivery">{% for value, label in [('all','Любой статус'),('failed','Ошибка отправки'),('delivery_unknown','Статус неизвестен')] %}<option value="{{ value }}" {% if data.filters.delivery == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                <button class="btn-secondary" type="submit">Применить</button>
             </form>
         </div>
-    </div>
-
-    <section class="card">
-        <h2>Согласия</h2>
-        <div class="data-table"><table><thead><tr><th>Канал</th><th>Клиент</th><th>Версия</th><th>Статус</th><th>Дата</th></tr></thead><tbody>
-        {% for consent in data.consents %}<tr><td>{{ consent.channel }}</td><td>{{ consent.user_id }}</td><td>{{ consent.consent_version }}</td><td>{{ 'Активно' if consent.active else 'Отозвано' }}</td><td>{{ consent.granted_at if consent.active else consent.revoked_at }}</td></tr>
-        {% else %}<tr><td colspan="5">Marketing consent пока не записан</td></tr>{% endfor %}
-        </tbody></table></div>
+        {% set sent = data.funnel.main_sent %}
+        <div class="funnel-flow" aria-label="Воронка результата">
+            <div class="funnel-stage"><span>Подходят</span><strong>{{ data.latest_preview_eligible if data.latest_preview_eligible is not none else '—' }}</strong><small>последний расчёт</small></div>
+            <div class="funnel-stage"><span>Принято Telegram</span><strong>{{ sent }}</strong><small>{% if data.latest_preview_eligible %}{{ (sent * 100 / data.latest_preview_eligible)|round(1) }}% от подходящих{% else %}основные сообщения{% endif %}</small></div>
+            <div class="funnel-stage"><span>Ответили</span><strong>{{ data.funnel.replied_7d }}</strong><small>{% if sent %}{{ (data.funnel.replied_7d * 100 / sent)|round(1) }}% за 7 дней{% else %}за 7 дней{% endif %}</small></div>
+            <div class="funnel-stage"><span>Записались</span><strong>{{ data.funnel.booked_14d }}</strong><small>{% if sent %}{{ (data.funnel.booked_14d * 100 / sent)|round(1) }}% за 14 дней{% else %}за 14 дней{% endif %}</small></div>
+            <div class="funnel-stage"><span>Пришли</span><strong>{{ data.funnel.completed_30d }}</strong><small>{% if sent %}{{ (data.funnel.completed_30d * 100 / sent)|round(1) }}% за 30 дней{% else %}за 30 дней{% endif %}</small></div>
+        </div>
+        <div class="attention-panel">
+            <div><h3>Требует внимания</h3><p>Операционные сигналы не смешиваются с бизнес-воронкой.</p></div>
+            <div class="attention-grid">
+                {% for label, value in [
+                    ('Напоминания приняты Telegram', data.funnel.reminder_sent),
+                    ('Отписались', data.funnel.opted_out),
+                    ('Исключены из рассылки', data.funnel.suppressed),
+                    ('Переданы администратору', data.funnel.escalated),
+                    ('Ошибки отправки', data.funnel.failed),
+                    ('Статус доставки неизвестен', data.funnel.delivery_unknown)
+                ] %}
+                <div class="attention-item {% if value %}has-signal{% endif %}"><span>{{ label }}</span><strong>{{ value }}</strong></div>
+                {% endfor %}
+            </div>
+        </div>
+        <p class="metric-note">Проценты считаются от сообщений, принятых Telegram. Это результат в заданных временных окнах, а не доказанный причинный эффект.</p>
     </section>
 
-    <section class="card">
-        <h2>Журнал кампаний</h2>
-        <div class="data-table"><table><thead><tr><th>Дата</th><th>Сегмент</th><th>Статус</th><th>Отправлено</th><th>Пропущено</th><th>Ошибки</th><th>Получатели</th><th></th></tr></thead><tbody>
-        {% for campaign in data.campaigns %}<tr><td>{{ campaign.created_at }}</td><td>{{ {'after_visit':'После визита','sleeping':'Спящие','regular':'Постоянные'}[campaign.segment] }}</td><td>{{ campaign.status }}</td><td>{{ campaign.sent_count }}</td><td>{{ campaign.skipped_count }}</td><td>{{ campaign.error_count }}</td><td>{{ campaign.recipient_count }}</td><td>{% if campaign.status == 'draft' %}<form method="post" action="{{ request.scope.get('root_path', '') }}/reactivation/campaigns/{{ campaign.id }}/queue"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Поставить в очередь</button></form>{% endif %}</td></tr>
-        {% else %}<tr><td colspan="8">Кампаний пока нет</td></tr>{% endfor %}
+    <section class="card journeys-card">
+        <div class="section-heading">
+            <div><p class="section-eyebrow">Текущая работа</p><h2>Клиенты в реактивации</h2></div>
+            <span class="muted">{{ data.journeys|length }} на этой странице</span>
+        </div>
+        {% if data.journeys %}
+        <div class="data-table"><table><thead><tr><th>Клиент</th><th>Версия</th><th>Состояние</th><th>Результат</th><th>Начало</th></tr></thead><tbody>
+            {% for journey in data.journeys %}<tr><td>{{ journey.customer }}</td><td>v{{ journey.version_number }}</td><td>{{ journey_status_labels.get(journey.status, journey.status) }}</td><td>{{ close_reason_labels.get(journey.close_reason, 'В процессе') }}</td><td>{{ journey.created_at }}</td></tr>{% endfor %}
         </tbody></table></div>
+        {% else %}
+        <div class="empty-state"><strong>Реактивации ещё не запускались.</strong><span>После запуска здесь появятся клиенты, этапы цепочки и результаты.</span></div>
+        {% endif %}
     </section>
 
-    <section class="card">
-        <h2>Журнал доставок</h2>
-        <div class="data-table"><table><thead><tr><th>Дата</th><th>Канал</th><th>Клиент</th><th>Статус</th><th>Причина</th></tr></thead><tbody>
-        {% for delivery in data.deliveries %}<tr><td>{{ delivery.created_at }}</td><td>{{ delivery.channel }}</td><td>{{ delivery.user_id }}</td><td>{{ delivery.status }}</td><td>{{ delivery.skip_reason or delivery.error_code or '—' }}</td></tr>
-        {% else %}<tr><td colspan="5">Доставок пока нет</td></tr>{% endfor %}
-        </tbody></table></div>
-    </section>
+    <details class="card additional-panel">
+        <summary>
+            <span><span class="section-eyebrow">Юридические и технические данные</span><strong>Дополнительно</strong></span>
+            <span class="additional-summary">{{ proven_consents }} активных согласий · {{ data.funnel.opted_out }} отписок</span>
+        </summary>
+        <section class="additional-section">
+            <div class="section-heading">
+                <div><h2>История согласий</h2><p class="muted">Админка может только отозвать согласие. Выдать его может лишь сам клиент.</p></div>
+            </div>
+            <form class="consent-search" method="get" action="{{ request.scope.get('root_path', '') }}/marketing/">
+                <label>Найти по ID согласия<input name="consent_id" value="{{ request.query_params.get('consent_id', '') }}" placeholder="UUID"></label>
+                <button class="btn-secondary" type="submit">Найти</button>
+                {% if request.query_params.get('consent_id') %}<a class="btn-secondary" href="{{ request.scope.get('root_path', '') }}/marketing/">Сбросить</a>{% endif %}
+            </form>
+            {% if data.consents %}
+            <div class="data-table"><table><thead><tr><th>Клиент</th><th>Канал</th><th>Версия</th><th>Состояние</th><th>Обновлено</th><th></th></tr></thead><tbody>
+                {% for consent in data.consents %}<tr><td>{{ consent.customer }}</td><td>{{ consent.channel }}</td><td>{{ consent.consent_version }}</td><td>{{ 'Подтверждено' if consent.proven and consent.active else ('Исключён: ' ~ consent.suppression_reason if consent.suppression_reason else 'Отозвано') }}</td><td>{{ consent.updated_at }}</td><td>{% if consent.active %}<form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/consents/{{ consent.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger-button" type="submit">Отозвать согласие</button></form>{% endif %}</td></tr>{% endfor %}
+            </tbody></table></div>
+            {% else %}
+            <div class="empty-state"><strong>Клиенты ещё не давали рекламное согласие.</strong><span>Без доказанного согласия реактивация невозможна.</span></div>
+            {% endif %}
+            <details class="inset-details">
+                <summary>События согласий</summary>
+                {% if data.consent_events %}
+                <div class="data-table"><table><tbody>{% for event in data.consent_events %}<tr><td>{{ event.occurred_at }}</td><td>{{ event.customer }}</td><td>{{ consent_action_labels.get(event.action, event.action) }}</td><td>{{ event.source }}</td></tr>{% endfor %}</tbody></table></div>
+                {% else %}<p class="muted">Событий пока нет.</p>{% endif %}
+            </details>
+            <details class="inset-details legacy-archive">
+                <summary>Архив старой версии</summary>
+                <p class="notice">Черновая версия, реальные сообщения не отправлялись</p>
+                <h3>Состояния черновиков</h3>
+                {% for row in data.legacy.campaigns %}<p>{{ row.status }}: {{ row.total }} · получателей {{ row.recipients }} · отправлено {{ row.sent }} · пропущено {{ row.skipped }} · ошибок {{ row.errors }}</p>{% else %}<p class="muted">Архив пуст.</p>{% endfor %}
+                <h3>Состояния отправок</h3>
+                {% for row in data.legacy.deliveries %}<p>{{ row.status }}: {{ row.total }}</p>{% else %}<p class="muted">Записей нет.</p>{% endfor %}
+            </details>
+        </section>
+    </details>
+
+    {% if data.pagination.previous_url or data.pagination.next_url %}
+    <nav class="customer-events-pagination" aria-label="Страницы маркетинговых данных">
+        {% if data.pagination.previous_url %}<a href="{{ data.pagination.previous_url }}">← Новее</a>{% endif %}
+        <span>Страница {{ data.pagination.page }}</span>
+        {% if data.pagination.next_url %}<a href="{{ data.pagination.next_url }}">Раньше →</a>{% endif %}
+    </nav>
+    {% endif %}
 </section>
+<script>
+(() => {
+    const form = document.getElementById("reactivation-settings-form");
+    if (!form) return;
+    const reminderSelect = document.getElementById("reminder-after-days");
+    const reminderFields = document.getElementById("reminder-fields");
+    const reminderText = reminderFields.querySelector("textarea");
+    const unsavedNote = document.getElementById("unsaved-settings-note");
+    const syncReminder = () => {
+        const enabled = reminderSelect.value !== "off";
+        reminderFields.hidden = !enabled;
+        reminderText.disabled = !enabled;
+        reminderText.required = enabled;
+    };
+    reminderSelect.addEventListener("change", syncReminder);
+    form.addEventListener("input", () => { unsavedNote.hidden = false; });
+    form.addEventListener("change", () => { unsavedNote.hidden = false; });
+    syncReminder();
+})();
+</script>
 {% endblock %}

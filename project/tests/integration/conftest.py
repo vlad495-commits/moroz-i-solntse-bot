@@ -1,12 +1,21 @@
 import os
 import subprocess
 import uuid
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
+import pytest
 import pytest_asyncio
 
 from moroz.common.config import Settings
+
+
+@pytest.fixture
+def migration_source() -> str:
+    return Path(
+        "/workspace/migrations/versions/0024_reactivation_v2.py"
+    ).read_text(encoding="utf-8")
 
 
 class RedactedDatabaseURL(str):

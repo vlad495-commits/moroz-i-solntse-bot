@@ -7,6 +7,10 @@ import pytest
 import moroz.booking.yclients_records as yclients_records
 from moroz.booking.yclients_http import HttpResponse, YclientsConfig, YclientsTransportError
 from moroz.booking.yclients_records import YclientsProjectionError, YclientsRecordsReader
+from moroz.reactivation.activity import (
+    MAX_HISTORY_PAGES,
+    YclientsClientHistoryReader,
+)
 
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
@@ -45,7 +49,12 @@ def _config() -> YclientsConfig:
 def _record(record_id: int = 9001, **changes: object) -> dict[str, object]:
     record: dict[str, object] = {
         "id": record_id,
-        "client": {"name": "  Client  "},
+        "create_date": "2026-01-02T09:00:00+03:00",
+        "client": {
+            "id": 55,
+            "name": "  Client  ",
+            "phone": "+79990000000",
+        },
         "staff": {"name": "  Specialist  "},
         "services": [{"title": "  Cryotherapy  "}],
         "datetime": "2026-08-14T12:00:00+03:00",
@@ -91,6 +100,8 @@ async def test_reads_exact_window_pages_and_projects_allowlisted_fields() -> Non
     ]
     record = snapshot.records[0]
     assert record.external_id == "1"
+    assert record.client_id == "55"
+    assert record.record_created_at == datetime(2026, 1, 2, 6, 0, tzinfo=UTC)
     assert record.booking_key == BOOKING_KEY
     assert record.bot_marker_state == "valid"
     assert record.starts_at.tzinfo is not None
@@ -102,6 +113,44 @@ async def test_reads_exact_window_pages_and_projects_allowlisted_fields() -> Non
     assert not hasattr(record, "phone")
     assert not hasattr(record, "email")
     assert not hasattr(record, "comment")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client", [None, {}, {"id": None}])
+async def test_empty_client_has_no_stable_identity(client: object) -> None:
+    snapshot = await YclientsRecordsReader(
+        _config(), http=FakeHttp([_page([_record(client=client)])])
+    ).read_window(NOW)
+
+    assert snapshot.records[0].client_id is None
+
+
+@pytest.mark.asyncio
+async def test_missing_or_null_create_date_is_not_identity_proof() -> None:
+    missing = _record()
+    missing.pop("create_date")
+
+    for record in (missing, _record(create_date=None)):
+        snapshot = await YclientsRecordsReader(
+            _config(), http=FakeHttp([_page([record])])
+        ).read_window(NOW)
+
+        assert snapshot.records[0].record_created_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("create_date", [False, 0, "not-a-date", {}])
+async def test_malformed_non_null_create_date_fails_provider_page_safely(
+    create_date: object,
+) -> None:
+    reader = YclientsRecordsReader(
+        _config(), http=FakeHttp([_page([_record(create_date=create_date)])])
+    )
+
+    with pytest.raises(YclientsProjectionError) as raised:
+        await reader.read_window(NOW)
+
+    assert raised.value.code == "yclients_response_shape"
 
 
 @pytest.mark.asyncio
@@ -283,3 +332,119 @@ async def test_rejects_transport_failure_with_safe_code() -> None:
 
     assert raised.value.code == "yclients_transport"
     assert str(raised.value) == "yclients_transport"
+
+
+@pytest.mark.asyncio
+async def test_full_history_is_paginated_by_stable_client_id_and_aggregated() -> None:
+    completed = _record(
+        1,
+        attendance=1,
+        datetime="2026-08-01T12:00:00+03:00",
+        client={"id": 55, "phone": "+79990000000", "name": "Test"},
+    )
+    cancelled = _record(
+        2,
+        attendance=1,
+        deleted=True,
+        datetime="2026-08-10T12:00:00+03:00",
+    )
+    future = _record(
+        3,
+        attendance=0,
+        datetime="2026-08-20T12:00:00+03:00",
+    )
+    fake = FakeHttp([_page([completed, cancelled, future])])
+
+    snapshot = await YclientsClientHistoryReader(
+        _config(), http=fake
+    ).read_history("55", now=NOW)
+
+    assert fake.requests == [
+        (
+            "GET",
+            "/api/v1/records/17",
+            (("client_id", "55"), ("page", 1), ("count", 100), ("with_deleted", 1)),
+            True,
+        )
+    ]
+    assert snapshot.yclients_client_id == "55"
+    assert snapshot.last_completed_visit_at == datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+    assert snapshot.next_active_booking_at == datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+    assert snapshot.history_synced_at == NOW
+    assert snapshot.sync_status == "current"
+    assert snapshot.error_code is None
+    assert "+79990000000" not in repr(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_history_page_limit_is_bounded_and_partial() -> None:
+    pages = [
+        _page([_record(page * 100 + index) for index in range(1, 101)])
+        for page in range(MAX_HISTORY_PAGES)
+    ]
+    fake = FakeHttp(pages)
+
+    snapshot = await YclientsClientHistoryReader(
+        _config(), http=fake
+    ).read_history("55", now=NOW)
+
+    assert len(fake.requests) == MAX_HISTORY_PAGES
+    assert all(dict(request[2])["client_id"] == "55" for request in fake.requests)
+    assert snapshot.sync_status == "partial"
+    assert snapshot.error_code == "history_page_limit"
+
+
+@pytest.mark.asyncio
+async def test_history_rejects_malformed_non_null_record_create_date() -> None:
+    fake = FakeHttp([_page([_record(create_date="not-a-date")])])
+
+    with pytest.raises(YclientsProjectionError) as raised:
+        await YclientsClientHistoryReader(_config(), http=fake).read_history(
+            "55", now=NOW
+        )
+
+    assert raised.value.code == "yclients_response_shape"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client", [None, {"id": 66, "name": "Other"}])
+async def test_history_rejects_record_not_owned_by_requested_client(
+    client: object,
+) -> None:
+    fake = FakeHttp([_page([_record(client=client)])])
+
+    with pytest.raises(YclientsProjectionError) as raised:
+        await YclientsClientHistoryReader(_config(), http=fake).read_history(
+            "55", now=NOW
+        )
+
+    assert raised.value.code == "yclients_response_shape"
+
+
+@pytest.mark.asyncio
+async def test_single_record_lookup_uses_provider_id_and_safe_projection() -> None:
+    fake = FakeHttp([_response(_record(9001))])
+
+    record = await YclientsClientHistoryReader(
+        _config(), http=fake
+    ).read_record("9001")
+
+    assert fake.requests == [
+        ("GET", "/api/v1/record/17/9001", (), True)
+    ]
+    assert record is not None
+    assert record.external_id == "9001"
+    assert record.client_id == "55"
+    assert not hasattr(record, "phone")
+
+
+@pytest.mark.asyncio
+async def test_single_record_lookup_accepts_provider_single_item_list_envelope() -> None:
+    fake = FakeHttp([_response([_record(9001)])])
+
+    record = await YclientsClientHistoryReader(
+        _config(), http=fake
+    ).read_record("9001")
+
+    assert record is not None
+    assert record.client_id == "55"

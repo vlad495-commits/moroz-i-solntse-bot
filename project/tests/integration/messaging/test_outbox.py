@@ -5,6 +5,7 @@ import pytest_asyncio
 
 from moroz.common.db import Database
 from moroz.messaging.outbox import OutboxRelay, enqueue_process_message
+from moroz.messaging.repository import MessageRepository
 
 
 pytestmark = pytest.mark.asyncio
@@ -99,3 +100,21 @@ async def test_concurrent_relays_do_not_publish_same_pending_row(database):
     assert second_count == 0
     assert await first == 1
     assert len(queue.tasks) == 1
+
+
+async def test_send_outbound_task_is_published_once_across_relay_redelivery(database):
+    outbound_id = await MessageRepository(database).enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Ответ",
+        idempotency_key="relay:send-once",
+    )
+    queue = RecordingQueue()
+    relay = OutboxRelay(database, queue)
+
+    assert await relay.publish_pending() == 1
+    assert await relay.publish_pending() == 0
+
+    assert len(queue.tasks) == 1
+    assert queue.tasks[0].kind == "send_outbound"
+    assert queue.tasks[0].payload == {"outbound_id": str(outbound_id)}

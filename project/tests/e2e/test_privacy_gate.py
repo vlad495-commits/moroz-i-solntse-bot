@@ -1,7 +1,8 @@
 import asyncio
+from hashlib import sha256
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import asyncpg
@@ -15,6 +16,10 @@ from config import (
     BOT_PAUSE_KEY,
     BOT_PAUSED_REPLY,
     INPUT_TOO_LONG_REPLY,
+    MARKETING_CONSENT_CLAUSE,
+    MARKETING_DISABLED_REPLY,
+    MARKETING_ENABLE_LABEL,
+    MARKETING_DISABLE_LABEL,
     MAX_INPUT_LENGTH,
     NON_TEXT_REPLY,
     START_REPLY,
@@ -34,6 +39,8 @@ CONSENT_PII_CALLBACK_DATA = "consent:set:pii:on"
 CONSENT_PII_CLEAR_CALLBACK_DATA = "consent:set:pii:off"
 CONSENT_ADS_CALLBACK_DATA = "consent:set:ads:on"
 CONSENT_DONE_CALLBACK_DATA = "consent:done"
+MARKETING_ENABLE_CALLBACK_DATA = "marketing:enable"
+MARKETING_DISABLE_CALLBACK_DATA = "marketing:disable"
 CONSENT_PROMPT = (
     "Чтобы начать, отметьте согласия и нажмите «Готово»\n\n"
     "1) Согласен с политикой конфиденциальности\n"
@@ -63,6 +70,7 @@ class FakeTelegram:
         self.sent_messages = []
         self.edited_reply_markups = []
         self.chat_actions = []
+        self.answered_callback_ids = []
         self.send_error = None
 
     @property
@@ -81,6 +89,10 @@ class FakeTelegram:
 
     async def send_chat_action(self, **kwargs):
         self.chat_actions.append(kwargs)
+        return True
+
+    async def answer_callback_query(self, callback_query_id, **_kwargs):
+        self.answered_callback_ids.append(callback_query_id)
         return True
 
 
@@ -115,11 +127,13 @@ def telegram_consent_callback(
     chat_type="private",
     user_id=7,
     data=CONSENT_DONE_CALLBACK_DATA,
+    callback_id="callback-1",
+    message_date=1_768_478_400,
 ):
     return {
         "update_id": update_id,
         "callback_query": {
-            "id": "callback-1",
+            "id": callback_id,
             "from": {
                 "id": user_id,
                 "is_bot": False,
@@ -129,7 +143,7 @@ def telegram_consent_callback(
             "data": data,
             "message": {
                 "message_id": 99,
-                "date": 1_768_478_400,
+                "date": message_date,
                 "chat": {"id": chat_id, "type": chat_type},
             },
         },
@@ -544,6 +558,242 @@ async def test_checked_policy_done_persists_only_versioned_consent(
     assert isinstance(consent["granted_at"], datetime)
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
     assert fake_telegram.last_text == CONSENT_THANKS
+
+
+async def test_ads_checkbox_grants_proven_marketing_consent(
+    client, db, fake_telegram
+):
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_text_update("Покажите условия", update_id=99),
+        )
+    ).status_code == 200
+    opt_in_screen = fake_telegram.last_text
+    visible_clause = next(
+        line.removeprefix("2) ")
+        for line in opt_in_screen.splitlines()
+        if MARKETING_CONSENT_CLAUSE in line
+    )
+    assert visible_clause == MARKETING_CONSENT_CLAUSE
+    assert 'href="https://example.com/privacy"' in opt_in_screen
+
+    for update_id, data, callback_id in (
+        (100, CONSENT_PII_CALLBACK_DATA, "callback-pii"),
+        (101, CONSENT_ADS_CALLBACK_DATA, "callback-ads"),
+        (102, CONSENT_DONE_CALLBACK_DATA, "callback-done"),
+    ):
+        response = await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=update_id,
+                data=data,
+                callback_id=callback_id,
+            ),
+        )
+        assert response.status_code == 200
+
+    state = await db.fetchrow(
+        """
+        SELECT consent.active, consent.consent_version,
+               consent.proof_text_hash, event.source_event_id
+        FROM marketing_consents AS consent
+        JOIN marketing_consent_events AS event
+          ON event.id = consent.proof_event_id
+        WHERE consent.channel = 'telegram' AND consent.user_id = '7'
+        """
+    )
+    assert tuple(state.values()) == (
+        True,
+        "marketing-v1",
+        sha256(visible_clause.encode()).hexdigest(),
+        "102",
+    )
+    assert fake_telegram.answered_callback_ids == [
+        "callback-pii",
+        "callback-ads",
+        "callback-done",
+    ]
+
+
+async def test_unchecked_ads_does_not_grant_marketing_consent(
+    client, db, fake_telegram
+):
+    await grant_policy_consent(client, update_id=110)
+
+    assert await db.fetchval("SELECT count(*) FROM marketing_consents") == 0
+    assert await db.fetchval("SELECT count(*) FROM marketing_consent_events") == 0
+    assert fake_telegram.answered_callback_ids == ["callback-1", "callback-1"]
+
+
+async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
+    client, db, fake_telegram
+):
+    command = await client.post(
+        "/telegram/webhook",
+        json=telegram_text_update("/marketing", update_id=120),
+    )
+    assert command.status_code == 200
+    marketing_screen = fake_telegram.last_text
+    visible_clause = next(
+        line
+        for line in marketing_screen.splitlines()
+        if "сообщения об акциях" in line
+    )
+    assert visible_clause == MARKETING_CONSENT_CLAUSE
+    assert marketing_screen.index(visible_clause) < (
+        marketing_screen.index(MARKETING_DISABLED_REPLY)
+    )
+    keyboard = fake_telegram.sent_messages[-1]["reply_markup"].inline_keyboard
+    assert [(button.text, button.callback_data) for button in keyboard[0]] == [
+        (MARKETING_ENABLE_LABEL, MARKETING_ENABLE_CALLBACK_DATA),
+        (MARKETING_DISABLE_LABEL, MARKETING_DISABLE_CALLBACK_DATA),
+    ]
+
+    enable = telegram_consent_callback(
+        update_id=121,
+        data=MARKETING_ENABLE_CALLBACK_DATA,
+        callback_id="callback-enable",
+    )
+    received_before = datetime.now(UTC)
+    assert (await client.post("/telegram/webhook", json=enable)).status_code == 200
+    assert (await client.post("/telegram/webhook", json=enable)).status_code == 200
+    received_after = datetime.now(UTC)
+    assert await db.fetchval(
+        "SELECT count(*) FROM marketing_consent_events WHERE action = 'granted'"
+    ) == 1
+    proof = await db.fetchrow(
+        """
+        SELECT event.proof_text_hash AS event_hash,
+               consent.proof_text_hash AS materialized_hash,
+               event.occurred_at
+        FROM marketing_consent_events AS event
+        JOIN marketing_consents AS consent ON consent.proof_event_id = event.id
+        WHERE event.action = 'granted'
+        """
+    )
+    visible_hash = sha256(visible_clause.encode()).hexdigest()
+    assert (proof["event_hash"], proof["materialized_hash"]) == (
+        visible_hash,
+        visible_hash,
+    )
+    assert received_before <= proof["occurred_at"] <= received_after
+
+    disable = telegram_consent_callback(
+        update_id=122,
+        data=MARKETING_DISABLE_CALLBACK_DATA,
+        callback_id="callback-disable",
+    )
+    assert (await client.post("/telegram/webhook", json=disable)).status_code == 200
+    state = await db.fetchrow(
+        "SELECT active, suppression_reason FROM marketing_consents"
+    )
+    assert tuple(state.values()) == (False, "user_stop")
+
+    reenable = telegram_consent_callback(
+        update_id=123,
+        data=MARKETING_ENABLE_CALLBACK_DATA,
+        callback_id="callback-reenable",
+    )
+    assert (await client.post("/telegram/webhook", json=reenable)).status_code == 200
+    assert [
+        row["action"]
+        for row in await db.fetch(
+            "SELECT action FROM marketing_consent_events "
+            "WHERE source_event_id = '123' ORDER BY created_at"
+        )
+    ] == ["unsuppressed", "granted"]
+    state = await db.fetchrow(
+        "SELECT active, suppression_reason FROM marketing_consents"
+    )
+    assert tuple(state.values()) == (True, None)
+    assert fake_telegram.answered_callback_ids == [
+        "callback-enable",
+        "callback-enable",
+        "callback-disable",
+        "callback-reenable",
+    ]
+
+
+async def test_inaccessible_callback_message_uses_server_receipt_time(
+    client, db, fake_telegram
+):
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_text_update("/marketing", update_id=124),
+        )
+    ).status_code == 200
+    callback = telegram_consent_callback(
+        update_id=125,
+        data=MARKETING_ENABLE_CALLBACK_DATA,
+        callback_id="callback-inaccessible",
+        message_date=0,
+    )
+
+    received_before = datetime.now(UTC)
+    assert (
+        await client.post("/telegram/webhook", json=callback)
+    ).status_code == 200
+    received_after = datetime.now(UTC)
+    occurred_at = await db.fetchval(
+        "SELECT occurred_at FROM marketing_consent_events "
+        "WHERE action = 'granted'"
+    )
+    assert received_before <= occurred_at <= received_after
+    assert "callback-inaccessible" in fake_telegram.answered_callback_ids
+
+
+async def test_stop_revokes_and_suppresses_before_pause_or_llm(
+    client, db, redis_client, fake_telegram
+):
+    for update_id, data in (
+        (130, CONSENT_PII_CALLBACK_DATA),
+        (131, CONSENT_ADS_CALLBACK_DATA),
+        (132, CONSENT_DONE_CALLBACK_DATA),
+    ):
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(update_id=update_id, data=data),
+        )
+    await redis_client.set(BOT_PAUSE_KEY, "1")
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_text_update("Не писать", update_id=133),
+    )
+
+    assert response.status_code == 200
+    state = await db.fetchrow(
+        "SELECT active, suppression_reason FROM marketing_consents"
+    )
+    assert tuple(state.values()) == (False, "user_stop")
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
+    assert await db.fetchval(
+        "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
+    ) == 0
+    assert fake_telegram.last_text == MARKETING_DISABLED_REPLY
+    assert BOT_PAUSED_REPLY not in [
+        message["text"] for message in fake_telegram.sent_messages
+    ]
+
+
+async def test_callback_is_answered_even_when_deletion_blocks_mutation(
+    client, redis_client, fake_telegram
+):
+    await redis_client.set("privacy:deleting:telegram:42", "1", ex=300)
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_consent_callback(
+            update_id=140,
+            data=MARKETING_ENABLE_CALLBACK_DATA,
+            callback_id="callback-deleting",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert fake_telegram.answered_callback_ids == ["callback-deleting"]
 
 
 async def test_stale_consent_is_upgraded_by_done_callback(

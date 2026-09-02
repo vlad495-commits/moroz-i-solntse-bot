@@ -13,6 +13,10 @@ from moroz.booking.yclients_catalog import YclientsCatalogError
 from moroz.booking.yclients_records import YclientsProjectionError
 from moroz.common.queue import MAX_RETRIES, QueueTask
 from moroz.notifications.models import JobResult, SchedulerJob
+from moroz.reactivation.service import (
+    REACTIVATION_ACTIVITY_SYNC_KIND,
+    REACTIVATION_TICK_KIND,
+)
 from moroz.security.llm_gateway import LLMResponse, LLMUsage
 from moroz.retention import (
     RETENTION_CLEANUP_KIND,
@@ -43,6 +47,48 @@ class NoopRetentionCleanup:
 
     async def ensure_current(self, _now):
         pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "method"),
+    [
+        (REACTIVATION_ACTIVITY_SYNC_KIND, "run_activity_sync"),
+        (REACTIVATION_TICK_KIND, "run_tick"),
+    ],
+)
+async def test_worker_routes_reactivation_system_jobs(kind, method):
+    job_id = uuid4()
+    job = SchedulerJob(
+        id=job_id,
+        kind=kind,
+        run_at=datetime(2026, 8, 31, tzinfo=UTC),
+        payload={},
+        idempotency_key=f"{kind}:test",
+        attempts=0,
+        booking_key=None,
+        booking_starts_at=None,
+    )
+    scheduler = AsyncMock()
+    scheduler.get_claimed.return_value = job
+    coordinator = AsyncMock()
+    getattr(coordinator, method).return_value = JobResult.sent()
+    handler = worker_main.MessageTaskHandler(
+        object(), object(), object(),
+        scheduler_repository=scheduler,
+        reactivation=coordinator,
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="scheduler_job",
+            payload={"job_id": str(job_id)},
+            idempotency_key=f"scheduler_job:{job_id}",
+        )
+    )
+
+    getattr(coordinator, method).assert_awaited_once_with(job)
+    scheduler.complete.assert_awaited_once_with(job, JobResult.sent())
 
 
 class UsageConnection:
@@ -703,7 +749,7 @@ def test_yclients_services_are_disabled_when_required_config_is_empty(
         monkeypatch.setenv(name, "")
 
     assert worker_main._build_yclients_services(object()) == (
-        None, None, None, None, None,
+        None, None, None, None, None, None,
     )
 
 
@@ -858,6 +904,21 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
             assert callable(clock)
             built.append(("command_service", adapter, booking_repository, command_repository, scheduler))
 
+    class ActivityRepository:
+        def __init__(self, received_database):
+            assert received_database is database
+            built.append(("activity_repository", received_database))
+
+    class ClientHistoryReader:
+        def __init__(self, received_config):
+            assert received_config is config
+            built.append(("activity_reader", received_config))
+
+    class ActivitySync:
+        def __init__(self, repository, reader, scheduler, *, clock):
+            assert callable(clock)
+            built.append(("activity_sync", repository, reader, scheduler))
+
     monkeypatch.setenv("YCLIENTS_PARTNER_TOKEN", "partner")
     monkeypatch.setenv("YCLIENTS_USER_TOKEN", "user")
     monkeypatch.setenv("YCLIENTS_COMPANY_ID", "17")
@@ -875,8 +936,11 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     monkeypatch.setattr(worker_main, "BookingRepository", BookingRepository)
     monkeypatch.setattr(worker_main, "AdminBookingCommandRepository", CommandRepository)
     monkeypatch.setattr(worker_main, "AdminBookingCommandService", CommandService)
+    monkeypatch.setattr(worker_main, "ActivityRepository", ActivityRepository)
+    monkeypatch.setattr(worker_main, "YclientsClientHistoryReader", ClientHistoryReader)
+    monkeypatch.setattr(worker_main, "ActivitySyncCoordinator", ActivitySync)
 
-    lifecycle, projection_sync, catalog_sync, catalog_repository, command_service = (
+    lifecycle, projection_sync, catalog_sync, catalog_repository, command_service, activity_sync = (
         worker_main._build_yclients_services(database)
     )
 
@@ -885,12 +949,14 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     assert isinstance(catalog_sync, CatalogSync)
     assert isinstance(catalog_repository, CatalogRepository)
     assert isinstance(command_service, CommandService)
+    assert isinstance(activity_sync, ActivitySync)
     assert [entry[0] for entry in built] == [
         "config", "adapter", "scheduler_repository", "feedback", "lifecycle", "reader",
         "projection_repository", "scheduler_repository", "projection_sync",
         "catalog_reader", "catalog_repository", "scheduler_repository",
         "catalog_sync", "booking_repository", "command_repository",
-        "command_service",
+        "command_service", "activity_repository", "activity_reader",
+        "scheduler_repository", "activity_sync",
     ]
 
 
@@ -975,7 +1041,7 @@ async def test_configured_worker_ensures_current_projection_before_queue_consume
     monkeypatch.setattr(
         worker_main,
         "_build_yclients_services",
-        lambda _database: (None, ProjectionSync(), CatalogSync(), object(), None),
+        lambda _database: (None, ProjectionSync(), CatalogSync(), object(), None, None),
     )
     monkeypatch.setattr(worker_main, "init_llm", lambda: None)
     monkeypatch.setattr(worker_main, "_supervise", supervise)

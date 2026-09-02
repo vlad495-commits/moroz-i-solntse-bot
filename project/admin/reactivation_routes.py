@@ -1,228 +1,281 @@
-"""Owner-only admin routes for the internal reactivation queue."""
+"""Owner-only controls for the reactivation marketing program."""
 
 from pathlib import Path
+from typing import Literal
+from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import database
 import reactivation_database as rdb
-from audit_repository import record_audit, request_ip_address, request_user_agent
+from audit_repository import request_ip_address, request_user_agent
 from auth import get_current_user
+from moroz.reactivation.policy import (
+    DEFAULT_MAIN_TEXT,
+    DEFAULT_REMINDER_TEXT,
+    ProgramPolicy,
+    validate_policy,
+)
+from moroz.reactivation.repository import ActivationBlocked
 from paths import admin_url
 from rbac import require_role, validate_csrf
 
 
-router = APIRouter(prefix="/reactivation", tags=["reactivation"])
+router = APIRouter(prefix="/marketing", tags=["marketing"])
+legacy_router = APIRouter(prefix="/reactivation", tags=["marketing-legacy"])
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent / "templates")
 
 
+@legacy_router.get("/")
+async def legacy_reactivation(request: Request) -> RedirectResponse:
+    suffix = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(
+        f"{admin_url(request, '/marketing/')}{suffix}", status_code=307
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
-async def reactivation_page(request: Request):
-    user = await get_current_user(request)
-    require_role(user, {"owner"})
-    data = await rdb.get_page_data(database.get_database())
-    return templates.TemplateResponse(
+async def marketing_page(
+    request: Request,
+    consent_id: UUID | None = Query(None),
+    preview_version: UUID | None = Query(None),
+    page: int = Query(1, ge=1),
+    period: int = Query(30),
+    outcome: Literal[
+        "all", "replied", "booked", "completed", "opted_out", "escalated"
+    ] = Query("all"),
+    delivery: Literal["all", "failed", "delivery_unknown"] = Query("all"),
+):
+    if period not in {7, 30, 90}:
+        raise HTTPException(status_code=422, detail="unsupported outcome period")
+    user = await _owner(request)
+    data = await rdb.get_marketing_page_data(
+        database.get_database(),
+        actor_id=user.id,
+        consent_id=consent_id,
+        page=page,
+        period=period,
+        outcome=outcome,
+        delivery=delivery,
+    )
+    if preview_version is not None:
+        try:
+            data["preview_samples"] = list(
+                await rdb.preview_samples(
+                    database.get_database(), preview_version, actor_id=user.id
+                )
+            )
+        except (ActivationBlocked, ValueError) as error:
+            raise _version_http_error(error) from error
+    data["pagination"]["previous_url"] = (
+        _page_url(request, page - 1, consent_id, period, outcome, delivery)
+        if page > 1 else None
+    )
+    data["pagination"]["next_url"] = (
+        _page_url(request, page + 1, consent_id, period, outcome, delivery)
+        if data["pagination"]["has_next"]
+        else None
+    )
+    response = templates.TemplateResponse(
         request,
         "reactivation.html",
         {"user": user, "csrf_token": user.csrf_token, "data": data},
     )
+    if preview_version is not None:
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
-@router.post("/settings")
-async def reactivation_settings(
+@router.post("/versions")
+async def marketing_version_create(
     request: Request,
-    after_visit_days: int = Form(...),
-    sleeping_days: int = Form(...),
-    discount_percent: int = Form(...),
-    monthly_message_limit: int = Form(...),
-    ignore_limit: int = Form(...),
-    base_offer: str = Form(""),
-    llm_instruction: str = Form(""),
+    inactivity_days: int = Form(90),
+    reminder_after_days: str = Form("5"),
+    cooldown_days: int = Form(90),
+    main_text: str = Form(DEFAULT_MAIN_TEXT),
+    reminder_text: str = Form(DEFAULT_REMINDER_TEXT),
     csrf_token: str = Form(""),
 ):
-    user = await get_current_user(request)
-    require_role(user, {"owner"})
-    validate_csrf(user, csrf_token)
-    _validate_settings(
-        after_visit_days=after_visit_days,
-        sleeping_days=sleeping_days,
-        discount_percent=discount_percent,
-        monthly_message_limit=monthly_message_limit,
-        ignore_limit=ignore_limit,
-        base_offer=base_offer,
-        llm_instruction=llm_instruction,
-    )
-    target = database.get_database()
-    before = await rdb.get_settings(target)
-    after = await rdb.save_settings(
-        target,
-        after_visit_days=after_visit_days,
-        sleeping_days=sleeping_days,
-        discount_percent=discount_percent,
-        monthly_message_limit=monthly_message_limit,
-        ignore_limit=ignore_limit,
-        base_offer=base_offer,
-        llm_instruction=llm_instruction,
-    )
-    await _audit(
-        request,
-        user,
-        action="reactivation.settings_saved",
-        object_type="reactivation_settings",
-        object_id="1",
-        before=_audit_snapshot(before),
-        after=_audit_snapshot(after),
-    )
-    return RedirectResponse(
-        url=admin_url(request, "/reactivation/?saved=1"), status_code=302
-    )
-
-
-@router.post("/consent")
-async def reactivation_consent(
-    request: Request,
-    channel: str = Form("telegram"),
-    user_id: str = Form(...),
-    consent_version: str = Form(...),
-    action: str = Form(...),
-    csrf_token: str = Form(""),
-):
-    user = await get_current_user(request)
-    require_role(user, {"owner"})
-    validate_csrf(user, csrf_token)
-    if channel != "telegram" or action not in {"grant", "revoke"}:
-        raise HTTPException(status_code=422, detail="invalid consent action")
-    if not user_id.strip() or not consent_version.strip():
-        raise HTTPException(status_code=422, detail="consent fields required")
-    if len(user_id) > 128 or len(consent_version) > 128:
-        raise HTTPException(status_code=422, detail="consent fields too long")
-    result = await rdb.set_marketing_consent(
-        database.get_database(),
-        channel=channel,
-        user_id=user_id.strip(),
-        consent_version=consent_version.strip(),
-        active=action == "grant",
-    )
-    await _audit(
-        request,
-        user,
-        action=f"reactivation.consent_{action}",
-        object_type="marketing_consent",
-        object_id=f"{channel}:{user_id.strip()}",
-        before=None,
-        after={
-            "active": result["active"],
-            "consent_version": result["consent_version"],
-        },
-    )
-    status = "granted" if action == "grant" else "revoked"
-    return RedirectResponse(
-        url=admin_url(request, f"/reactivation/?consent={status}"),
-        status_code=302,
-    )
-
-
-@router.post("/campaigns")
-async def reactivation_campaign_create(
-    request: Request,
-    segment: str = Form(...),
-    action: str = Form("draft"),
-    csrf_token: str = Form(""),
-):
-    user = await get_current_user(request)
-    require_role(user, {"owner"})
-    validate_csrf(user, csrf_token)
-    if segment not in rdb.SEGMENTS or action not in {"draft", "queue"}:
-        raise HTTPException(status_code=422, detail="invalid campaign")
-    campaign_id = await rdb.create_campaign(
-        database.get_database(),
-        segment=segment,
-        created_by=user.id,
-    )
-    result = {"recipient_count": 0}
-    if action == "queue":
-        result = await rdb.queue_campaign(
-            database.get_database(), campaign_id=campaign_id
+    user = await _owner_write(request, csrf_token)
+    try:
+        reminder = (
+            None
+            if reminder_after_days in {"", "off"}
+            else int(reminder_after_days)
         )
-    await _audit(
-        request,
-        user,
-        action=f"reactivation.campaign_{action}",
-        object_type="reactivation_campaign",
-        object_id=str(campaign_id),
-        before=None,
-        after={
-            "segment": segment,
-            "status": "queued" if action == "queue" else "draft",
-            "recipient_count": result["recipient_count"],
-        },
-    )
-    result_status = "queued" if action == "queue" else "draft"
-    return RedirectResponse(
-        url=admin_url(request, f"/reactivation/?campaign={result_status}"),
-        status_code=302,
-    )
+        policy = ProgramPolicy(
+            inactivity_days=inactivity_days,
+            reminder_after_days=reminder,
+            cooldown_days=cooldown_days,
+            main_text=main_text.strip(),
+            reminder_text=reminder_text.strip(),
+        )
+        validate_policy(policy)
+        version_id = await rdb.create_draft(
+            database.get_database(),
+            policy=policy,
+            actor_id=user.id,
+        )
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _redirect(request, f"/?version={version_id}")
 
 
-@router.post("/campaigns/{campaign_id}/queue")
-async def reactivation_campaign_queue(
+@router.post("/versions/{version_id}/preview")
+async def marketing_version_preview(
     request: Request,
-    campaign_id: UUID,
+    version_id: UUID,
     csrf_token: str = Form(""),
 ):
+    user = await _owner_write(request, csrf_token)
+    try:
+        await rdb.preview_version(
+            database.get_database(), version_id, actor_id=user.id
+        )
+    except (ActivationBlocked, ValueError) as error:
+        raise _version_http_error(error) from error
+    return RedirectResponse(
+        admin_url(
+            request,
+            "/marketing/?"
+            + urlencode(
+                {"preview": "ready", "preview_version": str(version_id)}
+            ),
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/versions/{version_id}/test")
+async def marketing_version_test(
+    request: Request,
+    version_id: UUID,
+    csrf_token: str = Form(""),
+):
+    user = await _owner_write(request, csrf_token)
+    try:
+        outbound_id = await rdb.queue_test_send(
+            database.get_database(), version_id, actor_id=user.id
+        )
+    except (ActivationBlocked, ValueError) as error:
+        raise _version_http_error(error) from error
+    status = "queued" if outbound_id is not None else "not_configured"
+    return _redirect(request, f"/?test={status}")
+
+
+@router.post("/versions/{version_id}/activate")
+async def marketing_version_activate(
+    request: Request,
+    version_id: UUID,
+    confirmation: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    user = await _owner_write(request, csrf_token)
+    if confirmation != "АКТИВИРОВАТЬ":
+        raise HTTPException(status_code=400, detail="invalid activation confirmation")
+    try:
+        await rdb.activate_version(
+            database.get_database(), version_id, actor_id=user.id
+        )
+    except (ActivationBlocked, ValueError) as error:
+        raise _version_http_error(error) from error
+    return _redirect(request, "/?activated=1")
+
+
+@router.post("/legal")
+async def marketing_legal_approve(
+    request: Request,
+    reference: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    user = await _owner_write(request, csrf_token)
+    try:
+        await rdb.approve_legal(
+            database.get_database(), actor_id=user.id, reference=reference
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _redirect(request, "/?legal=approved")
+
+
+@router.post("/mode")
+async def marketing_mode_set(
+    request: Request,
+    mode: str = Form(""),
+    confirmation: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    user = await _owner_write(request, csrf_token)
+    if mode == "active" and confirmation != "АКТИВИРОВАТЬ":
+        raise HTTPException(status_code=400, detail="invalid activation confirmation")
+    try:
+        await rdb.set_mode(database.get_database(), mode, actor_id=user.id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _redirect(request, f"/?mode={mode}")
+
+
+@router.post("/consents/{consent_id}/revoke")
+async def marketing_consent_revoke(
+    request: Request,
+    consent_id: UUID,
+    csrf_token: str = Form(""),
+):
+    user = await _owner_write(request, csrf_token)
+    try:
+        await rdb.revoke_marketing_consent_by_id(
+            database.get_database(),
+            consent_id=consent_id,
+            actor_id=user.id,
+            ip_address=request_ip_address(request),
+            user_agent=request_user_agent(request),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return _redirect(request, "/?consent=revoked")
+
+
+async def _owner(request):
     user = await get_current_user(request)
     require_role(user, {"owner"})
+    return user
+
+
+async def _owner_write(request, csrf_token: str):
+    user = await _owner(request)
     validate_csrf(user, csrf_token)
-    result = await rdb.queue_campaign(
-        database.get_database(), campaign_id=campaign_id
-    )
-    await _audit(
-        request,
-        user,
-        action="reactivation.campaign_queued",
-        object_type="reactivation_campaign",
-        object_id=str(campaign_id),
-        before={"status": "draft"},
-        after={
-            "status": "queued",
-            "recipient_count": result["recipient_count"],
-        },
-    )
-    return RedirectResponse(
-        url=admin_url(request, "/reactivation/?campaign=queued"),
-        status_code=302,
-    )
+    return user
 
 
-def _validate_settings(**values) -> None:
-    bounds = {
-        "after_visit_days": (0, 3650),
-        "sleeping_days": (1, 3650),
-        "discount_percent": (0, 100),
-        "monthly_message_limit": (0, 100),
-        "ignore_limit": (0, 100),
-    }
-    for name, (minimum, maximum) in bounds.items():
-        if not minimum <= values[name] <= maximum:
-            raise HTTPException(status_code=422, detail=f"invalid {name}")
-    if len(values["base_offer"]) > 4000 or len(values["llm_instruction"]) > 4000:
-        raise HTTPException(status_code=422, detail="reactivation text too long")
+def _redirect(request, suffix: str):
+    return RedirectResponse(admin_url(request, f"/marketing{suffix}"), status_code=302)
 
 
-async def _audit(request, user, **values) -> None:
-    await record_audit(
-        actor_id=user.id,
-        ip_address=request_ip_address(request),
-        user_agent=request_user_agent(request),
-        **values,
-    )
+def _page_url(
+    request,
+    page: int,
+    consent_id: UUID | None,
+    period: int = 30,
+    outcome: str = "all",
+    delivery: str = "all",
+) -> str:
+    query = {"page": page}
+    if consent_id is not None:
+        query["consent_id"] = str(consent_id)
+    if period != 30:
+        query["period"] = period
+    if outcome != "all":
+        query["outcome"] = outcome
+    if delivery != "all":
+        query["delivery"] = delivery
+    return f"{admin_url(request, '/marketing/')}?{urlencode(query)}"
 
 
-def _audit_snapshot(values: dict) -> dict:
-    return {
-        key: value.isoformat() if hasattr(value, "isoformat") else value
-        for key, value in values.items()
-    }
+def _version_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, ActivationBlocked):
+        return HTTPException(status_code=409, detail=f"activation_blocked:{error.code}")
+    status_code = 404 if "not found" in str(error).lower() else 409
+    return HTTPException(status_code=status_code, detail=str(error))
