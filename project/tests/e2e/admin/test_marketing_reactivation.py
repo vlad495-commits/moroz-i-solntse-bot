@@ -284,6 +284,47 @@ async def test_empty_dashboard_explains_next_step_without_fake_pagination(monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("eligible", "disabled"), [(3, False), (0, True)])
+async def test_launch_summary_is_plain_and_zero_audience_is_blocked(
+    monkeypatch, eligible, disabled
+):
+    async def current_user(_request):
+        return _user()
+
+    async def page_data(*_args, **_kwargs):
+        data = _dashboard()
+        version = _version()
+        version["preview_counts"] = {
+            "total": eligible,
+            "eligible": eligible,
+            "planned_main": eligible,
+            "planned_reminder": 0,
+            "excluded_by_reason": {},
+        }
+        version["preview_created_at"] = "2026-09-03 02:00"
+        version["test_sent_at"] = "2026-09-03 02:01"
+        data["versions"] = [version]
+        return data
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "get_marketing_page_data", page_data)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.get("/marketing/")
+
+    assert response.status_code == 200
+    assert f"Сейчас подходят <strong>{eligible}</strong> клиентов" in response.text
+    assert (
+        "Сообщение будет отправлено только тем, кто дал согласие на рассылку."
+        in response.text
+    )
+    assert ("Запуск пока недоступен" in response.text) is disabled
+    assert ("disabled>Запустить</button>" in response.text) is disabled
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "path",
     [

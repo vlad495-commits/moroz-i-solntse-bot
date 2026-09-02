@@ -163,7 +163,7 @@ git commit -m "feat: запуск реактивации одним действ
 - Consumes: `draft.preview_counts.eligible`, existing activate/mode POST routes.
 - Produces: четыре шага readiness и точный согласованный русский текст запуска.
 
-- [ ] **Step 1: Write failing template contract**
+- [x] **Step 1: Write failing template contract**
 
 ```python
 assert "Сейчас подходят" in html
@@ -173,7 +173,7 @@ for removed in ("Юридическое подтверждение", "Ссылк
     assert removed not in html
 ```
 
-- [ ] **Step 2: Verify RED in Docker**
+- [x] **Step 2: Verify RED in Docker**
 
 Run:
 
@@ -183,15 +183,15 @@ docker compose --env-file ../.env run --rm test pytest -q tests/unit/admin/test_
 
 Expected: старый template содержит legal form/`АКТИВИРОВАТЬ` и не содержит новый текст.
 
-- [ ] **Step 3: Implement the approved copy**
+- [x] **Step 3: Implement the approved copy**
 
 Удалить legal readiness/action, перенумеровать запуск в шаг 4, показать динамический `eligible`, кнопку `Запустить` и `confirm('Запустить рассылку? Сообщение получат только клиенты, которые согласились на рассылку.')`. Для нуля показать причину и disabled button. Notice после успешного POST: «Рассылка запущена.»
 
-- [ ] **Step 4: Update owner documents**
+- [x] **Step 4: Update owner documents**
 
 В `ТЗ и архитектура.md` заменить legal reference/typed confirmation на owner launch с visible count и audit; в дорожной карте отметить локальную часть после фактических проверок; сразу записывать каждый завершённый шаг в `changelog.md`.
 
-- [ ] **Step 5: Run full verification**
+- [x] **Step 5: Run full verification**
 
 ```bash
 docker compose --env-file ../.env run --rm test pytest -q tests/unit/admin/test_reactivation_routes.py tests/e2e/admin/test_marketing_reactivation.py tests/integration/reactivation tests/e2e/reactivation/test_reactivation_v2.py
@@ -202,11 +202,11 @@ git diff --check
 
 Expected: все команды exit `0`; старые consent/runtime fences остаются зелёными.
 
-- [ ] **Step 6: Browser QA**
+- [x] **Step 6: Browser QA**
 
 Поднять только Docker local admin stack, проверить desktop `1440 px` и mobile `390 px`: точный текст, `N`, отсутствие legal form/typed phrase, disabled zero-state, confirm dialog и отсутствие horizontal overflow. Не отправлять реальные Telegram-сообщения.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add project/admin/templates/reactivation.html project/tests ТЗ\ и\ архитектура.md Дорожная\ карта.md changelog.md
