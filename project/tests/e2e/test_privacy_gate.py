@@ -18,6 +18,7 @@ from config import (
     INPUT_TOO_LONG_REPLY,
     MARKETING_CONSENT_CLAUSE,
     MARKETING_DISABLED_REPLY,
+    MARKETING_ENABLED_REPLY,
     MARKETING_ENABLE_LABEL,
     MARKETING_DISABLE_LABEL,
     MAX_INPUT_LENGTH,
@@ -38,6 +39,7 @@ pytestmark = pytest.mark.asyncio
 CONSENT_PII_CALLBACK_DATA = "consent:set:pii:on"
 CONSENT_PII_CLEAR_CALLBACK_DATA = "consent:set:pii:off"
 CONSENT_ADS_CALLBACK_DATA = "consent:set:ads:on"
+CONSENT_ADS_CLEAR_CALLBACK_DATA = "consent:set:ads:off"
 CONSENT_DONE_CALLBACK_DATA = "consent:done"
 MARKETING_ENABLE_CALLBACK_DATA = "marketing:enable"
 MARKETING_DISABLE_CALLBACK_DATA = "marketing:disable"
@@ -624,6 +626,150 @@ async def test_unchecked_ads_does_not_grant_marketing_consent(
     assert await db.fetchval("SELECT count(*) FROM marketing_consents") == 0
     assert await db.fetchval("SELECT count(*) FROM marketing_consent_events") == 0
     assert fake_telegram.answered_callback_ids == ["callback-1", "callback-1"]
+
+
+async def test_old_consent_card_can_grant_marketing_later(
+    client, db, redis_client, fake_telegram
+):
+    await grant_policy_consent(client, update_id=140)
+    assert await db.fetchval("SELECT count(*) FROM marketing_consents") == 0
+
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=142,
+                data=CONSENT_ADS_CALLBACK_DATA,
+                callback_id="callback-late-ads",
+            ),
+        )
+    ).status_code == 200
+    keyboard = fake_telegram.edited_reply_markups[-1][
+        "reply_markup"
+    ].inline_keyboard
+    assert [(row[0].text, row[0].callback_data) for row in keyboard] == [
+        (f"☑ {CONSENT_PII_LABEL}", CONSENT_PII_CLEAR_CALLBACK_DATA),
+        (f"☑ {CONSENT_ADS_LABEL}", CONSENT_ADS_CLEAR_CALLBACK_DATA),
+        (CONSENT_DONE_LABEL, CONSENT_DONE_CALLBACK_DATA),
+    ]
+
+    done = telegram_consent_callback(
+        update_id=143,
+        callback_id="callback-late-done",
+    )
+    assert (await client.post("/telegram/webhook", json=done)).status_code == 200
+    assert (await client.post("/telegram/webhook", json=done)).status_code == 200
+
+    state = await db.fetchrow(
+        """
+        SELECT consent.active, consent.proof_text_hash,
+               event.source_event_id
+        FROM marketing_consents AS consent
+        JOIN marketing_consent_events AS event
+          ON event.id = consent.proof_event_id
+        """
+    )
+    assert tuple(state.values()) == (
+        True,
+        sha256(MARKETING_CONSENT_CLAUSE.encode()).hexdigest(),
+        "143",
+    )
+    assert await redis_client.get("consent:state:telegram:42:7") is None
+    assert [message["text"] for message in fake_telegram.sent_messages] == [
+        CONSENT_THANKS,
+        MARKETING_ENABLED_REPLY,
+    ]
+    assert await db.fetchval(
+        "SELECT count(*) FROM marketing_consent_events"
+    ) == 1
+
+
+async def test_late_marketing_draft_survives_database_rollback(
+    client, db, redis_client, monkeypatch
+):
+    await grant_policy_consent(client, update_id=145)
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=147,
+                data=CONSENT_ADS_CALLBACK_DATA,
+            ),
+        )
+    ).status_code == 200
+
+    async def fail_enqueue(*_args, **_kwargs):
+        raise RuntimeError("outbox unavailable")
+
+    monkeypatch.setattr(
+        MessageRepository,
+        "enqueue_outbound_in_transaction",
+        fail_enqueue,
+    )
+    with pytest.raises(RuntimeError, match="outbox unavailable"):
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(update_id=148),
+        )
+
+    assert (
+        await redis_client.get("consent:state:telegram:42:7")
+        == "ads,pii"
+    )
+    assert await db.fetchval("SELECT count(*) FROM marketing_consents") == 0
+    assert await db.fetchval(
+        "SELECT count(*) FROM marketing_consent_events"
+    ) == 0
+
+
+async def test_old_consent_card_can_revoke_marketing_later(
+    client, db, redis_client, fake_telegram
+):
+    for update_id, data in (
+        (150, CONSENT_PII_CALLBACK_DATA),
+        (151, CONSENT_ADS_CALLBACK_DATA),
+        (152, CONSENT_DONE_CALLBACK_DATA),
+    ):
+        assert (
+            await client.post(
+                "/telegram/webhook",
+                json=telegram_consent_callback(update_id=update_id, data=data),
+            )
+        ).status_code == 200
+
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(
+                update_id=153,
+                data=CONSENT_ADS_CLEAR_CALLBACK_DATA,
+            ),
+        )
+    ).status_code == 200
+    keyboard = fake_telegram.edited_reply_markups[-1][
+        "reply_markup"
+    ].inline_keyboard
+    assert [(row[0].text, row[0].callback_data) for row in keyboard] == [
+        (f"☑ {CONSENT_PII_LABEL}", CONSENT_PII_CLEAR_CALLBACK_DATA),
+        (f"☐ {CONSENT_ADS_LABEL}", CONSENT_ADS_CALLBACK_DATA),
+        (CONSENT_DONE_LABEL, CONSENT_DONE_CALLBACK_DATA),
+    ]
+
+    assert (
+        await client.post(
+            "/telegram/webhook",
+            json=telegram_consent_callback(update_id=154),
+        )
+    ).status_code == 200
+    consent = await db.fetchrow(
+        "SELECT active, suppression_reason FROM marketing_consents"
+    )
+    assert tuple(consent.values()) == (False, "user_stop")
+    assert await redis_client.get("consent:state:telegram:42:7") is None
+    assert [message["text"] for message in fake_telegram.sent_messages] == [
+        CONSENT_THANKS,
+        MARKETING_DISABLED_REPLY,
+    ]
 
 
 async def test_marketing_command_and_callbacks_are_explicit_and_idempotent(
