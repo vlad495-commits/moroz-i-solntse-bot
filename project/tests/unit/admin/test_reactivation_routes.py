@@ -53,7 +53,9 @@ def test_marketing_navigation_and_focused_page_contract():
         "Отозвать согласие",
         "Архив старой версии",
         "Черновая версия, реальные сообщения не отправлялись",
-        "АКТИВИРОВАТЬ",
+        "Сейчас подходят",
+        "Сообщение будет отправлено только тем, кто дал согласие на рассылку.",
+        "Запустить рассылку? Сообщение получат только клиенты, которые согласились на рассылку.",
     ):
         assert label in html
     for forbidden in (
@@ -67,5 +69,8 @@ def test_marketing_navigation_and_focused_page_contract():
         "Eligible journeys",
         "Delivery unknown",
         "Пути реактивации",
+        "Юридическое подтверждение",
+        "Ссылка или номер документа",
+        "АКТИВИРОВАТЬ",
     ):
         assert forbidden not in html

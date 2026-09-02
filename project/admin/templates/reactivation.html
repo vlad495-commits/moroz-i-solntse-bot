@@ -6,14 +6,13 @@
 {% set active = namespace(value=none) %}
 {% for version in data.versions %}{% if version.status == 'active' %}{% set active.value = version %}{% endif %}{% endfor %}
 {% set mode_labels = {'dry_run': 'Только расчёт', 'paused': 'Остановлена', 'active': 'Активна'} %}
-{% set legal_labels = {'pending': 'Ожидает подтверждения', 'approved': 'Подтверждено', 'rejected': 'Отклонено'} %}
 {% set journey_status_labels = {'scheduled': 'Ожидает отправки', 'active': 'В работе', 'closed': 'Завершена'} %}
 {% set close_reason_labels = {'responded': 'Клиент ответил', 'booked': 'Клиент записался', 'suppressed': 'Исключён из рассылки', 'exhausted': 'Цепочка завершена', 'failed': 'Ошибка отправки', 'cancelled': 'Отменена', 'delivery_unknown': 'Статус доставки неизвестен', 'escalated': 'Передано администратору'} %}
 {% set consent_action_labels = {'granted': 'Согласие получено', 'revoked': 'Согласие отозвано', 'suppressed': 'Рассылка запрещена', 'unsuppressed': 'Запрет снят'} %}
 {% set proven_consents = data.readiness.proven_consents %}
 {% set preview_ready = draft and draft.preview_created_at %}
 {% set test_ready = draft and draft.test_sent_at %}
-{% set legal_ready = settings.legal_status == 'approved' %}
+{% set eligible_count = draft.preview_counts.eligible if draft and draft.preview_counts else 0 %}
 {% set reminder_enabled = draft and draft.reminder_after_days %}
 <section class="reactivation-page">
     <header class="marketing-header card">
@@ -39,7 +38,7 @@
     </header>
 
     {% if request.query_params.get('consent') %}<p class="notice success">Согласие отозвано, будущие шаги отменены.</p>{% endif %}
-    {% if request.query_params.get('activated') %}<p class="notice success">Версия активирована.</p>{% endif %}
+    {% if request.query_params.get('started') %}<p class="notice success">Рассылка запущена.</p>{% endif %}
     {% if settings.mode == 'paused' %}<p class="notice">Программа остановлена: новые отправки не выполняются.</p>{% endif %}
 
     <section class="card launch-readiness" aria-labelledby="launch-readiness-title">
@@ -66,15 +65,10 @@
                 <div><strong>Тестовое сообщение</strong><span>{% if test_ready %}Подтверждено {{ draft.test_sent_at }}{% elif draft %}Не отправлено владельцу{% else %}Сначала сохраните настройки{% endif %}</span></div>
                 {% if draft %}<a href="#program-start">Отправить тест</a>{% endif %}
             </li>
-            <li class="readiness-step {% if legal_ready %}is-ready{% elif draft %}needs-action{% else %}is-blocked{% endif %}">
+            <li class="readiness-step {% if settings.mode == 'active' %}is-ready{% elif preview_ready and test_ready and eligible_count > 0 %}needs-action{% else %}is-blocked{% endif %}">
                 <span class="step-index">4</span>
-                <div><strong>Юридическое подтверждение</strong><span>{{ legal_labels.get(settings.legal_status, settings.legal_status) }}</span></div>
-                {% if draft %}<a href="#program-start">Подтвердить</a>{% endif %}
-            </li>
-            <li class="readiness-step {% if settings.mode == 'active' %}is-ready{% elif active.value %}needs-action{% else %}is-blocked{% endif %}">
-                <span class="step-index">5</span>
-                <div><strong>Запуск</strong><span>{% if settings.mode == 'active' %}Программа работает{% elif active.value %}Версия готова к запуску{% else %}Требуется активная версия{% endif %}</span></div>
-                {% if active.value and settings.mode != 'active' %}<a href="#program-start">{% if settings.mode == 'paused' %}Возобновить{% else %}Запустить{% endif %}</a>{% endif %}
+                <div><strong>Запуск</strong><span>{% if settings.mode == 'active' %}Программа работает{% elif eligible_count > 0 %}Готово к запуску{% else %}Подходящих клиентов пока нет{% endif %}</span></div>
+                {% if settings.mode != 'active' and preview_ready and test_ready and eligible_count > 0 %}<a href="#program-start">Запустить</a>{% endif %}
             </li>
         </ol>
         {% if proven_consents == 0 %}
@@ -200,8 +194,8 @@
     {% if draft %}
     <section class="card activation-panel" id="program-start">
         <div class="section-heading">
-            <div><p class="section-eyebrow">Шаги 3–5</p><h2>Проверка и запуск</h2></div>
-            <p class="muted">Каждое действие защищено отдельно. Клиентские сообщения не начнут отправляться без активной версии и режима «Активна».</p>
+            <div><p class="section-eyebrow">Шаги 3–4</p><h2>Проверка и запуск</h2></div>
+            <p class="muted">Сначала проверьте сообщение на своём аккаунте, затем запустите рассылку.</p>
         </div>
         <div class="launch-actions">
             <section class="launch-action">
@@ -212,35 +206,34 @@
                     <button class="btn-secondary" type="submit">Отправить тест владельцу</button>
                 </form>
             </section>
-            <section class="launch-action">
-                <span class="step-index">4</span>
-                <div><h3>Подтвердить основание</h3><p>Укажите реальную ссылку или номер юридического решения.</p></div>
-                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/legal">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <label>Ссылка или номер документа<input name="reference" maxlength="500" required></label>
-                    <button type="submit">Подтвердить согласование</button>
-                </form>
-            </section>
             {% if draft.status != 'active' %}
-            <section class="launch-action">
-                <span class="step-index">5</span>
-                <div><h3>Активировать версию</h3><p>Активация фиксирует проверенные настройки, но сама по себе не включает программу.</p></div>
-                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/versions/{{ draft.id }}/activate">
+            <section class="launch-action launch-action-primary">
+                <span class="step-index">4</span>
+                <div>
+                    <h3>Готово к запуску</h3>
+                    <p>Сейчас подходят <strong>{{ eligible_count }}</strong> клиентов.</p>
+                    <p>Сообщение будет отправлено только тем, кто дал согласие на рассылку.</p>
+                    {% if eligible_count == 0 %}<p class="muted">Запуск пока недоступен: подходящих клиентов нет.</p>{% endif %}
+                </div>
+                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/versions/{{ draft.id }}/activate" onsubmit="return confirm('Запустить рассылку? Сообщение получат только клиенты, которые согласились на рассылку.')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <label>Введите АКТИВИРОВАТЬ<input name="confirmation" autocomplete="off" required></label>
-                    <button type="submit">Активировать версию</button>
+                    <button class="btn-primary" type="submit" {% if eligible_count == 0 %}disabled{% endif %}>Запустить</button>
                 </form>
             </section>
             {% endif %}
             {% if settings.mode != 'active' and active.value %}
             <section class="launch-action launch-action-primary">
-                <span class="step-index">5</span>
-                <div><h3>{% if settings.mode == 'paused' %}Возобновить программу{% else %}Запустить программу{% endif %}</h3><p>После подтверждения разрешаются реальные отправки подходящим клиентам.</p></div>
-                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/mode">
+                <span class="step-index">4</span>
+                <div>
+                    <h3>Готово к запуску</h3>
+                    <p>Сейчас подходят <strong>{{ eligible_count }}</strong> клиентов.</p>
+                    <p>Сообщение будет отправлено только тем, кто дал согласие на рассылку.</p>
+                    {% if eligible_count == 0 %}<p class="muted">Запуск пока недоступен: подходящих клиентов нет.</p>{% endif %}
+                </div>
+                <form method="post" action="{{ request.scope.get('root_path', '') }}/marketing/mode" onsubmit="return confirm('Запустить рассылку? Сообщение получат только клиенты, которые согласились на рассылку.')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="mode" value="active">
-                    <label>Введите АКТИВИРОВАТЬ<input name="confirmation" autocomplete="off" required></label>
-                    <button class="btn-primary" type="submit">{% if settings.mode == 'paused' %}Возобновить программу{% else %}Запустить программу{% endif %}</button>
+                    <button class="btn-primary" type="submit" {% if eligible_count == 0 %}disabled{% endif %}>Запустить</button>
                 </form>
             </section>
             {% endif %}

@@ -488,6 +488,8 @@ class ReactivationRepository:
         version_id: UUID,
         actor_id: int,
         now: datetime,
+        *,
+        start_program: bool = False,
     ) -> dict:
         current = _aware(now)
         async with self._database.acquire() as connection:
@@ -506,10 +508,13 @@ class ReactivationRepository:
                 await self._check_activation_gates(
                     connection, settings, version, current
                 )
-                if not (
+                if start_program and _preview_eligible(version) == 0:
+                    raise ActivationBlocked("eligible_recipients")
+                version_changed = not (
                     version["status"] == "active"
                     and settings["active_version_id"] == version_id
-                ):
+                )
+                if version_changed:
                     await connection.execute(
                         """
                         UPDATE reactivation_program_versions
@@ -528,26 +533,36 @@ class ReactivationRepository:
                         actor_id,
                         current,
                     )
+                if version_changed or (
+                    start_program and settings["mode"] != "active"
+                ):
                     await connection.execute(
                         """
                         UPDATE reactivation_settings
                         SET active_version_id = $1,
+                            mode = CASE WHEN $3::boolean THEN 'active' ELSE mode END,
+                            stopped_at = CASE WHEN $3::boolean THEN NULL ELSE stopped_at END,
                             program_revision = program_revision + 1,
                             updated_at = $2
                         WHERE id = 1
                         """,
                         version_id,
                         current,
+                        start_program,
                     )
                 row = await self._version(connection, version_id)
+                before = _version_audit(version)
+                before["mode"] = settings["mode"]
+                after = _version_audit(row)
+                after["mode"] = "active" if start_program else settings["mode"]
                 await _audit(
                     connection,
                     actor_id=actor_id,
                     action="reactivation.version_activated",
                     object_type="reactivation_program_version",
                     object_id=str(version_id),
-                    before=_version_audit(version),
-                    after=_version_audit(row),
+                    before=before,
+                    after=after,
                 )
         return dict(row)
 
@@ -581,6 +596,8 @@ class ReactivationRepository:
                     await self._check_activation_gates(
                         connection, settings, version, current
                     )
+                    if _preview_eligible(version) == 0:
+                        raise ActivationBlocked("eligible_recipients")
                 row = await connection.fetchrow(
                     """
                     UPDATE reactivation_settings
@@ -1112,10 +1129,6 @@ class ReactivationRepository:
         program_active = await connection.fetchval(
             """
             SELECT settings.mode = 'active'
-               AND settings.legal_status = 'approved'
-               AND settings.legal_reference IS NOT NULL
-               AND settings.legal_approved_at IS NOT NULL
-               AND settings.legal_approved_by IS NOT NULL
                AND settings.active_version_id = $1
                AND version.status = 'active'
             FROM reactivation_settings AS settings
@@ -1957,13 +1970,6 @@ class ReactivationRepository:
             )
             if version["test_sent_at"] is None or not test_ok:
                 raise ActivationBlocked("test_sent")
-        if (
-            settings["legal_status"] != "approved"
-            or settings["legal_approved_at"] is None
-            or settings["legal_approved_by"] is None
-            or not settings["legal_reference"]
-        ):
-            raise ActivationBlocked("legal_approved")
 
     def _require_same_template(self, version) -> None:
         if version["template_checksum"] != template_checksum(_policy(version)):
@@ -2206,10 +2212,6 @@ def _runtime_gates_open(settings) -> bool:
         settings
         and settings["mode"] == "active"
         and settings["active_version_id"] is not None
-        and settings["legal_status"] == "approved"
-        and settings["legal_reference"]
-        and settings["legal_approved_at"] is not None
-        and settings["legal_approved_by"] is not None
     )
 
 
@@ -2303,6 +2305,11 @@ def _version_audit(version) -> dict:
         "test_outbound_id": _uuid_text(version["test_outbound_id"]),
         "test_sent": version["test_sent_at"] is not None,
     }
+
+
+def _preview_eligible(version) -> int:
+    counts = _json_value(version.get("preview_counts")) or {}
+    return int(counts.get("eligible", 0))
 
 
 def _legal_audit(settings) -> dict:

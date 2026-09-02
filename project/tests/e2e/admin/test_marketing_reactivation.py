@@ -284,6 +284,47 @@ async def test_empty_dashboard_explains_next_step_without_fake_pagination(monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("eligible", "disabled"), [(3, False), (0, True)])
+async def test_launch_summary_is_plain_and_zero_audience_is_blocked(
+    monkeypatch, eligible, disabled
+):
+    async def current_user(_request):
+        return _user()
+
+    async def page_data(*_args, **_kwargs):
+        data = _dashboard()
+        version = _version()
+        version["preview_counts"] = {
+            "total": eligible,
+            "eligible": eligible,
+            "planned_main": eligible,
+            "planned_reminder": 0,
+            "excluded_by_reason": {},
+        }
+        version["preview_created_at"] = "2026-09-03 02:00"
+        version["test_sent_at"] = "2026-09-03 02:01"
+        data["versions"] = [version]
+        return data
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "get_marketing_page_data", page_data)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.get("/marketing/")
+
+    assert response.status_code == 200
+    assert f"Сейчас подходят <strong>{eligible}</strong> клиентов" in response.text
+    assert (
+        "Сообщение будет отправлено только тем, кто дал согласие на рассылку."
+        in response.text
+    )
+    assert ("Запуск пока недоступен" in response.text) is disabled
+    assert ("disabled>Запустить</button>" in response.text) is disabled
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "path",
     [
@@ -403,8 +444,6 @@ async def test_version_actions_translate_missing_and_retired_to_4xx(
     monkeypatch.setattr(reactivation_routes.database, "get_database", object)
     monkeypatch.setattr(reactivation_routes.rdb, function_name, fail)
     data = {"csrf_token": "known-csrf"}
-    if operation == "activate":
-        data["confirmation"] = "АКТИВИРОВАТЬ"
     async with AsyncClient(
         transport=ASGITransport(app=_app()), base_url="http://test"
     ) as client:
@@ -419,7 +458,7 @@ async def test_version_actions_translate_missing_and_retired_to_4xx(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "gate",
-    ["fresh_preview", "current_watermarks", "test_sent", "legal_approved", "same_checksum"],
+    ["fresh_preview", "current_watermarks", "test_sent", "eligible_recipients", "same_checksum"],
 )
 async def test_activation_gate_failures_return_conflict(monkeypatch, gate):
     async def current_user(_request):
@@ -436,7 +475,7 @@ async def test_activation_gate_failures_return_conflict(monkeypatch, gate):
     ) as client:
         response = await client.post(
             "/marketing/versions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/activate",
-            data={"csrf_token": "known-csrf", "confirmation": "АКТИВИРОВАТЬ"},
+            data={"csrf_token": "known-csrf"},
         )
 
     assert response.status_code == 409
@@ -536,7 +575,7 @@ async def test_pagination_links_are_canonical_under_admin_root(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_activation_requires_exact_fresh_confirmation(monkeypatch):
+async def test_activation_launches_without_typed_confirmation(monkeypatch):
     calls = []
 
     async def current_user(_request):
@@ -551,23 +590,21 @@ async def test_activation_requires_exact_fresh_confirmation(monkeypatch):
     async with AsyncClient(
         transport=ASGITransport(app=_app()), base_url="http://test"
     ) as client:
-        rejected = await client.post(
-            "/marketing/versions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/activate",
-            data={"csrf_token": "known-csrf", "confirmation": "активировать"},
-        )
         accepted = await client.post(
             "/marketing/versions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/activate",
-            data={"csrf_token": "known-csrf", "confirmation": "АКТИВИРОВАТЬ"},
+            data={"csrf_token": "known-csrf"},
             follow_redirects=False,
         )
 
-    assert rejected.status_code == 400
     assert accepted.status_code == 302
     assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args[1] == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    assert kwargs == {"actor_id": 7, "start_program": True}
 
 
 @pytest.mark.asyncio
-async def test_active_mode_also_requires_exact_confirmation(monkeypatch):
+async def test_active_mode_does_not_require_typed_confirmation(monkeypatch):
     calls = []
 
     async def current_user(_request):
@@ -582,25 +619,15 @@ async def test_active_mode_also_requires_exact_confirmation(monkeypatch):
     async with AsyncClient(
         transport=ASGITransport(app=_app()), base_url="http://test"
     ) as client:
-        rejected = await client.post(
-            "/marketing/mode",
-            data={
-                "csrf_token": "known-csrf",
-                "mode": "active",
-                "confirmation": "yes",
-            },
-        )
         accepted = await client.post(
             "/marketing/mode",
             data={
                 "csrf_token": "known-csrf",
                 "mode": "active",
-                "confirmation": "АКТИВИРОВАТЬ",
             },
             follow_redirects=False,
         )
 
-    assert rejected.status_code == 400
     assert accepted.status_code == 302
     assert len(calls) == 1
 
