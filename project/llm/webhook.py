@@ -276,9 +276,11 @@ def create_app(
             outbound,
         )
 
-    async def consent_checked(chat_id: int, user_id: int) -> set[str]:
+    async def consent_checked(chat_id: int, user_id: int) -> set[str] | None:
         raw = await webhook_app.state.redis.get(_consent_state_key(chat_id, user_id))
-        return {item for item in (raw or "").split(",") if item}
+        if raw is None:
+            return None
+        return {item for item in raw.split(",") if item}
 
     async def save_consent_checked(
         chat_id: int, user_id: int, checked: set[str]
@@ -288,6 +290,32 @@ def create_app(
             ",".join(sorted(checked)),
             ex=3600,
         )
+
+    async def durable_consent_state(
+        connection, user_id: str
+    ) -> tuple[bool, bool]:
+        row = await connection.fetchrow(
+            """
+            SELECT
+                EXISTS (
+                    SELECT 1 FROM processing_consents
+                    WHERE channel = 'telegram'
+                      AND user_id = $1
+                      AND consent_version = $2
+                ) AS processing_active,
+                COALESCE((
+                    SELECT active
+                           AND proof_event_id IS NOT NULL
+                           AND proof_text_hash IS NOT NULL
+                           AND suppressed_at IS NULL
+                    FROM marketing_consents
+                    WHERE channel = 'telegram' AND user_id = $1
+                ), false) AS marketing_active
+            """,
+            user_id,
+            PROCESSING_CONSENT_VERSION,
+        )
+        return row["processing_active"], row["marketing_active"]
 
     async def grant_explicit_marketing(
         connection,
@@ -469,12 +497,42 @@ def create_app(
                             callback.message.chat.id,
                             callback.from_user.id,
                         )
-                        if (kind in checked) == enabled:
-                            return Response(status_code=200)
-                        if enabled:
+                        state_was_missing = checked is None
+                        if checked is None:
+                            processing_active, marketing_active = (
+                                await durable_consent_state(
+                                    connection,
+                                    str(callback.from_user.id),
+                                )
+                            )
+                            checked = set()
+                            if processing_active:
+                                checked.add("pii")
+                            if marketing_active:
+                                checked.add("ads")
+                        else:
+                            processing_active = await connection.fetchval(
+                                "SELECT EXISTS ("
+                                "SELECT 1 FROM processing_consents "
+                                "WHERE channel = 'telegram' AND user_id = $1 "
+                                "AND consent_version = $2)",
+                                str(callback.from_user.id),
+                                PROCESSING_CONSENT_VERSION,
+                            )
+                        desired_enabled = (
+                            True
+                            if kind == "pii" and processing_active
+                            else enabled
+                        )
+                        if (kind in checked) == desired_enabled:
+                            if not state_was_missing:
+                                return Response(status_code=200)
+                        elif desired_enabled:
                             checked.add(kind)
                         else:
-                            checked.remove(kind)
+                            checked.discard(kind)
+                        if processing_active:
+                            checked.add("pii")
                         await save_consent_checked(
                             callback.message.chat.id,
                             callback.from_user.id,
@@ -487,23 +545,8 @@ def create_app(
                 )
                 return Response(status_code=200)
             if callback.data == CONSENT_DONE_CALLBACK_DATA:
-                if await webhook_app.state.consent_service.has_processing_consent(
-                    "telegram", str(callback.from_user.id)
-                ):
-                    return Response(status_code=200)
-                checked = await consent_checked(
-                    callback.message.chat.id,
-                    callback.from_user.id,
-                )
-                if "pii" not in checked:
-                    await send_static_reply(
-                        update_id=update.update_id,
-                        chat_id=callback.message.chat.id,
-                        text=CONSENT_NEED_PII_REPLY,
-                        reply_kind="consent_need_pii",
-                    )
-                    return Response(status_code=200)
                 outbound_id = None
+                needs_processing_consent = False
                 async with webhook_app.state.database.acquire() as connection:
                     async with connection.transaction():
                         await connection.execute(
@@ -515,43 +558,84 @@ def create_app(
                             fail_closed=True,
                         ):
                             return Response(status_code=200)
-                        if await connection.fetchval(
-                            "SELECT EXISTS (SELECT 1 FROM processing_consents "
-                            "WHERE channel = 'telegram' AND user_id = $1 "
-                            "AND consent_version = $2)",
-                            str(callback.from_user.id),
-                            PROCESSING_CONSENT_VERSION,
-                        ):
-                            return Response(status_code=200)
-                        await webhook_app.state.consent_service.grant_processing_consent(
-                            "telegram",
-                            str(callback.from_user.id),
-                            PROCESSING_CONSENT_VERSION,
-                            connection=connection,
-                        )
-                        if "ads" in checked:
-                            await grant_explicit_marketing(
+                        processing_active, marketing_active = (
+                            await durable_consent_state(
                                 connection,
-                                user_id=str(callback.from_user.id),
-                                source_event_id=str(update.update_id),
-                                occurred_at=received_at,
-                            )
-                        await webhook_app.state.redis.delete(
-                            _consent_state_key(
-                                callback.message.chat.id,
-                                callback.from_user.id,
+                                str(callback.from_user.id),
                             )
                         )
-                        outbound_id = await webhook_app.state.message_repository.enqueue_outbound_in_transaction(
-                            connection,
-                            channel="telegram",
-                            chat_id=str(callback.message.chat.id),
-                            text=CONSENT_THANKS,
-                            idempotency_key=(
-                                f"telegram:consent_thanks:{update.update_id}"
-                            ),
-                            delivery_options=None,
+                        checked = await consent_checked(
+                            callback.message.chat.id,
+                            callback.from_user.id,
                         )
+                        if checked is None:
+                            checked = set()
+                            if processing_active:
+                                checked.add("pii")
+                            if marketing_active:
+                                checked.add("ads")
+                        if processing_active:
+                            checked.add("pii")
+                        if "pii" not in checked:
+                            needs_processing_consent = True
+                        else:
+                            if not processing_active:
+                                await webhook_app.state.consent_service.grant_processing_consent(
+                                    "telegram",
+                                    str(callback.from_user.id),
+                                    PROCESSING_CONSENT_VERSION,
+                                    connection=connection,
+                                )
+                            wants_marketing = "ads" in checked
+                            event = {
+                                "user_id": str(callback.from_user.id),
+                                "source_event_id": str(update.update_id),
+                                "occurred_at": received_at,
+                            }
+                            if wants_marketing and not marketing_active:
+                                await grant_explicit_marketing(
+                                    connection,
+                                    **event,
+                                )
+                            elif marketing_active and not wants_marketing:
+                                await webhook_app.state.reactivation_repository.record_inbound(
+                                    "telegram",
+                                    str(callback.from_user.id),
+                                    received_at,
+                                    "marketing_disable",
+                                    connection=connection,
+                                )
+                                await opt_out_marketing(connection, **event)
+                            await webhook_app.state.redis.delete(
+                                _consent_state_key(
+                                    callback.message.chat.id,
+                                    callback.from_user.id,
+                                )
+                            )
+                            if not processing_active:
+                                reply = CONSENT_THANKS
+                            elif wants_marketing:
+                                reply = MARKETING_ENABLED_REPLY
+                            else:
+                                reply = MARKETING_DISABLED_REPLY
+                            outbound_id = await webhook_app.state.message_repository.enqueue_outbound_in_transaction(
+                                connection,
+                                channel="telegram",
+                                chat_id=str(callback.message.chat.id),
+                                text=reply,
+                                idempotency_key=(
+                                    f"telegram:consent_thanks:{update.update_id}"
+                                ),
+                                delivery_options=None,
+                            )
+                if needs_processing_consent:
+                    await send_static_reply(
+                        update_id=update.update_id,
+                        chat_id=callback.message.chat.id,
+                        text=CONSENT_NEED_PII_REPLY,
+                        reply_kind="consent_need_pii",
+                    )
+                    return Response(status_code=200)
                 if outbound_id is not None:
                     await deliver_static_reply(outbound_id)
             return Response(status_code=200)
