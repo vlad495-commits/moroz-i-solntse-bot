@@ -46,7 +46,7 @@ def test_marketing_screen_exposes_explicit_yclients_unavailable_gate():
     )
 
     assert "reactivation_activity_sync" in MODULE.read_text(encoding="utf-8")
-    assert "YCLIENTS unavailable" in template
+    assert "Данные YCLIENTS недоступны" in template
 
 
 def test_create_draft_wrapper_has_one_policy_input():

@@ -279,6 +279,7 @@ async def test_empty_dashboard_explains_next_step_without_fake_pagination(monkey
     assert "Нет клиентов с подтверждённым рекламным согласием" in response.text
     assert "Реактивации ещё не запускались" in response.text
     assert "Клиенты ещё не давали рекламное согласие" in response.text
+    assert '<option value="90" selected>90 дней без визита или обращения</option>' in response.text
     assert "Страница 1" not in response.text
 
 

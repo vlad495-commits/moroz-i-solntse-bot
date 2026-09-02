@@ -1602,7 +1602,29 @@ button:hover {
 }
 
 .marketing-status { justify-content: flex-end; }
-.header-action { text-decoration: none; }
+.reactivation-page a.btn-primary,
+.reactivation-page a.btn-secondary {
+    display: inline-flex;
+    min-height: 38px;
+    align-items: center;
+    justify-content: center;
+    padding: 9px 16px;
+    border: 1px solid rgba(16, 75, 169, 0.18);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--text);
+    font-weight: 750;
+    text-decoration: none;
+}
+
+.reactivation-page a.btn-primary {
+    border-color: var(--brand);
+    background: var(--brand);
+    color: #fff;
+}
+
+.reactivation-page a.btn-primary:hover { background: #0c3f92; }
+.reactivation-page a.btn-secondary:hover { background: var(--ice); }
 .section-heading { align-items: flex-start; }
 .section-heading > .muted { max-width: 620px; }
 
@@ -2037,9 +2059,9 @@ button:hover {
     }
     .marketing-status { justify-content: flex-start; }
     .readiness-list,
-    .preview-stats,
     .funnel-flow,
     .attention-grid { grid-template-columns: 1fr; }
+    .preview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .telegram-bubble,
     .telegram-actions { max-width: 96%; }
     .results-filters label,

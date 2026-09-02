@@ -101,7 +101,7 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <label>Неактивность клиента
                     <select name="inactivity_days">
-                        {% for value in [60, 90, 120] %}<option value="{{ value }}" {% if draft and draft.inactivity_days == value %}selected{% endif %}>{{ value }} дней без визита или обращения</option>{% endfor %}
+                        {% for value in [60, 90, 120] %}<option value="{{ value }}" {% if (draft and draft.inactivity_days == value) or (not draft and value == 90) %}selected{% endif %}>{{ value }} дней без визита или обращения</option>{% endfor %}
                     </select>
                 </label>
                 <label>Напоминание
