@@ -1112,10 +1112,6 @@ class ReactivationRepository:
         program_active = await connection.fetchval(
             """
             SELECT settings.mode = 'active'
-               AND settings.legal_status = 'approved'
-               AND settings.legal_reference IS NOT NULL
-               AND settings.legal_approved_at IS NOT NULL
-               AND settings.legal_approved_by IS NOT NULL
                AND settings.active_version_id = $1
                AND version.status = 'active'
             FROM reactivation_settings AS settings
@@ -1957,13 +1953,6 @@ class ReactivationRepository:
             )
             if version["test_sent_at"] is None or not test_ok:
                 raise ActivationBlocked("test_sent")
-        if (
-            settings["legal_status"] != "approved"
-            or settings["legal_approved_at"] is None
-            or settings["legal_approved_by"] is None
-            or not settings["legal_reference"]
-        ):
-            raise ActivationBlocked("legal_approved")
 
     def _require_same_template(self, version) -> None:
         if version["template_checksum"] != template_checksum(_policy(version)):
@@ -2206,10 +2195,6 @@ def _runtime_gates_open(settings) -> bool:
         settings
         and settings["mode"] == "active"
         and settings["active_version_id"] is not None
-        and settings["legal_status"] == "approved"
-        and settings["legal_reference"]
-        and settings["legal_approved_at"] is not None
-        and settings["legal_approved_by"] is not None
     )
 
 

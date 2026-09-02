@@ -31,7 +31,7 @@
 - Consumes: `ReactivationRepository.activate_version`, `_check_activation_gates`, `_runtime_gates_open`.
 - Produces: запуск и runtime delivery, не зависящие от deprecated `legal_*`; остальные gates неизменны.
 
-- [ ] **Step 1: Write failing activation and runtime tests**
+- [x] **Step 1: Write failing activation and runtime tests**
 
 Добавить проверку, которая перед запуском явно оставляет `legal_status='pending'` и `legal_reference=NULL`, но ожидает успешную активацию после свежего preview/test. Из существующих delivery/planner тестов убрать ожидание остановки только из-за `legal_status='pending'` и вместо него доказать, что consent и остальные fences продолжают решать допуск.
 
@@ -49,7 +49,7 @@ async def test_activation_does_not_require_deprecated_legal_fields(repository, d
     assert activated["status"] == "active"
 ```
 
-- [ ] **Step 2: Verify RED in Docker**
+- [x] **Step 2: Verify RED in Docker**
 
 Run:
 
@@ -59,7 +59,7 @@ docker compose --env-file ../.env run --rm test pytest -q tests/integration/reac
 
 Expected: новый activation test падает с `ActivationBlocked("legal_approved")`; старые runtime expectations показывают зависимость от legal-полей.
 
-- [ ] **Step 3: Implement the minimum gate change**
+- [x] **Step 3: Implement the minimum gate change**
 
 Удалить только четыре `legal_*` условия из `_check_activation_gates`, delivery SQL `program_active` и `_runtime_gates_open`. Не менять marketing consent, suppression, freshness, identity и recipient-lock логику.
 
@@ -72,11 +72,11 @@ def _runtime_gates_open(settings) -> bool:
     )
 ```
 
-- [ ] **Step 4: Verify GREEN in Docker**
+- [x] **Step 4: Verify GREEN in Docker**
 
 Повторить команду Step 2. Expected: весь focused integration набор проходит.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add project/src/moroz/reactivation/repository.py project/tests/integration/reactivation

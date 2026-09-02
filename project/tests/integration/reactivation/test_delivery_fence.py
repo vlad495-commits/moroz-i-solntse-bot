@@ -253,7 +253,6 @@ async def test_program_transition_first_blocks_send_then_guard_cancels(delivery)
         ("delete", "consent_revoked"),
         ("human", "human_mode"),
         ("escalation", "open_escalation"),
-        ("legal", "legal_unavailable"),
         ("version", "version_changed"),
     ],
 )
@@ -270,7 +269,6 @@ async def test_pre_send_guard_rechecks_all_terminal_controls(
         "delete": "81006",
         "human": "81007",
         "escalation": "81008",
-        "legal": "81009",
         "version": "81010",
     }[mutation]
     outbound_id = await _seed_and_reserve(database, repository, user_id)
@@ -323,11 +321,6 @@ async def test_pre_send_guard_rechecks_all_terminal_controls(
                 "(customer_id, enabled, reason_code, enabled_at) "
                 "VALUES ($1, true, 'admin_handoff', $2)", user_id, NOW
             )
-        elif mutation == "legal":
-            await connection.execute(
-                "UPDATE reactivation_settings SET legal_status = 'pending' "
-                "WHERE id = 1"
-            )
         elif mutation == "version":
             await connection.execute(
                 "UPDATE reactivation_program_versions SET status = 'retired' "
@@ -360,6 +353,23 @@ async def test_pre_send_guard_rechecks_all_terminal_controls(
             outbound_id,
         )
     assert tuple(state.values()) == ("cancelled", "cancelled", reason, "closed")
+
+
+async def test_pre_send_does_not_depend_on_deprecated_legal_fields(delivery):
+    database, repository, _ = delivery
+    outbound_id = await _seed_and_reserve(database, repository, "81011")
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE reactivation_settings SET legal_status = 'pending', "
+            "legal_reference = NULL, legal_approved_at = NULL, "
+            "legal_approved_by = NULL WHERE id = 1"
+        )
+
+    telegram = FakeTelegram()
+    result = await _sender(database, repository, telegram).send(outbound_id)
+
+    assert result == DeliveryResult.SENT
+    assert len(telegram.calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -822,7 +832,6 @@ async def test_accepted_send_survives_concurrent_consent_terminal(
         ("human", "cancelled"),
         ("escalation", "escalated"),
         ("delete", "suppressed"),
-        ("legal", "cancelled"),
         ("version", "cancelled"),
     ],
 )
@@ -878,11 +887,6 @@ async def test_accepted_send_rechecks_post_network_terminal_controls(
         elif mutation == "delete":
             await connection.execute(
                 "DELETE FROM marketing_consents WHERE user_id = $1", user_id
-            )
-        elif mutation == "legal":
-            await connection.execute(
-                "UPDATE reactivation_settings SET legal_status = 'pending' "
-                "WHERE id = 1"
             )
         else:
             await connection.execute(

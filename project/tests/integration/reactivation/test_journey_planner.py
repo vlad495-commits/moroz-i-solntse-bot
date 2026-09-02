@@ -259,17 +259,19 @@ async def test_terminal_main_never_schedules_reminder(planner, terminal):
         ) == 0
 
 
-async def test_missing_legal_gate_creates_nothing(planner):
+async def test_planner_does_not_depend_on_deprecated_legal_fields(planner):
     database, repository, _ = planner
     async with database.acquire() as connection:
         await _seed_eligible(connection, "70006")
         await connection.execute(
-            "UPDATE reactivation_settings SET legal_status = 'pending' WHERE id = 1"
+            "UPDATE reactivation_settings SET legal_status = 'pending', "
+            "legal_reference = NULL, legal_approved_at = NULL, "
+            "legal_approved_by = NULL WHERE id = 1"
         )
 
-    assert await repository.run_planner_cycle(NOW) == 0
+    assert await repository.run_planner_cycle(NOW) == 1
     async with database.acquire() as connection:
-        assert await connection.fetchval("SELECT count(*) FROM reactivation_journeys") == 0
+        assert await connection.fetchval("SELECT count(*) FROM reactivation_journeys") == 1
 
 
 async def test_planner_is_bounded_to_one_hundred_new_journeys(planner):

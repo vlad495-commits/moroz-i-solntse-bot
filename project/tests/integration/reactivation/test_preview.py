@@ -390,7 +390,7 @@ async def test_preview_without_admin_secret_fails_closed(database, actors):
 
 @pytest.mark.parametrize(
     "missing_gate",
-    ["fresh_preview", "same_checksum", "current_watermarks", "test_sent", "legal_approved"],
+    ["fresh_preview", "same_checksum", "current_watermarks", "test_sent"],
 )
 async def test_activation_fails_closed_for_every_gate(
     repository, database, missing_gate
@@ -423,14 +423,29 @@ async def test_activation_fails_closed_for_every_gate(
                 "UPDATE reactivation_program_versions SET test_sent_at = NULL WHERE id = $1",
                 version_id,
             )
-        else:
-            await connection.execute(
-                "UPDATE reactivation_settings SET legal_status = 'pending' WHERE id = 1"
-            )
 
     with pytest.raises(ActivationBlocked) as error:
         await value.activate_version(version_id, owner_id, NOW)
     assert error.value.code == missing_gate
+
+
+async def test_activation_does_not_require_deprecated_legal_fields(
+    repository, database
+):
+    value, version_id, owner_id = repository
+    async with database.acquire() as connection:
+        await _seed_eligible(connection, "123456789")
+    await _ready(value, version_id, owner_id)
+    async with database.acquire() as connection:
+        await connection.execute(
+            "UPDATE reactivation_settings SET legal_status = 'pending', "
+            "legal_reference = NULL, legal_approved_at = NULL, "
+            "legal_approved_by = NULL WHERE id = 1"
+        )
+
+    activated = await value.activate_version(version_id, owner_id, NOW)
+
+    assert activated["status"] == "active"
 
 
 @pytest.mark.parametrize("mutation", ["consent", "inbound", "booking", "journey"])
