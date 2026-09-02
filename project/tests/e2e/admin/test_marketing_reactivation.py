@@ -71,6 +71,24 @@ def _dashboard():
     }
 
 
+def _version(status="draft"):
+    return {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "version_number": 3,
+        "status": status,
+        "inactivity_days": 90,
+        "reminder_after_days": None,
+        "cooldown_days": 90,
+        "main_text": "Давно вас не видели. Будем рады новой встрече!",
+        "reminder_text": "Напоминаем, что будем рады вас видеть.",
+        "preview_counts": None,
+        "preview_created_at": None,
+        "preview_history_watermark": None,
+        "preview_recent_watermark": None,
+        "test_sent_at": None,
+    }
+
+
 @pytest.mark.asyncio
 async def test_legacy_route_preserves_query():
     async with AsyncClient(
@@ -193,12 +211,75 @@ async def test_dashboard_renders_honest_funnel_and_rejects_unbounded_filters(
     assert captured[0]["period"] == 7
     assert captured[0]["outcome"] == "booked"
     assert captured[0]["delivery"] == "delivery_unknown"
-    assert "Подойдут по последнему предпросмотру" in response.text
+    assert "Результаты реактивации" in response.text
+    assert "Подходят" in response.text
     assert "Принято Telegram" in response.text
-    assert "Delivery unknown" in response.text
+    assert "Статус доставки неизвестен" in response.text
     assert "Программа остановлена" in response.text
+    assert "Доставлено" not in response.text
     assert "Прочитано" not in response.text
     assert invalid.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "active_version", "shows_stop", "shows_resume"),
+    [
+        ("active", True, True, False),
+        ("paused", True, False, True),
+        ("paused", False, False, False),
+        ("dry_run", False, False, False),
+    ],
+)
+async def test_program_actions_match_mode_and_active_version(
+    monkeypatch, mode, active_version, shows_stop, shows_resume
+):
+    async def current_user(_request):
+        return _user()
+
+    async def page_data(*_args, **_kwargs):
+        data = _dashboard()
+        data["settings"]["mode"] = mode
+        if active_version:
+            version = _version(status="active")
+            data["versions"] = [version]
+            data["settings"]["active_version_id"] = version["id"]
+        return data
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "get_marketing_page_data", page_data)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.get("/marketing/")
+
+    assert response.status_code == 200
+    assert ("Экстренная остановка" in response.text) is shows_stop
+    assert ("Возобновить программу" in response.text) is shows_resume
+
+
+@pytest.mark.asyncio
+async def test_empty_dashboard_explains_next_step_without_fake_pagination(monkeypatch):
+    async def current_user(_request):
+        return _user()
+
+    async def page_data(*_args, **_kwargs):
+        return _dashboard()
+
+    monkeypatch.setattr(reactivation_routes, "get_current_user", current_user)
+    monkeypatch.setattr(reactivation_routes.database, "get_database", object)
+    monkeypatch.setattr(reactivation_routes.rdb, "get_marketing_page_data", page_data)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.get("/marketing/")
+
+    assert response.status_code == 200
+    assert "Нет клиентов с подтверждённым рекламным согласием" in response.text
+    assert "Реактивации ещё не запускались" in response.text
+    assert "Клиенты ещё не давали рекламное согласие" in response.text
+    assert "Страница 1" not in response.text
 
 
 @pytest.mark.asyncio
