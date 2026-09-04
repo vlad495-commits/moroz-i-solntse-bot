@@ -10,9 +10,15 @@ from moroz.booking.models import BookingIdentity, BookingScenario, Slot, SlotQue
 from moroz.booking.ports import BookingPort
 from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
+from moroz.booking.yclients_catalog import walk_in_family
 
 
 STALE_REPLY = "Эта кнопка уже неактуальна. Начните запись заново."
+_WALK_IN_LABELS = {
+    "collagenarium": "Коллагенарий",
+    "collarium": "Коллариум",
+    "solarium": "Солярий",
+}
 
 
 def _utc_now() -> datetime:
@@ -176,7 +182,7 @@ class TelegramBookingCoordinator:
             state={
                 "step": "service",
                 "source": "telegram",
-                "choices": [self._service_choice(service) for service in services],
+                "choices": self._service_choices(services),
             },
             error_code=None,
             created_at=self._now(),
@@ -335,6 +341,21 @@ class TelegramBookingCoordinator:
     async def _choose_service(
         self, scenario: BookingScenario, choice: Mapping[str, object]
     ) -> BookingReply:
+        walk_in = choice.get("walk_in")
+        if isinstance(walk_in, str) and walk_in in _WALK_IN_LABELS:
+            closed = replace(
+                scenario,
+                phase="failed",
+                error_code="walk_in_no_booking",
+                updated_at=self._now(),
+            )
+            await self._repository.checkpoint(closed, "booking_walk_in_selected")
+            return BookingReply(
+                f"{_WALK_IN_LABELS[walk_in]}: предварительная запись не нужна. "
+                "Можно прийти ежедневно с 10:00 до 21:00. Чтобы выбрать другую "
+                "услугу, нажмите «Записаться» ещё раз.",
+                {},
+            )
         variants = choice.get("variants")
         if not isinstance(variants, tuple):
             return BookingReply(STALE_REPLY, {})
@@ -575,6 +596,25 @@ class TelegramBookingCoordinator:
                 for variant in service.variants
             ],
         }
+
+    @classmethod
+    def _service_choices(
+        cls, services: tuple[CatalogService, ...]
+    ) -> list[dict[str, object]]:
+        families = {
+            family
+            for service in services
+            if (family := walk_in_family(service.service_name)) is not None
+        }
+        return [
+            {"walk_in": family, "label": label}
+            for family, label in _WALK_IN_LABELS.items()
+            if family in families
+        ] + [
+            cls._service_choice(service)
+            for service in services
+            if walk_in_family(service.service_name) is None
+        ]
 
     @staticmethod
     def _slot_choice(slot: Slot) -> dict[str, object]:

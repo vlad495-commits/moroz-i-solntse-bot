@@ -47,7 +47,7 @@ class CountingAdapter(MockYclientsAdapter):
         return await super().cancel_booking(command)
 
 
-async def _coordinator(migrated_database_url):
+async def _coordinator(migrated_database_url, *, catalog_records=None):
     database = Database(migrated_database_url, min_size=1, max_size=3)
     await database.connect()
     repository = BookingRepository(database, schedule_notifications=False)
@@ -56,7 +56,7 @@ async def _coordinator(migrated_database_url):
         await catalog.replace(
             connection,
             CatalogSnapshot(
-                (
+                catalog_records or (
                     CatalogRecord(
                         "331", "10", "Криокапсула", "Крио", "Анна",
                         1000, 1000, 60,
@@ -98,6 +98,69 @@ async def _coordinator(migrated_database_url):
 async def _handle(coordinator, database, **kwargs):
     async with database.acquire() as connection:
         return await coordinator.handle(connection, **kwargs)
+
+
+async def test_walk_in_services_are_grouped_and_never_call_booking_adapter(
+    migrated_database_url,
+):
+    records = tuple(
+        CatalogRecord(str(index), "10", name, "Загар", "Анна", 100, 500, minutes)
+        for index, name, minutes in (
+            (1, "Солярий | 1 минута", 1),
+            (2, "Солярий | 5 минут", 5),
+            (3, "Коллариум 3 минуты", 3),
+            (4, "Коллариум 5 минут", 5),
+            (5, "КОЛЛАГЕНАРИЙ 1 минута", 1),
+            (6, "КОЛЛАГЕНАРИЙ 5 минут", 5),
+            (7, "Криокапсула", 2),
+        )
+    )
+    database, repository, adapter, coordinator = await _coordinator(
+        migrated_database_url, catalog_records=records
+    )
+    try:
+        expected = ["Коллагенарий", "Коллариум", "Солярий", "Криокапсула"]
+        for offset, expected_index in enumerate(range(3)):
+            customer_id = str(100 + offset)
+            reply = await _handle(
+                coordinator,
+                database,
+                customer_id=customer_id,
+                user_id="7",
+                update_id=f"walk-in-start-{offset}",
+                text="Записаться",
+                kind="text",
+                data={},
+            )
+            assert reply.text == "Выберите услугу"
+            scenario = await repository.get_active_for_customer(customer_id)
+            assert [choice["label"] for choice in scenario.state["choices"]] == expected
+
+            callback = f"booking:v1:{scenario.id.hex}:service:{expected_index}"
+            walk_in = await _handle(
+                coordinator,
+                database,
+                customer_id=customer_id,
+                user_id="7",
+                update_id=f"walk-in-select-{offset}",
+                text="",
+                kind="callback",
+                data={"callback_data": callback},
+            )
+
+            assert "предварительная запись не нужна" in walk_in.text.casefold()
+            assert "10:00 до 21:00" in walk_in.text
+            stored = await repository.get_scenario(scenario.id)
+            assert (stored.phase, stored.error_code) == ("failed", "walk_in_no_booking")
+            assert await repository.get_active_for_customer(customer_id) is None
+        assert (
+            adapter.list_calls,
+            adapter.create_calls,
+            adapter.reschedule_calls,
+            adapter.cancel_calls,
+        ) == (0, 0, 0, 0)
+    finally:
+        await database.close()
 
 
 async def test_create_booking_flow_uses_server_choices_and_mutates_once(

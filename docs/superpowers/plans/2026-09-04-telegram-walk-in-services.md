@@ -126,7 +126,7 @@ git commit -m "fix: поддержаны поминутные услуги YCLIE
 - Produces: private `TelegramBookingCoordinator._service_choices(...)`.
 - Walk-in choice shape: `{"walk_in": family, "label": public_label}`.
 
-- [ ] **Step 1: Write the failing E2E test**
+- [x] **Step 1: Write the failing E2E test**
 
 Seed multiple minute variants from all three families plus `Криокапсула`. Assert:
 
@@ -141,7 +141,7 @@ assert [choice["label"] for choice in scenario.state["choices"]] == [
 
 Select each walk-in callback and assert the reply contains `предварительная запись не нужна` and `10:00 до 21:00`, scenario phase is terminal, and adapter counters remain `(0, 0, 0, 0)`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -152,7 +152,7 @@ docker compose --env-file ../.env run --build --rm test pytest tests/e2e/booking
 
 Expected: minute variants appear separately and selecting one proceeds to staff.
 
-- [ ] **Step 3: Implement grouping and terminal reply**
+- [x] **Step 3: Implement grouping and terminal reply**
 
 Import `walk_in_family`. Build exactly one choice per family using labels:
 
@@ -166,7 +166,7 @@ _WALK_IN_LABELS = {
 
 Regular services keep `_service_choice`. In `_choose_service`, before reading `variants`, handle `choice.get("walk_in")`: checkpoint the scenario with phase `failed`, error code `walk_in_no_booking`, event `booking_walk_in_selected`, return the no-booking/hours text, and make zero calls to `BookingPort`.
 
-- [ ] **Step 4: Run GREEN and regression**
+- [x] **Step 4: Run GREEN and regression**
 
 ```powershell
 cd project
@@ -175,7 +175,7 @@ docker compose --env-file ../.env run --build --rm test pytest tests/e2e/booking
 
 Expected: all selected tests pass; ordinary create/reschedule/cancel behavior is unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add project/src/moroz/booking/telegram.py project/tests/e2e/booking/test_telegram_booking.py changelog.md
