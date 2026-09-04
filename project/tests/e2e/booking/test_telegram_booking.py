@@ -4,7 +4,13 @@ import pytest
 
 from moroz.booking.catalog import CatalogRepository
 from moroz.booking.mock_yclients import MockYclientsAdapter
-from moroz.booking.models import CreateBooking, Slot, SlotQuery
+from moroz.booking.models import (
+    CancelBooking,
+    CreateBooking,
+    RescheduleBooking,
+    Slot,
+    SlotQuery,
+)
 from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
 from moroz.booking.telegram import TelegramBookingCoordinator
@@ -21,6 +27,8 @@ class CountingAdapter(MockYclientsAdapter):
         super().__init__(slots)
         self.list_calls = 0
         self.create_calls = 0
+        self.reschedule_calls = 0
+        self.cancel_calls = 0
 
     async def list_slots(self, query: SlotQuery):
         self.list_calls += 1
@@ -29,6 +37,14 @@ class CountingAdapter(MockYclientsAdapter):
     async def create_booking(self, command: CreateBooking):
         self.create_calls += 1
         return await super().create_booking(command)
+
+    async def reschedule_booking(self, command: RescheduleBooking):
+        self.reschedule_calls += 1
+        return await super().reschedule_booking(command)
+
+    async def cancel_booking(self, command: CancelBooking):
+        self.cancel_calls += 1
+        return await super().cancel_booking(command)
 
 
 async def _coordinator(migrated_database_url):
@@ -192,6 +208,82 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         assert first.text == repeated.text
         assert "Запись подтверждена" in first.text
         assert adapter.create_calls == 1
+
+        mine = await _handle(
+            coordinator,
+            database,
+            **{**base, "update_id": "109", "text": "Мои записи", "kind": "text"},
+        )
+        assert "Криокапсула" in mine.text
+        management = await repository.get_active_for_customer("42")
+        management_token = management.id.hex
+        forged = f"booking:v1:{management_token}:booking_management:99"
+        assert (await _handle(
+            coordinator, database, **{**base, "update_id": "110", "data": {"callback_data": forged}}
+        )).text == "Эта кнопка уже неактуальна. Начните запись заново."
+
+        select = f"booking:v1:{management_token}:booking_management:0"
+        assert (await _handle(
+            coordinator, database, **{**base, "update_id": "111", "data": {"callback_data": select}}
+        )).text == "Что сделать с записью?"
+        reschedule = f"booking:v1:{management_token}:booking_action:0"
+        assert (await _handle(
+            coordinator, database, **{**base, "update_id": "112", "data": {"callback_data": reschedule}}
+        )).text == "Выберите специалиста"
+        change = await repository.get_active_for_customer("42")
+        change_token = change.id.hex
+        change_staff = f"booking:v1:{change_token}:staff:0"
+        await _handle(
+            coordinator, database, **{**base, "update_id": "113", "data": {"callback_data": change_staff}}
+        )
+        change_date = f"booking:v1:{change_token}:available_date:0"
+        await _handle(
+            coordinator, database, **{**base, "update_id": "114", "data": {"callback_data": change_date}}
+        )
+        change_slot = f"booking:v1:{change_token}:slot:0"
+        change_summary = await _handle(
+            coordinator, database, **{**base, "update_id": "115", "data": {"callback_data": change_slot}}
+        )
+        assert "Перенести запись" in change_summary.text
+        assert adapter.reschedule_calls == 0
+        change_confirm = f"booking:v1:{change_token}:confirm_change:0"
+        moved = await _handle(
+            coordinator, database, **{**base, "update_id": "116", "data": {"callback_data": change_confirm}}
+        )
+        repeated_move = await _handle(
+            coordinator, database, **{**base, "update_id": "117", "data": {"callback_data": change_confirm}}
+        )
+        assert moved.text == repeated_move.text
+        assert adapter.reschedule_calls == 1
+
+        mine = await _handle(
+            coordinator,
+            database,
+            **{**base, "update_id": "118", "text": "Мои записи", "kind": "text"},
+        )
+        assert "Криокапсула" in mine.text
+        management = await repository.get_active_for_customer("42")
+        management_token = management.id.hex
+        select = f"booking:v1:{management_token}:booking_management:0"
+        await _handle(
+            coordinator, database, **{**base, "update_id": "119", "data": {"callback_data": select}}
+        )
+        cancel = f"booking:v1:{management_token}:booking_action:1"
+        cancel_summary = await _handle(
+            coordinator, database, **{**base, "update_id": "120", "data": {"callback_data": cancel}}
+        )
+        assert "Отменить запись" in cancel_summary.text
+        assert adapter.cancel_calls == 0
+        cancel_scenario = await repository.get_active_for_customer("42")
+        cancel_confirm = f"booking:v1:{cancel_scenario.id.hex}:confirm_change:0"
+        cancelled = await _handle(
+            coordinator, database, **{**base, "update_id": "121", "data": {"callback_data": cancel_confirm}}
+        )
+        repeated_cancel = await _handle(
+            coordinator, database, **{**base, "update_id": "122", "data": {"callback_data": cancel_confirm}}
+        )
+        assert cancelled.text == repeated_cancel.text
+        assert adapter.cancel_calls == 1
     finally:
         await database.close()
 

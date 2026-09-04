@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from moroz.booking.catalog import CatalogRepository, CatalogService
-from moroz.booking.models import BookingScenario, Slot, SlotQuery
+from moroz.booking.models import BookingIdentity, BookingScenario, Slot, SlotQuery
 from moroz.booking.ports import BookingPort
 from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
@@ -70,6 +70,8 @@ class TelegramBookingCoordinator:
 
         scenario = await self._repository.get_active_for_customer(customer_id)
         if scenario is None:
+            if kind == "text" and "мои запис" in text.casefold():
+                return await self._start_management(customer_id, update_id)
             if kind != "text" or "запис" not in text.casefold():
                 return None
             return await self._start(connection, customer_id, update_id)
@@ -87,6 +89,57 @@ class TelegramBookingCoordinator:
             state["customer_name"] = name
             return await self._show_confirmation(scenario, state)
         return self._render_current(scenario)
+
+    async def _start_management(
+        self, customer_id: str, update_id: str
+    ) -> BookingReply:
+        owned = await self._repository.list_future_owned(customer_id, self._now())
+        if not owned:
+            return BookingReply(
+                "Здесь можно управлять только будущими записями, созданными через этот Telegram-чат. По остальным поможет администратор.",
+                {},
+            )
+        choices = []
+        for booking, raw_state in owned:
+            state = self._state_item(raw_state)
+            service_name = str(state.get("service_name", "Услуга"))
+            staff_name = str(state.get("staff_name", "Специалист"))
+            choices.append(
+                {
+                    "external_id": booking.external_id,
+                    "booking_key": str(booking.booking_key),
+                    "slot_id": booking.slot_id,
+                    "starts_at": booking.starts_at.isoformat(),
+                    "service_id": str(state.get("service_id", "")),
+                    "service_name": service_name,
+                    "staff_id": state.get("selected_staff_id"),
+                    "staff_name": staff_name,
+                    "staff_names": self._state_item(state.get("staff_names", {})),
+                    "label": f"{booking.starts_at:%d.%m %H:%M} — {service_name}",
+                }
+            )
+        scenario = BookingScenario(
+            id=uuid4(),
+            kind="create",
+            phase="collecting",
+            idempotency_key=f"telegram:manage:{update_id}",
+            customer_id=customer_id,
+            state={
+                "step": "booking_management",
+                "source": "telegram",
+                "choices": choices,
+            },
+            error_code=None,
+            created_at=self._now(),
+            updated_at=self._now(),
+        )
+        await self._repository.create_scenario(scenario)
+        details = "\n".join(str(choice["label"]) for choice in choices)
+        return self._choice_reply(
+            scenario,
+            f"Ваши записи:\n{details}",
+            "booking_management",
+        )
 
     async def _start(
         self,
@@ -146,6 +199,17 @@ class TelegramBookingCoordinator:
                 confirmed=True,
             )
             return BookingReply(result.message, {})
+        if (
+            action == "confirm_change"
+            and index == 0
+            and scenario.state.get("step") == "confirm_change"
+        ):
+            result = await self._booking_service.handle(
+                scenario.id,
+                confirmed=True,
+                identity=BookingIdentity(customer_id, confirmed=True),
+            )
+            return BookingReply(result.message, {})
         if scenario.phase != "collecting" or scenario.state.get("step") != action:
             return BookingReply(STALE_REPLY, {})
         choices = scenario.state.get("choices")
@@ -162,7 +226,86 @@ class TelegramBookingCoordinator:
             return await self._choose_date(scenario, choice)
         if action == "slot":
             return await self._choose_slot(scenario, choice)
+        if action == "booking_management":
+            return await self._choose_owned_booking(scenario, choice)
+        if action == "booking_action":
+            return await self._begin_change(scenario, choice)
         return BookingReply(STALE_REPLY, {})
+
+    async def _choose_owned_booking(
+        self, scenario: BookingScenario, choice: Mapping[str, object]
+    ) -> BookingReply:
+        state = self._state(scenario)
+        state.update(
+            {
+                "step": "booking_action",
+                "selected_booking": self._state_item(choice),
+                "choices": [
+                    {"operation": "reschedule", "label": "Перенести"},
+                    {"operation": "cancel", "label": "Отменить"},
+                ],
+            }
+        )
+        updated = await self._checkpoint(
+            scenario, state, "booking_management_selected"
+        )
+        return self._choice_reply(updated, "Что сделать с записью?", "booking_action")
+
+    async def _begin_change(
+        self, management: BookingScenario, choice: Mapping[str, object]
+    ) -> BookingReply:
+        operation = str(choice.get("operation", ""))
+        if operation not in {"reschedule", "cancel"}:
+            return BookingReply(STALE_REPLY, {})
+        selected = management.state.get("selected_booking")
+        if not isinstance(selected, Mapping):
+            return BookingReply(STALE_REPLY, {})
+        closed = replace(management, phase="failed", updated_at=self._now())
+        await self._repository.checkpoint(closed, "booking_management_completed")
+        base_state = {
+            "source": "telegram",
+            "external_id": str(selected["external_id"]),
+            "booking_key": str(selected["booking_key"]),
+            "starts_at": str(selected["starts_at"]),
+            "service_id": str(selected["service_id"]),
+            "service_name": str(selected["service_name"]),
+            "staff_id": selected.get("staff_id"),
+            "staff_name": str(selected["staff_name"]),
+            "staff_names": self._state_item(selected.get("staff_names", {})),
+        }
+        scenario = BookingScenario(
+            id=uuid4(),
+            kind=operation,
+            phase=("collecting" if operation == "reschedule" else "awaiting_confirmation"),
+            idempotency_key=f"telegram:{operation}:{management.id.hex}",
+            customer_id=management.customer_id,
+            state=base_state,
+            error_code=None,
+            created_at=self._now(),
+            updated_at=self._now(),
+        )
+        if operation == "cancel":
+            scenario = replace(scenario, state={**base_state, "step": "confirm_change"})
+            await self._repository.create_scenario(scenario)
+            return BookingReply(
+                f"Отменить запись на {datetime.fromisoformat(str(selected['starts_at'])):%d.%m %H:%M}?",
+                self._inline_options(
+                    [[("Да, отменить", self._callback(scenario, "confirm_change", 0))]]
+                ),
+            )
+        staff_names = base_state["staff_names"]
+        choices = [{"staff_id": None, "label": "Любой специалист"}]
+        if isinstance(staff_names, Mapping):
+            choices.extend(
+                {"staff_id": staff_id, "label": label}
+                for staff_id, label in staff_names.items()
+            )
+        scenario = replace(
+            scenario,
+            state={**base_state, "step": "staff", "choices": choices},
+        )
+        await self._repository.create_scenario(scenario)
+        return self._choice_reply(scenario, "Выберите специалиста", "staff")
 
     async def _choose_service(
         self, scenario: BookingScenario, choice: Mapping[str, object]
@@ -260,13 +403,26 @@ class TelegramBookingCoordinator:
         self, scenario: BookingScenario, choice: Mapping[str, object]
     ) -> BookingReply:
         state = self._state(scenario)
-        state.update(
-            {
-                "step": "contact",
-                "selected_slot_id": str(choice["slot_id"]),
-                "starts_at": str(choice["starts_at"]),
-            }
-        )
+        state["selected_slot_id"] = str(choice["slot_id"])
+        state["selected_staff_id"] = choice.get("staff_id")
+        if scenario.kind == "reschedule":
+            state.update(
+                {"step": "confirm_change", "new_starts_at": str(choice["starts_at"])}
+            )
+            updated = replace(
+                scenario,
+                phase="awaiting_confirmation",
+                state=state,
+                updated_at=self._now(),
+            )
+            await self._repository.checkpoint(updated, "booking_reschedule_collected")
+            return BookingReply(
+                f"Перенести запись на {datetime.fromisoformat(str(choice['starts_at'])):%d.%m %H:%M}?",
+                self._inline_options(
+                    [[("Да, перенести", self._callback(updated, "confirm_change", 0))]]
+                ),
+            )
+        state.update({"step": "contact", "starts_at": str(choice["starts_at"])})
         await self._checkpoint(scenario, state, "booking_slot_selected")
         return BookingReply(
             "Отправьте свой контакт кнопкой ниже или напишите номер телефона.",

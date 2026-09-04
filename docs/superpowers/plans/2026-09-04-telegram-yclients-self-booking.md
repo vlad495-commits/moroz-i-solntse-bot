@@ -317,7 +317,7 @@ git commit -m "feat: добавлена запись внутри Telegram"
 **Files:**
 - Modify: `project/src/moroz/booking/telegram.py`
 - Modify: `project/src/moroz/booking/repository.py`
-- Test: `project/tests/unit/booking/test_telegram_booking.py`
+- Test: `project/tests/unit/booking/test_telegram_booking_unit.py`
 - Test: `project/tests/e2e/booking/test_telegram_booking.py`
 - Test: `project/tests/e2e/booking/test_change_booking.py`
 
@@ -325,11 +325,11 @@ git commit -m "feat: добавлена запись внутри Telegram"
 - Extends: `TelegramBookingCoordinator.handle(...)` with `booking_management` and `my_bookings`.
 - Preserves: existing `BookingIdentity`, three-hour cutoff and unknown-outcome escalation.
 
-- [ ] **Step 1: Write ownership RED**
+- [x] **Step 1: Write ownership RED**
 
 Seed own future, other-customer, cancelled and past bookings. Assert `Мои записи` renders only the own future active record and callback selection cannot address another external ID even when forged.
 
-- [ ] **Step 2: Run ownership RED**
+- [x] **Step 2: Run ownership RED**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -338,11 +338,11 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: fail because management flow is absent.
 
-- [ ] **Step 3: Implement server-owned booking selection**
+- [x] **Step 3: Implement server-owned booking selection**
 
 Store choices as local booking identifiers from `list_future_owned`; callback carries only choice index. Render service/staff labels from the last scenario state. When none exist, answer that the bot can manage only records created through this Telegram chat and provide the administrator contact.
 
-- [ ] **Step 4: Write reschedule/cancel RED**
+- [x] **Step 4: Write reschedule/cancel RED**
 
 Assert:
 
@@ -355,11 +355,11 @@ assert fake_port.cancel_calls == 1
 
 Also assert action without explicit confirmation makes zero mutation calls, a change inside three hours returns `late_booking_change`, and `BookingOutcomeUnknown` becomes `booking_outcome_unknown` without retry.
 
-- [ ] **Step 5: Implement using existing BookingService**
+- [x] **Step 5: Implement using existing BookingService**
 
 Create `reschedule` and `cancel` `BookingScenario` objects with current local `external_id`, `starts_at`, service/staff display state and exact original `booking_key`. Pass `BookingIdentity(customer_id, confirmed=True)` only after the repository ownership query. For reschedule reuse the same service and return to staff/date/slot steps; do not support service change.
 
-- [ ] **Step 6: Run GREEN and regression**
+- [x] **Step 6: Run GREEN and regression**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -370,7 +370,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all pass; mutations occur once and only for owned records.
 
-- [ ] **Step 7: Document and commit**
+- [x] **Step 7: Document and commit**
 
 ```powershell
 git add -- project/src/moroz/booking/telegram.py `
