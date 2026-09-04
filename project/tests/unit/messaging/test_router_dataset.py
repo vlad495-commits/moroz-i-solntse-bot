@@ -59,12 +59,10 @@ def test_router_v2_dataset_has_stable_unique_contract():
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda case: case["case_key"])
-def test_router_v2_source_matches_runtime_deterministic_boundary(case):
+def test_historical_router_cases_now_all_require_semantic_classification(case):
     masked_input = PiiSession().mask(case["input"]).text
     decision = deterministic_route(masked_input)
 
-    if case["expected_source"] == "llm":
-        assert decision is None
-    else:
-        assert decision is not None
-        assert decision.route == case["expected_route"]
+    # v2 is an immutable migration seed. Its historical source is not today's
+    # routing policy; the expected semantic destination remains applicable.
+    assert decision is None

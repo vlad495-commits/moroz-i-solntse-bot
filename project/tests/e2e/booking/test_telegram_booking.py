@@ -18,6 +18,7 @@ from moroz.booking.service import BookingService
 from moroz.booking.telegram import TelegramBookingCoordinator
 from moroz.booking.yclients_catalog import CatalogRecord, CatalogSnapshot
 from moroz.common.db import Database
+from moroz.messaging.router import RouteDecision
 
 
 pytestmark = pytest.mark.asyncio
@@ -98,6 +99,25 @@ async def _coordinator(migrated_database_url, *, catalog_records=None):
 
 
 async def _handle(coordinator, database, **kwargs):
+    # Legacy fixtures name logical actions; issue current signed-view buttons.
+    if kwargs.get("kind") == "callback":
+        raw = kwargs.get("data", {}).get("callback_data", "")
+        parsed = coordinator._parse_callback(raw)
+        if parsed is not None and parsed[3] is None:
+            scenario = await coordinator._repository.get_scenario(parsed[0])
+            if scenario is not None:
+                kwargs["data"] = {"callback_data": coordinator._callback(scenario, parsed[1], parsed[2])}
+    # These coordinator tests supply explicit router decisions; worker tests cover classification.
+    if kwargs.get("kind") == "text" and "decision" not in kwargs:
+        decision = {
+            "Хочу записаться": RouteDecision("booking", 1, "create"),
+            "Записаться": RouteDecision("booking", 1, "create"),
+            "Мои записи": RouteDecision("booking_management", 1, "view"),
+            "Отменить действие": RouteDecision("booking", 1, "cancel_draft"),
+            "Иван": RouteDecision("booking", 1, "provide_name"),
+        }.get(kwargs.get("text"))
+        if decision:
+            kwargs["decision"] = decision
     async with database.acquire() as connection:
         return await coordinator.handle(connection, **kwargs)
 
@@ -196,7 +216,7 @@ async def test_walk_in_services_are_grouped_and_never_call_booking_adapter(
         await database.close()
 
 
-async def test_stale_callback_opens_fresh_service_list(
+async def test_stale_callback_does_not_create_a_new_scenario(
     migrated_database_url,
 ):
     database, repository, adapter, coordinator = await _coordinator(
@@ -218,11 +238,8 @@ async def test_stale_callback_opens_fresh_service_list(
             },
         )
 
-        assert reply.text == "Выберите услугу"
-        assert _button_labels(reply) == ["Криокапсула"]
-        assert (await repository.get_active_for_customer("42")).state[
-            "step"
-        ] == "service"
+        assert "неактуальна" in reply.text
+        assert await repository.get_active_for_customer("42") is None
         assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (
             0,
             0,
@@ -383,8 +400,8 @@ async def test_stale_confirmation_is_rebuilt_and_old_confirm_cannot_execute_afte
                 },
             },
         )
-        assert old_confirm.text == "Выберите услугу"
-        assert _button_labels(old_confirm) == ["Криокапсула"]
+        assert "неактуальна" in old_confirm.text
+        assert await repository.get_active_for_customer("42") is None
         assert (adapter.create_calls, adapter.reschedule_calls) == (0, 0)
     finally:
         await database.close()
@@ -430,8 +447,12 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
                     "data": {"callback_data": callback},
                 },
             )
-            assert stale.text == "Выберите услугу"
-            assert _button_labels(stale)
+            if customer_id == "other":
+                assert "неактуальна" in stale.text
+                assert await repository.get_active_for_customer("other") is None
+            else:
+                assert stale.text == "Выберите услугу"
+                assert _button_labels(stale)
         assert (adapter.list_calls, adapter.create_calls) == (0, 0)
 
         service = f"booking:v1:{token}:service:0"
@@ -493,10 +514,14 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         first = await _handle(
             coordinator, database, **{**base, "update_id": "107", "data": {"callback_data": confirm}}
         )
+        replay = await _handle(
+            coordinator, database, **{**base, "update_id": "107", "data": {"callback_data": confirm}}
+        )
+        assert replay.text == first.text
         repeated = await _handle(
             coordinator, database, **{**base, "update_id": "108", "data": {"callback_data": confirm}}
         )
-        assert first.text == repeated.text
+        assert repeated.text == ""
         assert "Запись подтверждена" in first.text
         assert first.delivery_options["reply_markup"]["is_persistent"] is True
         assert adapter.create_calls == 1
@@ -542,7 +567,7 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         repeated_move = await _handle(
             coordinator, database, **{**base, "update_id": "117", "data": {"callback_data": change_confirm}}
         )
-        assert moved.text == repeated_move.text
+        assert repeated_move.text == ""
         assert adapter.reschedule_calls == 1
 
         mine = await _handle(
@@ -567,7 +592,7 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         repeated_cancel = await _handle(
             coordinator, database, **{**base, "update_id": "122", "data": {"callback_data": cancel_confirm}}
         )
-        assert cancelled.text == repeated_cancel.text
+        assert repeated_cancel.text == ""
         assert adapter.cancel_calls == 1
     finally:
         await database.close()

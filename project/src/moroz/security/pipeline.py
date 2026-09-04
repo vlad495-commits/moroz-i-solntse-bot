@@ -136,6 +136,8 @@ class SecurityPipeline:
         *,
         recent_message_count: int = 1,
         catalog=None,
+        dispatch=None,
+        booking_context=None,
     ) -> LLMResponse:
         decision = check_input(
             user_message,
@@ -159,6 +161,8 @@ class SecurityPipeline:
         ]
         masked_context = bound_untrusted_context(masked_history)
         masked_current = session.mask(user_message)
+        if booking_context:
+            masked_context.append({"role": "assistant", "content": session.mask(booking_context).text})
         forbidden_raw = session.raw_values()
         accumulated: list[LLMResponse] = []
 
@@ -222,6 +226,25 @@ class SecurityPipeline:
         except asyncio.CancelledError:
             await _cancel_and_drain(security_task, router_task)
             raise
+
+        if route_source == "fallback" and (dispatch is not None or self.router is not None):
+            return _aggregate(accumulated,
+                "Не удалось понять запрос. Попробуйте ещё раз или воспользуйтесь кнопками меню.",
+                "router-fallback")
+        logger.info("intent_decision route=%s source=%s action=%s confidence=%s",
+                    route.route, route_source, route.action, _confidence_bucket(route.confidence))
+        if dispatch is not None:
+            if route.confidence < 0.6:
+                return _aggregate(accumulated,
+                    "Уточните, пожалуйста: посмотреть свободное время, свои записи или задать вопрос об услуге?",
+                    "router-clarification")
+            reply = await dispatch(route)
+            if reply is not None:
+                return _aggregate(accumulated, reply, "booking-local")
+        elif self.router is not None and route.route in {"booking", "booking_management"}:
+            return _aggregate(accumulated,
+                "Запись внутри Telegram сейчас недоступна. Воспользуйтесь кнопками меню или напишите администратору.",
+                "booking-unavailable")
 
         route_metadata = (
             f"ROUTE route={route.route}; "

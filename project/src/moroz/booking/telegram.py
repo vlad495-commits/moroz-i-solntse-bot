@@ -2,6 +2,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
+import json
+import hashlib
 
 import asyncpg
 
@@ -12,6 +14,8 @@ from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
 from moroz.booking.yclients_catalog import walk_in_family
 from moroz.messaging.telegram import main_menu_options
+from moroz.messaging.router import RouteDecision
+from moroz.booking.time_display import MOSCOW, format_booking_time
 
 
 STALE_REPLY = "Эта кнопка уже неактуальна. Начните запись заново."
@@ -29,6 +33,7 @@ _WALK_IN_LABELS = {
     "collarium": "Коллариум",
     "solarium": "Солярий",
 }
+_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page")
 
 
 def persistent_menu_command(text: str) -> str | None:
@@ -47,6 +52,8 @@ class BookingReply:
 
 
 def normalize_russian_phone(value: str) -> str | None:
+    if any(character not in "+()- .\t\r\n0123456789" for character in value):
+        return None
     digits = "".join(character for character in value if character.isdigit())
     if len(digits) == 10:
         digits = f"7{digits}"
@@ -83,6 +90,7 @@ class TelegramBookingCoordinator:
         text: str,
         kind: str,
         data: Mapping[str, object],
+        decision: RouteDecision | None = None,
     ) -> BookingReply | None:
         if kind == "callback":
             return await self._handle_callback(
@@ -114,14 +122,21 @@ class TelegramBookingCoordinator:
             if menu_command == _MENU_BOOK:
                 return await self._start(connection, customer_id, update_id)
             return None
-        if scenario is None:
-            if kind == "text" and "мои запис" in text.casefold():
-                return await self._start_management(customer_id, update_id)
-            if kind != "text" or "запис" not in text.casefold():
-                return None
-            return await self._start(connection, customer_id, update_id)
-
-        if kind == "text" and text.strip().casefold() == "отменить действие":
+        if decision is None:
+            if scenario is not None and scenario.state.get("step") == "contact" and (
+                kind == "contact" or normalize_russian_phone(text) is not None
+            ):
+                return await self._collect_contact(connection, scenario, user_id, text, kind, data)
+            return BookingReply(STALE_REPLY, main_menu_options()) if kind == "contact" else None
+        if decision.route not in {"booking", "booking_management"}:
+            return None
+        if scenario is not None and scenario.phase == "executing":
+            return BookingReply("Запись уже обрабатывается. Дождитесь результата.", {})
+        if decision.action == "clarify":
+            return BookingReply("Вы хотите прекратить текущее оформление или отменить уже созданную запись?", {})
+        if decision.action == "cancel_draft":
+            if scenario is None:
+                return BookingReply("Сейчас нет незавершённого оформления.", main_menu_options())
             cancelled = replace(
                 scenario,
                 phase="failed",
@@ -134,12 +149,36 @@ class TelegramBookingCoordinator:
                 main_menu_options(),
             )
 
+        if decision.route == "booking_management":
+            if scenario is not None and scenario.state.get("step") in {"booking_management", "booking_action"}:
+                if scenario.state.get("step") == "booking_action" and decision.action in {"cancel", "reschedule"}:
+                    return await self._begin_change(scenario, {"operation": decision.action})
+                if decision.choice is not None:
+                    return await self._semantic_choice(connection, scenario, customer_id, user_id, update_id, decision.choice)
+                return self._render_current(scenario)
+            if scenario is not None:
+                await self._repository.checkpoint(replace(scenario, phase="failed", updated_at=self._now()), "booking_flow_switched")
+            return await self._start_management(customer_id, update_id, operation=decision.action)
+        if scenario is None:
+            return await self._start(connection, customer_id, update_id, decision=decision)
+        if decision.service:
+            decision = replace(decision, date=decision.date or scenario.state.get("requested_date"))
+            await self._repository.checkpoint(replace(scenario, phase="failed", updated_at=self._now()), "booking_flow_switched")
+            return await self._start(connection, customer_id, update_id, decision=decision)
+        if decision.date:
+            state = self._state(scenario)
+            state["requested_date"] = decision.date
+            scenario = await self._checkpoint(scenario, state, "booking_date_requested")
+            if state.get("service_id"):
+                return await self._choose_staff(scenario, {"staff_id": state.get("staff_id"), "label": state.get("staff_name", "Любой специалист")})
+        if decision.choice is not None:
+            return await self._semantic_choice(connection, scenario, customer_id, user_id, update_id, decision.choice)
         step = scenario.state.get("step")
         if step == "contact":
             return await self._collect_contact(
                 connection, scenario, user_id, text, kind, data
             )
-        if step == "name" and kind == "text":
+        if step == "name" and kind == "text" and decision.action == "provide_name":
             name = text.strip()
             if not name:
                 return BookingReply("Как вас зовут?", {})
@@ -148,8 +187,24 @@ class TelegramBookingCoordinator:
             return await self._show_confirmation(scenario, state)
         return self._render_current(scenario)
 
+    async def _semantic_choice(self, connection, scenario, customer_id, user_id, update_id, index):
+        step = str(scenario.state.get("step"))
+        if step not in {"service", "staff", "available_date", "slot", "booking_management", "booking_action"}:
+            return self._render_current(scenario)
+        return await self._handle_callback(connection, customer_id, user_id, update_id, self._callback(scenario, step, index))
+
+    async def routing_context(self, customer_id: str) -> str:
+        scenario = await self._repository.get_active_for_customer(customer_id)
+        state = {"today": self._now().astimezone(MOSCOW).date().isoformat(), "active": scenario is not None}
+        if scenario is not None:
+            state.update({"kind": scenario.kind, "step": scenario.state.get("step"),
+                          "service": scenario.state.get("service_name"),
+                          "date": scenario.state.get("requested_date") or scenario.state.get("selected_date"),
+                          "choices": [str(item.get("label", "")) for item in scenario.state.get("choices", ()) if isinstance(item, Mapping)]})
+        return "Текущее состояние записи (данные): " + json.dumps(state, ensure_ascii=False)
+
     async def _start_management(
-        self, customer_id: str, update_id: str
+        self, customer_id: str, update_id: str, *, operation: str = "view"
     ) -> BookingReply:
         owned = await self._repository.list_future_owned(customer_id, self._now())
         if not owned:
@@ -173,7 +228,7 @@ class TelegramBookingCoordinator:
                     "staff_id": state.get("selected_staff_id"),
                     "staff_name": staff_name,
                     "staff_names": self._state_item(state.get("staff_names", {})),
-                    "label": f"{booking.starts_at:%d.%m %H:%M} — {service_name}",
+                    "label": f"{format_booking_time(booking.starts_at)} — {service_name}",
                 }
             )
         scenario = BookingScenario(
@@ -184,6 +239,7 @@ class TelegramBookingCoordinator:
             customer_id=customer_id,
             state={
                 "step": "booking_management",
+                "management_operation": operation,
                 "source": "telegram",
                 "choices": choices,
             },
@@ -191,7 +247,11 @@ class TelegramBookingCoordinator:
             created_at=self._now(),
             updated_at=self._now(),
         )
-        await self._repository.create_scenario(scenario)
+        scenario_id = await self._repository.create_scenario(scenario)
+        scenario = await self._repository.get_scenario(scenario_id)
+        if scenario.phase != "collecting":
+            active = await self._repository.get_active_for_customer(customer_id)
+            return self._render_current(active) if active is not None else BookingReply(STALE_REPLY, main_menu_options())
         if len(choices) == 1:
             return await self._choose_owned_booking(scenario, choices[0])
         details = "\n".join(str(choice["label"]) for choice in choices)
@@ -206,12 +266,19 @@ class TelegramBookingCoordinator:
         connection: asyncpg.Connection,
         customer_id: str,
         update_id: str,
+        *, decision: RouteDecision | None = None,
     ) -> BookingReply:
         services = await self._catalog.list_services(connection, self._now())
         if not services:
             return BookingReply(
                 "Сейчас не могу загрузить услуги. Напишите администратору.", {}
             )
+        choices = self._service_choices(services)
+        if decision is not None and decision.service:
+            query = decision.service.casefold().replace("ё", "е").strip()
+            choices = [item for item in choices if f" {query} " in f" {str(item['label']).casefold().replace('ё', 'е')} "]
+            if not choices:
+                return BookingReply("Не нашёл такую услугу в каталоге. Уточните её название или откройте список кнопкой «📅 Записаться».", main_menu_options())
         scenario = BookingScenario(
             id=uuid4(),
             kind="create",
@@ -221,20 +288,26 @@ class TelegramBookingCoordinator:
             state={
                 "step": "service",
                 "source": "telegram",
-                "choices": self._service_choices(services),
+                "choices": choices,
+                "requested_date": decision.date if decision is not None else None,
             },
             error_code=None,
             created_at=self._now(),
             updated_at=self._now(),
         )
         try:
-            await self._repository.create_scenario(scenario)
+            scenario_id = await self._repository.create_scenario(scenario)
+            scenario = await self._repository.get_scenario(scenario_id)
         except asyncpg.UniqueViolationError:
             active = await self._repository.get_active_for_customer(customer_id)
             if active is None:
                 raise
             return self._render_current(active)
-        return self._choice_reply(scenario, "Выберите услугу", "service")
+        if scenario.phase != "collecting":
+            return await self._recover_callback(connection, customer_id, update_id)
+        if decision is not None and decision.service and len(choices) == 1:
+            return await self._choose_service(scenario, scenario.state["choices"][0])
+        return self._choice_reply(scenario, "Уточните услугу" if decision and decision.service else "Выберите услугу", "service")
 
     async def _handle_callback(
         self,
@@ -249,12 +322,28 @@ class TelegramBookingCoordinator:
             return await self._recover_callback(
                 connection, customer_id, update_id
             )
-        scenario_id, action, index = parsed
+        scenario_id, action, index, revision = parsed
         scenario = await self._repository.get_scenario(scenario_id)
         if scenario is None or scenario.customer_id != customer_id:
             return await self._recover_callback(
                 connection, customer_id, update_id
             )
+        if scenario.phase == "confirmed" and action in {"confirm", "confirm_change"} and scenario.state.get("confirmation_update_id") != update_id:
+            return BookingReply("", {})
+        if revision != self._callback_revision(scenario):
+            return await self._recover_callback(connection, customer_id, update_id)
+        if action == "page" and scenario.phase == "collecting":
+            choices = scenario.state.get("choices", ())
+            if not 0 <= index <= (len(choices) - 1) // 8:
+                return self._render_current(scenario)
+            state = self._state(scenario)
+            state["page"] = index
+            current = await self._checkpoint(scenario, state, "booking_page_selected")
+            return self._render_current(current)
+        if scenario.phase == "awaiting_confirmation" and action in {"confirm", "confirm_change"} and index == 0:
+            state = self._state(scenario)
+            state["confirmation_update_id"] = update_id
+            scenario = await self._checkpoint(scenario, state, "booking_confirmation_received")
         if (
             action == "confirm"
             and index == 0
@@ -265,6 +354,9 @@ class TelegramBookingCoordinator:
                 scenario.id,
                 confirmed=True,
             )
+            if result.next_action == "choose_slot":
+                current = await self._repository.get_scenario(scenario.id)
+                return await self._choose_staff(current, {"staff_id": current.state.get("staff_id"), "label": current.state.get("staff_name", "Любой специалист")})
             return BookingReply(result.message, main_menu_options())
         if (
             action == "confirm_change"
@@ -277,6 +369,9 @@ class TelegramBookingCoordinator:
                 confirmed=True,
                 identity=BookingIdentity(customer_id, confirmed=True),
             )
+            if result.next_action == "choose_slot":
+                current = await self._repository.get_scenario(scenario.id)
+                return await self._choose_staff(current, {"staff_id": current.state.get("staff_id"), "label": current.state.get("staff_name", "Любой специалист")})
             return BookingReply(result.message, main_menu_options())
         if scenario.phase != "collecting" or scenario.state.get("step") != action:
             return await self._recover_callback(
@@ -315,7 +410,7 @@ class TelegramBookingCoordinator:
         active = await self._repository.get_active_for_customer(customer_id)
         if active is not None:
             return self._render_current(active)
-        return await self._start(connection, customer_id, update_id)
+        return BookingReply(STALE_REPLY, main_menu_options())
 
     async def _choose_owned_booking(
         self, scenario: BookingScenario, choice: Mapping[str, object]
@@ -334,6 +429,9 @@ class TelegramBookingCoordinator:
         updated = await self._checkpoint(
             scenario, state, "booking_management_selected"
         )
+        operation = state.get("management_operation")
+        if operation in {"cancel", "reschedule"}:
+            return await self._begin_change(updated, {"operation": operation})
         label = str(choice.get("label", "Запись"))
         return self._choice_reply(
             updated,
@@ -378,7 +476,7 @@ class TelegramBookingCoordinator:
             scenario = replace(scenario, state={**base_state, "step": "confirm_change"})
             await self._repository.create_scenario(scenario)
             return BookingReply(
-                f"Отменить запись на {datetime.fromisoformat(str(selected['starts_at'])):%d.%m %H:%M}?",
+                f"Отменить запись на {format_booking_time(str(selected['starts_at']))}?",
                 self._inline_options(
                     [[("Да, отменить", self._callback(scenario, "confirm_change", 0))]]
                 ),
@@ -437,16 +535,31 @@ class TelegramBookingCoordinator:
             }
         )
         updated = await self._checkpoint(scenario, state, "booking_service_selected")
+        if state.get("requested_date"):
+            return await self._choose_staff(updated, {"staff_id": None, "label": "Любой специалист"})
         return self._choice_reply(updated, "Выберите специалиста", "staff")
 
     async def _choose_staff(
         self, scenario: BookingScenario, choice: Mapping[str, object]
     ) -> BookingReply:
+        # Changing date/time invalidates an earlier confirmation before querying slots.
+        if scenario.phase != "collecting" or scenario.state.get("step") != "staff":
+            state = self._state(scenario)
+            state.update({"step": "staff", "choices": [
+                {"staff_id": None, "label": "Любой специалист"},
+                *[{"staff_id": key, "label": label} for key, label in state.get("staff_names", {}).items()],
+            ]})
+            scenario = await self._checkpoint(replace(scenario, phase="collecting"), state, "booking_time_reselection")
         now = self._now()
+        requested = scenario.state.get("requested_date")
+        start = datetime.fromisoformat(str(requested)).replace(tzinfo=MOSCOW) if requested else now
+        end = start + timedelta(days=1) if requested else now + timedelta(days=14)
+        if end <= now:
+            return BookingReply("Эта дата уже прошла. Укажите будущую дату.", {})
         query = SlotQuery(
             (str(scenario.state["service_id"]),),
-            now,
-            now + timedelta(days=14),
+            max(now, start),
+            end,
             str(choice["staff_id"]) if choice.get("staff_id") is not None else None,
         )
         slots = sorted(await self._port.list_slots(query), key=lambda item: item.starts_at)
@@ -457,11 +570,9 @@ class TelegramBookingCoordinator:
             )
         dates = []
         for slot in slots:
-            value = slot.starts_at.date().isoformat()
+            value = slot.starts_at.astimezone(MOSCOW).date().isoformat()
             if value not in {item["date"] for item in dates}:
-                dates.append({"date": value, "label": slot.starts_at.strftime("%d.%m")})
-            if len(dates) == 7:
-                break
+                dates.append({"date": value, "label": slot.starts_at.astimezone(MOSCOW).strftime("%d.%m")})
         state = self._state(scenario)
         state.update(
             {
@@ -479,6 +590,8 @@ class TelegramBookingCoordinator:
             }
         )
         updated = await self._checkpoint(scenario, state, "booking_staff_selected")
+        if requested:
+            return await self._choose_date(updated, {"date": requested})
         return self._choice_reply(updated, "Выберите дату", "available_date")
 
     async def _choose_date(
@@ -493,7 +606,7 @@ class TelegramBookingCoordinator:
             for item in raw_slots
             if isinstance(item, Mapping)
             and str(item.get("starts_at", ""))[:10] == selected_date
-        ][:8]
+        ]
         state = self._state(scenario)
         state.update(
             {"step": "slot", "selected_date": selected_date, "choices": slots}
@@ -519,7 +632,7 @@ class TelegramBookingCoordinator:
             )
             await self._repository.checkpoint(updated, "booking_reschedule_collected")
             return BookingReply(
-                f"Перенести запись на {datetime.fromisoformat(str(choice['starts_at'])):%d.%m %H:%M}?",
+                f"Перенести запись на {format_booking_time(str(choice['starts_at']))}?",
                 self._inline_options(
                     [[("Да, перенести", self._callback(updated, "confirm_change", 0))]]
                 ),
@@ -598,7 +711,7 @@ class TelegramBookingCoordinator:
         starts_at = datetime.fromisoformat(str(state["starts_at"]))
         text = (
             f"Проверьте запись:\n{state['service_name']}\n"
-            f"{state['staff_name']}\n{starts_at:%d.%m %H:%M}\n"
+            f"{state['staff_name']}\n{format_booking_time(starts_at)}\n"
             f"{state['customer_name']}, {masked}"
         )
         return BookingReply(
@@ -611,6 +724,9 @@ class TelegramBookingCoordinator:
     async def _checkpoint(
         self, scenario: BookingScenario, state: Mapping[str, object], event: str
     ) -> BookingScenario:
+        state = dict(state)
+        if state.get("step") != scenario.state.get("step"):
+            state["page"] = 0
         updated = replace(scenario, state=state, updated_at=self._now())
         await self._repository.checkpoint(updated, event)
         return updated
@@ -619,11 +735,21 @@ class TelegramBookingCoordinator:
         self, scenario: BookingScenario, text: str, action: str
     ) -> BookingReply:
         choices = scenario.state.get("choices")
+        choices = choices if isinstance(choices, tuple) else ()
+        page = min(int(scenario.state.get("page", 0)), max(0, (len(choices) - 1) // 8))
         rows = [
             [(str(choice["label"]), self._callback(scenario, action, index))]
-            for index, choice in enumerate(choices if isinstance(choices, tuple) else ())
+            for index, choice in enumerate(choices)
+            if page * 8 <= index < (page + 1) * 8
             if isinstance(choice, Mapping)
         ]
+        navigation = []
+        if page:
+            navigation.append(("← Назад", self._callback(scenario, "page", page - 1)))
+        if (page + 1) * 8 < len(choices):
+            navigation.append(("Далее →", self._callback(scenario, "page", page + 1)))
+        if navigation:
+            rows.append(navigation)
         return BookingReply(text, self._inline_options(rows))
 
     def _choice_options(self, scenario: BookingScenario, action: str):
@@ -653,13 +779,13 @@ class TelegramBookingCoordinator:
         if step == "confirm_change":
             if scenario.kind == "cancel":
                 starts_at = datetime.fromisoformat(str(scenario.state["starts_at"]))
-                text = f"Отменить запись на {starts_at:%d.%m %H:%M}?"
+                text = f"Отменить запись на {format_booking_time(starts_at)}?"
                 label = "Да, отменить"
             elif scenario.kind == "reschedule":
                 starts_at = datetime.fromisoformat(
                     str(scenario.state["new_starts_at"])
                 )
-                text = f"Перенести запись на {starts_at:%d.%m %H:%M}?"
+                text = f"Перенести запись на {format_booking_time(starts_at)}?"
                 label = "Да, перенести"
             else:
                 return BookingReply(STALE_REPLY, {})
@@ -714,9 +840,9 @@ class TelegramBookingCoordinator:
     def _slot_choice(slot: Slot) -> dict[str, object]:
         return {
             "slot_id": slot.id,
-            "starts_at": slot.starts_at.isoformat(),
+            "starts_at": slot.starts_at.astimezone(MOSCOW).isoformat(),
             "staff_id": slot.staff_id,
-            "label": slot.starts_at.strftime("%H:%M"),
+            "label": slot.starts_at.astimezone(MOSCOW).strftime("%H:%M"),
         }
 
     @staticmethod
@@ -734,20 +860,33 @@ class TelegramBookingCoordinator:
 
         return thaw(scenario.state)
 
-    @staticmethod
-    def _callback(scenario: BookingScenario, action: str, index: int) -> str:
-        return f"booking:v1:{scenario.id.hex}:{action}:{index}"
+    @classmethod
+    def _callback_revision(cls, scenario: BookingScenario) -> str:
+        state = cls._state(scenario)
+        view = {key: state.get(key) for key in ("step", "choices", "selected_slot_id", "new_starts_at", "selected_booking", "requested_date")}
+        return hashlib.sha256(json.dumps(view, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
+
+    @classmethod
+    def _callback(cls, scenario: BookingScenario, action: str, index: int) -> str:
+        code = _CALLBACK_ACTIONS.index(action)
+        return f"booking:v1:{scenario.id.hex}:{code}:{index}.{cls._callback_revision(scenario)}"
 
     @staticmethod
-    def _parse_callback(raw: object) -> tuple[UUID, str, int] | None:
+    def _parse_callback(raw: object) -> tuple[UUID, str, int, str | None] | None:
         if not isinstance(raw, str):
             return None
         parts = raw.split(":")
         if len(parts) != 5 or parts[:2] != ["booking", "v1"]:
             return None
         try:
-            return UUID(hex=parts[2]), parts[3], int(parts[4])
-        except (ValueError, TypeError):
+            if "." not in parts[4]:
+                return UUID(hex=parts[2]), parts[3], int(parts[4]), None
+            index, revision = parts[4].split(".", 1)
+            code = int(parts[3])
+            if not 0 <= code < len(_CALLBACK_ACTIONS):
+                return None
+            return UUID(hex=parts[2]), _CALLBACK_ACTIONS[code], int(index), revision
+        except (ValueError, TypeError, IndexError):
             return None
 
     @staticmethod

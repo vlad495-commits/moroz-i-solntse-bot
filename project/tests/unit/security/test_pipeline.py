@@ -421,7 +421,7 @@ async def test_router_gets_bounded_history_and_security_gets_only_masked_current
                 source="fallback",
                 reason_code="router_unavailable",
             ),
-            "answer",
+            "Не удалось понять запрос. Попробуйте ещё раз или воспользуйтесь кнопками меню.",
         ),
         (
             security_response("block", "prompt_attack"),
@@ -460,11 +460,8 @@ async def test_router_error_after_allow_uses_safe_general_answer_path():
 
     result = await pipeline(gateway, router=router).respond("Да, завтра", [])
 
-    assert result.text == "answer"
-    metadata = gateway.requests[-1].messages[0]["content"]
-    assert "route=consultation" in metadata
-    assert "source=fallback" in metadata
-    assert "confidence=low" in metadata
+    assert "кнопками меню" in result.text
+    assert all(request.purpose != "answer" for request in gateway.requests)
     assert "router-response-sentinel" not in repr(gateway.requests)
 
 
@@ -529,6 +526,10 @@ async def test_non_offtopic_single_routes_continue_the_answer_path(
 
     result = await pipeline(gateway, router=router).respond("Да, завтра", [])
 
+    if route in {"booking", "booking_management"}:
+        assert "недоступна" in result.text
+        assert all(request.purpose != "answer" for request in gateway.requests)
+        return
     assert result.text == "answer"
     metadata = gateway.requests[-1].messages[0]["content"]
     assert f"ROUTE route={route};" in metadata
@@ -1330,7 +1331,7 @@ async def test_compactor_receives_full_masked_history_after_router_and_security(
         )
     )
     router = CapturingRouter(
-        RouterVerdict(RouteDecision("booking", 0.9), ())
+        RouterVerdict(RouteDecision("consultation", 0.9), ())
     )
     semantic = RecordingOutputValidator(
         OutputValidationVerdict(
@@ -1387,7 +1388,7 @@ async def test_compactor_cancellation_propagates():
         )
     )
     router = CapturingRouter(
-        RouterVerdict(RouteDecision("booking", 0.9), ())
+        RouterVerdict(RouteDecision("consultation", 0.9), ())
     )
 
     with pytest.raises(asyncio.CancelledError):

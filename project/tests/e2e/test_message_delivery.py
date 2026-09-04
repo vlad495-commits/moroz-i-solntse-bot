@@ -83,7 +83,7 @@ class FakeLLM:
         self.calls = []
         self.recent_counts = []
 
-    async def __call__(self, text, context, *, recent_message_count=1):
+    async def __call__(self, text, context, *, recent_message_count=1, dispatch=None, booking_context=None):
         self.calls.append((text, context))
         self.recent_counts.append(recent_message_count)
         return SimpleNamespace(
@@ -632,6 +632,9 @@ async def test_persistent_menu_does_not_discard_later_buffered_text(database):
             self.texts = []
             self.active = True
 
+        async def routing_context(self, customer_id):
+            return "active=false"
+
         async def handle(self, connection, **kwargs):
             self.texts.append(kwargs["text"])
             if kwargs["text"] == "📍 Адрес и режим":
@@ -705,7 +708,7 @@ async def test_human_mode_preserves_full_batch_ending_with_menu(database):
 
 async def test_booking_without_yclients_returns_safe_reply_without_llm(database):
     repository = MessageRepository(database)
-    assert await repository.accept(incoming(text="Хочу записаться"))
+    assert await repository.accept(incoming(text="📅 Записаться"))
     llm = FakeLLM()
     handler = MessageTaskHandler(
         database,

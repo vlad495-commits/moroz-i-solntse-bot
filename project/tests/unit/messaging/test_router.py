@@ -71,7 +71,7 @@ def test_deterministic_route_resolves_only_unambiguous_cases(
     text: str,
     expected: str,
 ) -> None:
-    assert deterministic_route(text) == RouteDecision(expected, 1.0)
+    assert deterministic_route(text) == (RouteDecision(expected, 1.0) if text in {"📅 Записаться", "✨ Услуги и цены", "📍 Адрес и режим", "👩‍💼 Позвать администратора"} else None)
 
 
 @pytest.mark.parametrize(
@@ -100,7 +100,7 @@ def test_deterministic_route_defers_context_mixed_and_nonlocal_cases(
     ],
 )
 def test_explicit_escalation_has_safe_local_priority(text: str) -> None:
-    assert deterministic_route(text) == RouteDecision("escalation", 1.0)
+    assert deterministic_route(text) is None
 
 
 @pytest.mark.parametrize(
@@ -111,7 +111,7 @@ def test_explicit_escalation_has_safe_local_priority(text: str) -> None:
     ],
 )
 def test_explicit_handoff_phrases_route_to_escalation(text: str) -> None:
-    assert deterministic_route(text) == RouteDecision("escalation", 1.0)
+    assert deterministic_route(text) is None
 
 
 @pytest.mark.parametrize(
@@ -129,7 +129,7 @@ def test_negated_complaint_does_not_create_false_escalation(
     expected: str | None,
 ) -> None:
     decision = deterministic_route(text)
-    assert (decision.route if decision else None) == expected
+    assert decision is None
 
 
 @pytest.mark.parametrize(
@@ -163,7 +163,7 @@ def test_smalltalk_rule_is_anchored_to_the_whole_message(
     expected: str | None,
 ) -> None:
     decision = deterministic_route(text)
-    assert (decision.route if decision else None) == expected
+    assert decision is None
 
 
 def test_route_message_uses_safe_general_fallback() -> None:
@@ -247,7 +247,7 @@ async def test_invalid_router_output_uses_safe_general_route(raw: str) -> None:
     verdict = await LLMIntentRouter(
         ScriptedProvider(router_response(raw))
     ).route("Неоднозначный текст", [])
-    assert verdict.decision == RouteDecision("consultation", 0.0)
+    assert verdict.decision == RouteDecision("other", 0.0)
     assert verdict.source == "fallback"
     assert verdict.confidence == 0.0
     assert verdict.reason_code == "invalid_router_output"
@@ -261,7 +261,7 @@ async def test_provider_failure_is_sanitized_and_cancellation_propagates(
     failed = await LLMIntentRouter(
         ScriptedProvider(LLMUnavailable(secret))
     ).route("Неоднозначный текст", [])
-    assert failed.decision == RouteDecision("consultation", 0.0)
+    assert failed.decision == RouteDecision("other", 0.0)
     assert failed.source == "fallback"
     assert failed.reason_code == "router_unavailable"
     assert secret not in caplog.text
@@ -279,3 +279,24 @@ def test_router_verdict_is_immutable_and_does_not_echo_input() -> None:
     assert text not in repr(verdict)
     with pytest.raises(FrozenInstanceError):
         verdict.decision = decision  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_router_extracts_structured_service_and_date():
+    payload = {'route': 'booking', 'confidence': .97, 'action': 'create',
+               'service': 'массаж', 'date': '2026-09-07', 'choice': None}
+    provider = ScriptedProvider(router_response(json.dumps(payload)))
+    verdict = await LLMIntentRouter(provider).route('Массаж 7 сентября', [])
+    assert verdict.decision == RouteDecision('booking', .97, 'create', 'массаж', '2026-09-07')
+    schema = ROUTER_RESPONSE_FORMAT['json_schema']['schema']
+    assert set(schema['required']) == set(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('field,value', [('date', '2026-02-30'), ('choice', True), ('choice', -1), ('action', 'confirm'), ('service', 12)])
+async def test_bad_booking_parameters_never_dispatch(field, value):
+    payload = {'route': 'booking', 'confidence': .97, 'action': 'create',
+               'service': 'массаж', 'date': None, 'choice': None}
+    payload[field] = value
+    verdict = await LLMIntentRouter(ScriptedProvider(router_response(json.dumps(payload)))).route('запись', [])
+    assert verdict.source == 'fallback'

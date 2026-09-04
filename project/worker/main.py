@@ -52,7 +52,7 @@ from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.router import route_message
-from moroz.messaging.telegram import TelegramSender
+from moroz.messaging.telegram import TelegramSender, main_menu_options
 from moroz.notifications.feedback import FeedbackService
 from moroz.notifications.handlers import (
     STAGING_SCHEDULER_SMOKE_KIND,
@@ -642,23 +642,14 @@ class MessageTaskHandler:
                         )
 
                 booking_reply = None
-                booking_route = (
-                    route_message(persisted_text).route
-                    if interaction_kind == "text"
-                    else "booking"
-                )
+                booking_route = route_message(persisted_text).route
                 if self._booking_coordinator is not None:
-                    booking_text = (
-                        "Мои записи"
-                        if booking_route == "booking_management"
-                        else persisted_text
-                    )
                     booking_reply = await self._booking_coordinator.handle(
                         connection,
                         customer_id=chat_id,
                         user_id=str(user_id),
                         update_id=accepted_ids[0],
-                        text=booking_text,
+                        text=persisted_text,
                         kind=interaction_kind,
                         data=interaction_data,
                     )
@@ -668,6 +659,13 @@ class MessageTaskHandler:
                         {},
                     )
                 if booking_reply is not None:
+                    if not booking_reply.text:
+                        await connection.execute(
+                            "UPDATE message_inbox SET status = 'processed' "
+                            "WHERE channel = 'telegram' AND external_message_id = ANY($1::text[])",
+                            accepted_ids,
+                        )
+                        return
                     if persisted_text:
                         await connection.execute(
                             "INSERT INTO messages "
@@ -737,6 +735,24 @@ class MessageTaskHandler:
                 }
                 if catalog is not None:
                     llm_options["catalog"] = catalog
+                if self._booking_coordinator is not None:
+                    llm_options["booking_context"] = await self._booking_coordinator.routing_context(chat_id)
+
+                async def dispatch(decision):
+                    nonlocal booking_reply
+                    if decision.route not in {"booking", "booking_management"}:
+                        return None
+                    if self._booking_coordinator is None:
+                        return "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору."
+                    booking_reply = await self._booking_coordinator.handle(
+                        connection, customer_id=chat_id, user_id=str(user_id),
+                        update_id=accepted_ids[0], text=persisted_text,
+                        kind=interaction_kind, data=interaction_data, decision=decision,
+                    )
+                    return booking_reply.text if booking_reply is not None else None
+
+                if self._booking_coordinator is not None:
+                    llm_options["dispatch"] = dispatch
                 result = await self._llm(persisted_text, context, **llm_options)
 
                 source_message_id = await connection.fetchval(
@@ -772,6 +788,8 @@ class MessageTaskHandler:
                     chat_id=chat_id,
                     text=result.text,
                     idempotency_key=reply_key,
+                    delivery_options=(booking_reply.delivery_options if booking_reply is not None else
+                                      main_menu_options() if result.model in {"router-fallback", "router-clarification", "booking-unavailable"} else {}),
                 )
                 await connection.execute(
                     """

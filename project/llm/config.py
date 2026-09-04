@@ -61,7 +61,7 @@ ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL = resolve_provider_tuple(
     "ROUTER",
     (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
 )
-ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
+ROUTER_MAX_TOKENS = max(256, int(os.getenv("ROUTER_MAX_TOKENS", "256")))
 SECURITY_MODEL, SECURITY_API_KEY, SECURITY_BASE_URL = resolve_provider_tuple(
     os.environ,
     "SECURITY",
