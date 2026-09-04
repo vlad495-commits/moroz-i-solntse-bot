@@ -547,6 +547,8 @@ git commit -m "fix: закрыты privacy-гейты Telegram-записи"
 - Produces a reviewed commit-pinned candidate.
 - Reuses the existing customer-owned app onboarding sequence; does not store credentials in Git.
 
+**Staging checkpoint 2026-09-04:** exact candidate `446023bd18f032274485c7edc61048a51818e0e0` is deployed as `rc-446023bd18f032274485c7edc61048a51818e0e0`; schema is `0025_telegram_booking_flow (head)`, all 8 services are healthy, HTTPS/admin/static/webhook and safe-log gates pass. `TELEGRAM_YCLIENTS_BOOKING_ENABLED=false`, so this checkpoint performs no new Telegram-driven YCLIENTS mutations. Customer-owned acceptance and rollback rehearsal remain open below.
+
 - [x] **Step 1: Run focused Docker gate**
 
 ```powershell
