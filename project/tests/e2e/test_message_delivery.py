@@ -626,6 +626,77 @@ async def test_persistent_menu_command_wins_over_earlier_buffered_text(database)
     assert llm.calls == []
 
 
+async def test_persistent_menu_does_not_discard_later_buffered_text(database):
+    class BookingCoordinator:
+        def __init__(self):
+            self.texts = []
+
+        async def handle(self, connection, **kwargs):
+            self.texts.append(kwargs["text"])
+            return None
+
+    repository = MessageRepository(database)
+    assert await repository.accept(
+        incoming("menu-first", "📍 Адрес и режим")
+    )
+    assert await repository.accept(incoming("question-last", "Есть парковка?"))
+    coordinator = BookingCoordinator()
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+        booking_coordinator=coordinator,
+    )
+
+    update_ids = ["menu-first", "question-last"]
+    await handler.handle(
+        QueueTask(
+            kind="process_message",
+            payload={"chat_id": "42", "update_ids": update_ids},
+            idempotency_key=process_message_key(update_ids),
+        )
+    )
+
+    expected = "📍 Адрес и режим\nЕсть парковка?"
+    assert coordinator.texts == [expected]
+    assert llm.calls[0][0] == expected
+
+
+async def test_human_mode_preserves_full_batch_ending_with_menu(database):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("human-text", "Иван"))
+    assert await repository.accept(
+        incoming("human-menu", "📍 Адрес и режим")
+    )
+    async with database.acquire() as connection:
+        await connection.execute(
+            "INSERT INTO human_mode "
+            "(customer_id, enabled, reason_code, escalation_id, enabled_at) "
+            "VALUES ('42', true, 'manual', $1, now())",
+            uuid4(),
+        )
+    handler = MessageTaskHandler(
+        database,
+        FakeLLM(),
+        TelegramSender(FakeTelegram(), repository),
+    )
+    update_ids = ["human-text", "human-menu"]
+
+    await handler.handle(
+        QueueTask(
+            kind="process_message",
+            payload={"chat_id": "42", "update_ids": update_ids},
+            idempotency_key=process_message_key(update_ids),
+        )
+    )
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT content FROM messages WHERE chat_id = 42"
+        ) == "Иван\n📍 Адрес и режим"
+
+
 async def test_booking_without_yclients_returns_safe_reply_without_llm(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming(text="Хочу записаться"))

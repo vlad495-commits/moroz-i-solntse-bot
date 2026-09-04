@@ -293,14 +293,32 @@ async def test_persistent_menu_restarts_or_leaves_unfinished_booking_flow(
 
 
 @pytest.mark.parametrize(
-    ("kind", "step", "action"),
-    (("create", "confirm", "confirm"), ("reschedule", "confirm_change", "confirm_change")),
+    ("kind", "step", "action", "state", "button_label"),
+    (
+        ("create", "confirm", "confirm", {}, "Подтвердить"),
+        (
+            "reschedule",
+            "confirm_change",
+            "confirm_change",
+            {"new_starts_at": (NOW + timedelta(days=2)).isoformat()},
+            "Да, перенести",
+        ),
+        (
+            "cancel",
+            "confirm_change",
+            "confirm_change",
+            {"starts_at": (NOW + timedelta(days=1)).isoformat()},
+            "Да, отменить",
+        ),
+    ),
 )
 async def test_stale_confirmation_is_rebuilt_and_old_confirm_cannot_execute_after_menu_exit(
     migrated_database_url,
     kind,
     step,
     action,
+    state,
+    button_label,
 ):
     database, repository, adapter, coordinator = await _coordinator(
         migrated_database_url
@@ -311,7 +329,7 @@ async def test_stale_confirmation_is_rebuilt_and_old_confirm_cannot_execute_afte
         phase="awaiting_confirmation",
         idempotency_key=f"telegram:{kind}:confirmation-recovery",
         customer_id="42",
-        state={"step": step},
+        state={"step": step, **state},
         error_code=None,
         created_at=NOW,
         updated_at=NOW,
@@ -336,7 +354,11 @@ async def test_stale_confirmation_is_rebuilt_and_old_confirm_cannot_execute_afte
                 },
             },
         )
-        assert _button_labels(stale) == ["Подтвердить"]
+        assert _button_labels(stale) == [button_label]
+        if kind == "reschedule":
+            assert stale.text.startswith("Перенести запись на")
+        elif kind == "cancel":
+            assert stale.text.startswith("Отменить запись на")
 
         routed = await _handle(
             coordinator,

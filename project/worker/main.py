@@ -583,19 +583,7 @@ class MessageTaskHandler:
                     raise ValueError("process_message spans multiple users")
                 user_id = int(user_ids.pop())
                 persisted_text = "\n".join(payload["text"] for payload in payloads)
-                menu_command = next(
-                    (
-                        command
-                        for payload in reversed(payloads)
-                        if (
-                            command := persistent_menu_command(payload["text"])
-                        )
-                        is not None
-                    ),
-                    None,
-                )
-                if interaction_kind == "text" and menu_command is not None:
-                    persisted_text = menu_command
+                menu_command = persistent_menu_command(payloads[-1]["text"])
                 accepted_ids = [row["external_message_id"] for row in accepted]
 
                 human_mode = await connection.fetchval(
@@ -623,6 +611,9 @@ class MessageTaskHandler:
                         accepted_ids,
                     )
                     return
+
+                if interaction_kind == "text" and menu_command is not None:
+                    persisted_text = menu_command
 
                 booking_reply = None
                 booking_route = (

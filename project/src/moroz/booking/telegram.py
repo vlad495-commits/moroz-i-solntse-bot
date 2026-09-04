@@ -643,12 +643,30 @@ class TelegramBookingCoordinator:
         }
         step = str(scenario.state.get("step", ""))
         text = labels.get(step, STALE_REPLY)
-        if step in {"confirm", "confirm_change"}:
-            action = "confirm" if step == "confirm" else "confirm_change"
+        if step == "confirm":
             return BookingReply(
                 text,
                 self._inline_options(
-                    [[("Подтвердить", self._callback(scenario, action, 0))]]
+                    [[("Подтвердить", self._callback(scenario, "confirm", 0))]]
+                ),
+            )
+        if step == "confirm_change":
+            if scenario.kind == "cancel":
+                starts_at = datetime.fromisoformat(str(scenario.state["starts_at"]))
+                text = f"Отменить запись на {starts_at:%d.%m %H:%M}?"
+                label = "Да, отменить"
+            elif scenario.kind == "reschedule":
+                starts_at = datetime.fromisoformat(
+                    str(scenario.state["new_starts_at"])
+                )
+                text = f"Перенести запись на {starts_at:%d.%m %H:%M}?"
+                label = "Да, перенести"
+            else:
+                return BookingReply(STALE_REPLY, {})
+            return BookingReply(
+                text,
+                self._inline_options(
+                    [[(label, self._callback(scenario, "confirm_change", 0))]]
                 ),
             )
         if step in {
