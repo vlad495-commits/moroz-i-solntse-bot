@@ -630,9 +630,15 @@ async def test_persistent_menu_does_not_discard_later_buffered_text(database):
     class BookingCoordinator:
         def __init__(self):
             self.texts = []
+            self.active = True
 
         async def handle(self, connection, **kwargs):
             self.texts.append(kwargs["text"])
+            if kwargs["text"] == "📍 Адрес и режим":
+                self.active = False
+                return None
+            if self.active:
+                return BookingReply("Текст ошибочно попал в шаг записи", {})
             return None
 
     repository = MessageRepository(database)
@@ -659,7 +665,7 @@ async def test_persistent_menu_does_not_discard_later_buffered_text(database):
     )
 
     expected = "📍 Адрес и режим\nЕсть парковка?"
-    assert coordinator.texts == [expected]
+    assert coordinator.texts == ["📍 Адрес и режим", expected]
     assert llm.calls[0][0] == expected
 
 

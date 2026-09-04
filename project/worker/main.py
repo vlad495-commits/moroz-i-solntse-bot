@@ -583,7 +583,15 @@ class MessageTaskHandler:
                     raise ValueError("process_message spans multiple users")
                 user_id = int(user_ids.pop())
                 persisted_text = "\n".join(payload["text"] for payload in payloads)
-                menu_command = persistent_menu_command(payloads[-1]["text"])
+                menu_index = next(
+                    (
+                        index
+                        for index in range(len(payloads) - 1, -1, -1)
+                        if persistent_menu_command(payloads[index]["text"])
+                        is not None
+                    ),
+                    None,
+                )
                 accepted_ids = [row["external_message_id"] for row in accepted]
 
                 human_mode = await connection.fetchval(
@@ -612,8 +620,26 @@ class MessageTaskHandler:
                     )
                     return
 
-                if interaction_kind == "text" and menu_command is not None:
-                    persisted_text = menu_command
+                if interaction_kind == "text" and menu_index is not None:
+                    menu_command = persistent_menu_command(
+                        payloads[menu_index]["text"]
+                    )
+                    if menu_index == len(payloads) - 1:
+                        persisted_text = str(menu_command)
+                    else:
+                        if self._booking_coordinator is not None:
+                            await self._booking_coordinator.handle(
+                                connection,
+                                customer_id=chat_id,
+                                user_id=str(user_id),
+                                update_id=accepted_ids[menu_index],
+                                text=str(menu_command),
+                                kind="text",
+                                data={},
+                            )
+                        persisted_text = "\n".join(
+                            payload["text"] for payload in payloads[menu_index:]
+                        )
 
                 booking_reply = None
                 booking_route = (

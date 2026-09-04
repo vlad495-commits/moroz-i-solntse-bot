@@ -637,7 +637,7 @@ class TelegramBookingCoordinator:
             "slot": "Выберите время",
             "contact": "Отправьте номер телефона.",
             "name": "Как вас зовут?",
-            "confirm": "Подтвердите запись кнопкой выше.",
+            "confirm": "Подтвердите запись кнопкой ниже.",
             "booking_management": "Выберите запись",
             "booking_action": "Выберите действие",
         }
