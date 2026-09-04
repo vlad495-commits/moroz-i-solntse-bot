@@ -205,19 +205,19 @@ docker compose --env-file ../.env run --rm test python -m compileall -q src test
 
 Expected: zero failures and zero command errors.
 
-- [ ] **Step 2: Build and deploy the exact candidate to staging**
+- [x] **Step 2: Build and deploy the exact candidate to staging**
 
 Follow the existing commit-pinned staging runbook: save rollback evidence, build an immutable `rc-<commit>` image, deploy only the candidate services, and keep `TELEGRAM_YCLIENTS_BOOKING_ENABLED=false`.
 
 Expected: 8/8 services healthy, exact image IDs, schema unchanged, HTTPS/admin/webhook green.
 
-- [ ] **Step 3: Run GET-only catalog/projection acceptance**
+- [x] **Step 3: Run GET-only catalog/projection acceptance**
 
 Run the guarded GET-only readiness script and normal scheduler projection. Record only statuses, counts and safe booleans.
 
 Expected: catalog sync no longer fails on `Солярий | 1 минута`; no POST/PUT/DELETE reaches YCLIENTS; safe-log counters stay zero.
 
-- [ ] **Step 4: Update project records and commit**
+- [x] **Step 4: Update project records and commit**
 
 Mark the walk-in roadmap item complete, preserve the production token-rotation blocker, append exact verification evidence to `changelog.md`, then:
 
