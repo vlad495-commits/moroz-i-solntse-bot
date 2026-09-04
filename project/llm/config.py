@@ -84,6 +84,10 @@ YCLIENTS_CATALOG_GROUNDING_ENABLED = _parse_boolean(
     os.getenv("YCLIENTS_CATALOG_GROUNDING_ENABLED"),
     default=False,
 )
+TELEGRAM_YCLIENTS_BOOKING_ENABLED = _parse_boolean(
+    os.getenv("TELEGRAM_YCLIENTS_BOOKING_ENABLED"),
+    default=False,
+)
 _validate_context_limits(
     CONTEXT_MESSAGES_LIMIT,
     COMPACT_THRESHOLD,

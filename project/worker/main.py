@@ -14,6 +14,7 @@ from redis.exceptions import RedisError
 from config import (
     CONTEXT_MESSAGES_LIMIT,
     DATA_RETENTION_DAYS,
+    TELEGRAM_YCLIENTS_BOOKING_ENABLED,
     YCLIENTS_CATALOG_GROUNDING_ENABLED,
 )
 from llm import generate_response, init_llm, prompt_reload_listener
@@ -1015,6 +1016,8 @@ def _scheduler_error_code(error: Exception) -> str:
 
 def _build_yclients_services(
     database: Database,
+    *,
+    telegram_booking_enabled: bool = TELEGRAM_YCLIENTS_BOOKING_ENABLED,
 ) -> tuple[
     LifecycleService | None,
     ProjectionSyncCoordinator | None,
@@ -1070,15 +1073,17 @@ def _build_yclients_services(
         SchedulerJobRepository(database),
         clock=lambda: datetime.now(UTC),
     )
-    telegram_booking_repository = BookingRepository(
-        database, schedule_notifications=True
-    )
-    telegram_booking = TelegramBookingCoordinator(
-        telegram_booking_repository,
-        catalog_repository,
-        BookingService(adapter, telegram_booking_repository),
-        adapter,
-    )
+    telegram_booking = None
+    if telegram_booking_enabled:
+        telegram_booking_repository = BookingRepository(
+            database, schedule_notifications=True
+        )
+        telegram_booking = TelegramBookingCoordinator(
+            telegram_booking_repository,
+            catalog_repository,
+            BookingService(adapter, telegram_booking_repository),
+            adapter,
+        )
     return (
         lifecycle,
         projection_sync,

@@ -828,6 +828,19 @@ def test_yclients_services_reject_partial_required_config(
         worker_main._build_yclients_services(object())
 
 
+def test_yclients_services_keep_telegram_booking_disabled_by_flag(monkeypatch):
+    monkeypatch.setenv("YCLIENTS_PARTNER_TOKEN", "partner")
+    monkeypatch.setenv("YCLIENTS_USER_TOKEN", "user")
+    monkeypatch.setenv("YCLIENTS_COMPANY_ID", "17")
+
+    services = worker_main._build_yclients_services(
+        object(), telegram_booking_enabled=False
+    )
+
+    assert all(service is not None for service in services[:6])
+    assert services[6] is None
+
+
 def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     database = object()
     built = []
@@ -954,7 +967,9 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     monkeypatch.setattr(worker_main, "ActivitySyncCoordinator", ActivitySync)
 
     lifecycle, projection_sync, catalog_sync, catalog_repository, command_service, activity_sync, telegram_booking = (
-        worker_main._build_yclients_services(database)
+        worker_main._build_yclients_services(
+            database, telegram_booking_enabled=True
+        )
     )
 
     assert isinstance(lifecycle, Lifecycle)
