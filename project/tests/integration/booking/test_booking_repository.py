@@ -306,22 +306,25 @@ async def test_reschedule_replaces_old_notification_schedule(
     async with database.acquire() as connection:
         rows = await connection.fetch(
             """
-            SELECT booking_starts_at, status, count(*) AS jobs
+            SELECT booking_starts_at, status, kind
             FROM scheduler_jobs
             WHERE booking_key = $1
-            GROUP BY booking_starts_at, status
-            ORDER BY booking_starts_at, status
+            ORDER BY booking_starts_at, status, kind
             """,
             original.booking_key,
         )
 
-    assert [
-        (row["booking_starts_at"], row["status"], row["jobs"])
-        for row in rows
-    ] == [
-        (original.starts_at, "skipped", 5),
-        (moved.starts_at, "pending", 5),
-    ]
+    old_rows = [row for row in rows if row["booking_starts_at"] == original.starts_at]
+    moved_rows = [row for row in rows if row["booking_starts_at"] == moved.starts_at]
+    assert len(old_rows) == 5
+    assert {row["status"] for row in old_rows} == {"skipped"}
+    assert {row["kind"] for row in moved_rows} == {
+        "day_before",
+        "morning",
+        "hour_before",
+        "no_show_check",
+    }
+    assert {row["status"] for row in moved_rows} == {"pending"}
 
 
 async def test_cancellation_invalidates_pending_notifications(

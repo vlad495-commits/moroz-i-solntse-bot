@@ -378,6 +378,7 @@ class BookingRepository:
                 connection,
                 booking,
                 now=scenario.updated_at,
+                include_created=scenario.kind == "create",
             )
 
     @staticmethod
@@ -386,6 +387,7 @@ class BookingRepository:
         booking: ExternalBooking,
         *,
         now,
+        include_created: bool,
     ) -> None:
         await connection.execute(
             """
@@ -408,6 +410,7 @@ class BookingRepository:
             booking_key=booking.booking_key,
             starts_at=booking.starts_at,
             now=now,
+            include_created=include_created,
         )
         await connection.executemany(
             """

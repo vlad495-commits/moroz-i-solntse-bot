@@ -71,3 +71,23 @@ def test_skips_past_reminder_deadlines_for_late_booking():
         ("booking_created", now),
         ("no_show_check", starts_at),
     ]
+
+
+def test_reschedule_skips_created_notification_but_keeps_future_jobs():
+    booking_key = uuid4()
+    now = datetime(2026, 7, 27, 8, 0, tzinfo=MOSCOW)
+    starts_at = datetime(2026, 7, 28, 15, 0, tzinfo=MOSCOW)
+
+    jobs = plan_booking_notifications(
+        booking_key=booking_key,
+        starts_at=starts_at,
+        now=now,
+        include_created=False,
+    )
+
+    assert [job.kind for job in jobs] == [
+        "day_before",
+        "morning",
+        "hour_before",
+        "no_show_check",
+    ]

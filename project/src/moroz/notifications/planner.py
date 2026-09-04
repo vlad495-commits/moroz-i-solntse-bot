@@ -15,6 +15,7 @@ def plan_booking_notifications(
     booking_key: UUID,
     starts_at: datetime,
     now: datetime,
+    include_created: bool = True,
 ) -> list[PlannedSchedulerJob]:
     starts_at = starts_at.astimezone(MOSCOW)
     now = now.astimezone(MOSCOW)
@@ -36,7 +37,7 @@ def plan_booking_notifications(
     return [
         _planned_job(booking_key, starts_at, kind, run_at)
         for kind, run_at in sorted(reminder_times.items(), key=lambda item: item[1])
-        if kind == "booking_created" or run_at >= now
+        if (kind != "booking_created" or include_created) and run_at >= now
     ]
 
 
