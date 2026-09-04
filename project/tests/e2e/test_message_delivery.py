@@ -580,6 +580,31 @@ async def test_booking_message_is_routed_before_llm(database, text):
         ) == "Ответ записи"
 
 
+async def test_booking_without_yclients_returns_safe_reply_without_llm(database):
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming(text="Хочу записаться"))
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="process_message",
+            payload={"chat_id": "42", "update_ids": ["100"]},
+            idempotency_key="process_message:100",
+        )
+    )
+
+    assert llm.calls == []
+    async with database.acquire() as connection:
+        reply = await connection.fetchval("SELECT text FROM outbound_messages")
+    assert "сейчас недоступна" in reply
+    assert "онлайн-запись" in reply
+
+
 async def test_process_message_passes_last_40_and_never_persists_compact_summary(
     database,
 ):

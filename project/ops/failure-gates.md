@@ -6,7 +6,7 @@ Run these against staging only, never against production without an explicit rel
 |---|---|---|
 | Redis | Restart Redis while a chat buffer exists. | No lost confirmed state; temporary visible delay status is acceptable. |
 | RabbitMQ | Restart RabbitMQ while worker is consuming. | Worker reconnects; no lost confirmed state; retry/DLQ semantics stay bounded. |
-| YCLIENTS | Disable YCLIENTS credentials or point to a local failing endpoint. | Booking operations fail closed; FAQ continues; admin escalation is visible. |
+| YCLIENTS | Disable YCLIENTS credentials or point to a local failing endpoint. | Telegram booking and mutations stop with a safe online-booking/admin fallback; FAQ continues; uncertain mutations are not retried. |
 | primary LLM | Disable primary LLM key or force timeout. | Reserve/safe fallback path activates; user sees visible delay status or safe escalation. |
 
 Pass criteria:

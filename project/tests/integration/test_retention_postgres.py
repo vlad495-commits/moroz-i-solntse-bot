@@ -93,6 +93,47 @@ async def test_cleanup_deletes_expired_and_preserves_fresh_rows(database):
     ]
 
 
+async def test_cleanup_removes_expired_booking_interaction_payloads(database):
+    async with database.acquire() as connection:
+        now = await connection.fetchval("SELECT now()")
+        old = now - timedelta(days=31)
+        fresh = now - timedelta(days=29)
+        for update_id, created_at in (("old-contact", old), ("fresh-contact", fresh)):
+            await connection.execute(
+                "INSERT INTO message_inbox "
+                "(id, channel, external_message_id, chat_id, payload, "
+                "correlation_id, status, created_at) "
+                "VALUES (gen_random_uuid(), 'telegram', $1, '42', $2::jsonb, "
+                "gen_random_uuid(), 'processed', $3)",
+                update_id,
+                '{"kind":"contact","data":{"phone_number":"+79991234567"}}',
+                created_at,
+            )
+        for key, created_at in (("old-booking-reply", old), ("fresh-booking-reply", fresh)):
+            await connection.execute(
+                "INSERT INTO outbound_messages "
+                "(id, channel, chat_id, text, delivery_options, idempotency_key, "
+                "status, created_at) VALUES (gen_random_uuid(), 'telegram', '42', "
+                "'booking reply', '{}'::jsonb, $1, 'sent', $2)",
+                key,
+                created_at,
+            )
+
+    await RetentionCleanupCoordinator(
+        database, Scheduler(), retention_days=30
+    ).run(retention_job(NOW))
+
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT array_agg(external_message_id ORDER BY external_message_id) "
+            "FROM message_inbox"
+        ) == ["fresh-contact"]
+        assert await connection.fetchval(
+            "SELECT array_agg(idempotency_key ORDER BY idempotency_key) "
+            "FROM outbound_messages"
+        ) == ["fresh-booking-reply"]
+
+
 async def test_second_delete_failure_rolls_back_first_delete(database):
     async with database.acquire() as connection:
         database_now = await connection.fetchval("SELECT now()")

@@ -53,6 +53,24 @@ async def delete_expired_records(connection, retention_days: int) -> dict[str, i
         "DELETE FROM token_usage USING expired WHERE token_usage.id = expired.id",
         retention_days,
     )
+    message_inbox = await connection.execute(
+        "WITH expired AS (SELECT id FROM message_inbox "
+        "WHERE status = 'processed' "
+        "AND created_at < now() - make_interval(days => $1) "
+        f"ORDER BY created_at, id LIMIT {RETENTION_BATCH_SIZE}) "
+        "DELETE FROM message_inbox USING expired "
+        "WHERE message_inbox.id = expired.id",
+        retention_days,
+    )
+    outbound_messages = await connection.execute(
+        "WITH expired AS (SELECT id FROM outbound_messages "
+        "WHERE status IN ('sent', 'failed', 'delivery_unknown') "
+        "AND created_at < now() - make_interval(days => $1) "
+        f"ORDER BY created_at, id LIMIT {RETENTION_BATCH_SIZE}) "
+        "DELETE FROM outbound_messages USING expired "
+        "WHERE outbound_messages.id = expired.id",
+        retention_days,
+    )
     journeys = await connection.execute(
         "WITH expired AS (SELECT id FROM reactivation_journeys "
         "WHERE status = 'closed' "
@@ -91,6 +109,8 @@ async def delete_expired_records(connection, retention_days: int) -> dict[str, i
     return {
         "messages": _delete_count(messages),
         "token_usage": _delete_count(token_usage),
+        "message_inbox": _delete_count(message_inbox),
+        "outbound_messages": _delete_count(outbound_messages),
         "reactivation_journeys": _delete_count(journeys),
         "customer_activity_projection": _delete_count(activity),
         "marketing_consent_events": _delete_count(consent_events),

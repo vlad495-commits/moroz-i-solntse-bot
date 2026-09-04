@@ -488,15 +488,15 @@ git commit -m "feat: подключена Telegram-запись к YCLIENTS"
 - Retention removes expired interaction payloads using the existing configured retention boundary.
 - YCLIENTS failure leaves consultation/FAQ operational and booking mutation stopped.
 
-- [ ] **Step 1: Write privacy RED**
+- [x] **Step 1: Write privacy RED**
 
 Seed phone/name in `message_inbox.payload`, `booking_scenarios.state`, booking events and outbound text for customer `42`, plus unrelated control rows. Run existing deletion service and assert every sentinel for `42` is absent while control data remains.
 
-- [ ] **Step 2: Write retention/failure RED**
+- [x] **Step 2: Write retention/failure RED**
 
 Assert expired booking interaction inbox/outbound rows are removed, fresh rows remain, and missing/stale YCLIENTS configuration yields a safe booking response without an LLM invention or provider mutation.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -507,11 +507,11 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: new sentinel assertions fail against the pre-change cleanup graph.
 
-- [ ] **Step 4: Extend existing cleanup paths only**
+- [x] **Step 4: Extend existing cleanup paths only**
 
 Add the new payload relationships to the existing deletion transaction and retention batches; do not create a second cleanup service. Preserve lock ordering and projection suppression. Update failure-gates documentation with the Telegram booking fallback.
 
-- [ ] **Step 5: Run privacy GREEN and broad regression**
+- [x] **Step 5: Run privacy GREEN and broad regression**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -523,7 +523,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass; safe logs contain no sentinel phone/name.
 
-- [ ] **Step 6: Document and commit**
+- [x] **Step 6: Document and commit**
 
 ```powershell
 git add -- project/admin/customer_data_deletion.py `
