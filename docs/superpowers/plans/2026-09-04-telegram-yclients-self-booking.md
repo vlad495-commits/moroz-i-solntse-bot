@@ -136,7 +136,7 @@ git commit -m "feat: добавлен durable ввод записи из Telegra
 - Produces: `CatalogRepository.list_services(connection) -> tuple[CatalogService, ...]`.
 - Enforces: at most one `collecting|awaiting_confirmation|executing` scenario per customer.
 
-- [ ] **Step 1: Write migration RED**
+- [x] **Step 1: Write migration RED**
 
 Add assertions that Alembic head is `0025_telegram_booking_flow` and PostgreSQL contains:
 
@@ -148,7 +148,7 @@ WHERE phase IN ('collecting', 'awaiting_confirmation', 'executing')
 
 Also prove two open scenarios for one customer fail, while a new scenario after `failed`, `confirmed` or `escalated` succeeds.
 
-- [ ] **Step 2: Run migration RED**
+- [x] **Step 2: Run migration RED**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -157,11 +157,11 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: fail because revision `0025_telegram_booking_flow` and its unique index do not exist.
 
-- [ ] **Step 3: Add the additive revision**
+- [x] **Step 3: Add the additive revision**
 
 Create revision `0025_telegram_booking_flow` with `down_revision = "0024_reactivation_v2"`. `upgrade()` creates only the partial unique index; `downgrade()` drops only that index. Do not rewrite existing booking data. Pre-migration test must assert no duplicate open customer exists, so production migration fails closed instead of choosing a winner.
 
-- [ ] **Step 4: Write repository/catalog RED**
+- [x] **Step 4: Write repository/catalog RED**
 
 Tests must prove:
 
@@ -177,7 +177,7 @@ assert [service.service_name for service in await catalog.list_services(connecti
 
 Exclude cancelled, past and another customer's bookings. Return the last scenario state with each booking so Telegram can render service/staff names without decoding provider payloads.
 
-- [ ] **Step 5: Implement minimal read methods and run GREEN**
+- [x] **Step 5: Implement minimal read methods and run GREEN**
 
 Use existing row mappers and `_group_records`; add no second catalog model. Order active scenario by `created_at DESC, id DESC`, future bookings by `starts_at, external_id`, services by current catalog grouping.
 
@@ -190,7 +190,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass and Alembic reports one head.
 
-- [ ] **Step 6: Document and commit**
+- [x] **Step 6: Document and commit**
 
 ```powershell
 git add -- project/migrations/versions/0025_telegram_booking_flow.py `

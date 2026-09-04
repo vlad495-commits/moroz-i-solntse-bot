@@ -88,6 +88,66 @@ async def test_create_scenario_is_idempotent_without_overwriting_state(
     assert tuple(counts.values()) == (1, 1)
 
 
+async def test_get_active_scenario_for_customer(repo, scenario):
+    active = replace(scenario, phase="collecting")
+    await repo.create_scenario(active)
+
+    assert await repo.get_active_for_customer("customer-7") == active
+    assert await repo.get_active_for_customer("missing") is None
+
+
+async def test_list_future_owned_returns_only_active_customer_bookings_with_state(
+    repo, scenario
+):
+    now = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
+
+    async def store(*, external_id, customer_id, starts_at, status="confirmed"):
+        draft = replace(
+            scenario,
+            id=uuid4(),
+            phase="executing",
+            idempotency_key=f"booking:{uuid4()}",
+            customer_id=customer_id,
+            state={"service_name": f"Услуга {external_id}"},
+        )
+        booking = replace(
+            confirmed_booking(status=status),
+            external_id=external_id,
+            customer_id=customer_id,
+            booking_key=uuid4(),
+            starts_at=starts_at,
+        )
+        await repo.create_scenario(draft)
+        await repo.confirm(replace(draft, phase="confirmed"), booking)
+
+    await store(
+        external_id="own-future",
+        customer_id="customer-7",
+        starts_at=now + timedelta(days=1),
+    )
+    await store(
+        external_id="own-past",
+        customer_id="customer-7",
+        starts_at=now - timedelta(days=1),
+    )
+    await store(
+        external_id="own-cancelled",
+        customer_id="customer-7",
+        starts_at=now + timedelta(days=2),
+        status="cancelled",
+    )
+    await store(
+        external_id="other-future",
+        customer_id="customer-other",
+        starts_at=now + timedelta(days=1),
+    )
+
+    owned = await repo.list_future_owned("customer-7", now)
+
+    assert [booking.external_id for booking, _ in owned] == ["own-future"]
+    assert owned[0][1]["service_name"] == "Услуга own-future"
+
+
 async def test_checkpoint_updates_state_and_appends_event(repo, scenario):
     scenario_id = await repo.create_scenario(scenario)
     executing = replace(

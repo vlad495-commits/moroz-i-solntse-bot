@@ -198,6 +198,19 @@ class CatalogRepository:
         except asyncpg.PostgresError as error:
             raise YclientsCatalogError("yclients_catalog_write") from error
 
+    async def list_services(
+        self, connection: asyncpg.Connection
+    ) -> tuple[CatalogService, ...]:
+        rows = await connection.fetch(
+            """
+            SELECT service_id, staff_id, service_name, category_name,
+                   staff_name, price_min, price_max, duration_minutes
+            FROM yclients_service_catalog
+            ORDER BY service_id, staff_id
+            """
+        )
+        return _group_records(_record_from_row(row) for row in rows)
+
     async def ground(
         self,
         connection,

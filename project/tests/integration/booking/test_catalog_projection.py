@@ -115,3 +115,15 @@ async def test_serialized_lock_blocks_peer_and_releases_on_body_exception(databa
 
     async with second.serialized() as released:
         assert released is not None
+
+
+async def test_list_services_returns_grouped_catalog_choices(database):
+    repository = CatalogRepository(database)
+    value = snapshot("20", name="Криокапсула")
+    async with repository.serialized() as connection:
+        assert connection is not None
+        await repository.replace(connection, value)
+        services = await repository.list_services(connection)
+
+    assert [service.service_name for service in services] == ["Криокапсула"]
+    assert services[0].variants[0].staff_name == "Анна"

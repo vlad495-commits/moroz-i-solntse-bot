@@ -108,6 +108,59 @@ class BookingRepository:
             return None
         return self._scenario_from_row(row)
 
+    async def get_active_for_customer(
+        self, customer_id: str
+    ) -> BookingScenario | None:
+        async with self._database.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT *
+                FROM booking_scenarios
+                WHERE customer_id = $1
+                  AND phase IN ('collecting', 'awaiting_confirmation', 'executing')
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                customer_id,
+            )
+        return None if row is None else self._scenario_from_row(row)
+
+    async def list_future_owned(
+        self, customer_id: str, now
+    ) -> list[tuple[ExternalBooking, Mapping[str, object]]]:
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        async with self._database.acquire() as connection:
+            rows = await connection.fetch(
+                """
+                SELECT b.external_id, b.customer_id, b.booking_key, b.slot_id,
+                       b.starts_at, b.scheduled_end_at, b.status, s.state
+                FROM bookings AS b
+                JOIN booking_scenarios AS s ON s.id = b.last_scenario_id
+                WHERE b.customer_id = $1
+                  AND b.status = 'confirmed'
+                  AND b.starts_at > $2
+                ORDER BY b.starts_at, b.external_id
+                """,
+                customer_id,
+                now,
+            )
+        return [
+            (
+                ExternalBooking(
+                    external_id=row["external_id"],
+                    customer_id=row["customer_id"],
+                    booking_key=row["booking_key"],
+                    slot_id=row["slot_id"],
+                    starts_at=row["starts_at"],
+                    scheduled_end_at=row["scheduled_end_at"],
+                    status=row["status"],
+                ),
+                _load_json(row["state"]),
+            )
+            for row in rows
+        ]
+
     @staticmethod
     def _scenario_from_row(row) -> BookingScenario:
         return BookingScenario(
