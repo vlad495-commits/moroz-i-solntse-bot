@@ -397,11 +397,11 @@ git commit -m "feat: добавлено управление своими зап
 - Worker invokes `TelegramBookingCoordinator` before catalog grounding and LLM.
 - Telegram delivery accepts `InlineKeyboardMarkup`, `ReplyKeyboardMarkup` and `ReplyKeyboardRemove` from durable `delivery_options`.
 
-- [ ] **Step 1: Write worker routing RED**
+- [x] **Step 1: Write worker routing RED**
 
 Tests must prove an active flow consumes ordinary text, `route_message(...).route == "booking"` starts a flow, and `booking_management` opens own bookings. In all three cases assert `llm.calls == []`; unrelated consultation still calls the LLM exactly once.
 
-- [ ] **Step 2: Write keyboard delivery RED**
+- [x] **Step 2: Write keyboard delivery RED**
 
 Persist and claim three outbounds containing:
 
@@ -413,7 +413,7 @@ Persist and claim three outbounds containing:
 
 Assert aiogram receives the matching markup class and no mutable caller dictionary changes persisted JSON.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -423,13 +423,13 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: failures because worker has no coordinator and sender validates only inline markup.
 
-- [ ] **Step 4: Wire coordinator before LLM**
+- [x] **Step 4: Wire coordinator before LLM**
 
 Build one `YclientsAdapter` in `_build_yclients_services` and pass it both to existing lifecycle/admin components and `TelegramBookingCoordinator`. If all three YCLIENTS variables are absent, coordinator is `None` and booking intent returns the safe unavailable/admin response; partial configuration keeps the existing startup failure.
 
 Parse `kind/data` defensively in `_process_message`. Interaction updates are never concatenated with text batches. Enqueue `BookingReply` through the existing repository using `reply:<process_message key>`.
 
-- [ ] **Step 5: Support native contact keyboard**
+- [x] **Step 5: Support native contact keyboard**
 
 In `deliver_claimed_outbound`, validate markup by shape:
 
@@ -446,11 +446,11 @@ else:
 
 Do not pass arbitrary keys directly to Telegram.
 
-- [ ] **Step 6: Update the prompt boundary**
+- [x] **Step 6: Update the prompt boundary**
 
 Replace claims that the bot cannot see availability or create records with the exact implemented boundary: it can create and manage only records made by the same user through this Telegram bot. Keep the public YCLIENTS link as fallback for unsupported/external records, not as the primary successful path.
 
-- [ ] **Step 7: Run Task 5 GREEN**
+- [x] **Step 7: Run Task 5 GREEN**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -462,7 +462,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass; booking messages bypass LLM and consultation behavior remains unchanged.
 
-- [ ] **Step 8: Document and commit**
+- [x] **Step 8: Document and commit**
 
 ```powershell
 git add -- project/worker/main.py project/src/moroz/messaging/telegram.py `

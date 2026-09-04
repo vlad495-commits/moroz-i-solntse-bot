@@ -114,6 +114,7 @@ _ROUTE_RULES: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
     (
         "booking_management",
         (
+            re.compile(r"^\s*мои\s+запис\w*\s*[?!.]?\s*$", re.IGNORECASE),
             re.compile(
                 r"\b(?:отмен\w*|аннулир\w*|cancel)\b"
                 r".{0,40}\b(?:запис\w*|визит\w*|брон\w*|booking|appointment)\b",

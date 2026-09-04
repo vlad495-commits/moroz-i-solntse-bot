@@ -56,6 +56,7 @@ def test_routes_are_the_minimal_single_route_allowlist() -> None:
         ("Перенесите мою запись", "booking_management"),
         ("Отмените мою запись", "booking_management"),
         ("Перенесите или отмените запись", "booking_management"),
+        ("Мои записи", "booking_management"),
         ("Хочу пожаловаться", "escalation"),
         ("Позовите администратора", "escalation"),
         ("Верните деньги за услугу", "escalation"),

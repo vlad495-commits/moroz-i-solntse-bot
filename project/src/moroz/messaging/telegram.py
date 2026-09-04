@@ -13,7 +13,11 @@ from aiogram.exceptions import (
     TelegramNotFound,
     TelegramRetryAfter,
 )
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
 from moroz.common.queue import TaskRecoveryRequired
 from moroz.messaging.models import OutboundMessage
@@ -142,9 +146,17 @@ async def deliver_claimed_outbound(
             }
             reply_markup = current.delivery_options.get("reply_markup")
             if reply_markup is not None:
-                send_arguments["reply_markup"] = (
-                    InlineKeyboardMarkup.model_validate(reply_markup)
-                )
+                if not isinstance(reply_markup, dict):
+                    raise ValueError("unsupported Telegram reply markup")
+                if "inline_keyboard" in reply_markup:
+                    markup = InlineKeyboardMarkup.model_validate(reply_markup)
+                elif "keyboard" in reply_markup:
+                    markup = ReplyKeyboardMarkup.model_validate(reply_markup)
+                elif reply_markup.get("remove_keyboard") is True:
+                    markup = ReplyKeyboardRemove.model_validate(reply_markup)
+                else:
+                    raise ValueError("unsupported Telegram reply markup")
+                send_arguments["reply_markup"] = markup
             parse_mode = current.delivery_options.get("parse_mode")
             if parse_mode is not None:
                 send_arguments["parse_mode"] = str(parse_mode)

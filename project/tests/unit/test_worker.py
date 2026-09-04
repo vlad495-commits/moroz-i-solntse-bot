@@ -748,9 +748,9 @@ def test_yclients_services_are_disabled_when_required_config_is_empty(
     ):
         monkeypatch.setenv(name, "")
 
-    assert worker_main._build_yclients_services(object()) == (
-        None, None, None, None, None, None,
-    )
+        assert worker_main._build_yclients_services(object()) == (
+            None, None, None, None, None, None, None,
+        )
 
 
 @pytest.mark.asyncio
@@ -891,8 +891,19 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     class BookingRepository:
         def __init__(self, received_database, *, schedule_notifications):
             assert received_database is database
-            assert schedule_notifications is False
-            built.append(("booking_repository", received_database))
+            built.append(
+                ("booking_repository", received_database, schedule_notifications)
+            )
+
+    class BookingService:
+        def __init__(self, adapter, repository):
+            built.append(("booking_service", adapter, repository))
+
+    class TelegramBooking:
+        def __init__(self, repository, catalog, service, adapter):
+            built.append(
+                ("telegram_booking", repository, catalog, service, adapter)
+            )
 
     class CommandRepository:
         def __init__(self, received_database):
@@ -934,13 +945,15 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     monkeypatch.setattr(worker_main, "CatalogRepository", CatalogRepository)
     monkeypatch.setattr(worker_main, "CatalogSyncCoordinator", CatalogSync)
     monkeypatch.setattr(worker_main, "BookingRepository", BookingRepository)
+    monkeypatch.setattr(worker_main, "BookingService", BookingService)
+    monkeypatch.setattr(worker_main, "TelegramBookingCoordinator", TelegramBooking)
     monkeypatch.setattr(worker_main, "AdminBookingCommandRepository", CommandRepository)
     monkeypatch.setattr(worker_main, "AdminBookingCommandService", CommandService)
     monkeypatch.setattr(worker_main, "ActivityRepository", ActivityRepository)
     monkeypatch.setattr(worker_main, "YclientsClientHistoryReader", ClientHistoryReader)
     monkeypatch.setattr(worker_main, "ActivitySyncCoordinator", ActivitySync)
 
-    lifecycle, projection_sync, catalog_sync, catalog_repository, command_service, activity_sync = (
+    lifecycle, projection_sync, catalog_sync, catalog_repository, command_service, activity_sync, telegram_booking = (
         worker_main._build_yclients_services(database)
     )
 
@@ -950,13 +963,15 @@ def test_yclients_services_build_one_shared_config_graph(monkeypatch):
     assert isinstance(catalog_repository, CatalogRepository)
     assert isinstance(command_service, CommandService)
     assert isinstance(activity_sync, ActivitySync)
+    assert isinstance(telegram_booking, TelegramBooking)
     assert [entry[0] for entry in built] == [
         "config", "adapter", "scheduler_repository", "feedback", "lifecycle", "reader",
         "projection_repository", "scheduler_repository", "projection_sync",
         "catalog_reader", "catalog_repository", "scheduler_repository",
         "catalog_sync", "booking_repository", "command_repository",
         "command_service", "activity_repository", "activity_reader",
-        "scheduler_repository", "activity_sync",
+        "scheduler_repository", "activity_sync", "booking_repository",
+        "booking_service", "telegram_booking",
     ]
 
 
@@ -1041,7 +1056,9 @@ async def test_configured_worker_ensures_current_projection_before_queue_consume
     monkeypatch.setattr(
         worker_main,
         "_build_yclients_services",
-        lambda _database: (None, ProjectionSync(), CatalogSync(), object(), None, None),
+            lambda _database: (
+                None, ProjectionSync(), CatalogSync(), object(), None, None, None
+            ),
     )
     monkeypatch.setattr(worker_main, "init_llm", lambda: None)
     monkeypatch.setattr(worker_main, "_supervise", supervise)

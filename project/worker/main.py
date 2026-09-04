@@ -33,6 +33,8 @@ from moroz.booking.projection import (
     ProjectionSyncCoordinator,
 )
 from moroz.booking.repository import BookingRepository
+from moroz.booking.service import BookingService
+from moroz.booking.telegram import BookingReply, TelegramBookingCoordinator
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_catalog import YclientsCatalogError, YclientsCatalogReader
 from moroz.booking.yclients_http import YclientsConfig
@@ -44,6 +46,7 @@ from moroz.common.queue import MAX_RETRIES, QueueTask, RabbitQueue
 from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.outbox import OutboxRelay, process_message_key
 from moroz.messaging.repository import MessageRepository
+from moroz.messaging.router import route_message
 from moroz.messaging.telegram import TelegramSender
 from moroz.notifications.feedback import FeedbackService
 from moroz.notifications.handlers import (
@@ -238,6 +241,7 @@ class MessageTaskHandler:
         retention_cleanup=None,
         reactivation=None,
         catalog_repository=None,
+        booking_coordinator=None,
         catalog_grounding_enabled=False,
         clock=None,
         scheduler_handler=handle_scheduler_job,
@@ -258,6 +262,7 @@ class MessageTaskHandler:
         self._catalog_repository = (
             catalog_repository if catalog_grounding_enabled else None
         )
+        self._booking_coordinator = booking_coordinator
         self._clock = clock or (lambda: datetime.now(UTC))
         self._scheduler_handler = scheduler_handler
         self._system_scheduler_lock = asyncio.Lock()
@@ -559,6 +564,15 @@ class MessageTaskHandler:
                     ):
                         raise ValueError("process_message persisted payload is invalid")
                     payloads.append(payload)
+                kinds = [payload.get("kind", "text") for payload in payloads]
+                if any(kind not in {"text", "callback", "contact"} for kind in kinds):
+                    raise ValueError("process_message persisted kind is invalid")
+                if any(kind != "text" for kind in kinds) and len(kinds) != 1:
+                    raise ValueError("process_message interactions cannot be batched")
+                interaction_kind = kinds[0]
+                interaction_data = payloads[0].get("data", {})
+                if not isinstance(interaction_data, dict):
+                    raise ValueError("process_message persisted data is invalid")
                 user_ids = {payload["user_id"] for payload in payloads}
                 if len(user_ids) != 1:
                     raise ValueError("process_message spans multiple users")
@@ -588,6 +602,65 @@ class MessageTaskHandler:
                         WHERE channel = 'telegram'
                           AND external_message_id = ANY($1::text[])
                         """,
+                        accepted_ids,
+                    )
+                    return
+
+                booking_reply = None
+                booking_route = (
+                    route_message(persisted_text).route
+                    if interaction_kind == "text"
+                    else "booking"
+                )
+                if self._booking_coordinator is not None:
+                    booking_text = (
+                        "Мои записи"
+                        if booking_route == "booking_management"
+                        else persisted_text
+                    )
+                    booking_reply = await self._booking_coordinator.handle(
+                        connection,
+                        customer_id=chat_id,
+                        user_id=str(user_id),
+                        update_id=accepted_ids[0],
+                        text=booking_text,
+                        kind=interaction_kind,
+                        data=interaction_data,
+                    )
+                elif booking_route in {"booking", "booking_management"}:
+                    booking_reply = BookingReply(
+                        "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору.",
+                        {},
+                    )
+                if booking_reply is not None:
+                    if persisted_text:
+                        await connection.execute(
+                            "INSERT INTO messages "
+                            "(chat_id, user_id, role, content, llm_usage_tracked) "
+                            "VALUES ($1, $2, 'user', $3, TRUE)",
+                            numeric_chat_id,
+                            user_id,
+                            persisted_text,
+                        )
+                    await connection.execute(
+                        "INSERT INTO messages (chat_id, user_id, role, content) "
+                        "VALUES ($1, $2, 'assistant', $3)",
+                        numeric_chat_id,
+                        user_id,
+                        booking_reply.text,
+                    )
+                    await self._repository.enqueue_outbound_in_transaction(
+                        connection,
+                        channel="telegram",
+                        chat_id=chat_id,
+                        text=booking_reply.text,
+                        idempotency_key=reply_key,
+                        delivery_options=booking_reply.delivery_options,
+                    )
+                    await connection.execute(
+                        "UPDATE message_inbox SET status = 'processed' "
+                        "WHERE channel = 'telegram' "
+                        "AND external_message_id = ANY($1::text[])",
                         accepted_ids,
                     )
                     return
@@ -949,6 +1022,7 @@ def _build_yclients_services(
     CatalogRepository | None,
     AdminBookingCommandService | None,
     ActivitySyncCoordinator | None,
+    TelegramBookingCoordinator | None,
 ]:
     required = (
         "YCLIENTS_PARTNER_TOKEN",
@@ -957,7 +1031,7 @@ def _build_yclients_services(
     )
     present = tuple(bool(os.environ.get(name, "").strip()) for name in required)
     if not any(present):
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
     if not all(present):
         raise ValueError("YCLIENTS lifecycle configuration is incomplete")
     config = YclientsConfig.from_env(os.environ)
@@ -996,6 +1070,15 @@ def _build_yclients_services(
         SchedulerJobRepository(database),
         clock=lambda: datetime.now(UTC),
     )
+    telegram_booking_repository = BookingRepository(
+        database, schedule_notifications=True
+    )
+    telegram_booking = TelegramBookingCoordinator(
+        telegram_booking_repository,
+        catalog_repository,
+        BookingService(adapter, telegram_booking_repository),
+        adapter,
+    )
     return (
         lifecycle,
         projection_sync,
@@ -1003,6 +1086,7 @@ def _build_yclients_services(
         catalog_repository,
         admin_booking_commands,
         activity_sync,
+        telegram_booking,
     )
 
 
@@ -1043,6 +1127,7 @@ async def run() -> None:
                 catalog_repository,
                 admin_booking_commands,
                 activity_sync,
+                telegram_booking,
             ) = _build_yclients_services(database)
         except ValueError:
             if hasattr(database, "acquire"):
@@ -1128,6 +1213,7 @@ async def run() -> None:
             reactivation=reactivation,
             catalog_repository=catalog_repository,
             catalog_grounding_enabled=YCLIENTS_CATALOG_GROUNDING_ENABLED,
+            booking_coordinator=telegram_booking,
         )
         async def runtime_handler(task: QueueTask) -> None:
             if alert_router is None:

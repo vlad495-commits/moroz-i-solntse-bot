@@ -15,9 +15,15 @@ from aiogram.exceptions import (
     TelegramNetworkError,
     TelegramRetryAfter,
 )
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
 from customer_data_deletion import delete_customer_data
 from moroz.common.db import Database
+from moroz.booking.telegram import BookingReply
 from moroz.common.queue import QueueTask
 from moroz.escalation.service import admin_reply_key
 from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
@@ -158,6 +164,43 @@ async def test_worker_does_not_send_sent_outbound_twice(database):
         assert await connection.fetchval(
             "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
         ) == "sent"
+
+
+@pytest.mark.parametrize(
+    ("reply_markup", "markup_type"),
+    [
+        (
+            {"inline_keyboard": [[{"text": "Подтвердить", "callback_data": "booking:v1:x:confirm:0"}]]},
+            InlineKeyboardMarkup,
+        ),
+        (
+            {
+                "keyboard": [[{"text": "Поделиться номером", "request_contact": True}]],
+                "resize_keyboard": True,
+                "one_time_keyboard": True,
+            },
+            ReplyKeyboardMarkup,
+        ),
+        ({"remove_keyboard": True}, ReplyKeyboardRemove),
+    ],
+)
+async def test_booking_reply_markup_is_validated_without_mutating_payload(
+    database, reply_markup, markup_type
+):
+    repository = MessageRepository(database)
+    original = json.loads(json.dumps(reply_markup, ensure_ascii=False))
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Ответ",
+        idempotency_key=f"reply:markup:{markup_type.__name__}",
+        delivery_options={"reply_markup": reply_markup},
+    )
+    telegram = FakeTelegram()
+
+    assert await TelegramSender(telegram, repository).send(outbound_id) == DeliveryResult.SENT
+    assert isinstance(telegram.sent_messages[0]["reply_markup"], markup_type)
+    assert reply_markup == original
 
 
 async def test_claimed_outbound_deleted_before_fence_is_not_sent(
@@ -492,6 +535,49 @@ async def test_process_message_materializes_reply_and_history_once(database):
         "pending",
     )
     assert [tuple(row.values()) for row in tasks] == [("send_outbound", "pending")]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Хочу записаться", "Мои записи", "8 999 123-45-67"],
+)
+async def test_booking_message_is_routed_before_llm(database, text):
+    class BookingCoordinator:
+        def __init__(self):
+            self.calls = []
+
+        async def handle(self, connection, **kwargs):
+            self.calls.append((connection, kwargs))
+            return BookingReply(
+                "Ответ записи", {"reply_markup": {"remove_keyboard": True}}
+            )
+
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming(text=text))
+    llm = FakeLLM()
+    coordinator = BookingCoordinator()
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+        booking_coordinator=coordinator,
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="process_message",
+            payload={"chat_id": "42", "update_ids": ["100"]},
+            idempotency_key="process_message:100",
+        )
+    )
+
+    assert llm.calls == []
+    assert coordinator.calls[0][1]["text"] == text
+    async with database.acquire() as connection:
+        assert await connection.fetchval(
+            "SELECT text FROM outbound_messages WHERE idempotency_key = $1",
+            "reply:process_message:100",
+        ) == "Ответ записи"
 
 
 async def test_process_message_passes_last_40_and_never_persists_compact_summary(
