@@ -167,6 +167,7 @@ async def test_create_requires_confirmation_then_is_stable_and_idempotent(repo):
 
     assert confirmed == repeated
     assert confirmed.status == "ok"
+    assert confirmed.message == "Запись подтверждена на 29.07.2026 в 17:00."
     assert (await repo.get_scenario(scenario.id)).phase == "confirmed"
     assert await repo.get_local_booking(scenario.id) is not None
     assert (port.list_calls, port.create_calls) == (1, 1)
@@ -389,8 +390,8 @@ async def test_create_repeat_keeps_original_terminal_after_reschedule_and_cancel
     stored = await repo.get_scenario(create.id)
 
     assert repeated == initial
-    assert _slot("slot-9", 14).starts_at.isoformat() in repeated.message
-    assert _slot("slot-new", 16).starts_at.isoformat() not in repeated.message
+    assert "29.07.2026 в 17:00" in repeated.message
+    assert "29.07.2026 в 19:00" not in repeated.message
     assert stored.state["starts_at"] == _slot("slot-9", 14).starts_at.isoformat()
     assert stored.state["status"] == "confirmed"
     assert port.create_calls == 1

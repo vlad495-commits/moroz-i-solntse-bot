@@ -284,8 +284,10 @@ async def test_reschedule_persists_old_and_new_snapshot_and_repeat_is_stable(rep
 
     assert result == repeated
     assert result.status == "ok"
-    assert OLD_START.isoformat() in result.message
-    assert _slot("slot-new", 16).starts_at.isoformat() in result.message
+    assert result.message == (
+        "Запись перенесена с 25.07.2026 в 17:00 "
+        "на 25.07.2026 в 19:00."
+    )
     assert (port.list_calls, port.reschedule_calls) == (1, 1)
     assert port.last_reschedule is not None
     assert port.last_reschedule.customer_id == original.customer_id
@@ -316,7 +318,7 @@ async def test_cancel_at_exactly_three_hours_uses_local_snapshot_and_mutates_onc
 
     assert result == repeated
     assert result.status == "ok"
-    assert OLD_START.isoformat() in result.message
+    assert result.message == "Запись на 25.07.2026 в 17:00 отменена."
     assert (port.cancel_calls, port.list_calls, port.get_calls) == (1, 0, 1)
     assert port.last_cancel is not None
     assert port.last_cancel.customer_id == original.customer_id
@@ -443,8 +445,8 @@ async def test_earlier_reschedule_repeat_uses_its_own_scenario_snapshot(repo):
 
     assert first_result == repeated_first
     assert first_result != second_result
-    assert _slot("slot-new", 16).starts_at.isoformat() in first_result.message
-    assert _slot("slot-next", 18).starts_at.isoformat() not in first_result.message
+    assert "25.07.2026 в 19:00" in first_result.message
+    assert "25.07.2026 в 21:00" not in first_result.message
     assert (port.list_calls, port.reschedule_calls, port.get_calls) == calls_after_mutations
 
 

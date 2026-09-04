@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from moroz.booking.models import ExternalBooking
+from moroz.booking.time_display import format_booking_time
 from moroz.common.db import Database
 from moroz.messaging.repository import MessageRepository
 
@@ -111,10 +112,11 @@ class NotificationOutbox:
 
 
 def _reminder_text(booking: ExternalBooking, kind: str) -> str:
+    starts_at = format_booking_time(booking.starts_at)
     if kind == "booking_created":
-        return f"Запись подтверждена на {booking.starts_at.isoformat()}."
+        return f"Запись подтверждена на {starts_at}."
     if kind == "day_before":
-        return f"Напоминаем: завтра у Вас запись на {booking.starts_at.isoformat()}."
+        return f"Напоминаем: завтра у Вас запись на {starts_at}."
     if kind in {"morning", "hour_before", "morning_hour_before"}:
-        return f"Напоминаем о записи сегодня: {booking.starts_at.isoformat()}."
-    return f"Напоминание о записи: {booking.starts_at.isoformat()}."
+        return f"Напоминаем о записи сегодня: {starts_at}."
+    return f"Напоминание о записи: {starts_at}."

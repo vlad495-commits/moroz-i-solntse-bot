@@ -19,6 +19,7 @@ from moroz.booking.models import (
 )
 from moroz.booking.ports import BookingPort
 from moroz.booking.repository import BookingRepository, BookingScenarioSession
+from moroz.booking.time_display import format_booking_time
 from moroz.messaging.models import ScenarioResult
 
 
@@ -393,8 +394,8 @@ class BookingService:
             return ScenarioResult(
                 status="ok",
                 message=(
-                    f"Запись перенесена с {previous} "
-                    f"на {scenario.state['starts_at']}."
+                    f"Запись перенесена с {format_booking_time(str(previous))} "
+                    f"на {format_booking_time(str(scenario.state['starts_at']))}."
                 ),
                 next_action=None,
                 events=(),
@@ -402,7 +403,10 @@ class BookingService:
         if scenario.kind == "cancel":
             return ScenarioResult(
                 status="ok",
-                message=f"Запись на {scenario.state['starts_at']} отменена.",
+                message=(
+                    f"Запись на "
+                    f"{format_booking_time(str(scenario.state['starts_at']))} отменена."
+                ),
                 next_action=None,
                 events=(),
             )
@@ -441,7 +445,10 @@ class BookingService:
             raise RuntimeError("confirmed create has invalid terminal status")
         return ScenarioResult(
             status="ok",
-            message=f"Запись подтверждена на {scenario.state['starts_at']}.",
+            message=(
+                f"Запись подтверждена на "
+                f"{format_booking_time(str(scenario.state['starts_at']))}."
+            ),
             next_action=None,
             events=(),
         )
