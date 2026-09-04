@@ -194,7 +194,7 @@ git commit -m "feat: услуги без записи показаны в Telegr
 - Consumes the existing Docker and staging rollout/runbook.
 - Produces no YCLIENTS mutations.
 
-- [ ] **Step 1: Run repository verification**
+- [x] **Step 1: Run repository verification**
 
 ```powershell
 cd project
