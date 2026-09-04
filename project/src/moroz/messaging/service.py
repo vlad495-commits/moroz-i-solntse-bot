@@ -24,6 +24,16 @@ class MessageService:
     async def accept_consented(self, message: IncomingMessage) -> bool:
         return await self._accept(message, require_consent=True)
 
+    async def accept_interaction_consented(
+        self, message: IncomingMessage
+    ) -> bool:
+        if message.kind == "text":
+            raise ValueError("interaction kind must not be text")
+        return await self._repository.accept_if_consented(
+            message,
+            enqueue_directly=True,
+        )
+
     async def _accept(
         self, message: IncomingMessage, *, require_consent: bool
     ) -> bool:

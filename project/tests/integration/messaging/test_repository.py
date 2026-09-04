@@ -49,6 +49,36 @@ async def test_accept_same_message_once(message_repo, incoming_message):
     assert await message_repo.accept(incoming_message) is False
 
 
+async def test_accept_booking_interaction_persists_structured_payload_once(
+    database, message_repo, incoming_message
+):
+    interaction = replace(
+        incoming_message,
+        update_id="booking-contact-1",
+        text="",
+        kind="contact",
+        data={
+            "contact_user_id": "7",
+            "phone_number": "+70000000000",
+            "first_name": "Тест",
+            "last_name": "Клиент",
+        },
+    )
+
+    assert await message_repo.accept(interaction) is True
+    assert await message_repo.accept(interaction) is False
+
+    async with database.acquire() as connection:
+        payload = await connection.fetchval(
+            "SELECT payload FROM message_inbox WHERE external_message_id = $1",
+            interaction.update_id,
+        )
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    assert payload["kind"] == "contact"
+    assert payload["data"] == dict(interaction.data)
+
+
 @pytest.mark.parametrize("second_chat_id", ["42", "43"])
 async def test_accept_distinct_updates_with_same_message_id(
     message_repo, incoming_message, second_chat_id

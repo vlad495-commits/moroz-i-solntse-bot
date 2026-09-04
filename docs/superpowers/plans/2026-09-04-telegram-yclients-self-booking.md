@@ -38,7 +38,7 @@
 - Produces: `MessageService.accept_interaction_consented(message: IncomingMessage) -> bool`.
 - Preserves: existing text buffering and `process_message:<update_ids>` task contract.
 
-- [ ] **Step 1: Write failing repository tests for structured ingress**
+- [x] **Step 1: Write failing repository tests for structured ingress**
 
 Add tests which create these exact messages and assert the stored JSONB payload contains the fields while the `task_outbox` payload contains only `update_ids`:
 
@@ -64,7 +64,7 @@ contact = replace(
 
 Assert duplicate `(channel, external_message_id)` remains idempotent and neither phone nor name appears in `task_outbox.payload::text`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -74,7 +74,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: collection or assertion failures because `IncomingMessage` has no `kind/data` and webhook does not persist booking interactions.
 
-- [ ] **Step 3: Add the minimal immutable input fields**
+- [x] **Step 3: Add the minimal immutable input fields**
 
 Extend the model without breaking existing keyword constructors:
 
@@ -92,13 +92,13 @@ class IncomingMessage:
 
 Serialize `kind` and `dict(data)` in `_insert_incoming`. Add `accept_interaction_consented` which calls `accept_if_consented(..., enqueue_directly=True)` and never enters Redis buffer.
 
-- [ ] **Step 4: Persist booking callbacks and own contacts in webhook**
+- [x] **Step 4: Persist booking callbacks and own contacts in webhook**
 
 Use callback prefix `booking:v1:`. Acknowledge callback first, then persist it through `accept_interaction_consented`. For a contact message persist only after existing private-chat, deletion and processing-consent gates. Store `contact_user_id`, phone and names; set `text=""`. Do not accept a booking contact from a group.
 
 Non-booking callbacks keep the current consent/marketing/reactivation behavior.
 
-- [ ] **Step 5: Run GREEN and regression**
+- [x] **Step 5: Run GREEN and regression**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -109,7 +109,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass; existing text batching is unchanged.
 
-- [ ] **Step 6: Document and commit**
+- [x] **Step 6: Document and commit**
 
 ```powershell
 git add -- project/src/moroz/messaging project/llm/webhook.py `

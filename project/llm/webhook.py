@@ -418,6 +418,48 @@ def create_app(
                 return Response(status_code=200)
             if await is_customer_deletion_active(callback.message.chat.id):
                 return Response(status_code=200)
+            if (
+                isinstance(callback.data, str)
+                and callback.data.startswith("booking:v1:")
+            ):
+                user_id = str(callback.from_user.id)
+                if not await webhook_app.state.consent_service.has_processing_consent(
+                    "telegram", user_id
+                ):
+                    await send_static_reply(
+                        update_id=update.update_id,
+                        chat_id=callback.message.chat.id,
+                        text=_consent_prompt(),
+                        reply_kind="consent_prompt",
+                        delivery_options={
+                            "parse_mode": "HTML",
+                            "reply_markup": _consent_keyboard().model_dump(
+                                mode="json"
+                            ),
+                        },
+                    )
+                    return Response(status_code=200)
+                await record_customer_inbound(
+                    chat_id=callback.message.chat.id,
+                    user_id=callback.from_user.id,
+                    occurred_at=received_at,
+                    kind="button",
+                )
+                await webhook_app.state.message_service.accept_interaction_consented(
+                    IncomingMessage(
+                        update_id=str(update.update_id),
+                        message_id=str(callback.message.message_id),
+                        channel="telegram",
+                        chat_id=str(callback.message.chat.id),
+                        user_id=user_id,
+                        text="",
+                        received_at=received_at,
+                        correlation_id=uuid4(),
+                        kind="callback",
+                        data={"callback_data": callback.data},
+                    )
+                )
+                return Response(status_code=200)
             if callback.data in REACTIVATION_CALLBACK_REPLIES:
                 await record_customer_inbound(
                     chat_id=callback.message.chat.id,
@@ -699,6 +741,49 @@ def create_app(
                 chat_id=message.chat.id,
                 text=BOT_PAUSED_REPLY,
                 reply_kind="paused",
+            )
+            return Response(status_code=200)
+        if message.contact is not None and message.from_user is not None:
+            user_id = str(message.from_user.id)
+            if not await webhook_app.state.consent_service.has_processing_consent(
+                "telegram", user_id
+            ):
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=message.chat.id,
+                    text=_consent_prompt(),
+                    reply_kind="consent_prompt",
+                    delivery_options={
+                        "parse_mode": "HTML",
+                        "reply_markup": _consent_keyboard().model_dump(
+                            mode="json"
+                        ),
+                    },
+                )
+                return Response(status_code=200)
+            contact = message.contact
+            await webhook_app.state.message_service.accept_interaction_consented(
+                IncomingMessage(
+                    update_id=str(update.update_id),
+                    message_id=str(message.message_id),
+                    channel="telegram",
+                    chat_id=str(message.chat.id),
+                    user_id=user_id,
+                    text="",
+                    received_at=received_at,
+                    correlation_id=uuid4(),
+                    kind="contact",
+                    data={
+                        "contact_user_id": (
+                            str(contact.user_id)
+                            if contact.user_id is not None
+                            else ""
+                        ),
+                        "phone_number": contact.phone_number,
+                        "first_name": contact.first_name,
+                        "last_name": contact.last_name or "",
+                    },
+                )
             )
             return Response(status_code=200)
         if message.text is None:

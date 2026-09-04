@@ -108,6 +108,8 @@ class MessageRepository:
                 "text": message.text,
                 "received_at": message.received_at.isoformat(),
                 "correlation_id": str(message.correlation_id),
+                "kind": message.kind,
+                "data": dict(message.data),
             },
             ensure_ascii=False,
         )

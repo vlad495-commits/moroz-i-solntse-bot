@@ -176,6 +176,30 @@ def telegram_photo_update(*, update_id=903):
     }
 
 
+def telegram_contact_update(
+    *, update_id=904, chat_id=42, chat_type="private", user_id=7
+):
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": 102,
+            "date": 1_768_478_400,
+            "chat": {"id": chat_id, "type": chat_type},
+            "from": {
+                "id": user_id,
+                "is_bot": False,
+                "first_name": "Тест",
+            },
+            "contact": {
+                "phone_number": "+70000000000",
+                "first_name": "Тест",
+                "last_name": "Клиент",
+                "user_id": user_id,
+            },
+        },
+    }
+
+
 @pytest.fixture
 def fake_telegram():
     return FakeTelegram()
@@ -1032,6 +1056,67 @@ async def test_consented_update_is_persisted_once_by_update_id(
     assert await db.fetchval(
         "SELECT count(*) FROM task_outbox WHERE kind = 'process_message'"
     ) == 0
+
+
+async def test_booking_interactions_use_durable_ingress_without_pii_in_tasks(
+    client, db, fake_telegram
+):
+    await grant_policy_consent(client)
+    callback = telegram_consent_callback(
+        update_id=1200,
+        data="booking:v1:abc:service:0",
+        callback_id="booking-callback",
+    )
+    contact = telegram_contact_update(update_id=1201)
+
+    for update in (callback, callback, contact, contact):
+        assert (
+            await client.post("/telegram/webhook", json=update)
+        ).status_code == 200
+
+    rows = await db.fetch(
+        "SELECT external_message_id, payload FROM message_inbox "
+        "WHERE external_message_id = ANY($1::text[]) ORDER BY external_message_id",
+        ["1200", "1201"],
+    )
+    payloads = []
+    for row in rows:
+        payload = row["payload"]
+        payloads.append(json.loads(payload) if isinstance(payload, str) else payload)
+    tasks = await db.fetch(
+        "SELECT payload FROM task_outbox WHERE kind = 'process_message' "
+        "ORDER BY created_at, id"
+    )
+    task_payloads = [
+        json.loads(row["payload"])
+        if isinstance(row["payload"], str)
+        else row["payload"]
+        for row in tasks
+    ]
+
+    assert fake_telegram.answered_callback_ids[-2:] == [
+        "booking-callback",
+        "booking-callback",
+    ]
+    assert [payload["kind"] for payload in payloads] == ["callback", "contact"]
+    assert payloads[0]["data"] == {
+        "callback_data": "booking:v1:abc:service:0"
+    }
+    assert payloads[1]["data"] == {
+        "contact_user_id": "7",
+        "phone_number": "+70000000000",
+        "first_name": "Тест",
+        "last_name": "Клиент",
+    }
+    assert task_payloads == [
+        {"update_ids": ["1200"]},
+        {"update_ids": ["1201"]},
+    ]
+    assert all(
+        "+70000000000" not in json.dumps(payload, ensure_ascii=False)
+        and "Клиент" not in json.dumps(payload, ensure_ascii=False)
+        for payload in task_payloads
+    )
 
 
 async def test_redis_failure_after_consent_creates_single_message_task(
