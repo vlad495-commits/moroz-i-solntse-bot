@@ -1,10 +1,10 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 import pytest_asyncio
 
-from moroz.booking.catalog import CatalogRepository
+from moroz.booking.catalog import CATALOG_MAX_AGE, CatalogRepository
 from moroz.booking.yclients_catalog import (
     CatalogRecord,
     CatalogSnapshot,
@@ -123,7 +123,20 @@ async def test_list_services_returns_grouped_catalog_choices(database):
     async with repository.serialized() as connection:
         assert connection is not None
         await repository.replace(connection, value)
-        services = await repository.list_services(connection)
+        services = await repository.list_services(connection, NOW)
 
     assert [service.service_name for service in services] == ["Криокапсула"]
     assert services[0].variants[0].staff_name == "Анна"
+
+
+async def test_list_services_rejects_stale_catalog(database):
+    repository = CatalogRepository(database)
+    async with repository.serialized() as connection:
+        assert connection is not None
+        await repository.replace(connection, snapshot("20"))
+        services = await repository.list_services(
+            connection,
+            NOW + CATALOG_MAX_AGE + timedelta(seconds=1),
+        )
+
+    assert services == ()

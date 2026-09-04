@@ -1,5 +1,5 @@
 import importlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -247,6 +247,7 @@ async def test_invalid_week_and_read_failure_are_safe(monkeypatch):
 @pytest.mark.asyncio
 async def test_manual_booking_checks_csrf_catalog_and_enqueues(monkeypatch):
     queued = []
+    future_date = (datetime.now(UTC) + timedelta(days=2)).date()
 
     async def current_user(_request):
         return _user()
@@ -261,7 +262,7 @@ async def test_manual_booking_checks_csrf_catalog_and_enqueues(monkeypatch):
         "customer_name": "Анна",
         "customer_phone": "+79990000000",
         "service_staff": "331:6544",
-        "starts_at": "2026-09-02T10:00",
+        "starts_at": f"{future_date.isoformat()}T10:00",
         "consent": "yes",
         "csrf_token": "known-csrf",
     }
@@ -278,7 +279,7 @@ async def test_manual_booking_checks_csrf_catalog_and_enqueues(monkeypatch):
     assert bad_csrf.status_code == 403
     assert accepted.status_code == 303
     assert accepted.headers["location"].startswith(
-        "/admin/bookings/?week=2026-09-02&notice=queued"
+        f"/admin/bookings/?week={future_date.isoformat()}&notice=queued"
     )
     assert queued[0][0] == "database"
     assert queued[0][1]["payload"]["service_id"] == "331"

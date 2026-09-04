@@ -76,6 +76,19 @@ class TelegramBookingCoordinator:
                 return None
             return await self._start(connection, customer_id, update_id)
 
+        if kind == "text" and text.strip().casefold() == "отменить действие":
+            cancelled = replace(
+                scenario,
+                phase="failed",
+                error_code="user_cancelled",
+                updated_at=self._now(),
+            )
+            await self._repository.checkpoint(cancelled, "booking_flow_cancelled")
+            return BookingReply(
+                "Текущее действие отменено.",
+                {"reply_markup": {"remove_keyboard": True}},
+            )
+
         step = scenario.state.get("step")
         if step == "contact":
             return await self._collect_contact(
@@ -134,6 +147,8 @@ class TelegramBookingCoordinator:
             updated_at=self._now(),
         )
         await self._repository.create_scenario(scenario)
+        if len(choices) == 1:
+            return await self._choose_owned_booking(scenario, choices[0])
         details = "\n".join(str(choice["label"]) for choice in choices)
         return self._choice_reply(
             scenario,
@@ -147,7 +162,7 @@ class TelegramBookingCoordinator:
         customer_id: str,
         update_id: str,
     ) -> BookingReply:
-        services = await self._catalog.list_services(connection)
+        services = await self._catalog.list_services(connection, self._now())
         if not services:
             return BookingReply(
                 "Сейчас не могу загрузить услуги. Напишите администратору.", {}
@@ -198,7 +213,12 @@ class TelegramBookingCoordinator:
                 scenario.id,
                 confirmed=True,
             )
-            return BookingReply(result.message, {})
+            options = (
+                {"reply_markup": {"remove_keyboard": True}}
+                if result.status == "ok"
+                else {}
+            )
+            return BookingReply(result.message, options)
         if (
             action == "confirm_change"
             and index == 0
@@ -249,7 +269,12 @@ class TelegramBookingCoordinator:
         updated = await self._checkpoint(
             scenario, state, "booking_management_selected"
         )
-        return self._choice_reply(updated, "Что сделать с записью?", "booking_action")
+        label = str(choice.get("label", "Запись"))
+        return self._choice_reply(
+            updated,
+            f"Запись: {label}\nЧто сделать?",
+            "booking_action",
+        )
 
     async def _begin_change(
         self, management: BookingScenario, choice: Mapping[str, object]

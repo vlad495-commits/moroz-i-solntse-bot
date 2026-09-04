@@ -55,7 +55,7 @@ Expected: clean branch; runtime diff отсутствует.
 Run from `.worktrees/fix-late-marketing-consent/project`:
 
 ```powershell
-docker compose --env-file "D:/AI_Projects/moroz_i_solntse/moroz-i-solntse-bot/.env" -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/e2e/test_privacy_gate.py::test_duplicate_consent_checkbox_callback_is_idempotent tests/e2e/test_privacy_gate.py::test_duplicate_consent_done_callback_is_idempotent tests/e2e/test_privacy_gate.py::test_ads_checkbox_grants_proven_marketing_consent tests/e2e/test_privacy_gate.py::test_marketing_command_and_callbacks_are_explicit_and_idempotent
+docker compose --env-file ../.env -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/e2e/test_privacy_gate.py::test_duplicate_consent_checkbox_callback_is_idempotent tests/e2e/test_privacy_gate.py::test_duplicate_consent_done_callback_is_idempotent tests/e2e/test_privacy_gate.py::test_ads_checkbox_grants_proven_marketing_consent tests/e2e/test_privacy_gate.py::test_marketing_command_and_callbacks_are_explicit_and_idempotent
 ```
 
 Expected: `4 passed`.
@@ -197,7 +197,7 @@ async def test_old_consent_card_can_revoke_marketing_later(
 Run from worktree `project`:
 
 ```powershell
-docker compose --env-file "D:/AI_Projects/moroz_i_solntse/moroz-i-solntse-bot/.env" -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/e2e/test_privacy_gate.py::test_old_consent_card_can_grant_marketing_later tests/e2e/test_privacy_gate.py::test_old_consent_card_can_revoke_marketing_later
+docker compose --env-file ../.env -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/e2e/test_privacy_gate.py::test_old_consent_card_can_grant_marketing_later tests/e2e/test_privacy_gate.py::test_old_consent_card_can_revoke_marketing_later
 ```
 
 Expected: оба теста FAIL на старом поведении: policy не восстанавливается из durable state, поздний marketing grant/revoke и второй ответ отсутствуют.
@@ -404,7 +404,7 @@ elif outbound_id is not None:
 - [ ] **Step 5: Запустить GREEN двух новых тестов**
 
 ```powershell
-docker compose --env-file "D:/AI_Projects/moroz_i_solntse/moroz-i-solntse-bot/.env" -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/e2e/test_privacy_gate.py::test_old_consent_card_can_grant_marketing_later tests/e2e/test_privacy_gate.py::test_old_consent_card_can_revoke_marketing_later
+docker compose --env-file ../.env -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/e2e/test_privacy_gate.py::test_old_consent_card_can_grant_marketing_later tests/e2e/test_privacy_gate.py::test_old_consent_card_can_revoke_marketing_later
 ```
 
 Expected: `2 passed`.
@@ -412,7 +412,7 @@ Expected: `2 passed`.
 - [ ] **Step 6: Запустить весь consent/privacy E2E-файл**
 
 ```powershell
-docker compose --env-file "D:/AI_Projects/moroz_i_solntse/moroz-i-solntse-bot/.env" -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/e2e/test_privacy_gate.py
+docker compose --env-file ../.env -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/e2e/test_privacy_gate.py
 ```
 
 Expected: все тесты файла PASS, включая duplicate callback, policy-only, clean ads opt-in, `/marketing`, deletion и stale-consent upgrade.
@@ -440,7 +440,7 @@ git commit -m "fix: сохранен поздний marketing consent"
 - [ ] **Step 1: Запустить security/marketing regression**
 
 ```powershell
-docker compose --env-file "D:/AI_Projects/moroz_i_solntse/moroz-i-solntse-bot/.env" -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/unit/security/test_marketing_consent.py tests/integration/reactivation/test_marketing_consent.py tests/e2e/test_privacy_gate.py tests/e2e/reactivation/test_client_flow.py
+docker compose --env-file ../.env -p moroz-consent-fix --profile test run --rm --build test pytest -q tests/unit/security/test_marketing_consent.py tests/integration/reactivation/test_marketing_consent.py tests/e2e/test_privacy_gate.py tests/e2e/reactivation/test_client_flow.py
 ```
 
 Expected: все выбранные тесты PASS.
@@ -448,8 +448,8 @@ Expected: все выбранные тесты PASS.
 - [ ] **Step 2: Запустить статические Docker-gates**
 
 ```powershell
-docker compose --env-file "D:/AI_Projects/moroz_i_solntse/moroz-i-solntse-bot/.env" -p moroz-consent-fix run --rm --build test python -m compileall -q llm src
-docker compose --env-file "D:/AI_Projects/moroz_i_solntse/moroz-i-solntse-bot/.env" -p moroz-consent-fix config --quiet
+docker compose --env-file ../.env -p moroz-consent-fix run --rm --build test python -m compileall -q llm src
+docker compose --env-file ../.env -p moroz-consent-fix config --quiet
 git diff --check origin/main...HEAD
 ```
 

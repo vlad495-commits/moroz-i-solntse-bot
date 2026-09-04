@@ -207,6 +207,9 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         )
         assert first.text == repeated.text
         assert "Запись подтверждена" in first.text
+        assert first.delivery_options == {
+            "reply_markup": {"remove_keyboard": True}
+        }
         assert adapter.create_calls == 1
 
         mine = await _handle(
@@ -217,15 +220,12 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         assert "Криокапсула" in mine.text
         management = await repository.get_active_for_customer("42")
         management_token = management.id.hex
-        forged = f"booking:v1:{management_token}:booking_management:99"
+        assert management.state["step"] == "booking_action"
+        forged = f"booking:v1:{management_token}:booking_action:99"
         assert (await _handle(
             coordinator, database, **{**base, "update_id": "110", "data": {"callback_data": forged}}
         )).text == "Эта кнопка уже неактуальна. Начните запись заново."
 
-        select = f"booking:v1:{management_token}:booking_management:0"
-        assert (await _handle(
-            coordinator, database, **{**base, "update_id": "111", "data": {"callback_data": select}}
-        )).text == "Что сделать с записью?"
         reschedule = f"booking:v1:{management_token}:booking_action:0"
         assert (await _handle(
             coordinator, database, **{**base, "update_id": "112", "data": {"callback_data": reschedule}}
@@ -264,10 +264,6 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         assert "Криокапсула" in mine.text
         management = await repository.get_active_for_customer("42")
         management_token = management.id.hex
-        select = f"booking:v1:{management_token}:booking_management:0"
-        await _handle(
-            coordinator, database, **{**base, "update_id": "119", "data": {"callback_data": select}}
-        )
         cancel = f"booking:v1:{management_token}:booking_action:1"
         cancel_summary = await _handle(
             coordinator, database, **{**base, "update_id": "120", "data": {"callback_data": cancel}}
@@ -332,5 +328,45 @@ async def test_manual_phone_without_name_requests_name(migrated_database_url):
 
         assert reply.text == "Как вас зовут?"
         assert (await repository.get_scenario(active.id)).state["step"] == "name"
+    finally:
+        await database.close()
+
+
+async def test_cancel_action_closes_only_open_draft(migrated_database_url):
+    database, repository, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    try:
+        await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="300",
+            text="Хочу записаться",
+            kind="text",
+            data={},
+        )
+        active = await repository.get_active_for_customer("42")
+
+        reply = await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="301",
+            text="Отменить действие",
+            kind="text",
+            data={},
+        )
+
+        assert reply.text == "Текущее действие отменено."
+        assert (await repository.get_scenario(active.id)).phase == "failed"
+        assert await repository.get_active_for_customer("42") is None
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (
+            0,
+            0,
+            0,
+        )
     finally:
         await database.close()

@@ -199,16 +199,20 @@ class CatalogRepository:
             raise YclientsCatalogError("yclients_catalog_write") from error
 
     async def list_services(
-        self, connection: asyncpg.Connection
+        self, connection: asyncpg.Connection, now: datetime
     ) -> tuple[CatalogService, ...]:
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
         rows = await connection.fetch(
             """
             SELECT service_id, staff_id, service_name, category_name,
-                   staff_name, price_min, price_max, duration_minutes
+                   staff_name, price_min, price_max, duration_minutes, synced_at
             FROM yclients_service_catalog
             ORDER BY service_id, staff_id
             """
         )
+        if not rows or now - max(row["synced_at"] for row in rows) > CATALOG_MAX_AGE:
+            return ()
         return _group_records(_record_from_row(row) for row in rows)
 
     async def ground(

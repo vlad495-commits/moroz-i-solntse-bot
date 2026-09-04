@@ -547,7 +547,7 @@ git commit -m "fix: закрыты privacy-гейты Telegram-записи"
 - Produces a reviewed commit-pinned candidate.
 - Reuses the existing customer-owned app onboarding sequence; does not store credentials in Git.
 
-- [ ] **Step 1: Run focused Docker gate**
+- [x] **Step 1: Run focused Docker gate**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -561,7 +561,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: exit `0`, no skips introduced by this feature.
 
-- [ ] **Step 2: Run migration and static gates**
+- [x] **Step 2: Run migration and static gates**
 
 ```powershell
 docker compose --env-file ../.env --profile test run --rm migrate upgrade head
@@ -572,7 +572,7 @@ git diff --check
 
 Expected: single head `0025_telegram_booking_flow`; all commands exit `0`.
 
-- [ ] **Step 3: Run the full Docker suite once**
+- [x] **Step 3: Run the full Docker suite once**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q
@@ -580,7 +580,7 @@ docker compose --env-file ../.env run --rm test pytest -q
 
 Expected: exit `0`. Record exact count and duration, not an estimate.
 
-- [ ] **Step 4: Review the exact branch diff**
+- [x] **Step 4: Review the exact branch diff**
 
 Check ownership, stale callbacks, duplicate updates, contact validation, secret/PII output, unknown mutation outcomes, deletion/retention and rollback. Resolve every Critical/Important finding test-first before continuing.
 
