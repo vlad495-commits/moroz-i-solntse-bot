@@ -21,7 +21,6 @@ from config import (
     CONSENT_NEED_PII_REPLY,
     CONSENT_PII_LABEL,
     CONSENT_PROMPT,
-    CONSENT_THANKS,
     DATABASE_URL,
     INPUT_TOO_LONG_REPLY,
     MAX_INPUT_LENGTH,
@@ -44,7 +43,7 @@ from moroz.messaging.ingress import decide_ingress
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.service import MessageService
-from moroz.messaging.telegram import deliver_claimed_outbound
+from moroz.messaging.telegram import deliver_claimed_outbound, main_menu_options
 from moroz.privacy import deletion_marker_key
 from moroz.privacy import customer_lock_subject
 from moroz.reactivation.policy import is_stop_request
@@ -648,8 +647,10 @@ def create_app(
                                     connection=connection,
                                 )
                                 await opt_out_marketing(connection, **event)
+                            delivery_options = None
                             if not processing_active:
-                                reply = CONSENT_THANKS
+                                reply = START_REPLY
+                                delivery_options = main_menu_options()
                             elif wants_marketing:
                                 reply = MARKETING_ENABLED_REPLY
                             else:
@@ -662,7 +663,7 @@ def create_app(
                                 idempotency_key=(
                                     f"telegram:consent_thanks:{update.update_id}"
                                 ),
-                                delivery_options=None,
+                                delivery_options=delivery_options,
                             )
                 if needs_processing_consent:
                     await send_static_reply(
@@ -827,12 +828,30 @@ def create_app(
             )
             return Response(status_code=200)
         if command == "/start":
-            await send_static_reply(
-                update_id=update.update_id,
-                chat_id=message.chat.id,
-                text=START_REPLY,
-                reply_kind="start",
-            )
+            user_id = str(message.from_user.id)
+            if await webhook_app.state.consent_service.has_processing_consent(
+                "telegram", user_id
+            ):
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=message.chat.id,
+                    text=START_REPLY,
+                    reply_kind="start",
+                    delivery_options=main_menu_options(),
+                )
+            else:
+                await send_static_reply(
+                    update_id=update.update_id,
+                    chat_id=message.chat.id,
+                    text=_consent_prompt(),
+                    reply_kind="consent_prompt",
+                    delivery_options={
+                        "parse_mode": "HTML",
+                        "reply_markup": _consent_keyboard().model_dump(
+                            mode="json"
+                        ),
+                    },
+                )
             return Response(status_code=200)
 
         user_id = str(message.from_user.id)

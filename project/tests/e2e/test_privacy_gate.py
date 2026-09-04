@@ -9,7 +9,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 import redis.asyncio as redis
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 from httpx import ASGITransport, AsyncClient
 
 from config import (
@@ -54,7 +54,6 @@ CONSENT_PII_LABEL = "Согласен с политикой"
 CONSENT_ADS_LABEL = "Согласен на рассылку"
 CONSENT_DONE_LABEL = "Готово"
 CONSENT_NEED_PII_REPLY = "Без согласия с политикой продолжить не получится"
-CONSENT_THANKS = "Спасибо! Теперь я могу ответить на ваш вопрос."
 WEBHOOK_SECRET = "test-webhook-secret"
 
 
@@ -565,8 +564,15 @@ async def test_duplicate_consent_done_callback_is_idempotent(
     assert first.status_code == duplicate.status_code == 200
     assert await db.fetchval("SELECT count(*) FROM processing_consents") == 1
     assert [message["text"] for message in fake_telegram.sent_messages] == [
-        CONSENT_THANKS
+        START_REPLY
     ]
+    keyboard = fake_telegram.sent_messages[0]["reply_markup"]
+    assert isinstance(keyboard, ReplyKeyboardMarkup)
+    assert [[button.text for button in row] for row in keyboard.keyboard] == [
+        ["📅 Записаться", "✨ Услуги и цены"],
+        ["📍 Адрес и режим", "👩‍💼 Позвать администратора"],
+    ]
+    assert keyboard.is_persistent is True
 
 
 async def test_checked_policy_done_persists_only_versioned_consent(
@@ -583,7 +589,7 @@ async def test_checked_policy_done_persists_only_versioned_consent(
     assert tuple(consent.values())[:3] == ("telegram", "7", "v1")
     assert isinstance(consent["granted_at"], datetime)
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
-    assert fake_telegram.last_text == CONSENT_THANKS
+    assert fake_telegram.last_text == START_REPLY
 
 
 async def test_ads_checkbox_grants_proven_marketing_consent(
@@ -700,7 +706,7 @@ async def test_old_consent_card_can_grant_marketing_later(
     )
     assert await redis_client.get("consent:state:telegram:42:7") is None
     assert [message["text"] for message in fake_telegram.sent_messages] == [
-        CONSENT_THANKS,
+        START_REPLY,
         MARKETING_ENABLED_REPLY,
     ]
     assert await db.fetchval(
@@ -791,7 +797,7 @@ async def test_old_consent_card_can_revoke_marketing_later(
     assert tuple(consent.values()) == (False, "user_stop")
     assert await redis_client.get("consent:state:telegram:42:7") is None
     assert [message["text"] for message in fake_telegram.sent_messages] == [
-        CONSENT_THANKS,
+        START_REPLY,
         MARKETING_DISABLED_REPLY,
     ]
 
@@ -987,7 +993,7 @@ async def test_stale_consent_is_upgraded_by_done_callback(
         "WHERE channel = 'telegram' AND user_id = '7' "
         "AND consent_version = 'v1'"
     ) == 1
-    assert fake_telegram.last_text == CONSENT_THANKS
+    assert fake_telegram.last_text == START_REPLY
 
 
 async def test_group_messages_and_callbacks_are_ignored_before_any_durable_work(
@@ -1162,7 +1168,9 @@ async def test_redis_failure_after_consent_creates_single_message_task(
     assert tuple(task.values())[2:] == ("process_message:910", "pending")
 
 
-async def test_start_reply_is_durable_and_idempotent(client, db, fake_telegram):
+async def test_start_without_consent_shows_gate_and_is_idempotent(
+    client, db, fake_telegram
+):
     update = telegram_text_update("/start", update_id=911)
 
     first = await client.post("/telegram/webhook", json=update)
@@ -1170,12 +1178,38 @@ async def test_start_reply_is_durable_and_idempotent(client, db, fake_telegram):
 
     assert first.status_code == duplicate.status_code == 200
     assert [message["text"] for message in fake_telegram.sent_messages] == [
-        START_REPLY
+        CONSENT_PROMPT
     ]
+    assert isinstance(
+        fake_telegram.sent_messages[0]["reply_markup"], InlineKeyboardMarkup
+    )
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
     assert await db.fetchval(
         "SELECT idempotency_key FROM outbound_messages"
-    ) == "telegram:start:911"
+    ) == "telegram:consent_prompt:911"
+
+
+async def test_start_with_consent_shows_welcome_and_persistent_menu(
+    client, db, fake_telegram
+):
+    await grant_policy_consent(client, update_id=920)
+    fake_telegram.sent_messages.clear()
+
+    response = await client.post(
+        "/telegram/webhook",
+        json=telegram_text_update("/start", update_id=922),
+    )
+
+    assert response.status_code == 200
+    assert fake_telegram.last_text == START_REPLY
+    keyboard = fake_telegram.sent_messages[0]["reply_markup"]
+    assert isinstance(keyboard, ReplyKeyboardMarkup)
+    assert [[button.text for button in row] for row in keyboard.keyboard] == [
+        ["📅 Записаться", "✨ Услуги и цены"],
+        ["📍 Адрес и режим", "👩‍💼 Позвать администратора"],
+    ]
+    assert keyboard.is_persistent is True
+    assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
 
 
 async def test_paused_reply_is_durable_and_precedes_consent(
@@ -1208,7 +1242,7 @@ async def test_overlength_reply_is_durable_after_consent_without_persisting_text
 
     assert first.status_code == duplicate.status_code == 200
     assert [message["text"] for message in fake_telegram.sent_messages] == [
-        CONSENT_THANKS,
+        START_REPLY,
         INPUT_TOO_LONG_REPLY.format(limit=MAX_INPUT_LENGTH)
     ]
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0

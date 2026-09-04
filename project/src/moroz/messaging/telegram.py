@@ -27,6 +27,25 @@ from moroz.messaging.repository import DeliveryHook, MessageRepository, PreSendG
 logger = logging.getLogger(__name__)
 
 
+def main_menu_options() -> dict[str, object]:
+    return {
+        "reply_markup": {
+            "keyboard": [
+                [
+                    {"text": "📅 Записаться"},
+                    {"text": "✨ Услуги и цены"},
+                ],
+                [
+                    {"text": "📍 Адрес и режим"},
+                    {"text": "👩‍💼 Позвать администратора"},
+                ],
+            ],
+            "resize_keyboard": True,
+            "is_persistent": True,
+        }
+    }
+
+
 class DeliveryResult(StrEnum):
     SENT = "sent"
     FAILED = "failed"
