@@ -35,7 +35,11 @@ from moroz.booking.projection import (
 )
 from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
-from moroz.booking.telegram import BookingReply, TelegramBookingCoordinator
+from moroz.booking.telegram import (
+    BookingReply,
+    TelegramBookingCoordinator,
+    persistent_menu_command,
+)
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_catalog import YclientsCatalogError, YclientsCatalogReader
 from moroz.booking.yclients_http import YclientsConfig
@@ -579,6 +583,19 @@ class MessageTaskHandler:
                     raise ValueError("process_message spans multiple users")
                 user_id = int(user_ids.pop())
                 persisted_text = "\n".join(payload["text"] for payload in payloads)
+                menu_command = next(
+                    (
+                        command
+                        for payload in reversed(payloads)
+                        if (
+                            command := persistent_menu_command(payload["text"])
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if interaction_kind == "text" and menu_command is not None:
+                    persisted_text = menu_command
                 accepted_ids = [row["external_message_id"] for row in accepted]
 
                 human_mode = await connection.fetchval(

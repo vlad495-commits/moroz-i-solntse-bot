@@ -31,6 +31,11 @@ _WALK_IN_LABELS = {
 }
 
 
+def persistent_menu_command(text: str) -> str | None:
+    command = text.strip()
+    return command if command in _MENU_LABELS else None
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -89,7 +94,8 @@ class TelegramBookingCoordinator:
             )
 
         scenario = await self._repository.get_active_for_customer(customer_id)
-        if kind == "text" and text.strip() in _MENU_LABELS:
+        menu_command = persistent_menu_command(text) if kind == "text" else None
+        if menu_command is not None:
             if scenario is not None:
                 if scenario.phase == "executing":
                     return BookingReply(
@@ -105,7 +111,7 @@ class TelegramBookingCoordinator:
                     ),
                     "booking_flow_left_for_menu",
                 )
-            if text.strip() == _MENU_BOOK:
+            if menu_command == _MENU_BOOK:
                 return await self._start(connection, customer_id, update_id)
             return None
         if scenario is None:
@@ -253,6 +259,7 @@ class TelegramBookingCoordinator:
             action == "confirm"
             and index == 0
             and scenario.state.get("step") == "confirm"
+            and scenario.phase in {"awaiting_confirmation", "confirmed"}
         ):
             result = await self._booking_service.handle(
                 scenario.id,
@@ -263,6 +270,7 @@ class TelegramBookingCoordinator:
             action == "confirm_change"
             and index == 0
             and scenario.state.get("step") == "confirm_change"
+            and scenario.phase in {"awaiting_confirmation", "confirmed"}
         ):
             result = await self._booking_service.handle(
                 scenario.id,
@@ -635,6 +643,14 @@ class TelegramBookingCoordinator:
         }
         step = str(scenario.state.get("step", ""))
         text = labels.get(step, STALE_REPLY)
+        if step in {"confirm", "confirm_change"}:
+            action = "confirm" if step == "confirm" else "confirm_change"
+            return BookingReply(
+                text,
+                self._inline_options(
+                    [[("Подтвердить", self._callback(scenario, action, 0))]]
+                ),
+            )
         if step in {
             "service",
             "staff",

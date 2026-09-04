@@ -28,7 +28,11 @@ from moroz.common.queue import QueueTask
 from moroz.escalation.service import admin_reply_key
 from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.models import IncomingMessage
-from moroz.messaging.outbox import OutboxRelay, enqueue_process_message
+from moroz.messaging.outbox import (
+    OutboxRelay,
+    enqueue_process_message,
+    process_message_key,
+)
 from moroz.messaging.repository import (
     MessageRepository,
     OutboundDeliveryBlocked,
@@ -578,6 +582,48 @@ async def test_booking_message_is_routed_before_llm(database, text):
             "SELECT text FROM outbound_messages WHERE idempotency_key = $1",
             "reply:process_message:100",
         ) == "Ответ записи"
+
+
+async def test_persistent_menu_command_wins_over_earlier_buffered_text(database):
+    class BookingCoordinator:
+        def __init__(self):
+            self.texts = []
+
+        async def handle(self, connection, **kwargs):
+            self.texts.append(kwargs["text"])
+            if kwargs["text"] == "📍 Адрес и режим":
+                return BookingReply("Адрес центра", {})
+            return BookingReply("Текст ошибочно попал в шаг записи", {})
+
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("menu-buffer-1", "Иван"))
+    assert await repository.accept(
+        incoming("menu-buffer-2", "📍 Адрес и режим")
+    )
+    coordinator = BookingCoordinator()
+    llm = FakeLLM()
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+        booking_coordinator=coordinator,
+    )
+
+    await handler.handle(
+        QueueTask(
+            kind="process_message",
+            payload={
+                "chat_id": "42",
+                "update_ids": ["menu-buffer-1", "menu-buffer-2"],
+            },
+            idempotency_key=process_message_key(
+                ["menu-buffer-1", "menu-buffer-2"]
+            ),
+        )
+    )
+
+    assert coordinator.texts == ["📍 Адрес и режим"]
+    assert llm.calls == []
 
 
 async def test_booking_without_yclients_returns_safe_reply_without_llm(database):

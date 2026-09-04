@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 
 from moroz.booking.catalog import CatalogRepository
 from moroz.booking.mock_yclients import MockYclientsAdapter
 from moroz.booking.models import (
+    BookingScenario,
     CancelBooking,
     CreateBooking,
     RescheduleBooking,
@@ -286,6 +288,82 @@ async def test_persistent_menu_restarts_or_leaves_unfinished_booking_flow(
             0,
             0,
         )
+    finally:
+        await database.close()
+
+
+@pytest.mark.parametrize(
+    ("kind", "step", "action"),
+    (("create", "confirm", "confirm"), ("reschedule", "confirm_change", "confirm_change")),
+)
+async def test_stale_confirmation_is_rebuilt_and_old_confirm_cannot_execute_after_menu_exit(
+    migrated_database_url,
+    kind,
+    step,
+    action,
+):
+    database, repository, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    scenario = BookingScenario(
+        id=uuid4(),
+        kind=kind,
+        phase="awaiting_confirmation",
+        idempotency_key=f"telegram:{kind}:confirmation-recovery",
+        customer_id="42",
+        state={"step": step},
+        error_code=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    base = {
+        "customer_id": "42",
+        "user_id": "7",
+        "text": "",
+        "kind": "callback",
+        "data": {},
+    }
+    try:
+        await repository.create_scenario(scenario)
+        stale = await _handle(
+            coordinator,
+            database,
+            **{
+                **base,
+                "update_id": f"stale-{action}",
+                "data": {
+                    "callback_data": f"booking:v1:{scenario.id.hex}:service:0"
+                },
+            },
+        )
+        assert _button_labels(stale) == ["Подтвердить"]
+
+        routed = await _handle(
+            coordinator,
+            database,
+            **{
+                **base,
+                "update_id": f"leave-{action}",
+                "text": "📍 Адрес и режим",
+                "kind": "text",
+            },
+        )
+        assert routed is None
+
+        old_confirm = await _handle(
+            coordinator,
+            database,
+            **{
+                **base,
+                "update_id": f"old-{action}",
+                "data": {
+                    "callback_data": f"booking:v1:{scenario.id.hex}:{action}:0"
+                },
+            },
+        )
+        assert old_confirm.text == "Выберите услугу"
+        assert _button_labels(old_confirm) == ["Криокапсула"]
+        assert (adapter.create_calls, adapter.reschedule_calls) == (0, 0)
     finally:
         await database.close()
 
