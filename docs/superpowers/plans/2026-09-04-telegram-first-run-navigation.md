@@ -32,7 +32,7 @@
 - Produces: `main_menu_options() -> dict[str, object]`.
 - Preserves: existing durable `send_static_reply` and consent transaction.
 
-- [ ] **Step 1: Write failing privacy and markup tests**
+- [x] **Step 1: Write failing privacy and markup tests**
 
 Add tests proving:
 
@@ -51,7 +51,7 @@ assert consent_done.reply_markup.is_persistent is True
 
 Also prove `/start` with existing processing consent returns `START_REPLY` with the same keyboard, while a pre-consent ordinary text still creates no inbox/message row.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -61,7 +61,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: assertions fail because `/start` always sends `START_REPLY`, consent completion sends `CONSENT_THANKS`, and no persistent menu helper exists.
 
-- [ ] **Step 3: Add the minimal shared menu helper**
+- [x] **Step 3: Add the minimal shared menu helper**
 
 In `moroz.messaging.telegram` return the exact JSON-compatible markup:
 
@@ -79,13 +79,13 @@ def main_menu_options() -> dict[str, object]:
     }
 ```
 
-- [ ] **Step 4: Change webhook ordering**
+- [x] **Step 4: Change webhook ordering**
 
 For `/start`, check durable processing consent first. Send `_consent_prompt()` with the existing inline consent keyboard when absent; otherwise send `START_REPLY` with `main_menu_options()`.
 
 For the first successful `consent:done`, enqueue `START_REPLY` with `main_menu_options()` instead of the generic `CONSENT_THANKS`. Preserve existing marketing status replies for later edits of an old consent card.
 
-- [ ] **Step 5: Run GREEN and focused regression**
+- [x] **Step 5: Run GREEN and focused regression**
 
 Run the RED command again, then:
 
@@ -96,7 +96,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Document and commit**
+- [x] **Step 6: Document and commit**
 
 Update roadmap and changelog, then commit:
 
@@ -121,7 +121,7 @@ git commit -m "feat: согласие показано до приветстви
 - Consumes: `main_menu_options()` from Task 1.
 - Preserves: `TelegramBookingCoordinator.handle(...) -> BookingReply | None`.
 
-- [ ] **Step 1: Write failing booking tests**
+- [x] **Step 1: Write failing booking tests**
 
 Add tests proving:
 
@@ -138,7 +138,7 @@ assert "неактуальна" not in second.text
 
 Add one stale callback case with no active scenario that returns a fresh `Выберите услугу` list. Add worker/coordinator coverage that `📅 Записаться` restarts an unfinished flow and that another global menu label releases the unfinished flow to the ordinary router without mutation.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
@@ -148,21 +148,21 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: current walk-in scenario is `failed`, original sibling callback returns `STALE_REPLY`, and global menu is swallowed by the active booking flow.
 
-- [ ] **Step 3: Keep walk-in selection active**
+- [x] **Step 3: Keep walk-in selection active**
 
 Checkpoint a `booking_walk_in_selected` event without changing `phase` or `step`, and return the walk-in explanation with `_choice_options(scenario, "service")`. Remove the instruction to press `Записаться` again.
 
-- [ ] **Step 4: Recover stale callbacks and global navigation**
+- [x] **Step 4: Recover stale callbacks and global navigation**
 
 Pass `connection` and `update_id` into `_handle_callback`. If parsing, ownership or current-step validation fails, call a small recovery path that renders the owner’s active current step with its buttons or starts a fresh service list when no active flow exists.
 
 Recognize the four exact menu labels before step-specific text handling. `📅 Записаться` closes only an unfinished scenario and calls `_start`; the other three labels close the unfinished scenario with `menu_navigation` and return `None` so the existing worker router handles them.
 
-- [ ] **Step 5: Restore the main menu after temporary keyboards**
+- [x] **Step 5: Restore the main menu after temporary keyboards**
 
 Use `main_menu_options()` on cancellation and terminal booking replies that previously sent `remove_keyboard`. Keep inline confirmation buttons unchanged.
 
-- [ ] **Step 6: Run GREEN and booking regression**
+- [x] **Step 6: Run GREEN and booking regression**
 
 Run the RED command again, then:
 
@@ -175,7 +175,7 @@ docker compose --env-file ../.env run --rm test pytest -q `
 
 Expected: all selected tests pass and mutation call counts are unchanged.
 
-- [ ] **Step 7: Document and commit**
+- [x] **Step 7: Document and commit**
 
 Update roadmap and changelog, then commit:
 

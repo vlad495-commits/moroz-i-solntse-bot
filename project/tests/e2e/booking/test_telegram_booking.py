@@ -100,6 +100,14 @@ async def _handle(coordinator, database, **kwargs):
         return await coordinator.handle(connection, **kwargs)
 
 
+def _button_labels(reply):
+    return [
+        button["text"]
+        for row in reply.delivery_options["reply_markup"]["inline_keyboard"]
+        for button in row
+    ]
+
+
 async def test_walk_in_services_are_grouped_and_never_call_booking_adapter(
     migrated_database_url,
 ):
@@ -150,15 +158,134 @@ async def test_walk_in_services_are_grouped_and_never_call_booking_adapter(
 
             assert "предварительная запись не нужна" in walk_in.text.casefold()
             assert "10:00 до 21:00" in walk_in.text
+            assert _button_labels(walk_in) == expected
             stored = await repository.get_scenario(scenario.id)
-            assert (stored.phase, stored.error_code) == ("failed", "walk_in_no_booking")
-            assert await repository.get_active_for_customer(customer_id) is None
+            assert (stored.phase, stored.error_code, stored.state["step"]) == (
+                "collecting",
+                None,
+                "service",
+            )
+            assert (await repository.get_active_for_customer(customer_id)).id == scenario.id
+
+            if offset == 0:
+                other_service = await _handle(
+                    coordinator,
+                    database,
+                    customer_id=customer_id,
+                    user_id="7",
+                    update_id="walk-in-original-other-service",
+                    text="",
+                    kind="callback",
+                    data={
+                        "callback_data": (
+                            f"booking:v1:{scenario.id.hex}:service:3"
+                        )
+                    },
+                )
+                assert other_service.text == "Выберите специалиста"
+                assert "неактуальна" not in other_service.text.casefold()
         assert (
             adapter.list_calls,
             adapter.create_calls,
             adapter.reschedule_calls,
             adapter.cancel_calls,
         ) == (0, 0, 0, 0)
+    finally:
+        await database.close()
+
+
+async def test_stale_callback_opens_fresh_service_list(
+    migrated_database_url,
+):
+    database, repository, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    try:
+        reply = await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="stale-service",
+            text="",
+            kind="callback",
+            data={
+                "callback_data": (
+                    f"booking:v1:{'0' * 32}:service:0"
+                )
+            },
+        )
+
+        assert reply.text == "Выберите услугу"
+        assert _button_labels(reply) == ["Криокапсула"]
+        assert (await repository.get_active_for_customer("42")).state[
+            "step"
+        ] == "service"
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (
+            0,
+            0,
+            0,
+        )
+    finally:
+        await database.close()
+
+
+async def test_persistent_menu_restarts_or_leaves_unfinished_booking_flow(
+    migrated_database_url,
+):
+    database, repository, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    base = {
+        "customer_id": "42",
+        "user_id": "7",
+        "kind": "text",
+        "data": {},
+    }
+    try:
+        first = await _handle(
+            coordinator,
+            database,
+            **{**base, "update_id": "menu-start", "text": "Записаться"},
+        )
+        assert first.text == "Выберите услугу"
+        original = await repository.get_active_for_customer("42")
+
+        restarted = await _handle(
+            coordinator,
+            database,
+            **{
+                **base,
+                "update_id": "menu-restart",
+                "text": "📅 Записаться",
+            },
+        )
+        current = await repository.get_active_for_customer("42")
+        assert restarted.text == "Выберите услугу"
+        assert current.id != original.id
+        assert (await repository.get_scenario(original.id)).error_code == (
+            "menu_navigation"
+        )
+
+        routed = await _handle(
+            coordinator,
+            database,
+            **{
+                **base,
+                "update_id": "menu-services",
+                "text": "✨ Услуги и цены",
+            },
+        )
+        assert routed is None
+        assert await repository.get_active_for_customer("42") is None
+        assert (await repository.get_scenario(current.id)).error_code == (
+            "menu_navigation"
+        )
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (
+            0,
+            0,
+            0,
+        )
     finally:
         await database.close()
 
@@ -203,7 +330,8 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
                     "data": {"callback_data": callback},
                 },
             )
-            assert stale.text == "Эта кнопка уже неактуальна. Начните запись заново."
+            assert stale.text == "Выберите услугу"
+            assert _button_labels(stale)
         assert (adapter.list_calls, adapter.create_calls) == (0, 0)
 
         service = f"booking:v1:{token}:service:0"
@@ -270,9 +398,7 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         )
         assert first.text == repeated.text
         assert "Запись подтверждена" in first.text
-        assert first.delivery_options == {
-            "reply_markup": {"remove_keyboard": True}
-        }
+        assert first.delivery_options["reply_markup"]["is_persistent"] is True
         assert adapter.create_calls == 1
 
         mine = await _handle(
@@ -287,7 +413,7 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         forged = f"booking:v1:{management_token}:booking_action:99"
         assert (await _handle(
             coordinator, database, **{**base, "update_id": "110", "data": {"callback_data": forged}}
-        )).text == "Эта кнопка уже неактуальна. Начните запись заново."
+        )).text == "Выберите действие"
 
         reschedule = f"booking:v1:{management_token}:booking_action:0"
         assert (await _handle(
@@ -424,6 +550,7 @@ async def test_cancel_action_closes_only_open_draft(migrated_database_url):
         )
 
         assert reply.text == "Текущее действие отменено."
+        assert reply.delivery_options["reply_markup"]["is_persistent"] is True
         assert (await repository.get_scenario(active.id)).phase == "failed"
         assert await repository.get_active_for_customer("42") is None
         assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (
