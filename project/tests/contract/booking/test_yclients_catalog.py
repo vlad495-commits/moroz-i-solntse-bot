@@ -107,6 +107,32 @@ async def test_reads_bookable_staff_services_and_normalizes_allowlisted_fields()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "title,seance_length,expected_minutes",
+    [
+        ("Солярий | 1 минута", 0, 1),
+        ("Коллариум 3 минуты", 300, 3),
+        ("КОЛЛАГЕНАРИЙ 25 минут", 1800, 25),
+    ],
+)
+async def test_uses_title_minutes_for_confirmed_walk_in_services(
+    title, seance_length, expected_minutes
+):
+    fake = FakeHttp([
+        response([staff()]),
+        response({
+            "services": [
+                service(title=title, seance_length=seance_length)
+            ]
+        }),
+    ])
+
+    snapshot = await YclientsCatalogReader(config(), http=fake).read(NOW)
+
+    assert snapshot.records[0].duration_minutes == expected_minutes
+
+
+@pytest.mark.asyncio
 async def test_accepts_empty_successful_snapshot():
     snapshot = await YclientsCatalogReader(
         config(), http=FakeHttp([response([])])

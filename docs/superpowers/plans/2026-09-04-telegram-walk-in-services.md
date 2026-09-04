@@ -30,7 +30,7 @@
 - Produces: `walk_in_minutes(service_name: str) -> int | None`
 - Preserves: `CatalogRecord.duration_minutes: int` as a positive value.
 
-- [ ] **Step 1: Write the failing contract tests**
+- [x] **Step 1: Write the failing contract tests**
 
 Add tests proving:
 
@@ -58,18 +58,18 @@ async def test_rejects_zero_duration_for_unknown_service():
 
 Also parameterize case and separators for the three exact families.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
 ```powershell
 cd project
-docker compose --env-file ../.env run --rm test pytest tests/contract/booking/test_yclients_catalog.py -q
+docker compose --env-file ../.env run --build --rm test pytest tests/contract/booking/test_yclients_catalog.py -q
 ```
 
 Expected: new walk-in test fails because zero duration is rejected.
 
-- [ ] **Step 3: Implement the minimum parser**
+- [x] **Step 3: Implement the minimum parser**
 
 In `yclients_catalog.py`, use stdlib `re` and normalized title prefixes:
 
@@ -102,11 +102,11 @@ def walk_in_minutes(service_name: str) -> int | None:
 
 In `_record`, use title minutes for recognized walk-in services; keep the existing strict `seance_length` path for every other service.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run the same Docker test command. Expected: all catalog contract tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add project/src/moroz/booking/yclients_catalog.py project/tests/contract/booking/test_yclients_catalog.py changelog.md
@@ -147,7 +147,7 @@ Run:
 
 ```powershell
 cd project
-docker compose --env-file ../.env run --rm test pytest tests/e2e/booking/test_telegram_booking.py -q
+docker compose --env-file ../.env run --build --rm test pytest tests/e2e/booking/test_telegram_booking.py -q
 ```
 
 Expected: minute variants appear separately and selecting one proceeds to staff.
@@ -170,7 +170,7 @@ Regular services keep `_service_choice`. In `_choose_service`, before reading `v
 
 ```powershell
 cd project
-docker compose --env-file ../.env run --rm test pytest tests/e2e/booking/test_telegram_booking.py tests/unit/booking tests/contract/booking -q
+docker compose --env-file ../.env run --build --rm test pytest tests/e2e/booking/test_telegram_booking.py tests/unit/booking tests/contract/booking -q
 ```
 
 Expected: all selected tests pass; ordinary create/reschedule/cancel behavior is unchanged.
@@ -198,7 +198,7 @@ git commit -m "feat: услуги без записи показаны в Telegr
 
 ```powershell
 cd project
-docker compose --env-file ../.env run --rm test pytest tests/contract/booking/test_yclients_catalog.py tests/e2e/booking/test_telegram_booking.py tests/unit/booking -q
+docker compose --env-file ../.env run --build --rm test pytest tests/contract/booking/test_yclients_catalog.py tests/e2e/booking/test_telegram_booking.py tests/unit/booking -q
 docker compose --env-file ../.env config --quiet
 docker compose --env-file ../.env run --rm test python -m compileall -q src tests
 ```

@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,6 +20,15 @@ _MAX_DISPLAY_LENGTH = 200
 _MAX_PROVIDER_ID_LENGTH = 64
 _MAX_PRICE = Decimal("99999999.99")
 _MONEY_QUANTUM = Decimal("0.01")
+_WALK_IN_PATTERN = re.compile(
+    r"^(солярий|коллариум|коллагенарий)(?:\s|\||$)"
+)
+_WALK_IN_FAMILIES = {
+    "солярий": "solarium",
+    "коллариум": "collarium",
+    "коллагенарий": "collagenarium",
+}
+_MINUTES_PATTERN = re.compile(r"\b(\d{1,4})\s+минут(?:а|ы)?\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,19 +166,41 @@ def _record(value: object, staff_id: str, staff_name: str) -> CatalogRecord:
     price_max = _money(value.get("price_max", value.get("price_min")))
     if price_min > price_max:
         raise ValueError("price range is reversed")
-    seconds = _positive_int(value.get("seance_length"))
-    if seconds % 60 or seconds > 1_440 * 60:
-        raise ValueError("duration is outside bounds")
+    service_name = _required_display(value.get("title"))
+    duration_minutes = walk_in_minutes(service_name)
+    if walk_in_family(service_name) is not None:
+        if duration_minutes is None:
+            raise ValueError("walk-in duration is missing")
+    else:
+        seconds = _positive_int(value.get("seance_length"))
+        if seconds % 60 or seconds > 1_440 * 60:
+            raise ValueError("duration is outside bounds")
+        duration_minutes = seconds // 60
     return CatalogRecord(
         service_id=_provider_id(value.get("id")),
         staff_id=staff_id,
-        service_name=_required_display(value.get("title")),
+        service_name=service_name,
         category_name=_category(value.get("category")),
         staff_name=staff_name,
         price_min=price_min,
         price_max=price_max,
-        duration_minutes=seconds // 60,
+        duration_minutes=duration_minutes,
     )
+
+
+def walk_in_family(service_name: str) -> str | None:
+    match = _WALK_IN_PATTERN.match(service_name.strip().casefold())
+    return None if match is None else _WALK_IN_FAMILIES[match.group(1)]
+
+
+def walk_in_minutes(service_name: str) -> int | None:
+    if walk_in_family(service_name) is None:
+        return None
+    match = _MINUTES_PATTERN.search(service_name.casefold())
+    if match is None:
+        return None
+    minutes = int(match.group(1))
+    return minutes if 1 <= minutes <= 1_440 else None
 
 
 def _category(value: object) -> str | None:
