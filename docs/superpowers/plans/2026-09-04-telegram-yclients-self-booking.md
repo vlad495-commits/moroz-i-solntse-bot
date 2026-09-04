@@ -205,7 +205,7 @@ git commit -m "feat: добавлено состояние Telegram-записи
 
 **Files:**
 - Create: `project/src/moroz/booking/telegram.py`
-- Create: `project/tests/unit/booking/test_telegram_booking.py`
+- Create: `project/tests/unit/booking/test_telegram_booking_unit.py`
 - Test: `project/tests/e2e/booking/test_telegram_booking.py`
 
 **Interfaces:**
@@ -213,7 +213,7 @@ git commit -m "feat: добавлено состояние Telegram-записи
 - Produces: `TelegramBookingCoordinator.handle(connection, *, customer_id: str, user_id: str, update_id: str, text: str, kind: str, data: Mapping[str, object]) -> BookingReply | None`.
 - Consumes: `BookingRepository`, `CatalogRepository`, `BookingService`, `BookingPort`.
 
-- [ ] **Step 1: Write RED for start, choices and stale callbacks**
+- [x] **Step 1: Write RED for start, choices and stale callbacks**
 
 Use a real PostgreSQL repository and `MockYclientsAdapter`. Prove:
 
@@ -234,17 +234,17 @@ assert llm.calls == []
 
 Callbacks use `booking:v1:<scenario_hex>:<action>:<choice_index>`. Assert wrong customer, wrong scenario, wrong step and out-of-range choice return a safe stale-button reply and perform no provider call.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
-  tests/unit/booking/test_telegram_booking.py `
+  tests/unit/booking/test_telegram_booking_unit.py `
   tests/e2e/booking/test_telegram_booking.py
 ```
 
 Expected: collection failure because the coordinator module does not exist.
 
-- [ ] **Step 3: Implement start and server-owned choices**
+- [x] **Step 3: Implement start and server-owned choices**
 
 Create one coordinator file. Store in `BookingScenario.state`:
 
@@ -258,7 +258,7 @@ Create one coordinator file. Store in `BookingScenario.state`:
 
 Callbacks contain only scenario ID, action and index. Resolve every index against current `state["choices"]`; never accept service/staff/slot provider IDs directly from callback data.
 
-- [ ] **Step 4: Write RED for service → staff → date → slot**
+- [x] **Step 4: Write RED for service → staff → date → slot**
 
 Assert the exact progression:
 
@@ -268,11 +268,11 @@ service -> staff (Любой специалист first) -> available_date -> sl
 
 Call `BookingPort.list_slots` with the selected single service, optional staff and a bounded 14-day UTC-aware interval. Show at most seven dates and eight slots per date. Store display names, `slot_query` and the signed `selected_slot_id` in scenario state.
 
-- [ ] **Step 5: Implement slot progression and run focused GREEN**
+- [x] **Step 5: Implement slot progression and run focused GREEN**
 
 Reuse `SlotQuery` and adapter-returned signed `Slot.id`. When no slots exist, return a clear retry/admin reply and keep the flow at staff/date selection. Do not invent availability and do not call LLM.
 
-- [ ] **Step 6: Write RED for contact and confirmation**
+- [x] **Step 6: Write RED for contact and confirmation**
 
 Prove:
 
@@ -285,26 +285,26 @@ Prove:
 - only `confirm` calls `BookingService.handle(..., confirmed=True)`;
 - duplicate confirm returns the stored terminal result without a second provider mutation.
 
-- [ ] **Step 7: Implement contact and create confirmation**
+- [x] **Step 7: Implement contact and create confirmation**
 
 Use stdlib digit normalization; add no phone library. Read durable processing consent before accepting contact. At completed collection set `phase="awaiting_confirmation"` and state keys required by existing `BookingService`: `slot_query`, `selected_slot_id`, `customer_name`, `customer_phone`, `personal_data_processing_allowed=True`, plus safe display labels.
 
-- [ ] **Step 8: Run Task 3 GREEN**
+- [x] **Step 8: Run Task 3 GREEN**
 
 ```powershell
 docker compose --env-file ../.env run --rm test pytest -q `
-  tests/unit/booking/test_telegram_booking.py `
+  tests/unit/booking/test_telegram_booking_unit.py `
   tests/e2e/booking/test_telegram_booking.py `
   tests/e2e/booking/test_create_booking.py
 ```
 
 Expected: all selected tests pass; fake adapter shows exactly one create mutation.
 
-- [ ] **Step 9: Document and commit**
+- [x] **Step 9: Document and commit**
 
 ```powershell
 git add -- project/src/moroz/booking/telegram.py `
-  project/tests/unit/booking/test_telegram_booking.py `
+  project/tests/unit/booking/test_telegram_booking_unit.py `
   project/tests/e2e/booking/test_telegram_booking.py `
   'Дорожная карта.md' changelog.md
 git commit -m "feat: добавлена запись внутри Telegram"
