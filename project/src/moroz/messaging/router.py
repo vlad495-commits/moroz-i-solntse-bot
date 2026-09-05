@@ -130,11 +130,15 @@ class RouterVerdict:
 
 def deterministic_route(text: str) -> RouteDecision | None:
     """Only exact technical menu commands bypass semantic classification."""
+    if text.strip() == "📋 Мои записи":
+        return RouteDecision("booking_management", 1.0, "view")
     route = {
         "📅 Записаться": "booking",
         "✨ Услуги и цены": "consultation",
         "📍 Адрес и режим": "consultation",
         "👩‍💼 Позвать администратора": "escalation",
+        "👩‍💼 Связаться с администратором": "escalation",
+        "🧭 Подобрать процедуру": "consultation",
     }.get(text.strip())
     return RouteDecision(route, 1.0) if route else None
 

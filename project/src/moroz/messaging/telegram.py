@@ -16,6 +16,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import (
     InlineKeyboardMarkup,
+    LinkPreviewOptions,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
@@ -27,14 +28,19 @@ from moroz.messaging.repository import DeliveryHook, MessageRepository, PreSendG
 
 logger = logging.getLogger(__name__)
 _PLAIN_TEXT_TOKEN = re.compile(
-    r"https?://\S+|(?<![\w/])\*\*(\S(?:.*?\S)?)\*\*",
+    r"\[([^\]]+)\]\((https?://[^)]+)\)|https?://\S+|(?<![\w/])\*\*(\S(?:.*?\S)?)\*\*",
     re.DOTALL,
 )
 
 
 def _plain_text(text: str) -> str:
     return _PLAIN_TEXT_TOKEN.sub(
-        lambda match: match.group(1) if match.group(1) is not None else match.group(0),
+        lambda match: (
+            f"{match.group(1)}: {match.group(2)}"
+            if match.group(1) is not None
+            else match.group(3) if match.group(3) is not None
+            else match.group(0)
+        ),
         text,
     )
 
@@ -48,8 +54,12 @@ def main_menu_options() -> dict[str, object]:
                     {"text": "✨ Услуги и цены"},
                 ],
                 [
+                    {"text": "🧭 Подобрать процедуру"},
+                    {"text": "📋 Мои записи"},
+                ],
+                [
                     {"text": "📍 Адрес и режим"},
-                    {"text": "👩‍💼 Позвать администратора"},
+                    {"text": "👩‍💼 Связаться с администратором"},
                 ],
             ],
             "resize_keyboard": True,
@@ -175,6 +185,7 @@ async def deliver_claimed_outbound(
             send_arguments = {
                 "chat_id": int(current.chat_id),
                 "text": current.text if parse_mode is not None else _plain_text(current.text),
+                "link_preview_options": LinkPreviewOptions(is_disabled=True),
             }
             reply_markup = current.delivery_options.get("reply_markup")
             if reply_markup is not None:

@@ -13,7 +13,7 @@
 - Запуск и тесты только через Docker Compose с `--env-file ../.env`.
 - Не добавлять зависимости и миграции.
 - Не создавать, переносить и отменять реальные записи во время проверки.
-- Не менять production или staging в рамках локальной реализации.
+- Production не менять. После локальных проверок развернуть точный проверенный commit на staging по отдельному rollout/rollback gate.
 - Цены берутся только из свежего каталога YCLIENTS; отсутствующие тарифы не достраиваются.
 - Изменения вести в `codex/telegram-ux-audit-implementation`, каждый законченный блок коммитить отдельно и сразу фиксировать в `changelog.md`.
 
@@ -103,11 +103,11 @@
 - Consumes: service variants, main menu, outbound `delivery_options`.
 - Produces: skipped redundant single-resource choice, menu label `Связаться с администратором`, concise default greeting, link previews disabled for ordinary bot answers, plain URL contact copy.
 
-- [ ] **Step 1: Write failing tests** for automatic selection of a single variant, truthful contact label/copy, concise start fallback and `link_preview_options.is_disabled=True` delivery.
-- [ ] **Step 2: Run RED** for the three focused files.
-- [ ] **Step 3: Implement minimal copy and delivery changes**; accept the legacy administrator label as an alias so old persistent keyboards keep working.
-- [ ] **Step 4: Run GREEN** and confirm consent HTML delivery remains unchanged.
-- [ ] **Step 5: Update `changelog.md` and commit** as `feat: сделать подписи Telegram понятными клиенту`.
+- [x] **Step 1: Write failing tests** for automatic selection of a single variant, truthful contact label/copy, concise start fallback and `link_preview_options.is_disabled=True` delivery.
+- [x] **Step 2: Run RED** for the three focused files.
+- [x] **Step 3: Implement minimal copy and delivery changes**; accept the legacy administrator label as an alias so old persistent keyboards keep working.
+- [x] **Step 4: Run GREEN** and confirm consent HTML delivery remains unchanged.
+- [x] **Step 5: Update `changelog.md` and commit** as `feat: сделать подписи Telegram понятными клиенту`.
 
 ### Task 6: Combined verification and documentation
 
@@ -124,4 +124,12 @@
 - [ ] **Step 2: Run broader booking/catalog/delivery regression**, Ruff, `compileall`, `docker compose config`, and `git diff --check`.
 - [ ] **Step 3: Review every audit item** and document any deliberately unimplemented part with the concrete reason.
 - [ ] **Step 4: Update roadmap, plan checkboxes and changelog**, then commit as `docs: завершить реализацию UX-аудита Telegram`.
-- [ ] **Step 5: Do not push or deploy**; hand the local branch to the owner for review and selection of staging rollout.
+- [ ] **Step 5: Commit** as `docs: завершить реализацию UX-аудита Telegram`.
+
+### Task 7: Staging rollout и ручная приёмка
+
+- [ ] **Step 1: Выполнить server preflight и создать code/env/database/image rollback-артефакты.**
+- [ ] **Step 2: Передать точный commit на staging без GitHub push, собрать immutable RC и применить server-only короткий `START_REPLY`.**
+- [ ] **Step 3: Проверить migration current/heads, 8/8 health, HTTPS, webhook, scheduler/catalog и safe logs.**
+- [ ] **Step 4: Проверить исправленные ответы через локальный Telegram Web без создания реальной записи.**
+- [ ] **Step 5: Обновить roadmap, changelog и ручной QA-отчёт точным runtime evidence.**

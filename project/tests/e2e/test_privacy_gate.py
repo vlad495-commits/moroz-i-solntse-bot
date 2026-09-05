@@ -570,7 +570,8 @@ async def test_duplicate_consent_done_callback_is_idempotent(
     assert isinstance(keyboard, ReplyKeyboardMarkup)
     assert [[button.text for button in row] for row in keyboard.keyboard] == [
         ["📅 Записаться", "✨ Услуги и цены"],
-        ["📍 Адрес и режим", "👩‍💼 Позвать администратора"],
+        ["🧭 Подобрать процедуру", "📋 Мои записи"],
+        ["📍 Адрес и режим", "👩‍💼 Связаться с администратором"],
     ]
     assert keyboard.is_persistent is True
 
@@ -1206,7 +1207,8 @@ async def test_start_with_consent_shows_welcome_and_persistent_menu(
     assert isinstance(keyboard, ReplyKeyboardMarkup)
     assert [[button.text for button in row] for row in keyboard.keyboard] == [
         ["📅 Записаться", "✨ Услуги и цены"],
-        ["📍 Адрес и режим", "👩‍💼 Позвать администратора"],
+        ["🧭 Подобрать процедуру", "📋 Мои записи"],
+        ["📍 Адрес и режим", "👩‍💼 Связаться с администратором"],
     ]
     assert keyboard.is_persistent is True
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
@@ -1522,9 +1524,11 @@ async def test_claimed_outbound_with_empty_options_sends_without_markup(
     )
 
     assert claimed.delivery_options == {}
-    assert fake_telegram.sent_messages == [
-        {"chat_id": 42, "text": NON_TEXT_REPLY}
-    ]
+    assert fake_telegram.sent_messages[0]["chat_id"] == 42
+    assert fake_telegram.sent_messages[0]["text"] == NON_TEXT_REPLY
+    assert (
+        fake_telegram.sent_messages[0]["link_preview_options"].is_disabled is True
+    )
     assert await db.fetchval(
         "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
     ) == "sent"

@@ -35,6 +35,9 @@ _MENU_LABELS = frozenset(
         "✨ Услуги и цены",
         "📍 Адрес и режим",
         "👩‍💼 Позвать администратора",
+        "👩‍💼 Связаться с администратором",
+        "🧭 Подобрать процедуру",
+        "📋 Мои записи",
     }
 )
 _WALK_IN_LABELS = {
@@ -944,6 +947,12 @@ class TelegramBookingCoordinator:
             }
         )
         updated = await self._checkpoint(scenario, state, "booking_service_selected")
+        if len(variants) == 1:
+            only = variants[0]
+            return await self._choose_staff(
+                updated,
+                {"staff_id": only["staff_id"], "label": only["label"]},
+            )
         if state.get("requested_date"):
             return await self._choose_staff(updated, {"staff_id": None, "label": "Любой специалист"})
         return self._choice_reply(updated, "Выберите специалиста", "staff")

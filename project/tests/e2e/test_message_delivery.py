@@ -163,7 +163,9 @@ async def test_worker_does_not_send_sent_outbound_twice(database):
     assert await sender.send(outbound_id) == DeliveryResult.SENT
     assert await sender.send(outbound_id) == DeliveryResult.SKIPPED
 
-    assert telegram.sent_messages == [{"chat_id": 42, "text": "Ответ"}]
+    assert telegram.sent_messages[0]["chat_id"] == 42
+    assert telegram.sent_messages[0]["text"] == "Ответ"
+    assert telegram.sent_messages[0]["link_preview_options"].is_disabled is True
     async with database.acquire() as connection:
         assert await connection.fetchval(
             "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
@@ -184,13 +186,29 @@ async def test_plain_text_removes_only_balanced_bold_markers(database):
     telegram = FakeTelegram()
 
     assert await TelegramSender(telegram, repository).send(outbound_id) == DeliveryResult.SENT
-    assert telegram.sent_messages == [{
-        "chat_id": 42,
-        "text": (
-            "Важный ответ\nhttps://example.com/a**b**\n"
-            "https://example.com/a?x=**b**\n2 ** 3\nЛитерал **"
-        ),
-    }]
+    assert telegram.sent_messages[0]["text"] == (
+        "Важный ответ\nhttps://example.com/a**b**\n"
+        "https://example.com/a?x=**b**\n2 ** 3\nЛитерал **"
+    )
+    assert telegram.sent_messages[0]["link_preview_options"].is_disabled is True
+
+
+async def test_plain_text_renders_markdown_links_without_raw_brackets(database):
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="Напишите в [Telegram](https://t.me/krio_71) или [WhatsApp](https://wa.me/79029066166).",
+        idempotency_key="reply:plain-markdown-links",
+    )
+    telegram = FakeTelegram()
+
+    assert await TelegramSender(telegram, repository).send(outbound_id) == DeliveryResult.SENT
+    assert telegram.sent_messages[0]["text"] == (
+        "Напишите в Telegram: https://t.me/krio_71 или "
+        "WhatsApp: https://wa.me/79029066166."
+    )
+    assert telegram.sent_messages[0]["link_preview_options"].is_disabled is True
 
 
 async def test_explicit_html_delivery_is_unchanged(database):
@@ -205,11 +223,9 @@ async def test_explicit_html_delivery_is_unchanged(database):
     telegram = FakeTelegram()
 
     assert await TelegramSender(telegram, repository).send(outbound_id) == DeliveryResult.SENT
-    assert telegram.sent_messages == [{
-        "chat_id": 42,
-        "text": "<b>Согласие</b> **как есть**",
-        "parse_mode": "HTML",
-    }]
+    assert telegram.sent_messages[0]["text"] == "<b>Согласие</b> **как есть**"
+    assert telegram.sent_messages[0]["parse_mode"] == "HTML"
+    assert telegram.sent_messages[0]["link_preview_options"].is_disabled is True
 
 
 @pytest.mark.parametrize(
@@ -333,7 +349,9 @@ async def test_send_holds_customer_lock_until_provider_call_finishes(
             if not task.done():
                 task.cancel()
 
-    assert telegram.sent_messages == [{"chat_id": 42, "text": "Успевший ответ"}]
+    assert telegram.sent_messages[0]["chat_id"] == 42
+    assert telegram.sent_messages[0]["text"] == "Успевший ответ"
+    assert telegram.sent_messages[0]["link_preview_options"].is_disabled is True
 
 
 async def test_network_send_result_is_terminal_and_safe(

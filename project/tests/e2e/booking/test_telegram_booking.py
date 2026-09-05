@@ -180,7 +180,7 @@ async def test_walk_in_services_are_grouped_and_never_call_booking_adapter(
 
             assert "предварительная запись не нужна" in walk_in.text.casefold()
             assert "10:00 до 21:00" in walk_in.text
-            assert _button_labels(walk_in) == expected
+            assert _button_labels(walk_in) == [*expected, "Выйти из оформления"]
             stored = await repository.get_scenario(scenario.id)
             assert (stored.phase, stored.error_code, stored.state["step"]) == (
                 "collecting",
@@ -204,14 +204,14 @@ async def test_walk_in_services_are_grouped_and_never_call_booking_adapter(
                         )
                     },
                 )
-                assert other_service.text == "Выберите специалиста"
+                assert other_service.text.startswith("Свободного времени пока нет")
                 assert "неактуальна" not in other_service.text.casefold()
         assert (
             adapter.list_calls,
             adapter.create_calls,
             adapter.reschedule_calls,
             adapter.cancel_calls,
-        ) == (0, 0, 0, 0)
+        ) == (1, 0, 0, 0)
     finally:
         await database.close()
 
@@ -683,6 +683,56 @@ async def test_cancel_action_closes_only_open_draft(migrated_database_url):
             0,
             0,
         )
+    finally:
+        await database.close()
+
+
+async def test_single_resource_is_selected_without_customer_facing_staff_step(
+    migrated_database_url,
+):
+    records = (
+        CatalogRecord(
+            "331", "10", "Криокапсула", "Крио", "Крио Водород Массаж",
+            2400, 2400, 15,
+        ),
+    )
+    database, repository, adapter, coordinator = await _coordinator(
+        migrated_database_url, catalog_records=records
+    )
+    try:
+        reply = await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="single-resource-start",
+            text="Хочу записаться",
+            kind="text",
+            data={},
+        )
+        token = next(
+            button["callback_data"]
+            for row in reply.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Криокапсула"
+        )
+        reply = await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="single-resource-service",
+            text="",
+            kind="callback",
+            data={"callback_data": token},
+        )
+
+        assert reply.text == "Выберите дату"
+        assert "Крио Водород Массаж" not in _button_labels(reply)
+        assert (await repository.get_active_for_customer("42")).state[
+            "staff_name"
+        ] == "Крио Водород Массаж"
+        assert adapter.create_calls == 0
     finally:
         await database.close()
 

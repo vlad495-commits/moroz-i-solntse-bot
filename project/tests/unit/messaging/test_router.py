@@ -61,6 +61,9 @@ def test_routes_are_the_minimal_single_route_allowlist() -> None:
         ("✨ Услуги и цены", "consultation"),
         ("📍 Адрес и режим", "consultation"),
         ("👩‍💼 Позвать администратора", "escalation"),
+        ("👩‍💼 Связаться с администратором", "escalation"),
+        ("🧭 Подобрать процедуру", "consultation"),
+        ("📋 Мои записи", "booking_management"),
         ("Хочу пожаловаться", "escalation"),
         ("Позовите администратора", "escalation"),
         ("Верните деньги за услугу", "escalation"),
@@ -71,7 +74,15 @@ def test_deterministic_route_resolves_only_unambiguous_cases(
     text: str,
     expected: str,
 ) -> None:
-    assert deterministic_route(text) == (RouteDecision(expected, 1.0) if text in {"📅 Записаться", "✨ Услуги и цены", "📍 Адрес и режим", "👩‍💼 Позвать администратора"} else None)
+    local_commands = {
+        "📅 Записаться", "✨ Услуги и цены", "📍 Адрес и режим",
+        "👩‍💼 Позвать администратора", "👩‍💼 Связаться с администратором",
+        "🧭 Подобрать процедуру", "📋 Мои записи",
+    }
+    action = "view" if text == "📋 Мои записи" else "none"
+    assert deterministic_route(text) == (
+        RouteDecision(expected, 1.0, action) if text in local_commands else None
+    )
 
 
 @pytest.mark.parametrize(
