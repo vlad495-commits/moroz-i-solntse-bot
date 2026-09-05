@@ -35,7 +35,7 @@ _PRICE_WORDS = frozenset(
     }
 )
 _DURATION_WORDS = frozenset(
-    {"длительность", "длится", "времени", "минут", "минута", "минуты"}
+    {"длительность", "длится", "времени", "мин", "минут", "минута", "минуты"}
 )
 _STAFF_WORDS = frozenset(
     {"мастер", "мастера", "специалист", "специалисты", "кто", "сотрудник"}
@@ -337,14 +337,7 @@ def match_catalog(records, text: str) -> CatalogGrounding:
     )
     explicit_phrases = tuple(
         service for service in phrase_matches
-        if not any(
-            service is not other
-            and _is_phrase(
-                _normalized_text(service.service_name),
-                _normalized_text(other.service_name),
-            )
-            for other in phrase_matches
-        )
+        if _has_independent_phrase(service, phrase_matches, normalized_query)
     )
     technical_explicit = tuple(
         matched
@@ -378,7 +371,7 @@ def match_catalog(records, text: str) -> CatalogGrounding:
         if not grouped:
             return CatalogGrounding("fresh", (), kind, False)
 
-    scored: list[tuple[tuple[int, int, int], CatalogService]] = []
+    scored: list[tuple[tuple[int, int], CatalogService]] = []
     for service in grouped:
         name_tokens = _tokens(service.service_name)
         normalized_name = _normalized_text(service.service_name)
@@ -391,12 +384,12 @@ def match_catalog(records, text: str) -> CatalogGrounding:
             overlap = max(overlap, 1)
         if not phrase and not overlap:
             continue
-        scored.append(((phrase, overlap, len(name_tokens)), service))
+        scored.append(((phrase, overlap), service))
     scored.sort(
         key=lambda item: (
             -item[0][0],
             -item[0][1],
-            -item[0][2],
+            -len(_tokens(item[1].service_name)),
             _normalize(item[1].service_name),
             int(item[1].service_id),
         )
@@ -500,7 +493,40 @@ def _normalized_text(text: str) -> str:
 
 
 def _is_phrase(phrase: str, text: str) -> bool:
-    return bool(phrase and f" {phrase} " in f" {text} ")
+    return bool(_phrase_spans(phrase, text))
+
+
+def _phrase_spans(phrase: str, text: str) -> tuple[tuple[int, int], ...]:
+    if not phrase:
+        return ()
+    return tuple(
+        (match.start(), match.end())
+        for match in re.finditer(
+            rf"(?<!\w){re.escape(phrase)}(?!\w)",
+            text,
+        )
+    )
+
+
+def _has_independent_phrase(
+    service: CatalogService,
+    matches: tuple[CatalogService, ...],
+    query: str,
+) -> bool:
+    name = _normalized_text(service.service_name)
+    longer_spans = tuple(
+        span
+        for other in matches
+        if len(other_name := _normalized_text(other.service_name)) > len(name)
+        for span in _phrase_spans(other_name, query)
+    )
+    return any(
+        not any(
+            outer_start <= start and end <= outer_end
+            for outer_start, outer_end in longer_spans
+        )
+        for start, end in _phrase_spans(name, query)
+    )
 
 
 def _service_at_duration(
@@ -543,7 +569,7 @@ def _requested_minutes(text: str) -> int | None:
     values = {
         int(value)
         for value in re.findall(
-            r"\b(\d{1,4})\s+минут(?:а|ы)?\b",
+            r"\b(\d{1,4})\s*мин(?:ут(?:а|ы)?)?\b\.?",
             _normalize(text),
         )
     }

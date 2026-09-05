@@ -245,6 +245,62 @@ def test_unknown_non_walk_in_duration_has_no_closest_substitution():
     assert result.services == ()
 
 
+def test_abbreviated_minutes_keep_exact_walk_in_tariff():
+    result = match_catalog(
+        (
+            record("10", "Солярий 10 минут", duration=10),
+            record("16", "Солярий 16 минут", duration=16),
+        ),
+        "Сколько стоит солярий 10 мин.?",
+    )
+
+    assert result.ambiguous is False
+    assert [item.service_id for item in result.services] == ["10"]
+
+
+def test_unknown_abbreviated_minutes_have_no_closest_substitution():
+    result = match_catalog(
+        (
+            record("10", "Солярий 10 минут", duration=10),
+            record("16", "Солярий 16 минут", duration=16),
+        ),
+        "Сколько стоит солярий 99 мин.",
+    )
+
+    assert result.simple_kind == "price"
+    assert result.services == ()
+
+
+def test_nested_short_name_is_kept_when_it_has_a_separate_occurrence():
+    result = match_catalog(
+        (
+            record("20", "Криомассаж", price="900"),
+            record("21", "Криомассаж головы", price="1200"),
+        ),
+        "Сколько стоят Криомассаж и Криомассаж головы?",
+    )
+
+    assert result.multiple_requested is True
+    assert [item.service_id for item in result.services] == ["20", "21"]
+    assert result.direct_reply is None
+
+
+def test_partial_price_query_keeps_unequal_length_candidates_ambiguous():
+    result = match_catalog(
+        (
+            record("20", "Массаж лица", price="1000"),
+            record("21", "Массаж лица и шеи", price="1500"),
+        ),
+        "Сколько стоит массаж?",
+    )
+
+    assert result.simple_kind == "price"
+    assert result.ambiguous is True
+    assert [item.service_id for item in result.services] == ["21", "20"]
+    assert "Массаж лица" in result.direct_reply
+    assert "Массаж лица и шеи" in result.direct_reply
+
+
 def test_direct_price_reply_is_concise_and_retains_missing_price_intent():
     found = match_catalog(
         (record("20", "Солярий 10 минут", price="700", duration=10),),
