@@ -43,6 +43,17 @@ _STAFF_WORDS = frozenset(
 _COMPARISON_WORDS = frozenset(
     {"сравни", "сравнить", "разница", "отличается", "лучше", "подобрать", "выбрать"}
 )
+_STRUCTURAL_MATCH_TOKENS = frozenset(
+    {
+        "а", "без", "в", "во", "для", "до", "за", "и", "из", "или",
+        "к", "как", "на", "над", "не", "но", "о", "об", "от", "по",
+        "под", "при", "про", "с", "со", "сколько", "у", "через", "что",
+        "это",
+    }
+)
+_MONEY_UNIT_TOKENS = frozenset(
+    {"руб", "рубль", "рубля", "рубли", "рублей"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +331,7 @@ class CatalogSyncCoordinator:
 def match_catalog(records, text: str) -> CatalogGrounding:
     query_tokens = _tokens(text)
     query_name_tokens = _meaningful_name_tokens(text)
+    query_exact_tokens = _meaningful_name_tokens(text, allow_short=True)
     kind = _simple_kind(query_tokens)
     grouped = _group_records(records)
     normalized_query = _normalized_text(text)
@@ -327,14 +339,14 @@ def match_catalog(records, text: str) -> CatalogGrounding:
         service for service in grouped
         if _normalized_text(service.service_name) == normalized_query
     )
-    if exact and query_name_tokens:
+    if exact and query_exact_tokens:
         return CatalogGrounding("fresh", exact[:_MAX_MATCHES], kind, len(exact) > 1)
 
     query_family = _query_walk_in_family(text)
     requested_minutes = _requested_minutes(text)
     phrase_matches = tuple(
         service for service in grouped
-        if _meaningful_name_tokens(service.service_name)
+        if _meaningful_name_tokens(service.service_name, allow_short=True)
         and _is_phrase(_normalized_text(service.service_name), normalized_query)
     )
     explicit_phrases = tuple(
@@ -377,10 +389,14 @@ def match_catalog(records, text: str) -> CatalogGrounding:
     for service in grouped:
         name_tokens = _tokens(service.service_name)
         name_tokens_meaningful = _meaningful_name_tokens(service.service_name)
+        name_identity_tokens = _meaningful_name_tokens(
+            service.service_name,
+            allow_short=True,
+        )
         normalized_name = _normalized_text(service.service_name)
         overlap = len(query_tokens & name_tokens)
         phrase = int(
-            bool(name_tokens_meaningful)
+            bool(name_identity_tokens)
             and _is_phrase(normalized_name, normalized_query)
         )
         family_match = (
@@ -491,17 +507,23 @@ def _tokens(text: str) -> frozenset[str]:
     return values - _IGNORED_MATCH_TOKENS
 
 
-def _meaningful_name_tokens(text: str) -> frozenset[str]:
+def _meaningful_name_tokens(
+    text: str,
+    *,
+    allow_short: bool = False,
+) -> frozenset[str]:
     return frozenset(
         token
         for token in _TOKEN_RE.findall(_normalize(text))
-        if not token.isdecimal()
+        if not token.isdecimal() and (allow_short or len(token) >= 3)
     ) - (
         _IGNORED_MATCH_TOKENS
         | _PRICE_WORDS
         | _DURATION_WORDS
         | _STAFF_WORDS
         | _COMPARISON_WORDS
+        | _STRUCTURAL_MATCH_TOKENS
+        | _MONEY_UNIT_TOKENS
     )
 
 

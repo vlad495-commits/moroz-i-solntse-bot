@@ -343,6 +343,54 @@ def test_multiple_duration_only_titles_are_not_explicit_services():
     assert result.services == ()
 
 
+@pytest.mark.parametrize(
+    "query",
+    (
+        "А на 30 минут сколько стоит?",
+        "Для 30 минут сколько стоит?",
+        "И 30 минут сколько стоит?",
+    ),
+)
+def test_function_word_wrappers_do_not_identify_services(query):
+    result = match_catalog(
+        (
+            record("30", "Абонемент на солярий", duration=30),
+            record("31", "Уход для лица", duration=30),
+            record("32", "Массаж и обёртывание", duration=30),
+        ),
+        query,
+    )
+
+    assert result.services == ()
+
+
+@pytest.mark.parametrize(
+    ("query", "service_name"),
+    (
+        ("Сколько рублей за30минут?", "Сертификат 1000 рублей"),
+        ("Сколько руб за30минут?", "Сертификат 1000 руб"),
+        ("Сколько рубля за30минут?", "Сертификат на рубля"),
+    ),
+)
+def test_money_units_do_not_identify_services(query, service_name):
+    result = match_catalog(
+        (record("30", service_name, duration=30),),
+        query,
+    )
+
+    assert result.services == ()
+
+
+def test_short_real_service_name_survives_exact_and_phrase_matching():
+    records = (record("20", "RF"),)
+
+    exact = match_catalog(records, "RF")
+    phrase = match_catalog(records, "Сколько стоит RF?")
+
+    assert [item.service_id for item in exact.services] == ["20"]
+    assert [item.service_id for item in phrase.services] == ["20"]
+
+
 def test_direct_price_reply_is_concise_and_retains_missing_price_intent():
     found = match_catalog(
         (record("20", "Солярий 10 минут", price="700", duration=10),),
