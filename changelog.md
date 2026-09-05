@@ -3479,3 +3479,19 @@
 [2026-09-05 16:43] Editable booking зафиксирован отдельным 8178318 после fresh navigation 9 passed и delivery gates 8+32 passed. Владелец добавил menu 2×3 отдельным коммитом; дизайн/план/roadmap обновлены. Read-only проверка Docker aiogram 3.27.0 и официальных docs подтвердила style success/primary; используется только success записи, без custom IDs.
 [2026-09-05 16:44] Targeted catalog layout RED воспроизвёл 9 одиночных строк из-за одной длинной категории. Renderer теперь объединяет соседние короткие категории попарно, длинную оставляет отдельной; все 9 категорий помещаются в 6 строк. Итоговая проверка войдёт в combined gate.
 [2026-09-05 16:48] Новое меню 2×3 реализовано отдельным пакетом: точные короткие подписи, success только записи, standard emoji, старые aliases и worker STOP/menu границы сохранены. RED: 7 unit и 6 ожидаемых menu E2E failures; GREEN: 115 unit +10 E2E passed. Независимый reviewer не нашёл P1/P2; scoped pinned Ruff и diff-check прошли.
+
+[2026-09-05 16:53] Итоговый runtime-кандидат 558b380: запущен свежий combined Docker gate; Compose config и compileall пройдены. Ruff при default target ошибочно счёл anext неопределённым; повтор с фактическим Python 3.12 пройден.
+
+[2026-09-05 16:59] Полный Git bundle кандидата 558b380 проверен и передан в staging tmp, rollout ещё не запускался. Read-only QA baseline: бот не на паузе, 356 сообщений в тестовом диалоге. Telegram Web авторизован и доступен.
+
+[2026-09-05 17:03] План синхронизирован с завершёнными RED→GREEN, review и отдельными коммитами 1bf7505, 8178318, 558b380; финальный combined gate и staging/UI acceptance пока открыты.
+
+[2026-09-05 17:07] Fresh Docker build/gate кандидата 558b380: 588 passed за 837.93s. Ruff py312, compileall, Compose config, diff-check пройдены. Начата exact staging rollout с backup/rollback.
+
+[2026-09-05 17:09] Staging rollout кандидата 558b380 завершён: 8/8 healthy, schema0025, catalog76 fresh, HTTPS/admin200, webhook403 без подписи и clean status/logs. Локальный trailing Get-Content после helper ошибся из-за изменения cwd; сам remote rollout подтвердил SAFE_ROLLOUT_COMPLETE.
+
+[2026-09-05 17:15] Telegram Web acceptance: новое меню 2x3 и success подтверждены визуально; 360px light/dark без переносов и overflow, исходная тема восстановлена. Категории9, singleton Прессотерапия/Фреш, контекст Что это?, parts-duration, hydrogen30/60, walk-in details/address/back и old picker alias подтверждены живым UI.
+
+[2026-09-05 17:24] Live booking QA: 10 structural outbounds одного scenario использовали единственный Telegram message_id843; forward/back service/date/time, double Далее и stale time проверены. История356/356 сохранена,32 outbounds sent. Стоп закрыл draft и применил штатный marketing opt-out; /start вернул главное меню. Выявлен нюанс существующего LLM пути Адрес и режим: один security-fallback, в логах compact_invalid_output; проверяется повтор.
+
+[2026-09-05 17:28] Финальный staging audit558b380 пройден: exact images,8/8,schema0025,catalog76/scheduler,HTTPS/admin/webhook/logs,rollback. Создан durable QA report и обновлены roadmap/plan/tmp manual report. UI доказательства и ограничения записаны явно; address security-fallback и нативные Android/iOS вынесены в follow-up. Viewport сброшен, светлая тема восстановлена. Первый скрипт обновления roadmap остановился до записи из-за некорректного wildcard; исправленный выполнен.
