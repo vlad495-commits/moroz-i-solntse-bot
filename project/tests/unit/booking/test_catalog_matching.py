@@ -421,3 +421,14 @@ def test_catalog_data_labels_staff_neutrally_and_omits_missing_category():
     assert "Ресурс/специалист: Кабинет 1" in data
     assert "Категория:" not in data
     assert "Варианты:" not in data
+
+
+def test_deposit_display_omits_meaningless_service_duration():
+    result = match_catalog(
+        (record("50", "Депозит на загар", staff="Касса", price="1500", duration=60),),
+        "Сколько стоит депозит на загар?",
+    )
+
+    assert result.direct_reply == "«Депозит на загар» — 1 500 ₽"
+    assert "1 500 ₽" in result.data_block()
+    assert "60 мин." not in result.data_block()

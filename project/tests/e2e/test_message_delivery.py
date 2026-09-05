@@ -170,6 +170,48 @@ async def test_worker_does_not_send_sent_outbound_twice(database):
         ) == "sent"
 
 
+async def test_plain_text_removes_only_balanced_bold_markers(database):
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text=(
+            "**Важный ответ**\nhttps://example.com/a**b**\n"
+            "https://example.com/a?x=**b**\n2 ** 3\nЛитерал **"
+        ),
+        idempotency_key="reply:plain-balanced-bold",
+    )
+    telegram = FakeTelegram()
+
+    assert await TelegramSender(telegram, repository).send(outbound_id) == DeliveryResult.SENT
+    assert telegram.sent_messages == [{
+        "chat_id": 42,
+        "text": (
+            "Важный ответ\nhttps://example.com/a**b**\n"
+            "https://example.com/a?x=**b**\n2 ** 3\nЛитерал **"
+        ),
+    }]
+
+
+async def test_explicit_html_delivery_is_unchanged(database):
+    repository = MessageRepository(database)
+    outbound_id = await repository.enqueue_outbound(
+        channel="telegram",
+        chat_id="42",
+        text="<b>Согласие</b> **как есть**",
+        idempotency_key="reply:trusted-html-unchanged",
+        delivery_options={"parse_mode": "HTML"},
+    )
+    telegram = FakeTelegram()
+
+    assert await TelegramSender(telegram, repository).send(outbound_id) == DeliveryResult.SENT
+    assert telegram.sent_messages == [{
+        "chat_id": 42,
+        "text": "<b>Согласие</b> **как есть**",
+        "parse_mode": "HTML",
+    }]
+
+
 @pytest.mark.parametrize(
     ("reply_markup", "markup_type"),
     [

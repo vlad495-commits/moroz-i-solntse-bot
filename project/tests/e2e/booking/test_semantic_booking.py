@@ -66,7 +66,7 @@ async def test_worker_dispatches_then_consults_and_preserves_draft(migrated_data
         assert adapter.create_calls == 0
         async with database.acquire() as connection:
             row = await connection.fetchrow('SELECT text, delivery_options FROM outbound_messages ORDER BY created_at DESC LIMIT 1')
-        assert row['text'] == 'Выберите время'
+        assert row['text'] == 'Выберите время\nКриокапсула\n05.09.2026 · московское время'
         assert '13:00' in str(row['delivery_options'])
 
         router.decision = RouteDecision('consultation', .99)
@@ -112,7 +112,7 @@ async def test_ambiguous_service_keeps_date_until_service_selection(migrated_dat
         assert 'зависит от' in reply.text
         reply = await _handle(coordinator, database, **base, update_id='a2', text='Спины',
             decision=RouteDecision('booking', .98, 'continue', 'Массаж спины'))
-        assert reply.text == 'Выберите время'
+        assert reply.text == 'Выберите время\nМассаж спины\n05.09.2026 · московское время'
         draft = await bookings.get_active_for_customer('42')
         assert draft.state['selected_date'] == '2026-09-05'
         assert adapter.create_calls == 0
@@ -150,6 +150,298 @@ async def test_catalog_menu_shows_prices_then_opens_booking(migrated_database_ur
         await database.close()
 
 
+async def test_catalog_walk_in_family_expands_exact_durations_in_numeric_order(
+    migrated_database_url,
+):
+    records = tuple(
+        CatalogRecord(
+            str(minutes), "10", f"Солярий {minutes} минут", "Загар",
+            "Солярий", minutes * 100, minutes * 100, minutes,
+        )
+        for minutes in (1, 7, 10)
+    )
+    database, bookings, adapter, coordinator = await _coordinator(
+        migrated_database_url, catalog_records=records,
+    )
+    base = dict(customer_id="42", user_id="7")
+    try:
+        reply = await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="family-menu", text="✨ Услуги и цены",
+        )
+        reply = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": reply.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]},
+            update_id="family-category", text="",
+        )
+
+        assert _button_labels(reply) == [
+            "Солярий 1 минут", "Солярий 7 минут", "Солярий 10 минут",
+        ]
+        assert reply.text.index("100 ₽") < reply.text.index("700 ₽") < reply.text.index("1 000 ₽")
+        seven = reply.delivery_options["reply_markup"]["inline_keyboard"][1][0]["callback_data"]
+        detail = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": seven}, update_id="family-seven", text="",
+        )
+        assert "«Солярий 7 минут» — 700 ₽, 7 мин." in detail.text
+        assert (adapter.list_calls, adapter.create_calls, adapter.reschedule_calls,
+                adapter.cancel_calls) == (0, 0, 0, 0)
+        assert (await bookings.get_active_for_customer("42")).state["catalog_service_id"] == "7"
+    finally:
+        await database.close()
+
+
+async def test_catalog_walk_in_family_keeps_selected_page(migrated_database_url):
+    records = tuple(
+        CatalogRecord(
+            str(minutes), "10", f"Солярий {minutes} минут", "Загар",
+            "Солярий", minutes * 100, minutes * 100, minutes,
+        )
+        for minutes in range(1, 11)
+    )
+    database, _, adapter, coordinator = await _coordinator(
+        migrated_database_url, catalog_records=records,
+    )
+    base = dict(customer_id="42", user_id="7")
+    try:
+        reply = await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="family-page-menu", text="✨ Услуги и цены",
+        )
+        first = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": reply.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]},
+            update_id="family-page-category", text="",
+        )
+        next_page = first.delivery_options["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
+        second = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": next_page}, update_id="family-page-next", text="",
+        )
+
+        labels = _button_labels(second)
+        assert "Солярий 9 минут" in labels
+        assert "Солярий 10 минут" in labels
+        assert "Солярий 1 минут" not in labels
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
+async def test_mixed_catalog_groups_walk_in_family_before_regular_service(
+    migrated_database_url,
+):
+    records = (
+        CatalogRecord("10", "10", "Солярий 10 минут", "Загар", "Солярий", 1000, 1000, 10),
+        CatalogRecord("1", "10", "Солярий 1 минута", "Загар", "Солярий", 100, 100, 1),
+        CatalogRecord("50", "10", "Депозит на загар", "Загар", "Касса", 1500, 1500, 60),
+    )
+    database, _, adapter, coordinator = await _coordinator(
+        migrated_database_url, catalog_records=records,
+    )
+    base = dict(customer_id="42", user_id="7")
+    try:
+        reply = await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="mixed-menu", text="✨ Услуги и цены",
+        )
+        reply = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": reply.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]},
+            update_id="mixed-category", text="",
+        )
+        assert _button_labels(reply) == ["Солярий", "Депозит на загар"]
+        assert "Депозит на загар — 1 500 ₽" in reply.text
+        assert "60 мин." not in reply.text
+
+        family = reply.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        variants = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": family}, update_id="mixed-family", text="",
+        )
+        assert _button_labels(variants) == ["Солярий 1 минута", "Солярий 10 минут"]
+        assert (adapter.list_calls, adapter.create_calls, adapter.reschedule_calls,
+                adapter.cancel_calls) == (0, 0, 0, 0)
+    finally:
+        await database.close()
+
+
+async def test_closed_catalog_callback_returns_to_price_navigation(
+    migrated_database_url,
+):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    base = dict(customer_id="42", user_id="7")
+    try:
+        reply = await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="closed-menu", text="✨ Услуги и цены",
+        )
+        old = reply.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        scenario = await bookings.get_active_for_customer("42")
+        await bookings.checkpoint(replace(scenario, phase="failed"), "catalog_closed")
+
+        stale = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": old}, update_id="closed-callback", text="",
+        )
+        assert "Начните запись" not in stale.text
+        assert "Услуги и цены" in stale.text
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
+async def test_old_catalog_root_callback_after_menu_exit_returns_to_prices(
+    migrated_database_url,
+):
+    database, _, adapter, coordinator = await _coordinator(migrated_database_url)
+    base = dict(customer_id="42", user_id="7")
+    try:
+        root = await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="old-root-menu", text="✨ Услуги и цены",
+        )
+        old = root.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": old}, update_id="old-root-open", text="",
+        )
+        await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="old-root-exit", text="📍 Адрес и режим",
+        )
+
+        stale = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": old}, update_id="old-root-click", text="",
+        )
+        assert "Начните запись" not in stale.text
+        assert "Услуги и цены" in stale.text
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
+async def test_old_catalog_page_callback_after_menu_exit_returns_to_prices(
+    migrated_database_url,
+):
+    records = tuple(
+        CatalogRecord(str(index), "10", f"Массаж {index}", "Массаж", "Анна", 1500, 1500, 30)
+        for index in range(9)
+    )
+    database, _, adapter, coordinator = await _coordinator(
+        migrated_database_url, catalog_records=records,
+    )
+    base = dict(customer_id="42", user_id="7")
+    try:
+        root = await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="old-page-menu", text="✨ Услуги и цены",
+        )
+        listing = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": root.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]},
+            update_id="old-page-open", text="",
+        )
+        old_page = listing.delivery_options["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
+        await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="old-page-exit", text="📍 Адрес и режим",
+        )
+
+        stale = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": old_page}, update_id="old-page-click", text="",
+        )
+        assert "Начните запись" not in stale.text
+        assert "Услуги и цены" in stale.text
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
+async def test_removed_category_reopens_current_catalog_root(migrated_database_url):
+    records = (
+        CatalogRecord("331", "10", "Массаж спины", "Массаж", "Анна", 1500, 1500, 30),
+        CatalogRecord("332", "10", "Криокапсула", "Крио", "Анна", 1000, 1000, 60),
+    )
+    database, _, adapter, coordinator = await _coordinator(
+        migrated_database_url, catalog_records=records,
+    )
+    base = dict(customer_id="42", user_id="7")
+    try:
+        root = await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="removed-category-menu", text="✨ Услуги и цены",
+        )
+        massage = next(
+            button["callback_data"]
+            for row in root.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Массаж"
+        )
+        async with database.acquire() as connection:
+            await connection.execute(
+                "DELETE FROM yclients_service_catalog WHERE category_name = 'Массаж'"
+            )
+
+        stale = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": massage}, update_id="removed-category-click", text="",
+        )
+        assert "неактуальна" in stale.text.casefold()
+        assert _button_labels(stale) == ["Крио"]
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
+async def test_removed_open_family_reopens_current_catalog_root(migrated_database_url):
+    records = (
+        *tuple(
+            CatalogRecord(str(minutes), "10", f"Солярий {minutes} минут", "Загар",
+                          "Солярий", minutes * 100, minutes * 100, minutes)
+            for minutes in range(1, 10)
+        ),
+        CatalogRecord("332", "10", "Криокапсула", "Крио", "Анна", 1000, 1000, 60),
+    )
+    database, _, adapter, coordinator = await _coordinator(
+        migrated_database_url, catalog_records=records,
+    )
+    base = dict(customer_id="42", user_id="7")
+    try:
+        root = await _handle(
+            coordinator, database, **base, kind="text", data={},
+            update_id="removed-family-menu", text="✨ Услуги и цены",
+        )
+        tanning = next(
+            button["callback_data"]
+            for row in root.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Загар"
+        )
+        listing = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": tanning}, update_id="removed-family-open", text="",
+        )
+        next_page = listing.delivery_options["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
+        async with database.acquire() as connection:
+            await connection.execute(
+                "DELETE FROM yclients_service_catalog WHERE category_name = 'Загар'"
+            )
+
+        stale = await _handle(
+            coordinator, database, **base, kind="callback",
+            data={"callback_data": next_page}, update_id="removed-family-click", text="",
+        )
+        assert "неактуальна" in stale.text.casefold()
+        assert _button_labels(stale) == ["Крио"]
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
 async def test_old_slot_button_cannot_select_new_date(migrated_database_url):
     database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
     base = dict(customer_id='42', user_id='7', kind='text', data={})
@@ -159,11 +451,13 @@ async def test_old_slot_button_cannot_select_new_date(migrated_database_url):
         old = first.delivery_options['reply_markup']['inline_keyboard'][0][0]['callback_data']
         await _handle(coordinator, database, **base, update_id='s2', text='Лучше 6 сентября',
             decision=RouteDecision('booking', .99, 'continue', date='2026-09-06'))
-        await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback',
+        stale = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback',
             data={'callback_data': old}, update_id='s3', text='')
         draft = await bookings.get_active_for_customer('42')
         assert draft.state['step'] == 'slot'
         assert draft.state['selected_date'] == '2026-09-06'
+        assert 'кнопка уже неактуальна' in stale.text.casefold()
+        assert 'Криокапсула\n06.09.2026 · московское время' in stale.text
         assert adapter.create_calls == 0
     finally:
         await database.close()
@@ -173,7 +467,8 @@ async def test_slots_after_first_page_remain_selectable(migrated_database_url):
     database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
     try:
         scenario = BookingScenario(uuid4(), 'create', 'collecting', 'paging', '42',
-            {'step': 'slot', 'choices': [dict(slot_id=f'slot-{i}', staff_id='10',
+            {'step': 'slot', 'service_name': 'Массаж спины', 'selected_date': '2026-09-07',
+             'choices': [dict(slot_id=f'slot-{i}', staff_id='10',
                 starts_at=f'2026-09-07T{10+i:02}:00:00+03:00', label=f'{10+i}:00') for i in range(10)]},
             None, NOW, NOW)
         await bookings.create_scenario(scenario)
@@ -182,6 +477,7 @@ async def test_slots_after_first_page_remain_selectable(migrated_database_url):
         next_page = first.delivery_options['reply_markup']['inline_keyboard'][-1][0]['callback_data']
         second = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback',
             data={'callback_data': next_page}, update_id='page', text='')
+        assert second.text == 'Выберите время\nМассаж спины\n07.09.2026 · московское время'
         assert '19:00' in _button_labels(second)
         assert adapter.create_calls == 0
     finally:
@@ -209,10 +505,10 @@ async def test_worker_prices_use_semantic_service_and_do_not_guess_ambiguous(mig
         assert '1 500 ₽' in answer
         assert '2 000' not in answer
         answer = await send('price2', 'А криомассаж сколько?', 'Криомассаж')
-        assert 'Уточните' in answer
+        assert 'уточните' in answer.casefold()
         assert '1 500' not in answer
         answer = await send('price3', 'А другое сколько?', None)
-        assert 'Уточните' in answer
+        assert 'уточните' in answer.casefold()
         assert '1 500' not in answer
     finally:
         await database.close()

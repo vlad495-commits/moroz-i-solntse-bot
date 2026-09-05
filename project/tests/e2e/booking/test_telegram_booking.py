@@ -466,7 +466,7 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         date = f"booking:v1:{token}:available_date:0"
         assert (await _handle(
             coordinator, database, **{**base, "update_id": "103", "data": {"callback_data": date}}
-        )).text == "Выберите время"
+        )).text == "Выберите время\nКриокапсула\n05.09.2026 · московское время"
         slot = f"booking:v1:{token}:slot:0"
         contact_request = await _handle(
             coordinator, database, **{**base, "update_id": "104", "data": {"callback_data": slot}}

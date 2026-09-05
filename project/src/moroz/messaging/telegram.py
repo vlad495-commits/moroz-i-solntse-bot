@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import logging
+import re
 from enum import StrEnum
 from typing import Awaitable, Callable
 from uuid import UUID
@@ -25,6 +26,17 @@ from moroz.messaging.repository import DeliveryHook, MessageRepository, PreSendG
 
 
 logger = logging.getLogger(__name__)
+_PLAIN_TEXT_TOKEN = re.compile(
+    r"https?://\S+|(?<![\w/])\*\*(\S(?:.*?\S)?)\*\*",
+    re.DOTALL,
+)
+
+
+def _plain_text(text: str) -> str:
+    return _PLAIN_TEXT_TOKEN.sub(
+        lambda match: match.group(1) if match.group(1) is not None else match.group(0),
+        text,
+    )
 
 
 def main_menu_options() -> dict[str, object]:
@@ -159,9 +171,10 @@ async def deliver_claimed_outbound(
         ) as current:
             if current is None:
                 return DeliveryResult.SKIPPED
+            parse_mode = current.delivery_options.get("parse_mode")
             send_arguments = {
                 "chat_id": int(current.chat_id),
-                "text": current.text,
+                "text": current.text if parse_mode is not None else _plain_text(current.text),
             }
             reply_markup = current.delivery_options.get("reply_markup")
             if reply_markup is not None:
@@ -176,7 +189,6 @@ async def deliver_claimed_outbound(
                 else:
                     raise ValueError("unsupported Telegram reply markup")
                 send_arguments["reply_markup"] = markup
-            parse_mode = current.delivery_options.get("parse_mode")
             if parse_mode is not None:
                 send_arguments["parse_mode"] = str(parse_mode)
             sent_message = await telegram.send_message(**send_arguments)
