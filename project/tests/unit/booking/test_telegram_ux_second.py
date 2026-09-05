@@ -90,13 +90,15 @@ async def test_fresh_parts_question_does_not_claim_total_as_part_duration():
 
 
 @pytest.mark.asyncio
-async def test_selection_entry_is_deterministic_and_gift_has_url_actions():
+@pytest.mark.parametrize("menu_label", ["🧭 Подобрать процедуру", "✨ Подобрать"])
+async def test_selection_entry_is_deterministic_and_gift_has_url_actions(menu_label):
     c = coordinator([])
     c._repository.get_active_for_customer.return_value = None
-    replies = [await c.handle(None, customer_id='42', user_id='7', update_id=str(i), text='🧭 Подобрать процедуру', kind='text', data={}) for i in range(2)]
+    replies = [await c.handle(None, customer_id='42', user_id='7', update_id=str(i), text=menu_label, kind='text', data={}) for i in range(2)]
     assert replies[0] is not None and replies[0] == replies[1]
     markup = replies[0].delivery_options['reply_markup']
     assert [b['text'] for row in markup['keyboard'] for b in row][:4] == ['Отдых', 'Загар', 'Уход', 'Массаж']
+    assert [b['text'] for b in markup['keyboard'][-1]] == ['🏷 Услуги и цены', '🗓 Записаться']
     gift = await c.handle(None, customer_id='42', user_id='7', update_id='3', text='Хочу подарочный сертификат', kind='text', data={})
     assert labels(gift) == ['Оформить сертификат', 'Уточнить у администратора']
     assert all('url' in b for row in gift.delivery_options['reply_markup']['inline_keyboard'] for b in row)
@@ -180,3 +182,11 @@ async def test_old_repeated_callback_eventually_gets_recovery():
     c._repository.get_active_for_customer.return_value = current
     c._now = lambda: NOW + timedelta(minutes=2)
     assert (await c._handle_callback(None, '42', '7', 'later', raw)).text
+
+
+def test_short_categories_pair_even_when_one_category_is_long():
+    c = coordinator([])
+    choices = [{'label': name, 'category': name} for name in ['Водородотерапия', 'Коллагенарий', 'Коллариум', 'Криотерапия', 'Массаж', 'Прессотерапия/Лимфодренажный массаж', 'Солярий', 'Уход за лицом', 'Фреш день']]
+    reply = c._render_current(scenario(step='catalog_category', choices=choices))
+    assert len(reply.delivery_options['reply_markup']['inline_keyboard']) <= 6
+    assert len(labels(reply)) == 9

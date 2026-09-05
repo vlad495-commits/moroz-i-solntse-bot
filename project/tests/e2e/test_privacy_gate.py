@@ -569,9 +569,9 @@ async def test_duplicate_consent_done_callback_is_idempotent(
     keyboard = fake_telegram.sent_messages[0]["reply_markup"]
     assert isinstance(keyboard, ReplyKeyboardMarkup)
     assert [[button.text for button in row] for row in keyboard.keyboard] == [
-        ["📅 Записаться", "✨ Услуги и цены"],
-        ["🧭 Подобрать процедуру", "📋 Мои записи"],
-        ["📍 Адрес и режим", "👩‍💼 Связаться с администратором"],
+        ["🗓 Записаться", "✨ Подобрать"],
+        ["🏷 Услуги и цены", "📋 Мои записи"],
+        ["📍 Адрес и режим", "💬 Администратор"],
     ]
     assert keyboard.is_persistent is True
 
@@ -1206,9 +1206,9 @@ async def test_start_with_consent_shows_welcome_and_persistent_menu(
     keyboard = fake_telegram.sent_messages[0]["reply_markup"]
     assert isinstance(keyboard, ReplyKeyboardMarkup)
     assert [[button.text for button in row] for row in keyboard.keyboard] == [
-        ["📅 Записаться", "✨ Услуги и цены"],
-        ["🧭 Подобрать процедуру", "📋 Мои записи"],
-        ["📍 Адрес и режим", "👩‍💼 Связаться с администратором"],
+        ["🗓 Записаться", "✨ Подобрать"],
+        ["🏷 Услуги и цены", "📋 Мои записи"],
+        ["📍 Адрес и режим", "💬 Администратор"],
     ]
     assert keyboard.is_persistent is True
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0

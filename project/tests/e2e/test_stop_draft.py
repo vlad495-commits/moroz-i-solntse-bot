@@ -102,8 +102,9 @@ async def test_deletion_fence_blocks_stop_storage(client, db, redis_client):
     assert await db.fetchval("SELECT count(*) FROM marketing_consent_events") == 0
 
 
+@pytest.mark.parametrize("menu_label", ["📅 Записаться", "🗓 Записаться"])
 async def test_stop_blocks_old_booking_but_keeps_faq_and_fresh_booking(
-    client, db, migrated_database_url, monkeypatch,
+    client, db, migrated_database_url, monkeypatch, menu_label,
 ):
     from tests.e2e.booking.test_telegram_booking import _coordinator
     from tests.e2e.test_message_delivery import FakeLLM, FakeTelegram
@@ -155,7 +156,7 @@ async def test_stop_blocks_old_booking_but_keeps_faq_and_fresh_booking(
         await client.post("/telegram/webhook", json=telegram_text_update("stop", update_id=899))
         assert (await booking_repository.get_active_for_customer("42")).id == new.id
         # Late delivery after the new draft must still respect Telegram event order.
-        await accept(889, "📅 Записаться")
+        await accept(889, menu_label)
         await accept(888, "", kind="callback", data={"callback_data": f"booking:v1:{scenario_id.hex}:service:0"})
         await accept(887, "", kind="contact", data={"contact_user_id": "7", "phone_number": "+79991234567"})
         await process(889)
@@ -165,7 +166,7 @@ async def test_stop_blocks_old_booking_but_keeps_faq_and_fresh_booking(
         assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
         # Redis can still contain text spanning the STOP boundary.
         await accept(886, "Как подготовиться?")
-        await accept(904, "📅 Записаться")
+        await accept(904, menu_label)
         from uuid import UUID
         import moroz.messaging.outbox as outbox_module
         with monkeypatch.context() as patch:

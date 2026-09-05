@@ -37,3 +37,9 @@ Baseline: обнаружен выключенный Docker daemon; запуще�
 - [ ] RED→GREEN delivery: lookup по chat + scenario под fence, editMessageText, not-modified success, fallback только подтверждённый BadRequest, сеть без повторного send.
 - [ ] Независимый review, combined Docker gate, отдельный logical commit.
 - [ ] Включить forward/back/repeat/stale/fallback в приёмку и затем exact staging rollout.
+
+## 5. Дополнение: постоянное меню 2×3 (отдельный commit)
+- [ ] RED→GREEN нового layout/aliases, deterministic routing и worker menu boundary.
+- [ ] Docker model serialization: success только запись, neutral остальные, standard emoji fallback.
+- [ ] Отдельный menu commit; финальный combined Docker gate.
+- [ ] Telegram Web визуально на desktop и mobile width; наблюдения по отсутствию настоящих Android/iOS записать явно.

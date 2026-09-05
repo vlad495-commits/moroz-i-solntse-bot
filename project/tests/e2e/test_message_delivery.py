@@ -69,6 +69,7 @@ class FakeTelegram:
     def __init__(self, error=None):
         self.error = error
         self.sent_messages = []
+        self.edited_messages = []
         self.session = FakeSession()
 
     async def send_message(self, **kwargs):
@@ -76,6 +77,12 @@ class FakeTelegram:
         if self.error:
             raise self.error
         return SimpleNamespace(message_id=701)
+
+    async def edit_message_text(self, **kwargs):
+        self.edited_messages.append(kwargs)
+        if self.error:
+            raise self.error
+        return SimpleNamespace(message_id=kwargs["message_id"])
 
 
 class FakeLLM:
@@ -644,21 +651,29 @@ async def test_booking_message_is_routed_before_llm(database, text):
         ) == "Ответ записи"
 
 
-async def test_persistent_menu_command_wins_over_earlier_buffered_text(database):
+@pytest.mark.parametrize("menu_label, canonical", [
+    ("📍 Адрес и режим", "📍 Адрес и режим"),
+    ("🏷 Услуги и цены", "✨ Услуги и цены"),
+    ("🗓 Записаться", "📅 Записаться"),
+    ("✨ Подобрать", "🧭 Подобрать процедуру"),
+    ("💬 Администратор", "👩‍💼 Связаться с администратором"),
+    ("📋 Мои записи", "📋 Мои записи"),
+])
+async def test_persistent_menu_command_wins_over_earlier_buffered_text(database, menu_label, canonical):
     class BookingCoordinator:
         def __init__(self):
             self.texts = []
 
         async def handle(self, connection, **kwargs):
             self.texts.append(kwargs["text"])
-            if kwargs["text"] == "📍 Адрес и режим":
+            if kwargs["text"] == canonical:
                 return BookingReply("Адрес центра", {})
             return BookingReply("Текст ошибочно попал в шаг записи", {})
 
     repository = MessageRepository(database)
     assert await repository.accept(incoming("menu-buffer-1", "Иван"))
     assert await repository.accept(
-        incoming("menu-buffer-2", "📍 Адрес и режим")
+        incoming("menu-buffer-2", menu_label)
     )
     coordinator = BookingCoordinator()
     llm = FakeLLM()
@@ -682,7 +697,7 @@ async def test_persistent_menu_command_wins_over_earlier_buffered_text(database)
         )
     )
 
-    assert coordinator.texts == ["📍 Адрес и режим"]
+    assert coordinator.texts == [canonical]
     assert llm.calls == []
 
 

@@ -128,18 +128,36 @@ class RouterVerdict:
         return self.decision.confidence
 
 
+_MENU_ROUTES = {
+    "📅 Записаться": "booking",
+    "✨ Услуги и цены": "consultation",
+    "📍 Адрес и режим": "consultation",
+    "👩‍💼 Позвать администратора": "escalation",
+    "👩‍💼 Связаться с администратором": "escalation",
+    "🧭 Подобрать процедуру": "consultation",
+    "📋 Мои записи": "booking_management",
+}
+_MENU_ALIASES = {
+    "🗓 Записаться": "📅 Записаться",
+    "✨ Подобрать": "🧭 Подобрать процедуру",
+    "🏷 Услуги и цены": "✨ Услуги и цены",
+    "💬 Администратор": "👩‍💼 Связаться с администратором",
+}
+
+
+def persistent_menu_command(text: str) -> str | None:
+    """Keep canonical commands stable for coordinator and worker STOP fences."""
+    command = text.strip()
+    command = _MENU_ALIASES.get(command, command)
+    return command if command in _MENU_ROUTES else None
+
+
 def deterministic_route(text: str) -> RouteDecision | None:
     """Only exact technical menu commands bypass semantic classification."""
-    if text.strip() == "📋 Мои записи":
+    command = persistent_menu_command(text)
+    if command == "📋 Мои записи":
         return RouteDecision("booking_management", 1.0, "view")
-    route = {
-        "📅 Записаться": "booking",
-        "✨ Услуги и цены": "consultation",
-        "📍 Адрес и режим": "consultation",
-        "👩‍💼 Позвать администратора": "escalation",
-        "👩‍💼 Связаться с администратором": "escalation",
-        "🧭 Подобрать процедуру": "consultation",
-    }.get(text.strip())
+    route = _MENU_ROUTES.get(command)
     return RouteDecision(route, 1.0) if route else None
 
 

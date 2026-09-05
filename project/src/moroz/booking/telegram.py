@@ -21,7 +21,7 @@ from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
 from moroz.booking.yclients_catalog import walk_in_family
 from moroz.messaging.telegram import main_menu_options
-from moroz.messaging.router import RouteDecision, bound_routing_state, valid_route_action
+from moroz.messaging.router import RouteDecision, bound_routing_state, persistent_menu_command, valid_route_action
 from moroz.booking.time_display import MOSCOW, format_booking_time
 from moroz.booking.display import service_display_name, procedure_description, procedure_details, asks_component_duration
 
@@ -32,17 +32,6 @@ CLARIFY_REPLY = "Уточните, пожалуйста: хотите узнат
 _MENU_BOOK = "📅 Записаться"
 _MENU_CATALOG = "✨ Услуги и цены"
 _MENU_MY_BOOKINGS = "📋 Мои записи"
-_MENU_LABELS = frozenset(
-    {
-        _MENU_BOOK,
-        _MENU_CATALOG,
-        "📍 Адрес и режим",
-        "👩‍💼 Позвать администратора",
-        "👩‍💼 Связаться с администратором",
-        "🧭 Подобрать процедуру",
-        _MENU_MY_BOOKINGS,
-    }
-)
 _WALK_IN_LABELS = {
     "collagenarium": "Коллагенарий",
     "collarium": "Коллариум",
@@ -51,11 +40,6 @@ _WALK_IN_LABELS = {
 _CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft", "clear_time_after", "catalog_root", "choose_date", "catalog_back", "booking_back")
 _DRAFT_CANCEL_COMMANDS = frozenset({"отменить действие", "выйти из оформления"})
 _TIME_AFTER = re.compile(r"(?:после|не раньше)\s*(\d{1,2})(?:[:.](\d{2}))?", re.IGNORECASE)
-
-
-def persistent_menu_command(text: str) -> str | None:
-    command = text.strip()
-    return command if command in _MENU_LABELS else None
 
 
 def _utc_now() -> datetime:
@@ -227,7 +211,7 @@ class TelegramBookingCoordinator:
                     {"reply_markup": {"keyboard": [
                         [{"text": "Отдых"}, {"text": "Загар"}],
                         [{"text": "Уход"}, {"text": "Массаж"}],
-                        [{"text": _MENU_CATALOG}, {"text": _MENU_BOOK}],
+                        [{"text": "🏷 Услуги и цены"}, {"text": "🗓 Записаться"}],
                     ], "resize_keyboard": True}},
                 )
             return None
@@ -347,7 +331,7 @@ class TelegramBookingCoordinator:
                           if (item.get('service_id'), item.get('walk_in')) ==
                           (selected.get('service_id'), selected.get('walk_in'))), None)
             if index is None:
-                return BookingReply('Этой услуги больше нет в актуальном каталоге. Откройте список кнопкой «📅 Записаться».', main_menu_options())
+                return BookingReply('Этой услуги больше нет в актуальном каталоге. Откройте список кнопкой «🗓 Записаться».', main_menu_options())
             scenario = self._remember_booking_step(scenario)
             state = self._state(scenario)
             state['choices'] = fresh_choices
@@ -488,7 +472,7 @@ class TelegramBookingCoordinator:
             query = decision.service.casefold().replace("ё", "е").strip()
             choices = [item for item in choices if f" {query} " in f" {str(item['label']).casefold().replace('ё', 'е')} "]
             if not choices:
-                return BookingReply("Не нашёл такую услугу в каталоге. Уточните её название или откройте список кнопкой «📅 Записаться».", main_menu_options())
+                return BookingReply("Не нашёл такую услугу в каталоге. Уточните её название или откройте список кнопкой «🗓 Записаться».", main_menu_options())
         scenario = BookingScenario(
             id=uuid4(),
             kind="create",
@@ -561,7 +545,7 @@ class TelegramBookingCoordinator:
     async def _catalog_choice(self, connection, scenario, action, choice):
         services = await self._catalog.list_services(connection, self._now())
         if not services:
-            return BookingReply("Сейчас не могу подтвердить актуальные цены. Откройте «✨ Услуги и цены» позже.", main_menu_options())
+            return BookingReply("Сейчас не могу подтвердить актуальные цены. Откройте «🏷 Услуги и цены» позже.", main_menu_options())
         state = self._state(scenario)
         if action == "catalog_category":
             selected = [s for s in services if (s.category_name or "Другие услуги") == choice["category"]]
@@ -606,7 +590,7 @@ class TelegramBookingCoordinator:
                 )
             service = next((s for s in services if s.service_id == choice["service_id"]), None)
             if service is None:
-                return BookingReply("Этой услуги больше нет в актуальном каталоге. Откройте «✨ Услуги и цены».", main_menu_options())
+                return BookingReply("Этой услуги больше нет в актуальном каталоге. Откройте «🏷 Услуги и цены».", main_menu_options())
             family = walk_in_family(service.service_name)
             if action == "catalog_book" and choice.get("details") is True:
                 state.update(detail=procedure_details(service.service_name), catalog_details=True)
@@ -760,7 +744,7 @@ class TelegramBookingCoordinator:
         if revision != self._callback_revision(scenario):
             if catalog_callback and scenario.phase != "collecting":
                 return BookingReply(
-                    "Эта кнопка меню уже неактуальна. Откройте «✨ Услуги и цены».",
+                    "Эта кнопка меню уже неактуальна. Откройте «🏷 Услуги и цены».",
                     main_menu_options(),
                 )
             current = await self._recover_callback(connection, customer_id, update_id)
@@ -863,7 +847,7 @@ class TelegramBookingCoordinator:
         if scenario.phase != "collecting" or scenario.state.get("step") != action:
             if catalog_callback:
                 return BookingReply(
-                    "Эта кнопка меню уже неактуальна. Откройте «✨ Услуги и цены».",
+                    "Эта кнопка меню уже неактуальна. Откройте «🏷 Услуги и цены».",
                     main_menu_options(),
                 )
             return await self._recover_callback(
@@ -1312,10 +1296,13 @@ class TelegramBookingCoordinator:
             if page * page_size <= index < (page + 1) * page_size
             if isinstance(choice, Mapping)
         ]
-        if action in {"catalog_service", "catalog_category"} and visible and all(
-            len(label) <= 24 for label, _ in visible
-        ):
-            rows = [visible[index:index + 2] for index in range(0, len(visible), 2)]
+        if action in {"catalog_service", "catalog_category"}:
+            rows = []
+            for item in visible:
+                if rows and len(rows[-1]) == 1 and len(rows[-1][0][0]) <= 24 and len(item[0]) <= 24:
+                    rows[-1].append(item)
+                else:
+                    rows.append([item])
         else:
             rows = [[item] for item in visible]
         navigation = []
@@ -1367,7 +1354,7 @@ class TelegramBookingCoordinator:
         }
         step = str(scenario.state.get("step", ""))
         if step in {"catalog_service", "catalog_book"} and not catalog_fresh:
-            return BookingReply("Откройте «✨ Услуги и цены», чтобы получить актуальные цены.", main_menu_options())
+            return BookingReply("Откройте «🏷 Услуги и цены», чтобы получить актуальные цены.", main_menu_options())
         text = labels.get(step, STALE_REPLY)
         if step == "catalog_service":
             page = int(scenario.state.get("page", 0))

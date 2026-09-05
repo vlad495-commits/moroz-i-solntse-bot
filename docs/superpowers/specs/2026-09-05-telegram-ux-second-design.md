@@ -24,3 +24,19 @@
 - В сценарии сохраняется ограниченная история показанных шагов; append-only action booking_back возвращает предыдущий шаг в той же карточке. Счётчик view_revision запрещает повторное использование старых кнопок после движения назад.
 - RED→GREEN: forward, back, stale после back, double callback, edit success, not-modified, fallback not-found, network error без send, permanent completion и consultation без edit.
 - Независимые части: coordinator/history реализует основной агент; delivery/fence тестирует отдельный агент. Финальный commit собирает обе части после проверок.
+
+## Дополнение владельца: постоянное меню 2×3
+
+2026-09-05: отдельный logical commit после editable booking.
+
+| | |
+|---|---|
+| 🗓 Записаться | ✨ Подобрать |
+| 🏷 Услуги и цены | 📋 Мои записи |
+| 📍 Адрес и режим | 💬 Администратор |
+
+Только «Записаться» получает success; остальные нейтральные. Aiogram 3.27.0 в Docker поддерживает KeyboardButton.style и icon_custom_emoji_id. Для custom emoji нет утверждённых IDs/набора, поэтому используем стандартные emoji. Старые клиенты могут отображать нейтральные стандартные кнопки; никаких зависимостей или Mini App.
+
+Источники capability: https://core.telegram.org/bots/api#keyboardbutton и https://docs.aiogram.dev/en/latest/api/types/keyboard_button.html (проверены 2026-09-05).
+
+Старые подписи принимаются как aliases через общую нормализацию, включая worker menu-precedence и consent/stop boundaries. Визуальная приёмка: Telegram Web desktop и мобильная ширина; реальные Android/iOS не выдавать за проверенные эмуляцией ширины.
