@@ -31,11 +31,11 @@
 - Consumes: `TelegramBookingCoordinator.handle(...)`, `RouteDecision(action="cancel_draft")`.
 - Produces: текстовый shortcut `Отменить действие`, inline callback `cancel_draft`, ответ `Оформление остановлено. Новая запись не создана.`.
 
-- [ ] **Step 1: Write failing tests** for exact text cancellation and an inline exit button on collecting steps; assert no adapter mutations.
-- [ ] **Step 2: Run RED** with `docker compose --env-file ../.env run --rm test pytest tests/e2e/booking/test_telegram_booking.py tests/unit/messaging/test_router.py -q` and confirm the new assertions fail.
-- [ ] **Step 3: Implement minimal behavior** by deterministically routing exact exit labels, adding a `cancel_draft` callback action, and appending `Выйти из оформления` to collecting booking keyboards but not catalog or existing-booking confirmation.
-- [ ] **Step 4: Run GREEN** with the same command and confirm all selected tests pass.
-- [ ] **Step 5: Update `changelog.md` and commit** as `fix: понятный выход из оформления записи`.
+- [x] **Step 1: Write failing tests** for exact text cancellation and an inline exit button on collecting steps; assert no adapter mutations.
+- [x] **Step 2: Run RED** with `docker compose --env-file ../.env run --rm test pytest tests/e2e/booking/test_telegram_booking.py tests/unit/messaging/test_router.py -q` and confirm the new assertions fail.
+- [x] **Step 3: Implement minimal behavior** by deterministically routing exact exit labels, adding a `cancel_draft` callback action, and appending `Выйти из оформления` to collecting booking keyboards but not catalog or existing-booking confirmation.
+- [x] **Step 4: Run GREEN** with the same command and confirm all selected tests pass.
+- [x] **Step 5: Update `changelog.md` and commit** as `fix: понятный выход из оформления записи`.
 
 ### Task 2: Ограничение слотов «после HH:MM»
 

@@ -674,7 +674,7 @@ async def test_cancel_action_closes_only_open_draft(migrated_database_url):
             data={},
         )
 
-        assert reply.text == "Текущее действие отменено."
+        assert reply.text == "Оформление остановлено. Новая запись не создана."
         assert reply.delivery_options["reply_markup"]["is_persistent"] is True
         assert (await repository.get_scenario(active.id)).phase == "failed"
         assert await repository.get_active_for_customer("42") is None
@@ -683,5 +683,84 @@ async def test_cancel_action_closes_only_open_draft(migrated_database_url):
             0,
             0,
         )
+    finally:
+        await database.close()
+
+
+async def test_collecting_step_has_one_click_exit_that_never_cancels_booking(
+    migrated_database_url,
+):
+    database, repository, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    try:
+        reply = await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="exit-start",
+            text="Хочу записаться",
+            kind="text",
+            data={},
+        )
+        exit_button = next(
+            button
+            for row in reply.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Выйти из оформления"
+        )
+
+        stopped = await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="exit-click",
+            text="",
+            kind="callback",
+            data={"callback_data": exit_button["callback_data"]},
+        )
+
+        assert stopped.text == "Оформление остановлено. Новая запись не создана."
+        assert await repository.get_active_for_customer("42") is None
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (
+            0,
+            0,
+            0,
+        )
+    finally:
+        await database.close()
+
+
+async def test_exact_short_exit_is_handled_before_llm(migrated_database_url):
+    database, repository, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    try:
+        await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="short-exit-start",
+            text="Хочу записаться",
+            kind="text",
+            data={},
+        )
+        async with database.acquire() as connection:
+            reply = await coordinator.handle(
+                connection,
+                customer_id="42",
+                user_id="7",
+                update_id="short-exit",
+                text="Отменить действие",
+                kind="text",
+                data={},
+            )
+
+        assert reply.text == "Оформление остановлено. Новая запись не создана."
+        assert await repository.get_active_for_customer("42") is None
+        assert adapter.cancel_calls == 0
     finally:
         await database.close()

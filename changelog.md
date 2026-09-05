@@ -4,6 +4,8 @@
 
 [2026-09-05 08:34] Подготовлен TDD-план реализации UX-аудита: шесть самостоятельных задач для выхода из оформления, ограничения времени, компактного каталога, сравнения тарифов/подбора, клиентских подписей/контактов и общего Docker-gate. Новые зависимости, миграции, внешние mutations и rollout исключены.
 
+[2026-09-05 08:38] UX Task1 реализован test-first: точные команды `Отменить действие`/`Выйти из оформления` обрабатываются до LLM, на шагах новой записи добавлена inline-кнопка выхода, сценарий закрывается сообщением `Оформление остановлено. Новая запись не создана.` без create/reschedule/cancel вызовов. Свежий RED:2 failed по отсутствующему поведению; GREEN:3 passed.
+
 [2026-09-05 08:25] Синхронизация bf28b4b подтверждена: локальный main и GitHub main опубликованы, staging переключён на main и fast-forward обновлён, tracking origin/main исправлен; project tree9c31508c равен runtimebc800553,8/8healthy/HTTPS OK. Остальные ветки сохранены. Итоговый документный commit также отправляется в origin/main и подтягивается на staging; helper проверяет читаемость bind-mounted prompt и восстанавливает штатные10001:10001/0660 после checkout, без смены содержимого/секретов.
 
 [2026-09-05 08:24] main fast-forward bf28b4b опубликован на GitHub; свежие Docker unit1282 passed до merge/32.97s и после merge/24.01s, Ruff/compile/Compose clean. Первый server sync безопасно остановился до checkout: single-branch fetch tracking следил только за codex/staging-phase3, поэтому origin/main оставался старым, хотя FETCH_HEAD уже bf28b4b. Runtime не затронут; исправлен явный refspec main и добавлено постоянное tracking main без force/reset. Дерево project/ сервера и нового main совпадает9c31508c.

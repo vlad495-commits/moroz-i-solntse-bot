@@ -41,7 +41,8 @@ _WALK_IN_LABELS = {
     "collarium": "Коллариум",
     "solarium": "Солярий",
 }
-_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book")
+_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft")
+_DRAFT_CANCEL_COMMANDS = frozenset({"отменить действие", "выйти из оформления"})
 
 
 def persistent_menu_command(text: str) -> str | None:
@@ -139,6 +140,8 @@ class TelegramBookingCoordinator:
 
         scenario = await self._repository.get_active_for_customer(customer_id)
         menu_command = persistent_menu_command(text) if kind == "text" else None
+        if kind == "text" and text.strip().casefold() in _DRAFT_CANCEL_COMMANDS:
+            return await self._cancel_draft(scenario)
         if (
             scenario is not None
             and scenario.phase in {"collecting", "awaiting_confirmation"}
@@ -190,19 +193,7 @@ class TelegramBookingCoordinator:
         if scenario is not None and scenario.phase == "executing":
             return BookingReply("Запись уже обрабатывается. Дождитесь результата.", {})
         if decision.action == "cancel_draft":
-            if scenario is None:
-                return BookingReply("Сейчас нет незавершённого оформления.", main_menu_options())
-            cancelled = replace(
-                scenario,
-                phase="failed",
-                error_code="user_cancelled",
-                updated_at=self._now(),
-            )
-            await self._repository.checkpoint(cancelled, "booking_flow_cancelled")
-            return BookingReply(
-                "Текущее действие отменено.",
-                main_menu_options(),
-            )
+            return await self._cancel_draft(scenario)
 
         step = str(scenario.state.get('step', '')) if scenario is not None else ''
         browsing = step.startswith('catalog_')
@@ -626,6 +617,8 @@ class TelegramBookingCoordinator:
                 f"{OUTDATED_BUTTON_REPLY}\n\n{current.text}",
                 current.delivery_options,
             )
+        if action == "cancel_draft" and scenario.phase == "collecting":
+            return await self._cancel_draft(scenario)
         if action == "page" and scenario.phase == "collecting":
             choices = scenario.state.get("choices", ())
             if not 0 <= index <= (len(choices) - 1) // 8:
@@ -673,9 +666,24 @@ class TelegramBookingCoordinator:
                     "Эта кнопка меню уже неактуальна. Откройте «✨ Услуги и цены».",
                     main_menu_options(),
                 )
-            return await self._recover_callback(
-                connection, customer_id, update_id
-            )
+        return await self._recover_callback(
+            connection, customer_id, update_id
+        )
+
+    async def _cancel_draft(self, scenario: BookingScenario | None) -> BookingReply:
+        if scenario is None:
+            return BookingReply("Сейчас нет незавершённого оформления.", main_menu_options())
+        cancelled = replace(
+            scenario,
+            phase="failed",
+            error_code="user_cancelled",
+            updated_at=self._now(),
+        )
+        await self._repository.checkpoint(cancelled, "booking_flow_cancelled")
+        return BookingReply(
+            "Оформление остановлено. Новая запись не создана.",
+            main_menu_options(),
+        )
         choices = scenario.state.get("choices")
         if not isinstance(choices, tuple) or not 0 <= index < len(choices):
             return await self._recover_callback(
@@ -1052,6 +1060,10 @@ class TelegramBookingCoordinator:
             navigation.append(("Далее →", self._callback(scenario, "page", page + 1)))
         if navigation:
             rows.append(navigation)
+        if action in {"service", "staff", "available_date", "slot"}:
+            rows.append(
+                [("Выйти из оформления", self._callback(scenario, "cancel_draft", 0))]
+            )
         return BookingReply(text, self._inline_options(rows))
 
     def _choice_options(self, scenario: BookingScenario, action: str):
