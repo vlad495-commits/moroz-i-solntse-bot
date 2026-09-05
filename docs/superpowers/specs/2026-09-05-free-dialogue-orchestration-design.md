@@ -1,7 +1,7 @@
 # Свободный LLM-диалог и надёжная Telegram-запись
 
 Дата: 2026-09-05  
-Статус: дизайн-кандидат для проверки владельцем
+Статус: одобрено владельцем 2026-09-06, разрешены реализация и staging rollout
 
 ## 1. Цель
 
@@ -206,4 +206,4 @@ Router V3 имеет отдельные critical cases для mutation, ownershi
 - запись на несколько услуг одной YCLIENTS-операцией;
 - управление записями, созданными вне этого бота;
 - новый agent framework, tool-calling SDK, queue, runtime service, storage или таблица;
-- GitHub push, staging rollout, live paid LLM eval и YCLIENTS mutation без отдельного явного разрешения.
+- GitHub push, production rollout, live paid LLM eval и неоговорённые YCLIENTS mutation. Staging rollout отдельно разрешён владельцем 2026-09-06.
