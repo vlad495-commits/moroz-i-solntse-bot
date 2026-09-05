@@ -15,6 +15,7 @@ from moroz.booking.yclients_http import (
 
 _MAX_STAFF = 100
 _MAX_SERVICES_PER_STAFF = 200
+_MAX_CATEGORIES = 200
 _MAX_PAIRS = 5_000
 _MAX_DISPLAY_LENGTH = 200
 _MAX_PROVIDER_ID_LENGTH = 64
@@ -100,9 +101,22 @@ class YclientsCatalogReader:
             services = data["services"]
             if len(services) > _MAX_SERVICES_PER_STAFF:
                 raise YclientsCatalogError("yclients_catalog_bound")
+            categories = None
+            if "category" in data:
+                category_data = data["category"]
+                if not isinstance(category_data, list):
+                    raise YclientsCatalogError("yclients_catalog_response_shape")
+                if len(category_data) > _MAX_CATEGORIES:
+                    raise YclientsCatalogError("yclients_catalog_bound")
+                try:
+                    categories = _category_map(category_data)
+                except (TypeError, ValueError) as error:
+                    raise YclientsCatalogError(
+                        "yclients_catalog_response_shape"
+                    ) from error
             for value in services:
                 try:
-                    record = _record(value, staff_id, staff_name)
+                    record = _record(value, staff_id, staff_name, categories)
                 except (InvalidOperation, TypeError, ValueError) as error:
                     raise YclientsCatalogError(
                         "yclients_catalog_response_shape"
@@ -159,7 +173,12 @@ def _staff(value: object) -> tuple[str, str] | None:
     return _provider_id(value.get("id")), _required_display(value.get("name"))
 
 
-def _record(value: object, staff_id: str, staff_name: str) -> CatalogRecord:
+def _record(
+    value: object,
+    staff_id: str,
+    staff_name: str,
+    categories: Mapping[str, str] | None,
+) -> CatalogRecord:
     if not isinstance(value, Mapping):
         raise ValueError("service must be an object")
     price_min = _money(value.get("price_min"))
@@ -180,7 +199,9 @@ def _record(value: object, staff_id: str, staff_name: str) -> CatalogRecord:
         service_id=_provider_id(value.get("id")),
         staff_id=staff_id,
         service_name=service_name,
-        category_name=_category(value.get("category")),
+        category_name=_category(
+            value.get("category"), value.get("category_id"), categories
+        ),
         staff_name=staff_name,
         price_min=price_min,
         price_max=price_max,
@@ -203,12 +224,49 @@ def walk_in_minutes(service_name: str) -> int | None:
     return minutes if 1 <= minutes <= 1_440 else None
 
 
-def _category(value: object) -> str | None:
+def _category_map(values: list[object]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("category must be an object")
+        category_id = _provider_id(value.get("id"))
+        if category_id in result:
+            raise ValueError("category id must be unique")
+        result[category_id] = _required_display(value.get("title"))
+    return result
+
+
+def _category(
+    value: object,
+    category_id_value: object,
+    categories: Mapping[str, str] | None,
+) -> str | None:
+    nested_id = None
+    nested_title = None
     if value is None:
-        return None
-    if not isinstance(value, Mapping):
+        pass
+    elif not isinstance(value, Mapping):
         raise ValueError("category must be an object")
-    return _display(value.get("title"))
+    else:
+        if value.get("id") is not None:
+            nested_id = _provider_id(value["id"])
+        nested_title = _display(value.get("title"))
+
+    category_id = (
+        _provider_id(category_id_value)
+        if category_id_value is not None
+        else nested_id
+    )
+    if category_id_value is not None and nested_id not in (None, category_id):
+        raise ValueError("category ids contradict")
+    if categories is None or category_id is None:
+        return nested_title
+    mapped_title = categories.get(category_id)
+    if mapped_title is None:
+        raise ValueError("category reference is unknown")
+    if nested_title is not None and nested_title != mapped_title:
+        raise ValueError("category titles contradict")
+    return mapped_title
 
 
 def _display(value: object) -> str | None:

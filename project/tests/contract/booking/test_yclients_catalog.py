@@ -107,6 +107,103 @@ async def test_reads_bookable_staff_services_and_normalizes_allowlisted_fields()
 
 
 @pytest.mark.asyncio
+async def test_reads_category_title_from_real_book_services_shape():
+    live_service = service(category_id=7)
+    live_service.pop("category")
+    fake = FakeHttp([
+        response([staff()]),
+        response({
+            "services": [live_service],
+            "category": [
+                {"id": 7, "title": " Массаж ", "parent_id": 0},
+            ],
+        }),
+    ])
+
+    snapshot = await YclientsCatalogReader(config(), http=fake).read(NOW)
+
+    assert snapshot.records[0].category_name == "Массаж"
+
+
+@pytest.mark.asyncio
+async def test_preserves_nested_legacy_category_when_category_map_is_absent():
+    fake = FakeHttp([
+        response([staff()]),
+        response({"services": [service(category_id=7)]}),
+    ])
+
+    snapshot = await YclientsCatalogReader(config(), http=fake).read(NOW)
+
+    assert snapshot.records[0].category_name == "Крио"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data",
+    [
+        {
+            "services": [service(category_id=8)],
+            "category": [{"id": 7, "title": "Крио"}],
+        },
+        {
+            "services": [
+                service(category_id=7, category={"id": 8, "title": "Крио"})
+            ],
+            "category": [{"id": 7, "title": "Крио"}],
+        },
+        {
+            "services": [
+                service(category_id=7, category={"id": 7, "title": "Массаж"})
+            ],
+            "category": [{"id": 7, "title": "Крио"}],
+        },
+        {"services": [service()], "category": "not-a-list"},
+        {"services": [service()], "category": [{"id": 7}]},
+        {
+            "services": [service(category_id=7)],
+            "category": [
+                {"id": 7, "title": "Крио"},
+                {"id": 7, "title": "Крио"},
+            ],
+        },
+        {
+            "services": [service(category_id=7)],
+            "category": [
+                {"id": 7, "title": "Крио"},
+                {"id": 7, "title": "Массаж"},
+            ],
+        },
+    ],
+)
+async def test_rejects_malformed_or_contradictory_category_data(data):
+    fake = FakeHttp([response([staff()]), response(data)])
+
+    with pytest.raises(YclientsCatalogError) as raised:
+        await YclientsCatalogReader(config(), http=fake).read(NOW)
+
+    assert raised.value.code == "yclients_catalog_response_shape"
+
+
+@pytest.mark.asyncio
+async def test_rejects_category_map_bound():
+    fake = FakeHttp([
+        response([staff()]),
+        response({
+            "services": [service()],
+            "category": [
+                {"id": index, "title": f"Категория {index}"}
+                for index in range(1, 202)
+            ],
+        }),
+    ])
+
+    with pytest.raises(YclientsCatalogError) as raised:
+        await YclientsCatalogReader(config(), http=fake).read(NOW)
+
+    assert raised.value.code == "yclients_catalog_bound"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "title,seance_length,expected_minutes",
     [
