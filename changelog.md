@@ -1,5 +1,9 @@
 # Changelog
 
+[2026-09-05 08:25] Синхронизация bf28b4b подтверждена: локальный main и GitHub main опубликованы, staging переключён на main и fast-forward обновлён, tracking origin/main исправлен; project tree9c31508c равен runtimebc800553,8/8healthy/HTTPS OK. Остальные ветки сохранены. Итоговый документный commit также отправляется в origin/main и подтягивается на staging; helper проверяет читаемость bind-mounted prompt и восстанавливает штатные10001:10001/0660 после checkout, без смены содержимого/секретов.
+
+[2026-09-05 08:24] main fast-forward bf28b4b опубликован на GitHub; свежие Docker unit1282 passed до merge/32.97s и после merge/24.01s, Ruff/compile/Compose clean. Первый server sync безопасно остановился до checkout: single-branch fetch tracking следил только за codex/staging-phase3, поэтому origin/main оставался старым, хотя FETCH_HEAD уже bf28b4b. Runtime не затронут; исправлен явный refspec main и добавлено постоянное tracking main без force/reset. Дерево project/ сервера и нового main совпадает9c31508c.
+
 [2026-09-05 08:20] Владелец разрешил синхронизацию локального main/GitHub/staging и отложил нюанс99мин. Preflight: checkout чист, origin/main=localmain=a92aee0, текущая ветка впереди на25коммитов без расхождений; serverHEADbc800553 чист, GitHub доступен с сервера. project/ у проверенного runtime и текущегоHEAD идентичен. Запущен свежий Docker unit gate; Ruff/Compose clean. Выбран безопасный fast-forward без force/reset и без удаления остальных веток; staging checkout перейдёт на main, immutable runtime не требует перезапуска при идентичном дереве project/.
 
 [2026-09-05 08:16] Повторный post-QA server gate: exactbc800553, bot:paused=0,8/8healthy; с05:04UTC ERROR/CRITICAL/Exception/Traceback markers в bot/worker/scheduler/admin по0. Документный итог фиксируется локально отдельным commit без изменения staging runtime/GitHub/main.
