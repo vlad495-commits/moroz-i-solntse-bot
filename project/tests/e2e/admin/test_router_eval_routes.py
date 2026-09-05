@@ -114,9 +114,9 @@ async def test_router_index_uses_router_only_counts_and_read_only_root_urls(
     body = response.body.decode("utf-8")
 
     assert calls == [
-        ("cases", "router_v2"),
-        ("problems", "router_v2"),
-        ("runs", 10, "router_v2"),
+        ("cases", "router_v3"),
+        ("problems", "router_v3"),
+        ("runs", 10, "router_v3"),
     ]
     assert 'action="/admin/eval/router/runs"' in body
     assert 'action="/admin/eval/router/runs/problematic"' in body
@@ -135,7 +135,7 @@ async def test_router_run_start_reuses_supervision_and_audits(monkeypatch):
     audited = []
 
     async def list_cases(suite):
-        assert suite == "router_v2"
+        assert suite == "router_v3"
         return cases
 
     async def create_run(*args, **kwargs):
@@ -172,14 +172,14 @@ async def test_router_run_start_reuses_supervision_and_audits(monkeypatch):
     )
 
     assert created == [
-        ((1, eval_routes.eval_runner.ROUTER_MODEL, "router_v2"), {})
+        ((1, eval_routes.eval_runner.ROUTER_MODEL, "router_v3"), {})
     ]
     assert started == [
         ("runner", 91, cases),
         ("task", 91),
     ]
     assert audited[0]["action"] == "eval.router_run_start"
-    assert audited[0]["after"] == {"total": 1, "suite": "router_v2"}
+    assert audited[0]["after"] == {"total": 1, "suite": "router_v3"}
     assert response.status_code == 302
     assert response.headers["location"] == "/admin/eval/runs/91"
 
@@ -230,8 +230,8 @@ async def test_router_problem_rerun_uses_only_router_problem_cases(monkeypatch):
     )
 
     assert captured[:4] == [
-        ("problems", "router_v2"),
-        ("create", (1, eval_routes.eval_runner.ROUTER_MODEL, "router_v2")),
+        ("problems", "router_v3"),
+        ("create", (1, eval_routes.eval_runner.ROUTER_MODEL, "router_v3")),
         ("runner", 92, cases),
         ("task", 92),
     ]
@@ -245,7 +245,7 @@ async def test_router_detail_requires_owner_and_renders_structured_payload(
     now = datetime.now(timezone.utc)
     run = {
         "id": 91,
-        "suite": "router_v2",
+        "suite": "router_v3",
         "started_at": now,
         "finished_at": now,
         "total": 1,
