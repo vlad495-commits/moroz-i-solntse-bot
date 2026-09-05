@@ -204,7 +204,7 @@ git commit -m "feat: добавить eval-набор Router V3"
 - Produces: `next_requirement(state: Mapping[str, object]) -> Literal["service", "date", "time", "slot", "contact", "name", "confirm"]`.
 - Produces: `filter_slots(slots: Sequence[Slot], time_from: str | None, time_to: str | None) -> list[Slot]`.
 
-- [ ] **Step 1: Add RED tests for merge, correction and filtering**
+- [x] **Step 1: Add RED tests for merge, correction and filtering**
 
 ```python
 def test_date_correction_invalidates_slot_but_keeps_service():
@@ -223,13 +223,13 @@ def test_multiple_services_requires_service_choice():
     assert next_requirement(merged) == "service"
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/booking/test_conversation.py`
 
 Expected: FAIL with missing module/functions.
 
-- [ ] **Step 3: Implement pure state rules**
+- [x] **Step 3: Implement pure state rules**
 
 ```python
 def merge_draft(state: dict[str, object], decision: RouteDecision) -> dict[str, object]:
@@ -255,7 +255,7 @@ def merge_draft(state: dict[str, object], decision: RouteDecision) -> dict[str, 
 
 Keep this module free of I/O and framework classes. `next_requirement` derives state instead of trusting persisted legacy `step`.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/booking/test_conversation.py`
 
