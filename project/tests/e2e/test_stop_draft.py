@@ -272,3 +272,49 @@ async def test_contact_keeps_telegram_event_time_for_stop_order(client, db):
     assert (await client.post("/telegram/webhook", json=update)).status_code == 200
     payload = json.loads(await db.fetchval("SELECT payload FROM message_inbox WHERE external_message_id='904'"))
     assert datetime.fromisoformat(payload["received_at"]).timestamp() == update["message"]["date"]
+
+
+@pytest.mark.parametrize("booking_text", ["📅 Записаться", "Хочу записаться"])
+async def test_delayed_stop_preserves_booking_started_by_last_message_in_batch(
+    client, db, migrated_database_url, booking_text,
+):
+    from tests.e2e.booking.test_telegram_booking import _coordinator
+    from tests.e2e.test_message_delivery import FakeLLM, FakeTelegram
+    from moroz.messaging.models import IncomingMessage
+    from moroz.messaging.repository import MessageRepository
+    from moroz.messaging.router import RouteDecision
+    from moroz.messaging.telegram import TelegramSender
+    from moroz.common.queue import QueueTask
+    from worker.main import MessageTaskHandler
+
+    database, repository, adapter, coordinator = await _coordinator(migrated_database_url)
+    messages = MessageRepository(database)
+    class Router(FakeLLM):
+        async def __call__(self, text, context, **options):
+            result = await super().__call__(text, context, recent_message_count=1)
+            result.text = await options["dispatch"](RouteDecision("booking", 1, "create"))
+            return result
+    sender = TelegramSender(FakeTelegram(), messages)
+    handler = MessageTaskHandler(database, Router(), sender, booking_coordinator=coordinator)
+    try:
+        for update_id, text in [(890, "Как подготовиться?"), (901, booking_text)]:
+            await messages.accept_if_consented(IncomingMessage(
+                str(update_id), str(update_id), "telegram", "42", "7", text,
+                datetime.fromtimestamp(1_768_478_400, UTC), uuid4(),
+            ))
+        task = QueueTask("process_message", {"update_ids": ["890", "901"]}, "process_message:890,901")
+        await handler.handle(task)
+        scenario = await repository.get_active_for_customer("42")
+        assert scenario is not None
+        assert scenario.idempotency_key == "telegram:create:890"
+        for row in await db.fetch("SELECT id FROM outbound_messages WHERE status='pending' ORDER BY created_at,id"):
+            await sender.send(row["id"])
+        await client.post("/telegram/webhook", json=telegram_text_update("stop", update_id=900))
+        current = await repository.get_active_for_customer("42")
+        assert current is not None and current.id == scenario.id
+        assert current.state["origin_update_id"] == "901"
+        await handler.handle(task)
+        assert await db.fetchval("SELECT count(*) FROM booking_scenarios") == 1
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()

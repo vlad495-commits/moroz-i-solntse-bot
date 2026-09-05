@@ -126,6 +126,7 @@ class TelegramBookingCoordinator:
         kind: str,
         data: Mapping[str, object],
         decision: RouteDecision | None = None,
+        origin_update_id: str | None = None,
     ) -> BookingReply | None:
         if kind == "callback":
             return await self._handle_callback(
@@ -157,9 +158,9 @@ class TelegramBookingCoordinator:
                     "booking_flow_left_for_menu",
                 )
             if menu_command == _MENU_BOOK:
-                return await self._start(connection, customer_id, update_id)
+                return await self._start(connection, customer_id, update_id, origin_update_id=origin_update_id)
             if menu_command == "✨ Услуги и цены":
-                return await self._start_catalog(connection, customer_id, update_id)
+                return await self._start_catalog(connection, customer_id, update_id, origin_update_id=origin_update_id)
             return None
         if decision is None:
             if scenario is not None and scenario.state.get("step") == "contact" and (
@@ -215,19 +216,19 @@ class TelegramBookingCoordinator:
                 return self._render_current(scenario)
             if scenario is not None:
                 await self._repository.checkpoint(replace(scenario, phase="failed", updated_at=self._now()), "booking_flow_switched")
-            return await self._start_management(customer_id, update_id, operation=decision.action)
+            return await self._start_management(customer_id, update_id, operation=decision.action, origin_update_id=origin_update_id)
         if scenario is None or browsing:
             if decision.action != 'create':
                 return BookingReply(CLARIFY_REPLY, {})
             if scenario is not None:
                 await self._repository.checkpoint(replace(scenario, phase='failed', updated_at=self._now()), 'booking_flow_switched')
-            return await self._start(connection, customer_id, update_id, decision=decision)
+            return await self._start(connection, customer_id, update_id, decision=decision, origin_update_id=origin_update_id)
         if step not in {'service', 'staff', 'available_date', 'slot', 'contact', 'name', 'confirm', 'confirm_change', 'booking_management', 'booking_action'}:
             return BookingReply(CLARIFY_REPLY, {})
         if decision.service and decision.action == 'create':
             decision = replace(decision, date=decision.date or scenario.state.get('requested_date'))
             await self._repository.checkpoint(replace(scenario, phase='failed', updated_at=self._now()), 'booking_flow_switched')
-            return await self._start(connection, customer_id, update_id, decision=decision)
+            return await self._start(connection, customer_id, update_id, decision=decision, origin_update_id=origin_update_id)
         if decision.service and step != 'service':
             selected_service = str(scenario.state.get('service_name', '')).casefold().replace('ё', 'е')
             if decision.service.casefold().replace('ё', 'е').strip() != selected_service:
@@ -306,7 +307,8 @@ class TelegramBookingCoordinator:
         return bound_routing_state(json.dumps(state, ensure_ascii=False)) or '{}'
 
     async def _start_management(
-        self, customer_id: str, update_id: str, *, operation: str = "view"
+        self, customer_id: str, update_id: str, *, operation: str = "view",
+        origin_update_id: str | None = None,
     ) -> BookingReply:
         owned = await self._repository.list_future_owned(customer_id, self._now())
         if not owned:
@@ -342,7 +344,7 @@ class TelegramBookingCoordinator:
             state={
                 "step": "booking_management",
                 "management_operation": operation,
-                "origin_update_id": update_id,
+                "origin_update_id": origin_update_id or update_id,
                 "source": "telegram",
                 "choices": choices,
             },
@@ -370,6 +372,7 @@ class TelegramBookingCoordinator:
         customer_id: str,
         update_id: str,
         *, decision: RouteDecision | None = None,
+        origin_update_id: str | None = None,
     ) -> BookingReply:
         services = await self._catalog.list_services(connection, self._now())
         if not services:
@@ -390,7 +393,7 @@ class TelegramBookingCoordinator:
             customer_id=customer_id,
             state={
                 "step": "service",
-                "origin_update_id": update_id,
+                "origin_update_id": origin_update_id or update_id,
                 "source": "telegram",
                 "choices": choices,
                 "requested_date": decision.date if decision is not None else None,
@@ -413,14 +416,14 @@ class TelegramBookingCoordinator:
             return await self._choose_service(scenario, scenario.state["choices"][0])
         return self._render_current(scenario)
 
-    async def _start_catalog(self, connection, customer_id, update_id):
+    async def _start_catalog(self, connection, customer_id, update_id, *, origin_update_id=None):
         services = await self._catalog.list_services(connection, self._now())
         if not services:
             return BookingReply("Сейчас не могу подтвердить актуальные цены. Попробуйте позже или напишите администратору.", main_menu_options())
         categories = sorted({service.category_name or "Другие услуги" for service in services})
         scenario = BookingScenario(
             uuid4(), "create", "collecting", f"telegram:catalog:{update_id}", customer_id,
-            {"source": "telegram", "origin_update_id": update_id, "step": "catalog_category", "choices": [
+            {"source": "telegram", "origin_update_id": origin_update_id or update_id, "step": "catalog_category", "choices": [
                 {"label": category, "category": category} for category in categories]},
             None, self._now(), self._now(),
         )

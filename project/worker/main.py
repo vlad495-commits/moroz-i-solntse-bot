@@ -659,6 +659,7 @@ class MessageTaskHandler:
                                 customer_id=chat_id,
                                 user_id=str(user_id),
                                 update_id=accepted_ids[menu_index],
+                                origin_update_id=accepted_ids[menu_index],
                                 text=str(menu_command),
                                 kind="text",
                                 data={},
@@ -681,6 +682,7 @@ class MessageTaskHandler:
                         customer_id=chat_id,
                         user_id=str(user_id),
                         update_id=accepted_ids[0],
+                        origin_update_id=accepted_ids[menu_index] if menu_index == len(payloads) - 1 else accepted_ids[-1],
                         text=persisted_text,
                         kind=interaction_kind,
                         data=interaction_data,
@@ -800,6 +802,9 @@ class MessageTaskHandler:
                     booking_reply = await self._booking_coordinator.handle(
                         connection, customer_id=chat_id, user_id=str(user_id),
                         update_id=accepted_ids[0], text=persisted_text,
+                        # Semantic routing treats the retained batch as one turn,
+                        # whose boundary is its last input, not the idempotency ID.
+                        origin_update_id=accepted_ids[-1],
                         kind=interaction_kind, data=interaction_data, decision=decision,
                     )
                     return booking_reply.text if booking_reply is not None else None
