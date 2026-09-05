@@ -10,6 +10,7 @@ from moroz.security.pii import PiiSession
 
 
 DATASET = Path("/workspace/llm/eval/router_dataset_v2.json")
+DATASET_V3 = Path("/workspace/llm/eval/router_dataset_v3.json")
 CATEGORIES = {
     "consultation",
     "booking",
@@ -25,6 +26,36 @@ CATEGORIES = {
 
 def _cases() -> list[dict]:
     return json.loads(DATASET.read_text(encoding="utf-8"))
+
+
+def test_router_v3_dataset_has_bounded_structured_coverage():
+    cases = json.loads(DATASET_V3.read_text(encoding="utf-8"))
+    keys = [case["case_key"] for case in cases]
+    categories = {case["category"] for case in cases}
+
+    assert len(cases) >= 24
+    assert len(keys) == len(set(keys))
+    assert all(key.startswith("router-v3-") for key in keys)
+    assert {
+        "time_window",
+        "multi_intent",
+        "correction",
+        "negation",
+        "ownership",
+        "context",
+        "injection",
+        "invalid_output",
+    } <= categories
+    for case in cases:
+        assert set(case) == {
+            "case_key", "category", "input", "context", "expected", "critical"
+        }
+        assert set(case["expected"]) == {
+            "route", "action", "topics", "services", "date",
+            "time_from", "time_to", "staff", "choice",
+        }
+        assert len(case["expected"]["services"]) <= 3
+        assert type(case["critical"]) is bool
 
 
 def test_router_v2_dataset_has_stable_unique_contract():

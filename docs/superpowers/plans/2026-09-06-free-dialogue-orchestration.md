@@ -132,9 +132,9 @@ git commit -m "feat: расширить контракт Router V3"
 
 **Interfaces:**
 - Consumes: all Task 1 `RouteDecision` fields.
-- Produces: immutable suite name `router_v3`; `router_case_diff(expected, actual) -> dict[str, object]` compares every expected structured field.
+- Produces: immutable suite name `router_v3`; `router_case_diff(expected, actual) -> tuple[bool, str]` compares every expected structured field and returns the first `<field>_mismatch`.
 
-- [ ] **Step 1: Add RED tests for dataset shape, structured diff and migration head**
+- [x] **Step 1: Add RED tests for dataset shape, structured diff and migration head**
 
 ```python
 def test_router_v3_dataset_has_required_coverage(router_v3_cases):
@@ -150,13 +150,13 @@ def test_router_case_diff_reports_time_window():
     assert diff == {"time_from": {"expected": "18:00", "actual": None}}
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/test_router_dataset.py tests/unit/admin/test_router_eval_runner.py tests/unit/test_migration_profile.py tests/integration/test_migrations.py`
 
 Expected: FAIL because `router_v3`, migration `0026_router_v3` and structured comparison do not exist.
 
-- [ ] **Step 3: Add immutable cases and additive seed migration**
+- [x] **Step 3: Add immutable cases and additive seed migration**
 
 Each dataset item has concrete `id`, `input`, `context`, `category`, `critical`, and `expected`. Include at least these exact critical expectations:
 
@@ -177,7 +177,7 @@ Each dataset item has concrete `id`, `input`, `context`, `category`, `critical`,
 
 Migration `0026_router_v3` hashes the shipped JSON, inserts/updates only suite `router_v3`, and `downgrade()` deletes only that suite. `project/migrate/Dockerfile` copies the V3 file. Change `ROUTER_EVAL_SUITE = "router_v3"`; save actual V3 fields and compare only fields present in expected data.
 
-- [ ] **Step 4: Run GREEN, verify single head and commit**
+- [x] **Step 4: Run GREEN, verify single head and commit**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/test_router_dataset.py tests/unit/admin/test_router_eval_runner.py tests/unit/test_migration_profile.py tests/integration/test_migrations.py`
 
@@ -526,7 +526,7 @@ Expected: all tests PASS; no skipped critical Router V3 or booking mutation inva
 
 - [ ] **Step 2: Run static/config/schema gates**
 
-Run: `docker run --rm -v "${PWD}:/app" -w /app ghcr.io/astral-sh/ruff:0.12.7 check src tests admin bot worker scheduler`
+Run: `docker run --rm -v "${PWD}:/app" -w /app ghcr.io/astral-sh/ruff:0.12.7 check --target-version py312 src tests admin bot worker scheduler`
 
 Run: `docker compose --env-file ../.env run --rm test python -m compileall -q src tests admin bot worker scheduler`
 

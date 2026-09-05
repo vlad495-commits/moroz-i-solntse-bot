@@ -49,7 +49,6 @@ from moroz.security.validator import (
 from moroz.messaging.router import (
     LLMIntentRouter,
     RouteDecision,
-    deterministic_route,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,7 +78,7 @@ ROUTER_MODEL, ROUTER_API_KEY, ROUTER_BASE_URL = resolve_provider_tuple(
     (LLM_MODEL, LLM_API_KEY, LLM_BASE_URL),
 )
 ROUTER_MAX_TOKENS = int(os.getenv("ROUTER_MAX_TOKENS", "120"))
-ROUTER_EVAL_SUITE = "router_v2"
+ROUTER_EVAL_SUITE = "router_v3"
 SECURITY_MODEL, SECURITY_API_KEY, SECURITY_BASE_URL = resolve_provider_tuple(
     os.environ,
     "SECURITY",
@@ -586,8 +585,12 @@ def router_case_diff(
     expected: dict,
     actual: RouteDecision,
 ) -> tuple[bool, str]:
-    if expected["route"] != actual.route:
-        return False, "route_mismatch"
+    for field, expected_value in expected.items():
+        actual_value = getattr(actual, field, None)
+        if isinstance(actual_value, tuple):
+            actual_value = list(actual_value)
+        if expected_value != actual_value:
+            return False, f"{field}_mismatch"
     return True, "matched"
 
 
@@ -609,17 +612,21 @@ async def run_router_case(
             }
             for item in input_data["context"]
         ]
-        decision = deterministic_route(masked_input)
-        source = "deterministic"
-        reason_code = None
-        if decision is None:
-            router_verdict = await router.route(masked_input, masked_context)
-            decision = router_verdict.decision
-            source = router_verdict.source
-            reason_code = router_verdict.reason_code
+        router_verdict = await router.route(masked_input, masked_context)
+        decision = router_verdict.decision
+        source = router_verdict.source
+        reason_code = router_verdict.reason_code
         ok, reason = router_case_diff(case["expected_data"], decision)
         actual_data = {
             "route": decision.route,
+            "action": decision.action,
+            "topics": list(decision.topics),
+            "services": list(decision.services),
+            "date": decision.date,
+            "time_from": decision.time_from,
+            "time_to": decision.time_to,
+            "staff": decision.staff,
+            "choice": decision.choice,
             "source": source,
             "confidence": decision.confidence,
             "reason_code": reason_code,

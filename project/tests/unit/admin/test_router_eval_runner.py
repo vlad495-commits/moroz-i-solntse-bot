@@ -21,8 +21,8 @@ class CapturingRouter:
 def router_case(**overrides):
     value = {
         "id": 7,
-        "suite": "router_v2",
-        "case_key": "router-v2-test-001",
+        "suite": "router_v3",
+        "case_key": "router-v3-test-001",
         "category": "context",
         "question": "А сколько это?",
         "input_data": {"input": "А сколько это?", "context": []},
@@ -33,13 +33,13 @@ def router_case(**overrides):
     return value
 
 
-def test_router_case_diff_compares_only_single_route():
-    expected = {"route": "booking"}
-    actual = RouteDecision("booking", 0.83)
+def test_router_case_diff_compares_every_expected_structured_field():
+    expected = {"route": "booking", "action": "create", "time_from": "18:00"}
+    actual = RouteDecision("booking", 0.83, "create", time_from="18:00")
     assert eval_runner.router_case_diff(expected, actual) == (True, "matched")
     assert eval_runner.router_case_diff(
-        expected, RouteDecision("consultation", 0.9)
-    ) == (False, "route_mismatch")
+        expected, RouteDecision("booking", 0.9, "create")
+    ) == (False, "time_from_mismatch")
 
 
 @pytest.mark.asyncio
@@ -86,8 +86,8 @@ async def test_quality_case_masks_pii_and_never_calls_answer_or_judge(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_deterministic_case_never_calls_llm_router(monkeypatch):
-    router = CapturingRouter(AssertionError("LLM router must stay unused"))
+async def test_former_menu_case_uses_llm_router(monkeypatch):
+    router = CapturingRouter(RouterVerdict(RouteDecision("booking", .99, "create")))
     case = router_case(
         question="📅 Записаться",
         input_data={"input": "📅 Записаться", "context": []},
@@ -104,8 +104,8 @@ async def test_deterministic_case_never_calls_llm_router(monkeypatch):
     result = await eval_runner.run_router_case(case, 13, router=router)
 
     assert result["verdict"] == "pass"
-    assert router.calls == []
-    assert saved["actual_data"]["source"] == "deterministic"
+    assert router.calls == [("📅 Записаться", [])]
+    assert saved["actual_data"]["source"] == "llm"
 
     semantic_router = CapturingRouter(RouterVerdict(RouteDecision('booking', .99, 'create')))
     free_text = router_case(question='Хочу записаться',
@@ -157,7 +157,7 @@ async def test_router_eval_set_is_sequential_and_uses_existing_gate(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_router_eval_set_loads_only_v2_cases(monkeypatch):
+async def test_router_eval_set_loads_only_v3_cases(monkeypatch):
     loaded = []
 
     async def list_cases(suite):
@@ -172,7 +172,7 @@ async def test_router_eval_set_loads_only_v2_cases(monkeypatch):
 
     await eval_runner.run_router_eval_set(17, router=object())
 
-    assert loaded == ["router_v2"]
+    assert loaded == ["router_v3"]
 
 
 @pytest.mark.asyncio

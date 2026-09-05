@@ -70,6 +70,11 @@ def test_migration_image_is_minimal_and_non_root():
         "/app/llm/eval/router_dataset_v2.json"
         in dockerfile
     )
+    assert (
+        "COPY llm/eval/router_dataset_v3.json "
+        "/app/llm/eval/router_dataset_v3.json"
+        in dockerfile
+    )
     assert "requirements-dev" not in dockerfile
     assert "COPY src" not in dockerfile
     assert requirements.splitlines() == [

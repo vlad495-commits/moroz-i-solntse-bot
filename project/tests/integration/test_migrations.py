@@ -472,7 +472,7 @@ async def test_messaging_migration_downgrade_preserves_baseline_schema(
     conn = await asyncpg.connect(disposable_database_url)
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0025_telegram_booking_flow"
+            "0026_router_v3"
         )
     finally:
         await conn.close()
@@ -611,7 +611,7 @@ async def test_booking_migration_is_additive_and_downgrades_to_0004(
         finally:
             await conn.close()
 
-        assert current_revision == "0025_telegram_booking_flow"
+        assert current_revision == "0026_router_v3"
         assert {"booking_scenarios", "bookings", "booking_events"}.issubset(
             tables
         )
@@ -774,7 +774,7 @@ async def test_scheduler_notifications_migration_is_additive_and_downgrades_to_0
         finally:
             await conn.close()
 
-        assert current_revision == "0025_telegram_booking_flow"
+        assert current_revision == "0026_router_v3"
         assert {
             "scheduler_jobs",
             "notification_feedback_requests",
@@ -871,7 +871,7 @@ async def test_yclients_lifecycle_migration_preserves_new_statuses_and_normalize
         finally:
             await conn.close()
 
-        assert current_revision == "0025_telegram_booking_flow"
+        assert current_revision == "0026_router_v3"
         assert columns["scheduled_end_at"] == ("timestamp with time zone", "YES")
         assert all(status in constraint for status in ("confirmed", "cancelled", "completed", "no_show", "unknown"))
 
@@ -944,7 +944,7 @@ async def test_yclients_booking_projection_migration_creates_bounded_schema(
     finally:
         await conn.close()
 
-    assert current_revision == "0025_telegram_booking_flow"
+    assert current_revision == "0026_router_v3"
     assert columns == [
         "external_id",
         "booking_key",
@@ -1033,7 +1033,7 @@ async def test_review_cases_table_and_rows_survive_forward_upgrade_for_rollback(
             "SELECT id FROM eval_case_reviews WHERE id = $1", review_id
         ) == review_id
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0025_telegram_booking_flow"
+            "0026_router_v3"
         )
     finally:
         await conn.close()
@@ -1094,7 +1094,7 @@ async def test_router_eval_migration_preserves_answer_rows_and_downgrades_only_r
             "SELECT to_regclass('public.router_eval_cases')"
         ) is None
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0025_telegram_booking_flow"
+            "0026_router_v3"
         )
 
         router_case = await conn.fetchval(
@@ -1236,6 +1236,67 @@ async def test_router_v2_migration_preserves_v1_history_on_downgrade(
         await conn.close()
 
 
+async def test_router_v3_migration_seeds_structured_cases_and_preserves_history(
+    disposable_database_url,
+):
+    run_alembic(disposable_database_url, "upgrade", "head")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE suite = 'router_v3'"
+        ) == 24
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE suite = 'router_v2'"
+        ) == 24
+        expected = await conn.fetchval(
+            "SELECT expected_data FROM eval_cases "
+            "WHERE suite = 'router_v3' ORDER BY case_key LIMIT 1"
+        )
+        assert set(json.loads(expected)) == {
+            "route", "action", "topics", "services", "date",
+            "time_from", "time_to", "staff", "choice",
+        }
+        v3_case = await conn.fetchval(
+            "SELECT id FROM eval_cases WHERE suite = 'router_v3' ORDER BY id LIMIT 1"
+        )
+        v3_run = await conn.fetchval(
+            "INSERT INTO eval_runs (suite) VALUES ('router_v3') RETURNING id"
+        )
+        v3_result = await conn.fetchval(
+            """
+            INSERT INTO eval_results
+                (run_id, case_id, question, expected_answer, verdict, actual_data)
+            VALUES ($1, $2, 'router-v3', '', 'passed', '{}'::jsonb)
+            RETURNING id
+            """,
+            v3_run,
+            v3_case,
+        )
+    finally:
+        await conn.close()
+
+    run_alembic(disposable_database_url, "downgrade", "0025_telegram_booking_flow")
+    conn = await asyncpg.connect(disposable_database_url)
+    try:
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE suite = 'router_v3'"
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_runs WHERE id = $1", v3_run
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_results WHERE id = $1", v3_result
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM eval_cases WHERE suite = 'router_v2'"
+        ) == 24
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            "0025_telegram_booking_flow"
+        )
+    finally:
+        await conn.close()
+
+
 async def test_security_eval_migration_preserves_other_suites_on_downgrade(
     disposable_database_url,
 ):
@@ -1293,7 +1354,7 @@ async def test_security_eval_migration_preserves_other_suites_on_downgrade(
             security_case,
         )
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0025_telegram_booking_flow"
+            "0026_router_v3"
         )
     finally:
         await conn.close()
@@ -1394,7 +1455,7 @@ async def test_validator_eval_migration_seeds_cases_and_downgrades_only_validato
             validator_case,
         )
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
-            "0025_telegram_booking_flow"
+            "0026_router_v3"
         )
     finally:
         await conn.close()
@@ -1623,7 +1684,7 @@ async def test_yclients_service_catalog_migration_creates_only_bounded_columns(
     finally:
         await conn.close()
 
-    assert current_revision == "0025_telegram_booking_flow"
+    assert current_revision == "0026_router_v3"
     assert columns == [
         "service_id",
         "staff_id",
@@ -1680,7 +1741,7 @@ async def test_yclients_projection_suppression_migration_is_metadata_only(
     finally:
         await conn.close()
 
-    assert current_revision == "0025_telegram_booking_flow"
+    assert current_revision == "0026_router_v3"
     assert columns == [
         ("external_id", "text", "NO", None),
         ("created_at", "timestamp with time zone", "NO", "now()"),
@@ -1739,7 +1800,7 @@ async def test_telegram_booking_flow_enforces_one_open_scenario_per_customer(
     finally:
         await conn.close()
 
-    assert current_revision == "0025_telegram_booking_flow"
+    assert current_revision == "0026_router_v3"
     assert "UNIQUE" in index_definition
     assert "WHERE (phase = ANY" in index_definition
 
