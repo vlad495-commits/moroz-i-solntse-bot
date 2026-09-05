@@ -319,6 +319,7 @@ class CatalogSyncCoordinator:
 
 def match_catalog(records, text: str) -> CatalogGrounding:
     query_tokens = _tokens(text)
+    query_name_tokens = _meaningful_name_tokens(text)
     kind = _simple_kind(query_tokens)
     grouped = _group_records(records)
     normalized_query = _normalized_text(text)
@@ -326,14 +327,15 @@ def match_catalog(records, text: str) -> CatalogGrounding:
         service for service in grouped
         if _normalized_text(service.service_name) == normalized_query
     )
-    if exact:
+    if exact and query_name_tokens:
         return CatalogGrounding("fresh", exact[:_MAX_MATCHES], kind, len(exact) > 1)
 
     query_family = _query_walk_in_family(text)
     requested_minutes = _requested_minutes(text)
     phrase_matches = tuple(
         service for service in grouped
-        if _is_phrase(_normalized_text(service.service_name), normalized_query)
+        if _meaningful_name_tokens(service.service_name)
+        and _is_phrase(_normalized_text(service.service_name), normalized_query)
     )
     explicit_phrases = tuple(
         service for service in phrase_matches
@@ -374,15 +376,22 @@ def match_catalog(records, text: str) -> CatalogGrounding:
     scored: list[tuple[tuple[int, int], CatalogService]] = []
     for service in grouped:
         name_tokens = _tokens(service.service_name)
+        name_tokens_meaningful = _meaningful_name_tokens(service.service_name)
         normalized_name = _normalized_text(service.service_name)
         overlap = len(query_tokens & name_tokens)
-        phrase = int(_is_phrase(normalized_name, normalized_query))
-        if (
+        phrase = int(
+            bool(name_tokens_meaningful)
+            and _is_phrase(normalized_name, normalized_query)
+        )
+        family_match = (
             query_family is not None
             and query_family == walk_in_family(service.service_name)
-        ):
+        )
+        if family_match:
             overlap = max(overlap, 1)
-        if not phrase and not overlap:
+        if not phrase and not family_match and not (
+            query_name_tokens & name_tokens_meaningful
+        ):
             continue
         scored.append(((phrase, overlap), service))
     scored.sort(
@@ -480,6 +489,20 @@ def _tokens(text: str) -> frozenset[str]:
         if len(token) >= 3 or token.isdecimal()
     )
     return values - _IGNORED_MATCH_TOKENS
+
+
+def _meaningful_name_tokens(text: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for token in _TOKEN_RE.findall(_normalize(text))
+        if not token.isdecimal()
+    ) - (
+        _IGNORED_MATCH_TOKENS
+        | _PRICE_WORDS
+        | _DURATION_WORDS
+        | _STAFF_WORDS
+        | _COMPARISON_WORDS
+    )
 
 
 def _normalize(text: str) -> str:

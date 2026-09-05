@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+import pytest
+
 from moroz.booking.catalog import match_catalog
 from moroz.booking.yclients_catalog import CatalogRecord
 
@@ -299,6 +301,46 @@ def test_partial_price_query_keeps_unequal_length_candidates_ambiguous():
     assert [item.service_id for item in result.services] == ["21", "20"]
     assert "Массаж лица" in result.direct_reply
     assert "Массаж лица и шеи" in result.direct_reply
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "Сколько стоит 30 минут?",
+        "30мин",
+        "Стоимость 30 минут",
+        "Цена 420",
+        "30 сентября",
+    ),
+)
+def test_action_numbers_duration_or_date_without_service_name_do_not_match(query):
+    result = match_catalog(
+        (record("30", "Солярий 30 минут", price="420", duration=30),),
+        query,
+    )
+
+    assert result.services == ()
+
+
+def test_exact_named_numeric_title_still_matches():
+    result = match_catalog(
+        (record("30", "Солярий 30 минут", price="420", duration=30),),
+        "Солярий 30 минут",
+    )
+
+    assert [item.service_id for item in result.services] == ["30"]
+
+
+def test_multiple_duration_only_titles_are_not_explicit_services():
+    result = match_catalog(
+        (
+            record("30", "30 минут", price="420", duration=30),
+            record("60", "60 минут", price="800", duration=60),
+        ),
+        "Сколько стоят 30 минут и 60 минут?",
+    )
+
+    assert result.services == ()
 
 
 def test_direct_price_reply_is_concise_and_retains_missing_price_intent():

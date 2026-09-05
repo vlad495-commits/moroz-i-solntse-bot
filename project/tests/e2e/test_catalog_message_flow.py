@@ -396,6 +396,56 @@ async def test_price_action_with_two_explicit_services_keeps_both_for_answer(dat
     assert "Криомассаж лица" not in answer_system
 
 
+async def test_price_action_with_only_duration_does_not_select_single_tariff(database):
+    text = "Сколько стоит 30 минут?"
+    service_query = "30 минут"
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("catalog-duration-only", text))
+    gateway = ForbiddenGateway()
+    pipeline = SecurityPipeline(
+        gateway,
+        "",
+        extract_structured_facts(""),
+        router=PriceRouter(service_query),
+        input_security=AllowingInputSecurity(),
+    )
+
+    async def llm(text, context, *, recent_message_count, catalog):
+        return await pipeline.respond(
+            text, context, recent_message_count=recent_message_count,
+            catalog=catalog,
+        )
+
+    catalog_repository = MatchingCatalogRepository((
+        CatalogRecord(
+            "30", "10", "Солярий 30 минут", "Солярий", "Кабина 1",
+            Decimal("420"), Decimal("420"), 30,
+        ),
+    ))
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+        catalog_repository=catalog_repository,
+        catalog_grounding_enabled=True,
+        clock=lambda: NOW,
+    )
+
+    await handler.handle(QueueTask(
+        kind="process_message",
+        payload={"chat_id": "42", "update_ids": ["catalog-duration-only"]},
+        idempotency_key=process_message_key(["catalog-duration-only"]),
+    ))
+
+    async with database.acquire() as connection:
+        answer = await connection.fetchval(
+            "SELECT content FROM messages WHERE role = 'assistant'"
+        )
+    assert answer == "Чтобы назвать цену, уточните услугу."
+    assert catalog_repository.calls[0][1] == service_query
+    assert gateway.calls == 0
+
+
 async def test_catalog_reply_rolls_back_when_outbound_insert_fails(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming("catalog-rollback"))
