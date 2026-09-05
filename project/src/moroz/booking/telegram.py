@@ -14,11 +14,12 @@ from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
 from moroz.booking.yclients_catalog import walk_in_family
 from moroz.messaging.telegram import main_menu_options
-from moroz.messaging.router import RouteDecision
+from moroz.messaging.router import RouteDecision, bound_routing_state, valid_route_action
 from moroz.booking.time_display import MOSCOW, format_booking_time
 
 
 STALE_REPLY = "Эта кнопка уже неактуальна. Начните запись заново."
+CLARIFY_REPLY = "Уточните, пожалуйста: хотите узнать об услуге, посмотреть свободное время или свои записи?"
 _MENU_BOOK = "📅 Записаться"
 _MENU_LABELS = frozenset(
     {
@@ -132,12 +133,14 @@ class TelegramBookingCoordinator:
             ):
                 return await self._collect_contact(connection, scenario, user_id, text, kind, data)
             return BookingReply(STALE_REPLY, main_menu_options()) if kind == "contact" else None
+        if not valid_route_action(decision) or decision.action == 'clarify':
+            return BookingReply(CLARIFY_REPLY, {})
+        if decision.action == 'clarify_cancel':
+            return BookingReply("Вы хотите прекратить текущее оформление или отменить уже созданную запись?", {})
         if decision.route not in {"booking", "booking_management"}:
             return None
         if scenario is not None and scenario.phase == "executing":
             return BookingReply("Запись уже обрабатывается. Дождитесь результата.", {})
-        if decision.action == "clarify":
-            return BookingReply("Вы хотите прекратить текущее оформление или отменить уже созданную запись?", {})
         if decision.action == "cancel_draft":
             if scenario is None:
                 return BookingReply("Сейчас нет незавершённого оформления.", main_menu_options())
@@ -153,7 +156,23 @@ class TelegramBookingCoordinator:
                 main_menu_options(),
             )
 
+        step = str(scenario.state.get('step', '')) if scenario is not None else ''
+        browsing = step.startswith('catalog_')
+        if decision.action == 'none':
+            return await self._refresh_current(connection, scenario) if scenario else BookingReply(CLARIFY_REPLY, {})
+        if decision.action == 'continue' and (scenario is None or browsing):
+            return await self._refresh_current(connection, scenario) if scenario else BookingReply(CLARIFY_REPLY, {})
+        if decision.action == 'provide_name' and step != 'name':
+            return BookingReply(CLARIFY_REPLY, {})
+        if decision.choice is not None:
+            choices = scenario.state.get('choices', ()) if scenario is not None else ()
+            page = max(0, int(scenario.state.get('page', 0))) if scenario is not None else 0
+            if not page * 8 <= decision.choice < min(len(choices), (page + 1) * 8):
+                return BookingReply(CLARIFY_REPLY, {})
+
         if decision.route == "booking_management":
+            if decision.action == 'continue' and step not in {'booking_management', 'booking_action'}:
+                return BookingReply(CLARIFY_REPLY, {})
             if scenario is not None and scenario.state.get("step") in {"booking_management", "booking_action"}:
                 if scenario.state.get("step") == "booking_action" and decision.action in {"cancel", "reschedule"}:
                     return await self._begin_change(scenario, {"operation": decision.action})
@@ -163,12 +182,34 @@ class TelegramBookingCoordinator:
             if scenario is not None:
                 await self._repository.checkpoint(replace(scenario, phase="failed", updated_at=self._now()), "booking_flow_switched")
             return await self._start_management(customer_id, update_id, operation=decision.action)
-        if scenario is None:
+        if scenario is None or browsing:
+            if decision.action != 'create':
+                return BookingReply(CLARIFY_REPLY, {})
+            if scenario is not None:
+                await self._repository.checkpoint(replace(scenario, phase='failed', updated_at=self._now()), 'booking_flow_switched')
             return await self._start(connection, customer_id, update_id, decision=decision)
+        if step not in {'service', 'staff', 'available_date', 'slot', 'contact', 'name', 'confirm', 'confirm_change', 'booking_management', 'booking_action'}:
+            return BookingReply(CLARIFY_REPLY, {})
+        if decision.service and decision.action == 'create':
+            decision = replace(decision, date=decision.date or scenario.state.get('requested_date'))
+            await self._repository.checkpoint(replace(scenario, phase='failed', updated_at=self._now()), 'booking_flow_switched')
+            return await self._start(connection, customer_id, update_id, decision=decision)
+        if decision.service and step != 'service':
+            selected_service = str(scenario.state.get('service_name', '')).casefold().replace('ё', 'е')
+            if decision.service.casefold().replace('ё', 'е').strip() != selected_service:
+                return await self._refresh_current(connection, scenario)
+            decision = replace(decision, service=None)
         if decision.service:
-            decision = replace(decision, date=decision.date or scenario.state.get("requested_date"))
-            await self._repository.checkpoint(replace(scenario, phase="failed", updated_at=self._now()), "booking_flow_switched")
-            return await self._start(connection, customer_id, update_id, decision=decision)
+            query = decision.service.casefold().replace('ё', 'е').strip()
+            choices = [item for item in scenario.state.get('choices', ()) if isinstance(item, Mapping)
+                       and f' {query} ' in f" {str(item.get('label', '')).casefold().replace('ё', 'е')} "]
+            if len(choices) != 1:
+                return await self._refresh_current(connection, scenario)
+            if decision.date:
+                state = self._state(scenario)
+                state['requested_date'] = decision.date
+                scenario = await self._checkpoint(scenario, state, 'booking_date_requested')
+            return await self._choose_service(scenario, choices[0])
         if decision.date:
             state = self._state(scenario)
             state["requested_date"] = decision.date
@@ -199,13 +240,25 @@ class TelegramBookingCoordinator:
 
     async def routing_context(self, customer_id: str) -> str:
         scenario = await self._repository.get_active_for_customer(customer_id)
-        state = {"today": self._now().astimezone(MOSCOW).date().isoformat(), "active": scenario is not None}
+        state = {"today": self._now().astimezone(MOSCOW).date().isoformat(), "active": False, 'mode': 'idle'}
         if scenario is not None:
-            state.update({"kind": scenario.kind, "step": scenario.state.get("step"),
+            step = str(scenario.state.get('step', ''))
+            browsing = step.startswith('catalog_')
+            management = scenario.kind in {'cancel', 'reschedule'} or step in {'booking_management', 'booking_action'}
+            choices = scenario.state.get('choices', ())
+            page = max(0, min(int(scenario.state.get('page', 0)), max(0, (len(choices) - 1) // 8)))
+            state.update({'mode': 'catalog_browse' if browsing else 'booking_management' if management else 'booking',
+                          'active': not browsing, 'step': step, 'page': page,
                           "service": scenario.state.get("service_name"),
                           "date": scenario.state.get("requested_date") or scenario.state.get("selected_date"),
-                          "choices": [str(item.get("label", "")) for item in scenario.state.get("choices", ()) if isinstance(item, Mapping)]})
-        return "Текущее состояние записи (данные): " + json.dumps(state, ensure_ascii=False)
+                          'requested_date': scenario.state.get('requested_date'),
+                          'selected_date': scenario.state.get('selected_date'),
+                          "choices": [{'index': index, 'label': str(item.get('label', ''))[:128]}
+                                      for index, item in enumerate(choices[page * 8:(page + 1) * 8], start=page * 8)
+                                      if isinstance(item, Mapping)]})
+            if not browsing:
+                state['kind'] = scenario.kind
+        return bound_routing_state(json.dumps(state, ensure_ascii=False)) or '{}'
 
     async def _start_management(
         self, customer_id: str, update_id: str, *, operation: str = "view"
@@ -354,7 +407,7 @@ class TelegramBookingCoordinator:
             detail = CatalogGrounding("fresh", (service,), "price", False).direct_reply
             if family:
                 detail += "\nПредварительная запись не нужна — приходите ежедневно с 10:00 до 21:00."
-            state.update(step="catalog_book", detail=detail, catalog_service_id=service.service_id, choices=[] if family else [
+            state.update(step="catalog_book", detail=detail, catalog_service_id=service.service_id, service_name=service.service_name, choices=[] if family else [
                 {"label": "Свободное время", "service_id": service.service_id},
                 {"label": "Записаться", "service_id": service.service_id},
             ])

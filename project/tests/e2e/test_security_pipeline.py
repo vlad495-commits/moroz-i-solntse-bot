@@ -131,7 +131,7 @@ class ImmediateRouter:
         self.started = asyncio.Event()
         self.calls = []
 
-    async def route(self, text, context):
+    async def route(self, text, context, *, state=None):
         self.calls.append((text, context))
         self.started.set()
         return RouterVerdict(self.decision, ())
@@ -141,7 +141,7 @@ class ForbiddenRouter:
     def __init__(self):
         self.calls = 0
 
-    async def route(self, _text, _context):
+    async def route(self, _text, _context, *, state=None):
         self.calls += 1
         raise AssertionError("local security decision must not call Router")
 

@@ -89,8 +89,8 @@ async def test_quality_case_masks_pii_and_never_calls_answer_or_judge(monkeypatc
 async def test_deterministic_case_never_calls_llm_router(monkeypatch):
     router = CapturingRouter(AssertionError("LLM router must stay unused"))
     case = router_case(
-        question="Хочу записаться",
-        input_data={"input": "Хочу записаться", "context": []},
+        question="📅 Записаться",
+        input_data={"input": "📅 Записаться", "context": []},
         expected_data={"route": "booking"},
     )
     saved = {}
@@ -106,6 +106,14 @@ async def test_deterministic_case_never_calls_llm_router(monkeypatch):
     assert result["verdict"] == "pass"
     assert router.calls == []
     assert saved["actual_data"]["source"] == "deterministic"
+
+    semantic_router = CapturingRouter(RouterVerdict(RouteDecision('booking', .99, 'create')))
+    free_text = router_case(question='Хочу записаться',
+        input_data={'input': 'Хочу записаться', 'context': []}, expected_data={'route': 'booking'})
+    result = await eval_runner.run_router_case(free_text, 13, router=semantic_router)
+    assert result['verdict'] == 'pass'
+    assert semantic_router.calls == [('Хочу записаться', [])]
+    assert saved['actual_data']['source'] == 'llm'
 
 
 @pytest.mark.asyncio

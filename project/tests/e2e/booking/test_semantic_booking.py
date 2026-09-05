@@ -5,7 +5,7 @@ import pytest
 
 from tests.e2e.booking.test_telegram_booking import _coordinator, _handle, _button_labels, NOW
 from tests.e2e.test_security_pipeline import _incoming, FakeTelegram
-from moroz.messaging.router import RouteDecision, RouterVerdict
+from moroz.messaging.router import LLMIntentRouter, RouteDecision, RouterVerdict
 from moroz.security.pipeline import SecurityPipeline
 from moroz.security.validator import extract_structured_facts
 from moroz.security.llm_gateway import LLMResponse
@@ -38,8 +38,8 @@ class Router:
         self.calls = []
         self.decision = RouteDecision('booking', .99, 'create', 'Криокапсула', '2026-09-05')
 
-    async def route(self, text, context):
-        self.calls.append((text, context))
+    async def route(self, text, context, *, state=None):
+        self.calls.append((text, context, state))
         return RouterVerdict(self.decision)
 
 
@@ -73,7 +73,7 @@ async def test_worker_dispatches_then_consults_and_preserves_draft(migrated_data
         await send('9002', 'Что такое водородотерапия?')
         assert (await bookings.get_active_for_customer('42')).id == draft.id
         assert len(router.calls) == 2
-        assert 'slot' in str(router.calls[-1][1])
+        assert 'slot' in str(router.calls[-1][2])
 
         router.decision = RouteDecision('booking_management', .99, 'view')
         await send('9003', 'Куда я записывался?')
@@ -139,6 +139,9 @@ async def test_catalog_menu_shows_prices_then_opens_booking(migrated_database_ur
         assert '30 мин.' in reply.text
         reply = await click(reply, 'detail')
         assert '1 500 ₽' in reply.text
+        state = json.loads(await coordinator.routing_context('42'))
+        assert state['mode'] == 'catalog_browse'
+        assert state['service'] == 'Массаж спины'
         assert 'Свободное время' in _button_labels(reply)
         reply = await click(reply, 'start-booking')
         assert (await bookings.get_active_for_customer('42')).state['step'] == 'staff'
@@ -249,5 +252,160 @@ async def test_catalog_paging_and_recovery_do_not_reuse_stale_prices(migrated_da
             reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback', data={'callback_data': callback}, update_id=update, text='')
             assert '1 500' not in reply.text
             assert 'актуальн' in reply.text
+    finally:
+        await database.close()
+
+
+@pytest.mark.parametrize('decision', [
+    RouteDecision('booking', .99, 'continue', 'Криокапсула'),
+    RouteDecision('booking', .99),
+    RouteDecision('booking', .99, 'provide_name'),
+    RouteDecision('booking', .99, 'create', choice=0),
+    RouteDecision('booking_management', .99, 'create'),
+])
+async def test_only_explicit_valid_create_can_open_new_booking(migrated_database_url, decision):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    try:
+        await _handle(coordinator, database, customer_id='42', user_id='7', kind='text', data={},
+            update_id='unsafe-start', text='Криокапсула', decision=decision)
+        assert await bookings.get_active_for_customer('42') is None
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_browse_continue_preserves_catalog_but_create_starts_booking(migrated_database_url):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    base = dict(customer_id='42', user_id='7', kind='text', data={})
+    try:
+        await _handle(coordinator, database, **base, update_id='browse', text='✨ Услуги и цены')
+        draft = await bookings.get_active_for_customer('42')
+        await _handle(coordinator, database, **base, update_id='bare', text='Криокапсула',
+            decision=RouteDecision('booking', .99, 'continue', 'Криокапсула'))
+        active = await bookings.get_active_for_customer('42')
+        assert active.id == draft.id
+        assert active.state['step'] == 'catalog_category'
+        await _handle(coordinator, database, **base, update_id='explicit', text='Запиши на криокапсулу',
+            decision=RouteDecision('booking', .99, 'create', 'Криокапсула'))
+        assert (await bookings.get_active_for_customer('42')).state['step'] == 'staff'
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_unknown_clarification_is_not_cancellation(migrated_database_url):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    base = dict(customer_id='42', user_id='7', kind='text', data={})
+    try:
+        for route in ('booking', 'other'):
+            reply = await _handle(coordinator, database, **base, update_id=route, text='ghbdtn',
+                decision=RouteDecision(route, .99, 'clarify'))
+            assert reply is not None
+            assert 'отмен' not in reply.text.casefold()
+        reply = await _handle(coordinator, database, **base, update_id='cancel', text='Отмени',
+            decision=RouteDecision('booking', .99, 'clarify_cancel'))
+        assert 'отменить' in reply.text
+        assert await bookings.get_active_for_customer('42') is None
+    finally:
+        await database.close()
+
+
+async def test_catalog_state_preserves_conversation_and_pii_boundary(migrated_database_url):
+    records = tuple(CatalogRecord(str(i + 331), '10', f'Массаж {i} ' + 'расширенное название ' * 15,
+        'Массаж', 'Анна', 1500, 1500, 30) for i in range(76))
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url, catalog_records=records)
+    base = dict(customer_id='42', user_id='7')
+    try:
+        reply = await _handle(coordinator, database, **base, kind='text', data={}, update_id='ctx-menu', text='✨ Услуги и цены')
+        token = reply.delivery_options['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        await _handle(coordinator, database, **base, kind='callback', data={'callback_data': token}, update_id='ctx-cat', text='')
+        draft = await bookings.get_active_for_customer('42')
+        await bookings.checkpoint(replace(draft, state={**coordinator._state(draft), 'page': 1}), 'test_page')
+        state = json.loads(await coordinator.routing_context('42'))
+        assert state['mode'] == 'catalog_browse'
+        assert state['active'] is False
+        assert 'kind' not in state
+        assert [item['index'] for item in state['choices']] == list(range(8, 16))
+        state['service'] = 'Массаж +7 900 111-22-33'
+
+        class CapturingProvider:
+            def __init__(self):
+                self.requests = []
+            async def complete(self, request):
+                self.requests.append(request)
+                text = ('{"route":"consultation","confidence":0.99,"action":"none"}'
+                        if request.purpose == 'router' else 'Уточните вид массажа.')
+                return LLMResponse(text, 0, 0, 0, 0, 'test')
+
+        provider = CapturingProvider()
+        pipeline = SecurityPipeline(provider, '', extract_structured_facts(''),
+            router=LLMIntentRouter(provider), input_security=Security())
+        await pipeline.respond('Массаж', [
+            {'role': 'user', 'content': 'Сколько стоит массаж? Мой телефон +7 900 111-22-33'},
+            {'role': 'assistant', 'content': 'Какой вид массажа вас интересует?'}],
+            booking_context=json.dumps(state, ensure_ascii=False))
+        routing, answer = provider.requests
+        assert 'Какой вид массажа' in routing.messages[1]['content']
+        assert 'Сколько стоит массаж?' in routing.messages[1]['content']
+        actual = json.loads(routing.messages[2]['content'].split('\n', 1)[1])
+        assert actual['choices'][0]['index'] == 8
+        assert actual['mode'] == 'catalog_browse'
+        assert '<PII_PHONE_1>' in actual['service']
+        assert '+7 900' not in str(provider.requests)
+        assert 'catalog_browse' not in str(answer.messages)
+        assert 'UNTRUSTED_STATE' not in str(answer.messages)
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+@pytest.mark.parametrize('action', ['continue', 'create'])
+async def test_booking_continue_can_choose_active_management_action(migrated_database_url, action):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    try:
+        scenario = BookingScenario(uuid4(), 'create', 'collecting', 'manage-choice', '42', {
+            'step': 'booking_action', 'choices': [{'operation': 'cancel', 'label': 'Отменить'}],
+            'selected_booking': {'external_id': 'owned-record', 'booking_key': str(uuid4()),
+                'starts_at': '2026-09-05T13:00:00+03:00', 'service_id': '331',
+                'service_name': 'Криокапсула', 'staff_name': 'Анна', 'staff_names': {}}},
+            None, NOW, NOW)
+        await bookings.create_scenario(scenario)
+        assert json.loads(await coordinator.routing_context('42'))['mode'] == 'booking_management'
+        reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='text', data={},
+            update_id='manage-continue', text='Первый вариант' if action == 'continue' else 'Запиши на криокапсулу',
+            decision=RouteDecision('booking', .99, action, 'Криокапсула' if action == 'create' else None,
+                                   choice=0 if action == 'continue' else None))
+        assert 'reply_markup' in reply.delivery_options
+        if action == 'continue':
+            assert 'Да, отменить' in _button_labels(reply)
+        assert (await bookings.get_active_for_customer('42')).state['step'] == ('staff' if action == 'create' else 'confirm_change')
+        assert adapter.cancel_calls == 0
+    finally:
+        await database.close()
+
+
+@pytest.mark.parametrize('switch_service', [True, False])
+async def test_explicit_switch_or_repeated_service_preserves_requested_date(migrated_database_url, switch_service):
+    records = (CatalogRecord('331', '10', 'Массаж спины', 'Массаж', 'Анна', 1500, 1500, 60),
+               CatalogRecord('332', '10', 'Прессотерапия', 'Тело', 'Анна', 1500, 1500, 60))
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url, catalog_records=records)
+    base = dict(customer_id='42', user_id='7', kind='text', data={})
+    try:
+        await _handle(coordinator, database, **base, update_id='switch-start', text='Запиши на массаж',
+            decision=RouteDecision('booking', .99, 'create', 'Массаж спины', '2026-09-05'))
+        original = await bookings.get_active_for_customer('42')
+        assert original.state['step'] == 'slot'
+        service = 'Прессотерапия' if switch_service else 'Массаж спины'
+        await _handle(coordinator, database, **base, update_id='switch-next', text='Лучше 6 сентября',
+            decision=RouteDecision('booking', .99, 'create' if switch_service else 'continue', service, '2026-09-06'))
+        draft = await bookings.get_active_for_customer('42')
+        assert draft.state['requested_date'] == '2026-09-06'
+        assert draft.state['service_name'] == service
+        if not switch_service:
+            assert draft.id == original.id
+        state = json.loads(await coordinator.routing_context('42'))
+        assert state['requested_date'] == '2026-09-06'
+        assert state['service'] == service
+        assert adapter.create_calls == 0
     finally:
         await database.close()

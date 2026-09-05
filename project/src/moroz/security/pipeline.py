@@ -161,8 +161,7 @@ class SecurityPipeline:
         ]
         masked_context = bound_untrusted_context(masked_history)
         masked_current = session.mask(user_message)
-        if booking_context:
-            masked_context.append({"role": "assistant", "content": session.mask(booking_context).text})
+        masked_state = session.mask(booking_context).text if isinstance(booking_context, str) else None
         forbidden_raw = session.raw_values()
         accumulated: list[LLMResponse] = []
 
@@ -174,7 +173,7 @@ class SecurityPipeline:
         )
         router_task = (
             asyncio.create_task(
-                self.router.route(masked_current.text, masked_context)
+                self.router.route(masked_current.text, masked_context, state=masked_state)
             )
             if needs_router
             else None

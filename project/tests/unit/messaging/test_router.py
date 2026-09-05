@@ -300,3 +300,73 @@ async def test_bad_booking_parameters_never_dispatch(field, value):
     payload[field] = value
     verdict = await LLMIntentRouter(ScriptedProvider(router_response(json.dumps(payload)))).route('запись', [])
     assert verdict.source == 'fallback'
+
+
+@pytest.mark.asyncio
+async def test_state_has_its_own_budget_and_intact_untrusted_json():
+    provider = ScriptedProvider(router_response('{"route":"consultation","confidence":0.9}'))
+    state = json.dumps({'mode': 'catalog_browse', 'active': False, 'service': 'Массаж',
+        'choices': [{'index': i, 'label': 'Расширенное название ' * 30} for i in range(76)]}, ensure_ascii=False)
+    await LLMIntentRouter(provider).route('Массаж', [
+        {'role': 'user', 'content': 'Сколько стоит массаж?'},
+        {'role': 'assistant', 'content': 'Какой вид массажа вас интересует?'}], state=state)
+    messages = provider.requests[0].messages
+    assert len(messages) == 3
+    assert messages[-1]['role'] == 'user'
+    assert 'Какой вид массажа' in messages[1]['content']
+    assert 'Сколько стоит массаж?' in messages[1]['content']
+    assert len(messages[1]['content']) <= 2000
+    assert len(messages[2]['content']) <= 2000
+    bounded = json.loads(messages[2]['content'].split('\n', 1)[1])
+    assert bounded['mode'] == 'catalog_browse'
+    assert 0 < len(bounded['choices']) <= 8
+    assert bounded['choices'][0]['index'] == 0
+
+
+@pytest.mark.asyncio
+async def test_long_assistant_description_cannot_remove_recent_user_service():
+    provider = ScriptedProvider(router_response('{"route":"consultation","confidence":0.9}'))
+    await LLMIntentRouter(provider).route('Сколько стоит?', [
+        {'role': 'user', 'content': 'Расскажи про криомассаж головы'},
+        {'role': 'assistant', 'content': 'Описание процедуры. ' * 250}])
+    assert 'криомассаж головы' in provider.requests[0].messages[1]['content']
+
+
+@pytest.mark.asyncio
+async def test_long_assistant_keeps_service_at_start_and_question_at_end():
+    provider = ScriptedProvider(router_response('{"route":"consultation","confidence":0.9}'))
+    await LLMIntentRouter(provider).route('Сколько стоит?', [
+        {'role': 'user', 'content': 'Подробнее'},
+        {'role': 'assistant', 'content': 'Криомассаж головы. ' + 'Описание. ' * 500 + 'Что ещё рассказать?'}])
+    content = provider.requests[0].messages[1]['content']
+    assert 'Криомассаж головы' in content
+    assert 'Что ещё рассказать?' in content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('state', ['bad JSON', '[]', '{"unknown": "' + 'x' * 50000 + '"}'], ids=['invalid-json', 'non-object', 'large-unknown'])
+async def test_invalid_or_unknown_state_is_omitted(state):
+    provider = ScriptedProvider(router_response('{"route":"consultation","confidence":0.9}'))
+    await LLMIntentRouter(provider).route('Вопрос', [], state=state)
+    assert len(provider.requests[0].messages) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('route,action,choice', [
+    ('consultation', 'create', None), ('booking', 'price', None),
+    ('booking_management', 'create', None), ('booking', 'create', 0),
+    ('booking', 'none', 0), ('booking', 'provide_name', 0),
+])
+async def test_route_action_and_choice_must_agree(route, action, choice):
+    payload = dict(route=route, action=action, choice=choice, confidence=.99)
+    result = await LLMIntentRouter(ScriptedProvider(router_response(json.dumps(payload)))).route('текст', [])
+    assert result.source == 'fallback'
+
+
+@pytest.mark.asyncio
+async def test_global_choice_index_beyond_first_hundred_is_valid():
+    provider = ScriptedProvider(router_response('{"route":"booking","confidence":0.99,"action":"continue","choice":108}'))
+    result = await LLMIntentRouter(provider).route('Первый вариант на этой странице', [],
+        state='{"mode":"booking","active":true,"choices":[{"index":108,"label":"Массаж"}]}')
+    assert result.source == 'llm'
+    assert result.decision.choice == 108

@@ -24,7 +24,7 @@ class Router:
         self.calls = []
         self.source = source
 
-    async def route(self, text, context):
+    async def route(self, text, context, *, state=None):
         self.calls.append((text, context))
         return RouterVerdict(RouteDecision('booking', .98), source=self.source)
 
@@ -79,7 +79,7 @@ async def test_security_block_prevents_booking_dispatch():
 @pytest.mark.asyncio
 async def test_catalog_resolves_followup_after_semantic_router():
     class PriceRouter:
-        async def route(self, text, context):
+        async def route(self, text, context, *, state=None):
             assert context[0]['content'] == 'Расскажи про криомассаж головы'
             return RouterVerdict(RouteDecision('consultation', .99, service='Криомассаж головы'))
 

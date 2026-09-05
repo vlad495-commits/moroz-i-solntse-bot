@@ -62,7 +62,7 @@ class PriceRouter:
     def __init__(self):
         self.calls = 0
 
-    async def route(self, _text, _context):
+    async def route(self, _text, _context, *, state=None):
         self.calls += 1
         return RouterVerdict(RouteDecision('consultation', .99, 'price', 'Криотерапия'))
 

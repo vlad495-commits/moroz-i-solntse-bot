@@ -185,7 +185,7 @@ class BlockingRouter:
         self.calls = []
         self.cancelled = False
 
-    async def route(self, text, context):
+    async def route(self, text, context, *, state=None):
         self.calls.append((text, context))
         self.started.set()
         try:
@@ -223,7 +223,7 @@ class CapturingRouter:
         self.verdict = verdict
         self.calls = []
 
-    async def route(self, text, context):
+    async def route(self, text, context, *, state=None):
         self.calls.append((text, context))
         if isinstance(self.verdict, BaseException):
             raise self.verdict
@@ -249,7 +249,7 @@ class NeverFinishingRouter:
         self.started = asyncio.Event()
         self.cancelled = False
 
-    async def route(self, _text, _context):
+    async def route(self, _text, _context, *, state=None):
         self.started.set()
         try:
             await asyncio.Event().wait()
@@ -262,7 +262,7 @@ class ExplodingRouter:
     def __init__(self):
         self.started = asyncio.Event()
 
-    async def route(self, _text, _context):
+    async def route(self, _text, _context, *, state=None):
         self.started.set()
         raise RuntimeError("router-private-error")
 
@@ -1346,10 +1346,11 @@ async def test_compactor_receives_full_masked_history_after_router_and_security(
         input_security=security,
         output_validator=semantic,
         context_compactor=compactor,
-    ).respond("Да, завтра", source)
+    ).respond("Да, завтра", source, booking_context='{"mode":"catalog_browse","active":false}')
 
     assert len(compactor.calls) == 1
     assert len(compactor.calls[0]) == 31
+    assert 'catalog_browse' not in repr(compactor.calls)
     assert "privacy@example.ru" not in repr(compactor.calls)
     assert "<PII_EMAIL_1>" in compactor.calls[0][0]["content"]
     assert security.calls == ["Да, завтра"]
