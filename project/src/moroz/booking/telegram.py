@@ -205,11 +205,22 @@ class TelegramBookingCoordinator:
                        and f' {query} ' in f" {str(item.get('label', '')).casefold().replace('ё', 'е')} "]
             if len(choices) != 1:
                 return await self._refresh_current(connection, scenario)
+            services = await self._catalog.list_services(connection, self._now())
+            if not services:
+                return BookingReply('Сейчас не могу подтвердить актуальные услуги. Попробуйте позже или напишите администратору.', main_menu_options())
+            fresh_choices = self._service_choices(services)
+            selected = choices[0]
+            index = next((i for i, item in enumerate(fresh_choices)
+                          if (item.get('service_id'), item.get('walk_in')) ==
+                          (selected.get('service_id'), selected.get('walk_in'))), None)
+            if index is None:
+                return BookingReply('Этой услуги больше нет в актуальном каталоге. Откройте список кнопкой «📅 Записаться».', main_menu_options())
+            state = self._state(scenario)
+            state['choices'] = fresh_choices
             if decision.date:
-                state = self._state(scenario)
                 state['requested_date'] = decision.date
-                scenario = await self._checkpoint(scenario, state, 'booking_date_requested')
-            return await self._choose_service(scenario, choices[0])
+            scenario = replace(scenario, state=state)
+            return await self._choose_service(scenario, scenario.state['choices'][index])
         if decision.date:
             state = self._state(scenario)
             state["requested_date"] = decision.date

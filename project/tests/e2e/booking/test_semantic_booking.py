@@ -409,3 +409,38 @@ async def test_explicit_switch_or_repeated_service_preserves_requested_date(migr
         assert adapter.create_calls == 0
     finally:
         await database.close()
+
+
+@pytest.mark.parametrize('catalog_change', ['stale', 'removed', 'updated'])
+async def test_service_continuation_revalidates_current_catalog(migrated_database_url, catalog_change):
+    records = (CatalogRecord('331', '10', 'Массаж спины', 'Массаж', 'Анна', 1500, 1500, 60),
+               CatalogRecord('332', '10', 'Массаж лица', 'Массаж', 'Анна', 1500, 1500, 60))
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url, catalog_records=records)
+    base = dict(customer_id='42', user_id='7', kind='text', data={})
+    try:
+        await _handle(coordinator, database, **base, update_id='fresh-start', text='Массаж завтра',
+            decision=RouteDecision('booking', .99, 'create', 'массаж', '2026-09-05'))
+        original = await bookings.get_active_for_customer('42')
+        assert original.state['step'] == 'service'
+        async with database.acquire() as connection:
+            if catalog_change == 'stale':
+                await connection.execute("UPDATE yclients_service_catalog SET synced_at = synced_at - interval '2 days'")
+            elif catalog_change == 'removed':
+                await connection.execute("DELETE FROM yclients_service_catalog WHERE service_id = '331'")
+            else:
+                await connection.execute("UPDATE yclients_service_catalog SET service_name = 'Массаж спины обновлённый', staff_id = '22', staff_name = 'Ольга' WHERE service_id = '331'")
+        reply = await _handle(coordinator, database, **base, update_id='fresh-choose', text='Массаж спины',
+            decision=RouteDecision('booking', .99, 'continue', 'Массаж спины'))
+        draft = await bookings.get_active_for_customer('42')
+        assert draft.id == original.id
+        assert draft.state['requested_date'] == '2026-09-05'
+        if catalog_change == 'updated':
+            assert draft.state['service_name'] == 'Массаж спины обновлённый'
+            assert dict(draft.state['staff_names']) == {'22': 'Ольга'}
+        else:
+            assert draft.state['step'] == 'service'
+            assert adapter.list_calls == 0
+            assert 'актуальн' in reply.text or 'больше нет' in reply.text
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
