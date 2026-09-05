@@ -12,7 +12,7 @@ pytestmark = pytest.mark.asyncio
 
 CONFIG = "/workspace/alembic.ini"
 BASE_REVISION = "0022_admin_statistics"
-HEAD_REVISION = "0025_telegram_booking_flow"
+HEAD_REVISION = "0026_router_v3"
 
 ACTIVITY_COLUMNS = (
     "channel", "user_id", "yclients_client_id", "identity_status",
