@@ -55,6 +55,15 @@ Files: project/src/moroz/booking/telegram.py; project/src/moroz/booking/catalog.
 - [ ] RED/GREEN: slot header содержит услугу, DD.MM.YYYY и Московское время; старый callback объясняет обновление, не принимает старый выбор.
 - [ ] RED/GREEN: catalog facts разделяют service и staff/resource; без буквальных ** и двойных точек в Telegram-ответах. Не разрушать ссылки и смысл текста.
 
+## Task 4a: STOP закрывает только незавершённое оформление
+
+Владелец явно утвердил: «Да, закрывать и черновик» (2026-09-05).
+
+- [ ] Сохранить немедленный marketing opt-out до pause/consent gate; одновременно закрывать только собираемый или ожидающий подтверждения черновик клиента.
+- [ ] Не трогать executing/завершённые сценарии и реальные записи; ответ честно различает закрытый черновик и уже выполняемую операцию.
+- [ ] Проверить сериализацию с worker, идемпотентный повтор STOP, устаревшие кнопки и отложенные сообщения до STOP: они не должны восстановить закрытое оформление. После STOP новая явная просьба записаться разрешена.
+- [ ] TDD и независимый review; только синтетические согласия/записи в Docker, реальное согласие владельца в QA не менять.
+
 ## Task 5: Интеграция и приёмка
 
 - [ ] Все targeted RED/GREEN результаты записаны; независимый review spec/quality после каждого блока, общий review после интеграции.
@@ -66,4 +75,5 @@ Files: project/src/moroz/booking/telegram.py; project/src/moroz/booking/catalog.
 ## Progress ledger
 
 - Task 1 complete: 38b7ee3..8aa7ec7, review spec compliant / quality approved, no findings, Docker 120 passed. Ruff unavailable in image; full lint remains final gate.
-- Task 2 in progress. Tasks 3–5 pending.
+- Task 2 complete: f43e7d9..a18dcc1, review spec compliant / quality approved after stale-service fix. Docker 678 passed before fix + 42 covering passed on final fix, RED 3 failures reproduced stale/removed/updated catalog issue. Live model/Telegram verification pending.
+- Tasks 3, 4, 4a, 5 pending.

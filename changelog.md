@@ -1,5 +1,17 @@
 # Changelog
 
+[2026-09-05 05:00] Task 2 Important закрыт коммитом a18dcc1: RED 3 failed, финальный covering 42 passed/162.54s; повторный review spec compliant/quality approved, новых замечаний нет. В ledger отмечено завершение Task 2, далее точный подбор каталога/цен Task 3 и read-only проверка реальной модели на кандидатных модулях. STOP-решение владельца отражено в roadmap/плане.
+
+[2026-09-05 04:53] Независимый Task 2 review выявил Important: новый continue+service выбирает из сохранённого списка без повторной проверки свежести каталога. Исправление возвращено implementer с RED на stale/removed service; переход к Task 3 и live probe ждут закрытия замечания. Нейтральный clarify dispatch проверен и корректен.
+
+[2026-09-05 04:51] Task 2 закоммичен как 68a4fe5: отдельное untrusted-состояние роутера, сохранение истории, validation action/route и переходы без неявного оформления. Финальный Docker regression: 678 passed/355.35s; запущен независимый review. Первый расширенный прогон не засчитан: устаревший admin-test и прерванный e2e, оба перепроверены финальным GREEN. Подготовлен checksum-pinned tmp probe; первая сборка tar ошиблась относительным путём, архив пересоздан с абсолютными путями и проверен на три ожидаемых файла, сервер ещё не вызывался.
+
+[2026-09-05 04:47] Владелец утвердил STOP: отключать рекламу и закрывать незавершённый черновик, не изменяя созданные записи. В план добавлен Task 4a с проверками ordering/replay/executing; реализация и тестирование впереди, реальное согласие владельца не изменялось.
+
+[2026-09-05 04:43] Владелец повторно подтвердил продолжение в текущей ветке; read-only проверка: codex/semantic-booking-repair. Task 2 проходит расширенный regression, выявленный failure локализуется до review/выкладки. Подготовка read-only live probe и staging rollback workflow продолжается; staging runtime и настройки YCLIENTS не менялись.
+
+[2026-09-05 04:36] Task 2 RED воспроизвёл 18 failures/84 passed: общий бюджет контекста, неверные action/route и случайный старт оформления. Во время интеграционного чтения дополнительно найдены риски смены услуги/даты и глобальных индексов страницы; добавляются регрессии до commit. В tmp подготовлены brief Task 2–4, read-only candidate router/catalog probe с 12 синтетическими диалогами и защищённый server wrapper; реальные LLM/API вызовы этого probe ещё не выполнялись.
+
 [2026-09-05 04:24] Task 1 review: spec compliant, quality approved, без замечаний. Переход к Task 2: отдельный бюджет состояния/истории и безопасные semantic transitions; существующий baseline router/pipeline/booking — 83 passed. Worktree по решению владельца не создаётся.
 
 [2026-09-05 04:22] Task 1 импорт категорий реализован в 8aa7ec7: отдельный category map + category_id, legacy fallback, validation. Правильный RED после rebuild: 9 failed/27 passed; финальный Docker GREEN 120 passed. Первый прогон без rebuild показал старые 26 тестов и отклонён как evidence; дальнейшие изменения проверяются с --build или актуальным bind. Ruff в test image отсутствует, lint не объявлен пройденным. Запущен read-only task review; stage не менялся.
