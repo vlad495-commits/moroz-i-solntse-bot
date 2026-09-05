@@ -15,6 +15,7 @@ from moroz.messaging.telegram import TelegramSender
 from moroz.messaging.outbox import process_message_key
 from moroz.common.queue import QueueTask
 from moroz.booking.yclients_catalog import CatalogRecord
+from moroz.booking.catalog import CatalogRepository
 from moroz.booking.models import BookingScenario
 from uuid import uuid4
 from worker.main import MessageTaskHandler
@@ -105,11 +106,42 @@ async def test_ambiguous_service_keeps_date_until_service_selection(migrated_dat
         reply = await _handle(coordinator, database, **base, update_id='a1', text='Массаж 5 сентября',
             decision=RouteDecision('booking', .98, 'create', 'массаж', '2026-09-05'))
         assert set(_button_labels(reply)) == {'Массаж спины', 'Общий массаж тела'}
+        reply = await _handle(coordinator, database, **base, update_id='repeat', text='На какие часы свободно?',
+            decision=RouteDecision('booking', .98, 'continue'))
+        assert '05.09.2026' in reply.text
+        assert 'зависит от' in reply.text
         reply = await _handle(coordinator, database, **base, update_id='a2', text='Спины',
             decision=RouteDecision('booking', .98, 'continue', 'Массаж спины'))
         assert reply.text == 'Выберите время'
         draft = await bookings.get_active_for_customer('42')
         assert draft.state['selected_date'] == '2026-09-05'
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_catalog_menu_shows_prices_then_opens_booking(migrated_database_url):
+    records = (CatalogRecord('331', '10', 'Массаж спины', 'Массаж', 'Анна', 1500, 1500, 30),)
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url, catalog_records=records)
+    base = dict(customer_id='42', user_id='7')
+    try:
+        reply = await _handle(coordinator, database, **base, kind='text', data={}, update_id='prices', text='✨ Услуги и цены')
+        assert reply is not None
+        assert 'Массаж' in _button_labels(reply)
+
+        async def click(reply, update):
+            token = reply.delivery_options['reply_markup']['inline_keyboard'][0][0]['callback_data']
+            assert len(token.encode()) <= 64
+            return await _handle(coordinator, database, **base, kind='callback', data={'callback_data': token}, update_id=update, text='')
+
+        reply = await click(reply, 'category')
+        assert '1 500 ₽' in reply.text
+        assert '30 мин.' in reply.text
+        reply = await click(reply, 'detail')
+        assert '1 500 ₽' in reply.text
+        assert 'Свободное время' in _button_labels(reply)
+        reply = await click(reply, 'start-booking')
+        assert (await bookings.get_active_for_customer('42')).state['step'] == 'staff'
         assert adapter.create_calls == 0
     finally:
         await database.close()
@@ -149,5 +181,73 @@ async def test_slots_after_first_page_remain_selectable(migrated_database_url):
             data={'callback_data': next_page}, update_id='page', text='')
         assert '19:00' in _button_labels(second)
         assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_worker_prices_use_semantic_service_and_do_not_guess_ambiguous(migrated_database_url):
+    records = tuple(CatalogRecord(str(i), '10', name, 'Крио', 'Анна', price, price, 30)
+        for i, name, price in [(331, 'Криомассаж головы', 1500), (332, 'Криомассаж лица', 2000)])
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url, catalog_records=records)
+    try:
+        repository = MessageRepository(database)
+        router = Router()
+        pipeline = SecurityPipeline(Provider(), '', extract_structured_facts(''), router=router, input_security=Security())
+        handler = MessageTaskHandler(database, pipeline.respond, TelegramSender(FakeTelegram(), repository),
+            catalog_repository=CatalogRepository(database), catalog_grounding_enabled=True, clock=lambda: NOW)
+        async def send(update, text, service):
+            router.decision = RouteDecision('consultation', .99, 'price', service=service)
+            await repository.accept(replace(_incoming(update), text=text))
+            await handler.handle(QueueTask(kind='process_message', payload={'chat_id': '42', 'update_ids': [update]},
+                idempotency_key=process_message_key([update])))
+            async with database.acquire() as connection:
+                return await connection.fetchval('SELECT text FROM outbound_messages ORDER BY created_at DESC LIMIT 1')
+        answer = await send('price1', 'Сколько стоит?', 'Криомассаж головы')
+        assert '1 500 ₽' in answer
+        assert '2 000' not in answer
+        answer = await send('price2', 'А криомассаж сколько?', 'Криомассаж')
+        assert 'Уточните' in answer
+        assert '1 500' not in answer
+        answer = await send('price3', 'А другое сколько?', None)
+        assert 'Уточните' in answer
+        assert '1 500' not in answer
+    finally:
+        await database.close()
+
+
+async def test_catalog_menu_retry_keeps_live_buttons(migrated_database_url):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    base = dict(customer_id='42', user_id='7', kind='text', data={}, update_id='retry-menu', text='✨ Услуги и цены')
+    try:
+        await _handle(coordinator, database, **base)
+        reply = await _handle(coordinator, database, **base)
+        active = await bookings.get_active_for_customer('42')
+        assert active is not None
+        token = reply.delivery_options['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback',
+            data={'callback_data': token}, update_id='retry-click', text='')
+        assert '₽' in reply.text
+    finally:
+        await database.close()
+
+
+async def test_catalog_paging_and_recovery_do_not_reuse_stale_prices(migrated_database_url):
+    records = tuple(CatalogRecord(str(i + 331), '10', f'Массаж {i}', 'Массаж', 'Анна', 1500, 1500, 30) for i in range(10))
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url, catalog_records=records)
+    try:
+        reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='text', data={}, update_id='stale-menu', text='✨ Услуги и цены')
+        token = reply.delivery_options['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback', data={'callback_data': token}, update_id='stale-category', text='')
+        next_page = reply.delivery_options['reply_markup']['inline_keyboard'][-1][0]['callback_data']
+        async with database.acquire() as connection:
+            await connection.execute("DELETE FROM yclients_service_catalog WHERE service_id::int > 332")
+        reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback', data={'callback_data': next_page}, update_id='shrunk-page', text='')
+        assert '1 500' in reply.text
+        async with database.acquire() as connection:
+            await connection.execute("UPDATE yclients_service_catalog SET synced_at = synced_at - interval '2 days'")
+        for update, callback in [('stale-page', next_page), ('stale-recover', token)]:
+            reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback', data={'callback_data': callback}, update_id=update, text='')
+            assert '1 500' not in reply.text
+            assert 'актуальн' in reply.text
     finally:
         await database.close()

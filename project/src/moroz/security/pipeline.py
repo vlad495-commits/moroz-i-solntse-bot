@@ -256,6 +256,8 @@ class SecurityPipeline:
         active_facts = self.facts
         catalog_block = ""
         if catalog is not None and route.route == "consultation":
+            if callable(catalog):
+                catalog = await catalog(route)
             catalog_block = catalog.data_block()
             extracted = extract_structured_facts(catalog_block)
             catalog_facts = StructuredFacts(

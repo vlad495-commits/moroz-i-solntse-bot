@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 import json
 import logging
 import os
@@ -723,18 +724,23 @@ class MessageTaskHandler:
                     """,
                     chat_id,
                 )
-                catalog = None
-                if self._catalog_repository is not None:
-                    catalog = await self._catalog_repository.ground(
+                async def resolve_catalog(decision):
+                    grounded = await self._catalog_repository.ground(
                         connection,
-                        persisted_text,
+                        decision.service or "",
                         self._clock(),
                     )
+                    query = (decision.service or "").casefold().replace("ё", "е").strip()
+                    exact = tuple(s for s in grounded.services if s.service_name.casefold().replace("ё", "е").strip() == query)
+                    services = exact or grounded.services
+                    return replace(grounded, services=services, ambiguous=len(services) > 1, simple_kind=(
+                        decision.action if decision.action in {"price", "duration", "staff"} else None
+                    ))
                 llm_options = {
                     "recent_message_count": int(recent_message_count),
                 }
-                if catalog is not None:
-                    llm_options["catalog"] = catalog
+                if self._catalog_repository is not None:
+                    llm_options["catalog"] = resolve_catalog
                 if self._booking_coordinator is not None:
                     llm_options["booking_context"] = await self._booking_coordinator.routing_context(chat_id)
 

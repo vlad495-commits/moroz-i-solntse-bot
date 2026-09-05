@@ -33,7 +33,7 @@ ROUTER_RESPONSE_FORMAT = {
             "type": "object",
             "properties": {
                 "route": {"type": "string", "enum": list(ROUTES)},
-                "action": {"type": "string", "enum": ["none", "create", "view", "cancel", "reschedule", "cancel_draft", "continue", "provide_name", "clarify"]},
+                "action": {"type": "string", "enum": ["none", "price", "duration", "staff", "create", "view", "cancel", "reschedule", "cancel_draft", "continue", "provide_name", "clarify"]},
                 "service": {"type": ["string", "null"]},
                 "date": {"type": ["string", "null"]},
                 "choice": {"type": ["integer", "null"]},
@@ -62,13 +62,19 @@ other — прочее по теме центра.
 confidence — конечное число от 0 до 1.
 Дополнительные обязательные поля: action, service, date, choice.
 action: none для консультации; create для новой записи/просмотра свободного времени;
+Для consultation: price — вопрос о цене, duration — о длительности, staff — о специалистах;
+none — описание, сравнение, противопоказания или смешанная консультация.
 view для «куда/когда я записан», cancel/reschedule для существующей записи;
 cancel_draft только для явного отказа от незавершённого действия;
 continue для продолжения текущего шага; provide_name только для ответа именем на запрос имени;
 clarify если непонятно, отменить черновик или существующую запись.
 Для cancel_draft, continue, provide_name, clarify выбирай booking.
 Вопрос об услуге во время записи — consultation/none, не продолжение формы.
-service — название/вид услуги из сообщения, без ID, иначе null.
+service — название/вид услуги для booking И consultation, без ID.
+Для коротких вопросов «Сколько стоит?», «А по времени?» восстанови услугу из недавнего разговора.
+Если текущий вопрос явно называет другую услугу, используй её, а не старую тему.
+Если обсуждалось несколько услуг и выбор неясен, service=null; не угадывай.
+Если названия услуги нет ни в вопросе, ни в однозначном контексте, service=null.
 date — запрошенная дата YYYY-MM-DD с учётом текущей даты из состояния, иначе null.
 choice — нулевой индекс явно выбранного варианта из текущего состояния, иначе null.
 Подтверждение реальной записи и её отмены требует кнопки, не выполняется по тексту.
@@ -143,7 +149,7 @@ def _parse_router_output(text: str) -> RouteDecision:
     ):
         raise ValueError("invalid router confidence")
     action = data.get("action", "none")
-    if action not in {"none", "create", "view", "cancel", "reschedule", "cancel_draft", "continue", "provide_name", "clarify"}:
+    if action not in {"none", "price", "duration", "staff", "create", "view", "cancel", "reschedule", "cancel_draft", "continue", "provide_name", "clarify"}:
         raise ValueError("invalid action")
     service, day, choice = data.get("service"), data.get("date"), data.get("choice")
     if service is not None and (not isinstance(service, str) or not 1 <= len(service.strip()) <= 160):

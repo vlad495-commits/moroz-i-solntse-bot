@@ -295,8 +295,8 @@ async def test_persistent_menu_restarts_or_leaves_unfinished_booking_flow(
                 "text": "✨ Услуги и цены",
             },
         )
-        assert routed is None
-        assert await repository.get_active_for_customer("42") is None
+        assert routed is not None
+        assert (await repository.get_active_for_customer("42")).state['step'] == 'catalog_category'
         assert (await repository.get_scenario(current.id)).error_code == (
             "menu_navigation"
         )

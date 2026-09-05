@@ -5,6 +5,8 @@ from moroz.security.pipeline import SecurityPipeline
 from moroz.security.llm_gateway import LLMResponse
 from moroz.security.input_security import InputSecurityDecision, InputSecurityVerdict
 from moroz.security.validator import extract_structured_facts
+from moroz.booking.catalog import CatalogGrounding, CatalogService, CatalogVariant
+from decimal import Decimal
 
 
 class Gateway:
@@ -72,3 +74,32 @@ async def test_security_block_prevents_booking_dispatch():
     result = await SecurityPipeline(Gateway(), '', extract_structured_facts(''),
         router=Router(), input_security=Blocking()).respond('Хочу записаться', [], dispatch=forbidden)
     assert result.model == 'security-llm'
+
+
+@pytest.mark.asyncio
+async def test_catalog_resolves_followup_after_semantic_router():
+    class PriceRouter:
+        async def route(self, text, context):
+            assert context[0]['content'] == 'Расскажи про криомассаж головы'
+            return RouterVerdict(RouteDecision('consultation', .99, service='Криомассаж головы'))
+
+    seen = []
+    async def catalog(decision):
+        seen.append(decision.service)
+        return CatalogGrounding('fresh', (CatalogService('1', 'Криомассаж головы', 'Крио',
+            (CatalogVariant('10', 'Анна', Decimal(1500), Decimal(1500), 30),)),), 'price', False)
+
+    result = await SecurityPipeline(Gateway(), '', extract_structured_facts(''),
+        router=PriceRouter(), input_security=Security()).respond('Сколько стоит?',
+            [{'role': 'user', 'content': 'Расскажи про криомассаж головы'}], catalog=catalog)
+    assert seen == ['Криомассаж головы']
+    assert '1 500 ₽' in result.text
+
+
+@pytest.mark.asyncio
+async def test_failed_router_does_not_load_catalog():
+    async def forbidden(decision):
+        raise AssertionError('catalog must not load on failed router')
+    result = await SecurityPipeline(Gateway(), '', extract_structured_facts(''),
+        router=Router('fallback'), input_security=Security()).respond('Сколько стоит?', [], catalog=forbidden)
+    assert result.model == 'router-fallback'

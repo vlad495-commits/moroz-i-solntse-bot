@@ -17,6 +17,7 @@ from moroz.messaging.models import IncomingMessage
 from moroz.messaging.outbox import process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
+from moroz.messaging.router import RouteDecision, RouterVerdict
 from moroz.security.llm_gateway import LLMResponse
 from moroz.security.input_security import (
     InputSecurityDecision,
@@ -57,13 +58,13 @@ class SecurityOnlyGateway(ForbiddenGateway):
         )
 
 
-class ForbiddenRouter:
+class PriceRouter:
     def __init__(self):
         self.calls = 0
 
     async def route(self, _text, _context):
         self.calls += 1
-        raise AssertionError("deterministic catalog route must not call Router")
+        return RouterVerdict(RouteDecision('consultation', .99, 'price', 'Криотерапия'))
 
 
 class AllowingInputSecurity:
@@ -129,7 +130,7 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
     repository = MessageRepository(database)
     assert await repository.accept(incoming())
     gateway = ForbiddenGateway()
-    router = ForbiddenRouter()
+    router = PriceRouter()
     pipeline = SecurityPipeline(
         gateway,
         "",
@@ -179,7 +180,7 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
     assert usage is None
     assert len(catalog_repository.calls) == 1
     assert gateway.calls == 0
-    assert router.calls == 0
+    assert router.calls == 1
 
 
 async def test_pre_yclients_mode_skips_catalog_and_uses_normal_answer(database):
@@ -273,7 +274,8 @@ async def test_complex_catalog_grounding_reaches_llm_without_extra_history(datab
     calls = []
 
     async def llm(text, context, *, recent_message_count, catalog):
-        calls.append((text, context, recent_message_count, catalog))
+        resolved = await catalog(RouteDecision('consultation', .99, service='Криотерапия'))
+        calls.append((text, context, recent_message_count, resolved))
         return LLMResponse("Сравнение по актуальному каталогу", 4, 3, 0, 7, "fake")
 
     handler = MessageTaskHandler(
@@ -294,7 +296,7 @@ async def test_complex_catalog_grounding_reaches_llm_without_extra_history(datab
         contents = await connection.fetch(
             "SELECT content FROM messages ORDER BY id"
         )
-    assert calls[0][3] is complex_grounding
+    assert calls[0][3] == complex_grounding
     assert [row["content"] for row in contents] == [
         "Сравни криотерапию",
         "Сравнение по актуальному каталогу",
@@ -330,6 +332,7 @@ async def test_catalog_reply_rolls_back_when_outbound_insert_fails(database):
         gateway,
         "",
         extract_structured_facts(""),
+        router=PriceRouter(),
         input_security=AllowingInputSecurity(),
     )
 
@@ -387,7 +390,7 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
         )
     stale = CatalogGrounding("stale", (), "price", False)
     gateway = SecurityOnlyGateway()
-    pipeline = SecurityPipeline(gateway, "", extract_structured_facts(""))
+    pipeline = SecurityPipeline(gateway, "", extract_structured_facts(""), router=PriceRouter())
 
     async def llm(text, context, *, recent_message_count, catalog):
         return await pipeline.respond(

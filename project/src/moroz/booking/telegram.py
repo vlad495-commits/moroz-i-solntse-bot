@@ -7,7 +7,7 @@ import hashlib
 
 import asyncpg
 
-from moroz.booking.catalog import CatalogRepository, CatalogService
+from moroz.booking.catalog import CatalogRepository, CatalogService, CatalogGrounding, _range_text
 from moroz.booking.models import BookingIdentity, BookingScenario, Slot, SlotQuery
 from moroz.booking.ports import BookingPort
 from moroz.booking.repository import BookingRepository
@@ -33,7 +33,7 @@ _WALK_IN_LABELS = {
     "collarium": "Коллариум",
     "solarium": "Солярий",
 }
-_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page")
+_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book")
 
 
 def persistent_menu_command(text: str) -> str | None:
@@ -104,6 +104,8 @@ class TelegramBookingCoordinator:
         scenario = await self._repository.get_active_for_customer(customer_id)
         menu_command = persistent_menu_command(text) if kind == "text" else None
         if menu_command is not None:
+            if menu_command == "✨ Услуги и цены" and scenario is not None and scenario.idempotency_key == f"telegram:catalog:{update_id}":
+                return await self._refresh_current(connection, scenario)
             if scenario is not None:
                 if scenario.phase == "executing":
                     return BookingReply(
@@ -121,6 +123,8 @@ class TelegramBookingCoordinator:
                 )
             if menu_command == _MENU_BOOK:
                 return await self._start(connection, customer_id, update_id)
+            if menu_command == "✨ Услуги и цены":
+                return await self._start_catalog(connection, customer_id, update_id)
             return None
         if decision is None:
             if scenario is not None and scenario.state.get("step") == "contact" and (
@@ -185,12 +189,12 @@ class TelegramBookingCoordinator:
             state = self._state(scenario)
             state["customer_name"] = name
             return await self._show_confirmation(scenario, state)
-        return self._render_current(scenario)
+        return await self._refresh_current(connection, scenario)
 
     async def _semantic_choice(self, connection, scenario, customer_id, user_id, update_id, index):
         step = str(scenario.state.get("step"))
         if step not in {"service", "staff", "available_date", "slot", "booking_management", "booking_action"}:
-            return self._render_current(scenario)
+            return await self._refresh_current(connection, scenario)
         return await self._handle_callback(connection, customer_id, user_id, update_id, self._callback(scenario, step, index))
 
     async def routing_context(self, customer_id: str) -> str:
@@ -307,7 +311,71 @@ class TelegramBookingCoordinator:
             return await self._recover_callback(connection, customer_id, update_id)
         if decision is not None and decision.service and len(choices) == 1:
             return await self._choose_service(scenario, scenario.state["choices"][0])
-        return self._choice_reply(scenario, "Уточните услугу" if decision and decision.service else "Выберите услугу", "service")
+        return self._render_current(scenario)
+
+    async def _start_catalog(self, connection, customer_id, update_id):
+        services = await self._catalog.list_services(connection, self._now())
+        if not services:
+            return BookingReply("Сейчас не могу подтвердить актуальные цены. Попробуйте позже или напишите администратору.", main_menu_options())
+        categories = sorted({service.category_name or "Другие услуги" for service in services})
+        scenario = BookingScenario(
+            uuid4(), "create", "collecting", f"telegram:catalog:{update_id}", customer_id,
+            {"source": "telegram", "step": "catalog_category", "choices": [
+                {"label": category, "category": category} for category in categories]},
+            None, self._now(), self._now(),
+        )
+        scenario_id = await self._repository.create_scenario(scenario)
+        current = await self._repository.get_scenario(scenario_id)
+        if current.phase != "collecting":
+            return await self._recover_callback(connection, customer_id, update_id)
+        return await self._refresh_current(connection, current)
+
+    async def _catalog_choice(self, connection, scenario, action, choice):
+        services = await self._catalog.list_services(connection, self._now())
+        if not services:
+            return BookingReply("Сейчас не могу подтвердить актуальные цены. Откройте «✨ Услуги и цены» позже.", main_menu_options())
+        state = self._state(scenario)
+        if action == "catalog_category":
+            selected = [s for s in services if (s.category_name or "Другие услуги") == choice["category"]]
+            state.update(step="catalog_service", category=choice["category"], choices=[
+                {"label": s.service_name, "service_id": s.service_id, "summary": self._price_summary(s)} for s in selected])
+            state["page"] = min(int(state.get("page", 0)), max(0, (len(selected) - 1) // 8))
+        else:
+            service = next((s for s in services if s.service_id == choice["service_id"]), None)
+            if service is None:
+                return BookingReply("Этой услуги больше нет в актуальном каталоге. Откройте «✨ Услуги и цены».", main_menu_options())
+            family = walk_in_family(service.service_name)
+            if action == "catalog_book":
+                if family:
+                    return BookingReply("Предварительная запись на эту услугу не нужна. Можно прийти ежедневно с 10:00 до 21:00.", main_menu_options())
+                state.update(step="service", choices=[self._service_choice(service)])
+                updated = await self._checkpoint(scenario, state, "catalog_booking_started")
+                return await self._choose_service(updated, updated.state["choices"][0])
+            detail = CatalogGrounding("fresh", (service,), "price", False).direct_reply
+            if family:
+                detail += "\nПредварительная запись не нужна — приходите ежедневно с 10:00 до 21:00."
+            state.update(step="catalog_book", detail=detail, catalog_service_id=service.service_id, choices=[] if family else [
+                {"label": "Свободное время", "service_id": service.service_id},
+                {"label": "Записаться", "service_id": service.service_id},
+            ])
+        updated = await self._checkpoint(scenario, state, "catalog_view_selected")
+        return self._render_current(updated, catalog_fresh=True)
+
+    async def _refresh_current(self, connection, scenario):
+        step = scenario.state.get("step")
+        if step == "catalog_service":
+            return await self._catalog_choice(connection, scenario, "catalog_category", {"category": scenario.state["category"]})
+        if step == "catalog_book":
+            return await self._catalog_choice(connection, scenario, "catalog_service", {"service_id": scenario.state["catalog_service_id"]})
+        return self._render_current(scenario)
+
+    @staticmethod
+    def _price_summary(service):
+        prices = [p for v in service.variants for p in (v.price_min, v.price_max)]
+        durations = [v.duration_minutes for v in service.variants]
+        price = _range_text(min(prices), max(prices), suffix="₽")
+        duration = _range_text(min(durations), max(durations), suffix="мин.")
+        return f"{service.service_name} — {price} · {duration}"
 
     async def _handle_callback(
         self,
@@ -335,11 +403,11 @@ class TelegramBookingCoordinator:
         if action == "page" and scenario.phase == "collecting":
             choices = scenario.state.get("choices", ())
             if not 0 <= index <= (len(choices) - 1) // 8:
-                return self._render_current(scenario)
+                return await self._refresh_current(connection, scenario)
             state = self._state(scenario)
             state["page"] = index
             current = await self._checkpoint(scenario, state, "booking_page_selected")
-            return self._render_current(current)
+            return await self._refresh_current(connection, current)
         if scenario.phase == "awaiting_confirmation" and action in {"confirm", "confirm_change"} and index == 0:
             state = self._state(scenario)
             state["confirmation_update_id"] = update_id
@@ -387,6 +455,8 @@ class TelegramBookingCoordinator:
             return await self._recover_callback(
                 connection, customer_id, update_id
             )
+        if action in {"catalog_category", "catalog_service", "catalog_book"}:
+            return await self._catalog_choice(connection, scenario, action, choice)
         if action == "service":
             return await self._choose_service(scenario, choice)
         if action == "staff":
@@ -409,7 +479,7 @@ class TelegramBookingCoordinator:
     ) -> BookingReply:
         active = await self._repository.get_active_for_customer(customer_id)
         if active is not None:
-            return self._render_current(active)
+            return await self._refresh_current(connection, active)
         return BookingReply(STALE_REPLY, main_menu_options())
 
     async def _choose_owned_booking(
@@ -755,7 +825,7 @@ class TelegramBookingCoordinator:
     def _choice_options(self, scenario: BookingScenario, action: str):
         return self._choice_reply(scenario, "", action).delivery_options
 
-    def _render_current(self, scenario: BookingScenario) -> BookingReply:
+    def _render_current(self, scenario: BookingScenario, *, catalog_fresh=False) -> BookingReply:
         labels = {
             "service": "Выберите услугу",
             "staff": "Выберите специалиста",
@@ -766,9 +836,22 @@ class TelegramBookingCoordinator:
             "confirm": "Подтвердите запись кнопкой ниже.",
             "booking_management": "Выберите запись",
             "booking_action": "Выберите действие",
+            "catalog_category": "Услуги и цены\nВыберите категорию:",
         }
         step = str(scenario.state.get("step", ""))
+        if step in {"catalog_service", "catalog_book"} and not catalog_fresh:
+            return BookingReply("Откройте «✨ Услуги и цены», чтобы получить актуальные цены.", main_menu_options())
         text = labels.get(step, STALE_REPLY)
+        if step == "catalog_service":
+            page = int(scenario.state.get("page", 0))
+            choices = scenario.state.get("choices", ())[page * 8:(page + 1) * 8]
+            text = str(scenario.state.get("category", "Услуги")) + "\n\n" + "\n".join(str(c["summary"]) for c in choices)
+            text += "\n\nЦена и длительность зависят от выбранного варианта и специалиста, если указан диапазон. Выберите услугу для подробностей."
+        elif step == "catalog_book":
+            text = str(scenario.state.get("detail", ""))
+        elif step == "service" and scenario.state.get("requested_date"):
+            day = datetime.fromisoformat(str(scenario.state["requested_date"])).strftime("%d.%m.%Y")
+            text = f"Покажу свободное время на {day}. Сначала уточните услугу: доступное время зависит от её вида, длительности и специалиста."
         if step == "confirm":
             return BookingReply(
                 text,
@@ -796,6 +879,7 @@ class TelegramBookingCoordinator:
                 ),
             )
         if step in {
+            "catalog_category", "catalog_service", "catalog_book",
             "service",
             "staff",
             "available_date",
