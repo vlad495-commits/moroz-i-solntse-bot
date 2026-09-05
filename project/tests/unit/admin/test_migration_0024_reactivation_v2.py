@@ -1,3 +1,8 @@
+from pathlib import Path
+
+import pytest
+
+
 EXPECTED_TABLES = {
     "customer_activity_projection",
     "marketing_consent_events",
@@ -5,6 +10,13 @@ EXPECTED_TABLES = {
     "reactivation_journeys",
     "reactivation_journey_steps",
 }
+
+
+@pytest.fixture
+def migration_source() -> str:
+    return Path(
+        "/workspace/migrations/versions/0024_reactivation_v2.py"
+    ).read_text(encoding="utf-8")
 
 
 def test_reactivation_v2_migration_contract(migration_source: str) -> None:

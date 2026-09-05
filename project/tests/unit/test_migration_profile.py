@@ -211,6 +211,9 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "YCLIENTS_CATALOG_GROUNDING_ENABLED": (
             "${YCLIENTS_CATALOG_GROUNDING_ENABLED:-false}"
         ),
+        "TELEGRAM_YCLIENTS_BOOKING_ENABLED": (
+            "${TELEGRAM_YCLIENTS_BOOKING_ENABLED:-false}"
+        ),
         "YCLIENTS_PARTNER_TOKEN": "${YCLIENTS_PARTNER_TOKEN:-}",
         "YCLIENTS_USER_TOKEN": "${YCLIENTS_USER_TOKEN:-}",
         "YCLIENTS_COMPANY_ID": "${YCLIENTS_COMPANY_ID:-}",
