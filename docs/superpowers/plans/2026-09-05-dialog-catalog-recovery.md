@@ -66,14 +66,17 @@ Files: project/src/moroz/booking/telegram.py; project/src/moroz/booking/catalog.
 
 ## Task 5: Интеграция и приёмка
 
+- [ ] Исправить подтверждённые дефекты самого gate: отсутствующий migration_source в трёх тестах 0024 и отсутствие TELEGRAM_YCLIENTS_BOOKING_ENABLED в двух строгих worker-allowlists. Не менять миграцию, safety-switch/defaultfalse и границы секретов; отдельные RED/GREEN/review. Детали в tmp/recovery-final-gate-fixes.md.
 - [ ] Все targeted RED/GREEN результаты записаны; независимый review spec/quality после каждого блока, общий review после интеграции.
 - [ ] Docker gate: tests/contract/booking tests/unit/booking tests/unit/messaging tests/unit/security tests/e2e/booking tests/e2e/test_message_delivery.py. Сохранить точную команду/число тестов; старый зелёный suite не заменяет текущий.
 - [ ] Компиляция, git diff --check, Compose config; не запускать Telegram polling локально.
 - [ ] Живая LLM/Telegram приёмка точного кандидата по матрице audit; перед staging cutoff использовать deploy workflow/rollback. Production не выкладывать. Админ-TOTP, реальные mutations и multi-user проверки не объявлять пройденными без доступа/разрешения.
+- [ ] После rollout обновить локальную проекцию каталога штатным sync с GET-only обращением к YCLIENTS и штатной блокировкой; не ждать следующего часового тика. Проверить категории и свежесть до Telegram-приёмки. Не изменять настройки/записи YCLIENTS.
 - [ ] Roadmap/changelog обновить по факту; честно разделить локально исправлено, развёрнуто, проверено живой LLM и ещё не проверено.
 
 ## Progress ledger
 
 - Task 1 complete: 38b7ee3..8aa7ec7, review spec compliant / quality approved, no findings, Docker 120 passed. Ruff unavailable in image; full lint remains final gate.
 - Task 2 complete: f43e7d9..a18dcc1, review spec compliant / quality approved after stale-service fix. Docker 678 passed before fix + 42 covering passed on final fix, RED 3 failures reproduced stale/removed/updated catalog issue. Live model/Telegram verification pending.
-- Tasks 3, 4, 4a, 5 pending.
+- Task 3 complete: c7e5a34..dad9a0b, review spec compliant / quality approved, no findings. Final covering106 passed. Real GET probe all76 exact names passed at c3f3531; final integrated probe remains pending. Collarium2/7 tariffs absent in source, owner informed.
+- Task4 in progress; Tasks4a,5 pending; briefs in root tmp. Task5 includes5 concrete full-unit gate defects from tmp/recovery-final-gate-fixes.md.
