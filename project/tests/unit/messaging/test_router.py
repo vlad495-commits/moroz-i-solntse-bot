@@ -35,6 +35,23 @@ def router_response(text: str) -> LLMResponse:
     return LLMResponse(text, 11, 3, 2, 14, "router-model", (usage,))
 
 
+def v3_payload(**overrides):
+    payload = {
+        "route": "booking",
+        "action": "create",
+        "topics": [],
+        "services": ["криосауна"],
+        "date": "2026-09-08",
+        "time_from": "18:00",
+        "time_to": None,
+        "staff": None,
+        "choice": None,
+        "confidence": 0.94,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_routes_are_the_minimal_single_route_allowlist() -> None:
     assert router_module.ROUTES == (
         "consultation",
@@ -71,7 +88,73 @@ def test_deterministic_route_resolves_only_unambiguous_cases(
     text: str,
     expected: str,
 ) -> None:
-    assert deterministic_route(text) == (RouteDecision(expected, 1.0) if text in {"📅 Записаться", "✨ Услуги и цены", "📍 Адрес и режим", "👩‍💼 Позвать администратора"} else None)
+    assert deterministic_route(text) is None
+
+
+@pytest.mark.asyncio
+async def test_former_menu_label_goes_through_semantic_router() -> None:
+    provider = ScriptedProvider(router_response(json.dumps(v3_payload())))
+
+    verdict = await LLMIntentRouter(provider).route("📅 Записаться", [])
+
+    assert verdict.decision.route == "booking"
+    assert len(provider.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_router_parses_multi_intent_and_time_window() -> None:
+    provider = ScriptedProvider(
+        router_response(json.dumps(v3_payload(topics=["price", "duration"])))
+    )
+
+    verdict = await LLMIntentRouter(provider).route(
+        "Сколько стоит криосауна и запишите 8 сентября после 18:00?",
+        [],
+    )
+
+    assert verdict.decision.topics == ("price", "duration")
+    assert verdict.decision.services == ("криосауна",)
+    assert verdict.decision.service == "криосауна"
+    assert verdict.decision.time_from == "18:00"
+    assert verdict.decision.time_to is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("time_from", "25:00"),
+        ("time_to", "вечером"),
+        ("choice", -1),
+        ("services", ["a", "b", "c", "d"]),
+        ("topics", ["price", "invented"]),
+    ],
+)
+async def test_router_rejects_invalid_v3_fields(field, value) -> None:
+    payload = v3_payload(**{field: value})
+
+    verdict = await LLMIntentRouter(
+        ScriptedProvider(router_response(json.dumps(payload)))
+    ).route("запись", [])
+
+    assert verdict.source == "fallback"
+
+
+def test_router_v3_schema_requires_every_bounded_field() -> None:
+    schema = ROUTER_RESPONSE_FORMAT["json_schema"]["schema"]
+    assert set(schema["required"]) == {
+        "route",
+        "action",
+        "topics",
+        "services",
+        "date",
+        "time_from",
+        "time_to",
+        "staff",
+        "choice",
+        "confidence",
+    }
+    assert schema["properties"]["services"]["maxItems"] == 3
 
 
 @pytest.mark.parametrize(
@@ -283,8 +366,12 @@ def test_router_verdict_is_immutable_and_does_not_echo_input() -> None:
 
 @pytest.mark.asyncio
 async def test_router_extracts_structured_service_and_date():
-    payload = {'route': 'booking', 'confidence': .97, 'action': 'create',
-               'service': 'массаж', 'date': '2026-09-07', 'choice': None}
+    payload = v3_payload(
+        confidence=.97,
+        services=['массаж'],
+        date='2026-09-07',
+        time_from=None,
+    )
     provider = ScriptedProvider(router_response(json.dumps(payload)))
     verdict = await LLMIntentRouter(provider).route('Массаж 7 сентября', [])
     assert verdict.decision == RouteDecision('booking', .97, 'create', 'массаж', '2026-09-07')

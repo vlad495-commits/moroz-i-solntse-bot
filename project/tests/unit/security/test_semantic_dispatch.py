@@ -2,7 +2,6 @@ import pytest
 
 from moroz.messaging.router import RouteDecision, RouterVerdict, deterministic_route
 from moroz.security.pipeline import SecurityPipeline
-from moroz.security.llm_gateway import LLMResponse
 from moroz.security.input_security import InputSecurityDecision, InputSecurityVerdict
 from moroz.security.validator import extract_structured_facts
 from moroz.booking.catalog import CatalogGrounding, CatalogService, CatalogVariant

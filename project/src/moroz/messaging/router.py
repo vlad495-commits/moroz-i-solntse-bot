@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
-from datetime import date
 from dataclasses import dataclass
+from datetime import date
 
 from moroz.security.llm_gateway import (
     LLMRequest,
@@ -24,6 +25,26 @@ ROUTES = (
     "smalltalk",
     "offtopic",
     "other",
+)
+TOPICS = (
+    "price",
+    "duration",
+    "description",
+    "preparation",
+    "contraindications",
+    "address",
+    "hours",
+    "staff",
+)
+PUBLIC_ACTIONS = (
+    "none",
+    "create",
+    "view",
+    "reschedule",
+    "cancel",
+    "cancel_draft",
+    "continue",
+    "clarify",
 )
 # Four index digits keep the existing Telegram callback within 64 bytes.
 MAX_CHOICE_INDEX = 9_999
@@ -45,9 +66,21 @@ ROUTER_RESPONSE_FORMAT = {
             "type": "object",
             "properties": {
                 "route": {"type": "string", "enum": list(ROUTES)},
-                "action": {"type": "string", "enum": sorted(set().union(*ROUTE_ACTIONS.values()))},
-                "service": {"type": ["string", "null"]},
+                "action": {"type": "string", "enum": list(PUBLIC_ACTIONS)},
+                "topics": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(TOPICS)},
+                    "uniqueItems": True,
+                },
+                "services": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "maxItems": 3,
+                },
                 "date": {"type": ["string", "null"]},
+                "time_from": {"type": ["string", "null"]},
+                "time_to": {"type": ["string", "null"]},
+                "staff": {"type": ["string", "null"]},
                 "choice": {"type": ["integer", "null"], 'minimum': 0, 'maximum': MAX_CHOICE_INDEX},
                 "confidence": {
                     "type": "number",
@@ -55,14 +88,17 @@ ROUTER_RESPONSE_FORMAT = {
                     "maximum": 1,
                 },
             },
-            "required": ["route", "confidence", "action", "service", "date", "choice"],
+            "required": [
+                "route", "confidence", "action", "topics", "services", "date",
+                "time_from", "time_to", "staff", "choice",
+            ],
             "additionalProperties": False,
         },
     },
 }
 ROUTER_SYSTEM_PROMPT = """Ты диспетчер сообщений центра Moroz i Solntse.
 Выбери ровно один маршрут и верни только строгий JSON без markdown и пояснений:
-{"route":"consultation","confidence":0.9,"action":"none","service":null,"date":null,"choice":null}
+{"route":"consultation","confidence":0.9,"action":"none","topics":["price"],"services":["криосауна"],"date":null,"time_from":null,"time_to":null,"staff":null,"choice":null}
 consultation — услуги, цены, подготовка, противопоказания, адрес, контакты и расписание;
 booking — новая запись или просмотр свободного времени; booking_management — просмотр, перенос или отмена существующей записи;
 escalation — жалоба, претензия, возврат денег или явная просьба позвать человека;
@@ -76,27 +112,27 @@ mode=catalog_browse означает просмотр каталога, active=f
 Голое название услуги в каталоге не означает новую запись. После уточнения ассистентом цены
 или длительности ответ названием услуги продолжает consultation/price или consultation/duration.
 confidence — конечное число от 0 до 1.
-Дополнительные обязательные поля: action, service, date, choice.
+Дополнительные обязательные поля: action, topics, services, date, time_from, time_to, staff, choice.
 action: none для консультации; create для новой записи/просмотра свободного времени;
-Для consultation: price — вопрос о цене, duration — о длительности, staff — о специалистах;
-none — описание, сравнение, противопоказания или смешанная консультация.
+topics содержит все темы совместимого смешанного запроса: price, duration, description,
+preparation, contraindications, address, hours, staff. Для booking topics не теряются.
 view для «куда/когда я записан», cancel/reschedule для существующей записи;
 cancel_draft только для явного отказа от незавершённого действия;
-continue для продолжения текущего шага; provide_name только для ответа именем на запрос имени;
-clarify_cancel если явно просят отмену, но непонятно, черновик или существующую запись.
+continue для продолжения текущего контекста; clarify если данных недостаточно.
 clarify с route=other — непонятный запрос или неверная раскладка; это не запрос отмены.
-Для cancel_draft, continue, provide_name, clarify_cancel выбирай booking.
+Для cancel_draft и continue выбирай booking.
 continue допустим только для поддерживаемого активного шага записи, не для начала записи из каталога.
 Вопрос об услуге во время записи — consultation/none, не продолжение формы.
-service — название/вид услуги для booking И consultation, без ID.
-Сохраняй явно указанную длительность в service: «10 минут солярия» → «Солярий 10 минут».
+services — массив из 0–3 названий/видов услуг для booking И consultation, без ID.
+Сохраняй явно указанную длительность в названии: «10 минут солярия» → «Солярий 10 минут».
 Для коротких вопросов «Сколько стоит?», «А по времени?» восстанови услугу из недавнего разговора.
 Если текущий вопрос явно называет другую услугу, используй её, а не старую тему.
-Если обсуждалось несколько услуг и выбор неясен, service=null; не угадывай.
-Если явно просят сравнить или назвать цены нескольких конкретных услуг, выбери consultation/none
-и сохрани обе услуги в service; это общий вопрос по нескольким услугам, не выбор одной услуги.
-Если названия услуги нет ни в вопросе, ни в однозначном контексте, service=null.
+Если обсуждалось несколько услуг и выбор неясен, сохрани до трёх кандидатов; не угадывай.
+Если названия услуги нет ни в вопросе, ни в однозначном контексте, services=[].
 date — запрошенная дата YYYY-MM-DD с учётом текущей даты из состояния, иначе null.
+time_from/time_to — точные границы HH:MM. «После 18:00» даёт time_from=18:00,
+«до 15:00» даёт time_to=15:00. Для «после работы» и «вечером» обе границы null.
+staff — имя или публичное предпочтение без provider ID, иначе null.
 choice — исходный глобальный index явно выбранного варианта из choices текущей страницы, иначе null.
 Не пересчитывай index от начала страницы. choice допустим с continue или view/cancel/reschedule,
 но не с create, provide_name или none. Не придумывай отсутствующие варианты.
@@ -112,6 +148,17 @@ class RouteDecision:
     service: str | None = None
     date: str | None = None
     choice: int | None = None
+    topics: tuple[str, ...] = ()
+    services: tuple[str, ...] = ()
+    time_from: str | None = None
+    time_to: str | None = None
+    staff: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.service and not self.services:
+            object.__setattr__(self, "services", (self.service,))
+        elif self.service is None and len(self.services) == 1:
+            object.__setattr__(self, "service", self.services[0])
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,14 +174,8 @@ class RouterVerdict:
 
 
 def deterministic_route(text: str) -> RouteDecision | None:
-    """Only exact technical menu commands bypass semantic classification."""
-    route = {
-        "📅 Записаться": "booking",
-        "✨ Услуги и цены": "consultation",
-        "📍 Адрес и режим": "consultation",
-        "👩‍💼 Позвать администратора": "escalation",
-    }.get(text.strip())
-    return RouteDecision(route, 1.0) if route else None
+    """Compatibility shim: human text no longer bypasses semantic routing."""
+    return None
 
 
 def route_message(text: str) -> RouteDecision:
@@ -158,7 +199,11 @@ def _parse_router_output(text: str) -> RouteDecision:
             ValueError("non-finite router number")
         ),
     )
-    if not isinstance(data, dict) or not {"route", "confidence"} <= set(data) or set(data) - {"route", "confidence", "action", "service", "date", "choice"}:
+    allowed = {
+        "route", "confidence", "action", "topics", "services", "service",
+        "date", "time_from", "time_to", "staff", "choice",
+    }
+    if not isinstance(data, dict) or not {"route", "confidence"} <= set(data) or set(data) - allowed:
         raise ValueError("invalid router object")
     route = data["route"]
     confidence = data["confidence"]
@@ -174,19 +219,66 @@ def _parse_router_output(text: str) -> RouteDecision:
     action = data.get("action", "none")
     if not isinstance(action, str) or action not in ROUTE_ACTIONS[route]:
         raise ValueError("invalid action")
-    service, day, choice = data.get("service"), data.get("date"), data.get("choice")
-    if service is not None and (not isinstance(service, str) or not 1 <= len(service.strip()) <= 160):
+    topics = data.get("topics", [])
+    if (
+        not isinstance(topics, list)
+        or len(set(topics)) != len(topics)
+        or any(type(topic) is not str or topic not in TOPICS for topic in topics)
+    ):
+        raise ValueError("invalid topics")
+    services = data.get("services")
+    legacy_service = data.get("service")
+    if services is None:
+        services = [] if legacy_service is None else [legacy_service]
+    if (
+        not isinstance(services, list)
+        or len(services) > 3
+        or any(type(service) is not str or not 1 <= len(service.strip()) <= 160 for service in services)
+    ):
+        raise ValueError("invalid services")
+    if legacy_service is not None and (
+        not isinstance(legacy_service, str) or not 1 <= len(legacy_service.strip()) <= 160
+    ):
         raise ValueError("invalid service")
+    day, choice = data.get("date"), data.get("choice")
     if day is not None:
         if not isinstance(day, str) or len(day) != 10:
             raise ValueError("invalid date")
         date.fromisoformat(day)
     if choice is not None and (type(choice) is not int or not 0 <= choice <= MAX_CHOICE_INDEX):
         raise ValueError("invalid choice")
-    decision = RouteDecision(route, float(confidence), action, service, day, choice)
+    time_from = _valid_time(data.get("time_from"))
+    time_to = _valid_time(data.get("time_to"))
+    if time_from is not None and time_to is not None and time_from > time_to:
+        raise ValueError("invalid time window")
+    staff = data.get("staff")
+    if staff is not None and (type(staff) is not str or not 1 <= len(staff.strip()) <= 160):
+        raise ValueError("invalid staff")
+    clean_services = tuple(service.strip() for service in services)
+    decision = RouteDecision(
+        route=route,
+        confidence=float(confidence),
+        action=action,
+        service=clean_services[0] if len(clean_services) == 1 else None,
+        date=day,
+        choice=choice,
+        topics=tuple(topics),
+        services=clean_services,
+        time_from=time_from,
+        time_to=time_to,
+        staff=staff.strip() if staff is not None else None,
+    )
     if not valid_route_action(decision):
         raise ValueError('incompatible route action or choice')
     return decision
+
+
+def _valid_time(value: object) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str or re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value) is None:
+        raise ValueError("invalid time")
+    return value
 
 
 def valid_route_action(decision: RouteDecision) -> bool:

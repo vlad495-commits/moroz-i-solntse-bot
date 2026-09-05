@@ -49,7 +49,7 @@
 - Produces: `LLMIntentRouter.route(text: str, context: list[dict[str, str]] | None, draft: dict[str, object] | None) -> RouteDecision`.
 - Removes: exact-label `deterministic_route()` menu bypass.
 
-- [ ] **Step 1: Add failing schema/parser tests**
+- [x] **Step 1: Add failing schema/parser tests**
 
 ```python
 def test_router_parses_multi_intent_and_time_window():
@@ -73,13 +73,13 @@ def test_router_rejects_invalid_v3_fields(field, value):
         parse_route_decision(payload)
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/test_router.py tests/unit/security/test_semantic_dispatch.py`
 
 Expected: FAIL because V3 fields/parser do not exist and menu labels still bypass semantic routing.
 
-- [ ] **Step 3: Implement the minimal V3 dataclass, JSON schema and validation**
+- [x] **Step 3: Implement the minimal V3 dataclass, JSON schema and validation**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -105,7 +105,7 @@ def _valid_time(value: object) -> str | None:
 
 The strict schema declares every property required, uses nullable types, `additionalProperties: false`, max three services, unique topics, and route/action compatibility checked by Python. Remove `deterministic_route`; the prompt explicitly maps exact windows and requires `null` for vague time.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/messaging/test_router.py tests/unit/security/test_semantic_dispatch.py`
 
@@ -526,7 +526,7 @@ Expected: all tests PASS; no skipped critical Router V3 or booking mutation inva
 
 - [ ] **Step 2: Run static/config/schema gates**
 
-Run: `docker compose --env-file ../.env run --rm test ruff check src tests admin bot worker scheduler`
+Run: `docker run --rm -v "${PWD}:/app" -w /app ghcr.io/astral-sh/ruff:0.12.7 check src tests admin bot worker scheduler`
 
 Run: `docker compose --env-file ../.env run --rm test python -m compileall -q src tests admin bot worker scheduler`
 
