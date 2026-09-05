@@ -40,7 +40,6 @@ from moroz.booking.service import BookingService
 from moroz.booking.telegram import (
     BookingReply,
     TelegramBookingCoordinator,
-    persistent_menu_command,
 )
 from moroz.booking.yclients import YclientsAdapter
 from moroz.booking.yclients_catalog import YclientsCatalogError, YclientsCatalogReader
@@ -54,8 +53,7 @@ from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
 from moroz.messaging.outbox import OutboxRelay, process_message_key, enqueue_process_message_in_transaction
 from moroz.messaging.booking_stop import STOPPED_ACTION_REPLY, before_stop, stop_markers
 from moroz.messaging.repository import MessageRepository
-from moroz.messaging.router import route_message
-from moroz.messaging.telegram import TelegramSender, main_menu_options
+from moroz.messaging.telegram import TelegramSender
 from moroz.notifications.feedback import FeedbackService
 from moroz.notifications.handlers import (
     STAGING_SCHEDULER_SMOKE_KIND,
@@ -586,15 +584,6 @@ class MessageTaskHandler:
                     raise ValueError("process_message spans multiple users")
                 user_id = int(user_ids.pop())
                 persisted_text = "\n".join(payload["text"] for payload in payloads)
-                menu_index = next(
-                    (
-                        index
-                        for index in range(len(payloads) - 1, -1, -1)
-                        if persistent_menu_command(payloads[index]["text"])
-                        is not None
-                    ),
-                    None,
-                )
                 accepted_ids = [row["external_message_id"] for row in accepted]
                 stops = await stop_markers(connection, chat_id)
                 callback_origin = None
@@ -646,51 +635,23 @@ class MessageTaskHandler:
                     )
                     return
 
-                if interaction_kind == "text" and menu_index is not None:
-                    menu_command = persistent_menu_command(
-                        payloads[menu_index]["text"]
-                    )
-                    if menu_index == len(payloads) - 1:
-                        persisted_text = str(menu_command)
-                    else:
-                        if self._booking_coordinator is not None and not booking_stopped:
-                            await self._booking_coordinator.handle(
-                                connection,
-                                customer_id=chat_id,
-                                user_id=str(user_id),
-                                update_id=accepted_ids[menu_index],
-                                origin_update_id=accepted_ids[menu_index],
-                                text=str(menu_command),
-                                kind="text",
-                                data={},
-                            )
-                        persisted_text = "\n".join(
-                            payload["text"] for payload in payloads[menu_index:]
-                        )
-
                 booking_reply = None
-                booking_route = route_message(persisted_text).route
-                if booking_stopped and (
-                    interaction_kind == "contact"
-                    or (interaction_kind == "callback" and str(interaction_data.get("callback_data", "")).startswith("booking:"))
-                    or (interaction_kind == "text" and persistent_menu_command(persisted_text) in {"📅 Записаться", "✨ Услуги и цены"})
+                if booking_stopped and interaction_kind in {"contact", "callback"}:
+                    booking_reply = BookingReply(STOPPED_ACTION_REPLY, {})
+                elif (
+                    interaction_kind in {"contact", "callback"}
+                    and self._booking_coordinator is not None
+                    and not booking_stopped
                 ):
-                    booking_reply = BookingReply(STOPPED_ACTION_REPLY, main_menu_options())
-                elif self._booking_coordinator is not None and not booking_stopped:
                     booking_reply = await self._booking_coordinator.handle(
                         connection,
                         customer_id=chat_id,
                         user_id=str(user_id),
                         update_id=accepted_ids[0],
-                        origin_update_id=accepted_ids[menu_index] if menu_index == len(payloads) - 1 else accepted_ids[-1],
+                        origin_update_id=accepted_ids[-1],
                         text=persisted_text,
                         kind=interaction_kind,
                         data=interaction_data,
-                    )
-                elif self._booking_coordinator is None and booking_route in {"booking", "booking_management"}:
-                    booking_reply = BookingReply(
-                        "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору.",
-                        {},
                     )
                 if booking_reply is not None:
                     if not booking_reply.text:
@@ -763,10 +724,17 @@ class MessageTaskHandler:
                         decision.service or "",
                         self._clock(),
                     )
-                    simple_kind = (
-                        decision.action
-                        if decision.action in {"price", "duration", "staff"}
-                        else None
+                    simple_kind = next(
+                        (
+                            topic
+                            for topic in decision.topics
+                            if topic in {"price", "duration", "staff"}
+                        ),
+                        (
+                            decision.action
+                            if decision.action in {"price", "duration", "staff"}
+                            else None
+                        ),
                     )
                     return replace(
                         grounded,
@@ -795,7 +763,7 @@ class MessageTaskHandler:
                     if decision.route not in {"booking", "booking_management"}:
                         return None
                     if booking_stopped:
-                        booking_reply = BookingReply(STOPPED_ACTION_REPLY, main_menu_options())
+                        booking_reply = BookingReply(STOPPED_ACTION_REPLY, {})
                         return booking_reply.text
                     if self._booking_coordinator is None:
                         return "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору."
@@ -847,7 +815,7 @@ class MessageTaskHandler:
                     text=result.text,
                     idempotency_key=reply_key,
                     delivery_options=(booking_reply.delivery_options if booking_reply is not None else
-                                      main_menu_options() if result.model in {"router-fallback", "router-clarification", "booking-unavailable"} else {}),
+                                      {}),
                 )
                 await connection.execute(
                     """

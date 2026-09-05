@@ -583,14 +583,13 @@ async def test_process_message_materializes_reply_and_history_once(database):
     assert [tuple(row.values()) for row in tasks] == [("send_outbound", "pending")]
 
 
-@pytest.mark.parametrize(
-    "text",
-    ["Хочу записаться", "Мои записи", "8 999 123-45-67"],
-)
-async def test_booking_message_is_routed_before_llm(database, text):
+async def test_booking_text_uses_one_semantic_path(database):
     class BookingCoordinator:
         def __init__(self):
             self.calls = []
+
+        async def routing_context(self, customer_id):
+            return '{"mode":"idle"}'
 
         async def handle(self, connection, **kwargs):
             self.calls.append((connection, kwargs))
@@ -598,9 +597,31 @@ async def test_booking_message_is_routed_before_llm(database, text):
                 "Ответ записи", {"reply_markup": {"remove_keyboard": True}}
             )
 
+    class SemanticLLM(FakeLLM):
+        async def __call__(
+            self,
+            text,
+            context,
+            *,
+            recent_message_count=1,
+            dispatch=None,
+            booking_context=None,
+        ):
+            self.calls.append((text, context))
+            reply = await dispatch(SimpleNamespace(route="booking"))
+            return SimpleNamespace(
+                text=reply,
+                prompt_tokens=0,
+                completion_tokens=0,
+                cached_tokens=0,
+                total_tokens=0,
+                model="booking-local",
+            )
+
     repository = MessageRepository(database)
+    text = "Сколько стоит криокапсула и запишите после 18:00"
     assert await repository.accept(incoming(text=text))
-    llm = FakeLLM()
+    llm = SemanticLLM()
     coordinator = BookingCoordinator()
     handler = MessageTaskHandler(
         database,
@@ -617,7 +638,7 @@ async def test_booking_message_is_routed_before_llm(database, text):
         )
     )
 
-    assert llm.calls == []
+    assert len(llm.calls) == 1
     assert coordinator.calls[0][1]["text"] == text
     async with database.acquire() as connection:
         assert await connection.fetchval(
@@ -626,16 +647,17 @@ async def test_booking_message_is_routed_before_llm(database, text):
         ) == "Ответ записи"
 
 
-async def test_persistent_menu_command_wins_over_earlier_buffered_text(database):
+async def test_text_batch_is_sent_once_without_menu_splitting(database):
     class BookingCoordinator:
         def __init__(self):
             self.texts = []
 
+        async def routing_context(self, customer_id):
+            return '{"mode":"idle"}'
+
         async def handle(self, connection, **kwargs):
             self.texts.append(kwargs["text"])
-            if kwargs["text"] == "📍 Адрес и режим":
-                return BookingReply("Адрес центра", {})
-            return BookingReply("Текст ошибочно попал в шаг записи", {})
+            return None
 
     repository = MessageRepository(database)
     assert await repository.accept(incoming("menu-buffer-1", "Иван"))
@@ -664,53 +686,8 @@ async def test_persistent_menu_command_wins_over_earlier_buffered_text(database)
         )
     )
 
-    assert coordinator.texts == ["📍 Адрес и режим"]
-    assert llm.calls == []
-
-
-async def test_persistent_menu_does_not_discard_later_buffered_text(database):
-    class BookingCoordinator:
-        def __init__(self):
-            self.texts = []
-            self.active = True
-
-        async def routing_context(self, customer_id):
-            return "active=false"
-
-        async def handle(self, connection, **kwargs):
-            self.texts.append(kwargs["text"])
-            if kwargs["text"] == "📍 Адрес и режим":
-                self.active = False
-                return None
-            if self.active:
-                return BookingReply("Текст ошибочно попал в шаг записи", {})
-            return None
-
-    repository = MessageRepository(database)
-    assert await repository.accept(
-        incoming("menu-first", "📍 Адрес и режим")
-    )
-    assert await repository.accept(incoming("question-last", "Есть парковка?"))
-    coordinator = BookingCoordinator()
-    llm = FakeLLM()
-    handler = MessageTaskHandler(
-        database,
-        llm,
-        TelegramSender(FakeTelegram(), repository),
-        booking_coordinator=coordinator,
-    )
-
-    update_ids = ["menu-first", "question-last"]
-    await handler.handle(
-        QueueTask(
-            kind="process_message",
-            payload={"chat_id": "42", "update_ids": update_ids},
-            idempotency_key=process_message_key(update_ids),
-        )
-    )
-
-    expected = "📍 Адрес и режим\nЕсть парковка?"
-    assert coordinator.texts == ["📍 Адрес и режим", expected]
+    expected = "Иван\n📍 Адрес и режим"
+    assert coordinator.texts == []
     assert llm.calls[0][0] == expected
 
 
@@ -748,7 +725,7 @@ async def test_human_mode_preserves_full_batch_ending_with_menu(database):
         ) == "Иван\n📍 Адрес и режим"
 
 
-async def test_booking_without_yclients_returns_safe_reply_without_llm(database):
+async def test_booking_without_yclients_still_uses_semantic_path(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming(text="📅 Записаться"))
     llm = FakeLLM()
@@ -766,11 +743,10 @@ async def test_booking_without_yclients_returns_safe_reply_without_llm(database)
         )
     )
 
-    assert llm.calls == []
+    assert len(llm.calls) == 1
     async with database.acquire() as connection:
         reply = await connection.fetchval("SELECT text FROM outbound_messages")
-    assert "сейчас недоступна" in reply
-    assert "онлайн-запись" in reply
+    assert reply == "Готовый ответ"
 
 
 async def test_process_message_passes_last_40_and_never_persists_compact_summary(

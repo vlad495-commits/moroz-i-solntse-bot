@@ -39,23 +39,8 @@ def _plain_text(text: str) -> str:
     )
 
 
-def main_menu_options() -> dict[str, object]:
-    return {
-        "reply_markup": {
-            "keyboard": [
-                [
-                    {"text": "📅 Записаться"},
-                    {"text": "✨ Услуги и цены"},
-                ],
-                [
-                    {"text": "📍 Адрес и режим"},
-                    {"text": "👩‍💼 Позвать администратора"},
-                ],
-            ],
-            "resize_keyboard": True,
-            "is_persistent": True,
-        }
-    }
+def remove_keyboard_options() -> dict[str, object]:
+    return {"reply_markup": {"remove_keyboard": True}}
 
 
 class DeliveryResult(StrEnum):

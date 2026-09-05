@@ -281,7 +281,7 @@ git commit -m "feat: добавить независимый черновик з
 - Produces: `TelegramBookingCoordinator.handle_semantic(customer_id: UUID, decision: RouteDecision, text: str) -> BookingReply | None`.
 - Preserves: existing signed callback revision/ownership validation, contact validation and calls into `BookingService`.
 
-- [ ] **Step 1: Add end-to-end RED cases for free ordering and safe callbacks**
+- [x] **Step 1: Add end-to-end RED cases for free ordering and safe callbacks**
 
 ```python
 async def test_one_sentence_booking_offers_only_matching_slots(flow):
@@ -303,13 +303,13 @@ async def test_stale_legacy_catalog_callback_never_mutates(flow):
     assert flow.provider.mutation_calls == []
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/e2e/booking/test_semantic_booking.py tests/e2e/booking/test_telegram_booking.py`
 
 Expected: FAIL because the coordinator still enters service/staff/date wizard and ignores time windows.
 
-- [ ] **Step 3: Delete menu/catalog navigation and wire the draft state machine**
+- [x] **Step 3: Delete menu/catalog navigation and wire the draft state machine**
 
 Remove `persistent_menu_command`, `_MENU_BOOK`, `_MENU_LABELS`, catalog callbacks, category pagination, full service/staff/date button renderers and menu fallbacks. The coordinator resolves at most three catalog candidates, filters real slots, persists bounded `last_choices`, and returns typed replies:
 
@@ -323,13 +323,13 @@ class BookingReply:
 
 Only callbacks bound to customer/scenario/revision can select a short choice or confirm. Text can prepare a confirmation but cannot execute it. Legacy callback prefixes return `STALE_REPLY` plus `ReplyKeyboardRemove`, never resurrect state.
 
-- [ ] **Step 4: Run GREEN and focused safety regression**
+- [x] **Step 4: Run GREEN and focused safety regression**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/e2e/booking/test_semantic_booking.py tests/e2e/booking/test_telegram_booking.py tests/unit/booking/test_service.py tests/integration/booking`
 
 Expected: PASS; fake provider reports one mutation only after each explicit current confirmation.
 
-- [ ] **Step 5: Confirm deletion and commit**
+- [x] **Step 5: Confirm deletion and commit**
 
 Run: `rg -n "catalog_category|catalog_service|catalog_book|persistent_menu_command|_MENU_BOOK|_MENU_LABELS" project/src project/worker`
 
@@ -354,7 +354,7 @@ git commit -m "refactor: заменить анкету свободной зап
 - Consumes: Task 1 router and Task 4 `handle_semantic`.
 - Produces: one router call per allowed ordinary text batch; contact/callback remain deterministic.
 
-- [ ] **Step 1: Add RED call-count and fallback tests**
+- [x] **Step 1: Add RED call-count and fallback tests**
 
 ```python
 async def test_allowed_text_calls_router_once_and_keeps_multi_intent(runtime):
@@ -371,13 +371,13 @@ async def test_router_failure_has_no_menu_and_no_mutation(runtime):
     assert runtime.provider.mutation_calls == []
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/test_semantic_dispatch.py tests/e2e/test_message_delivery.py`
 
 Expected: FAIL because worker still has menu splitting, pre/post coordinator dispatch and menu fallbacks.
 
-- [ ] **Step 3: Remove duplicated orchestration**
+- [x] **Step 3: Remove duplicated orchestration**
 
 Keep order `STOP/privacy/medical -> mask -> router -> typed dispatch -> outbound`. Delete imports/calls of `persistent_menu_command` and `main_menu_options`, menu boundary splitting and conditional second coordinator call. Replace fallback copy with:
 
@@ -388,7 +388,7 @@ ROUTER_FALLBACK_REPLY = (
 )
 ```
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/unit/security/test_semantic_dispatch.py tests/e2e/test_message_delivery.py tests/integration/test_stop_ordering.py tests/e2e/test_privacy_gate.py`
 
@@ -412,7 +412,7 @@ git commit -m "refactor: оставить один semantic text path"
 - Produces: `remove_keyboard_options() -> dict[str, object]` using Telegram `ReplyKeyboardRemove` payload.
 - Removes: `main_menu_options()`.
 
-- [ ] **Step 1: Add RED tests for `/start` and consent completion**
+- [x] **Step 1: Add RED tests for `/start` and consent completion**
 
 ```python
 async def test_repeat_start_removes_legacy_keyboard(app):
@@ -427,13 +427,13 @@ async def test_consent_completion_invites_free_text(app):
     assert "цен" in reply.text.lower()
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/e2e/test_privacy_gate.py tests/unit/messaging`
 
 Expected: FAIL because persistent 2x2 keyboard is still emitted.
 
-- [ ] **Step 3: Replace menu markup with removal and natural examples**
+- [x] **Step 3: Replace menu markup with removal and natural examples**
 
 ```python
 def remove_keyboard_options() -> dict[str, object]:
@@ -447,7 +447,7 @@ WELCOME_TEXT = (
 
 Retain generic inline keyboard and `request_contact` delivery. Do not retain menu labels as hidden commands.
 
-- [ ] **Step 4: Run GREEN, scan and commit**
+- [x] **Step 4: Run GREEN, scan and commit**
 
 Run: `docker compose --env-file ../.env run --rm test pytest -q tests/e2e/test_privacy_gate.py tests/unit/messaging`
 
@@ -475,7 +475,7 @@ git commit -m "refactor: убрать постоянное Telegram-меню"
 **Interfaces:**
 - Documents the runtime contract built in Tasks 1–6.
 
-- [ ] **Step 1: Update prompt with explicit conversational boundaries**
+- [x] **Step 1: Update prompt with explicit conversational boundaries**
 
 Add these concrete rules without duplicating backend logic:
 
@@ -487,11 +487,11 @@ Add these concrete rules without duplicating backend logic:
 - Если время выражено неточно («после работы», «вечером»), задай один короткий вопрос о границе времени.
 ```
 
-- [ ] **Step 2: Update architecture sources and remove obsolete test code**
+- [x] **Step 2: Update architecture sources and remove obsolete test code**
 
 Document `security -> Router V3 -> consultation/booking draft -> BookingService confirmation`, contextual buttons, and no persistent menu. Use `git diff --stat <pre-cleanup-base>..HEAD -- project/src project/worker project/bot project/tests` to identify whether deleted UI branches outweigh additions; record exact counts in roadmap/changelog.
 
-- [ ] **Step 3: Run documentation/source scans and commit**
+- [x] **Step 3: Run documentation/source scans and commit**
 
 Run: `rg -n "воспользуйтесь кнопками меню|откройте список кнопкой|persistent menu|catalog_category|catalog_service|catalog_book" project/src project/worker project/llm/prompts`
 

@@ -105,7 +105,7 @@ async def test_deletion_fence_blocks_stop_storage(client, db, redis_client):
 async def test_stop_blocks_old_booking_but_keeps_faq_and_fresh_booking(
     client, db, migrated_database_url, monkeypatch,
 ):
-    from tests.e2e.booking.test_telegram_booking import _coordinator
+    from tests.e2e.booking.telegram_helpers import coordinator as _coordinator
     from tests.e2e.test_message_delivery import FakeLLM, FakeTelegram
     from moroz.messaging.models import IncomingMessage
     from moroz.messaging.repository import MessageRepository
@@ -120,7 +120,7 @@ async def test_stop_blocks_old_booking_but_keeps_faq_and_fresh_booking(
     class Router(FakeLLM):
         async def __call__(self, text, context, **options):
             result = await super().__call__(text, context, recent_message_count=options.get("recent_message_count", 1))
-            if text == "Хочу записаться":
+            if text in {"Хочу записаться", "📅 Записаться"}:
                 result.text = await options["dispatch"](RouteDecision("booking", 1, "create"))
             return result
     llm = Router()
@@ -199,7 +199,7 @@ async def test_stop_blocks_old_booking_but_keeps_faq_and_fresh_booking(
         assert retry_delivery.acked
         assert len(queue._exchange.messages) == 1
         await process(904)
-        assert (await booking_repository.get_active_for_customer("42")).id != new.id
+        assert (await booking_repository.get_active_for_customer("42")).id == new.id
         assert await db.fetchval("SELECT count(*) FROM message_inbox WHERE status='accepted'") == 0
         await client.post("/telegram/webhook", json=telegram_text_update("stop", update_id=950))
         reset_timestamp = 1_768_478_400 + 8 * 86400
@@ -212,13 +212,13 @@ async def test_stop_blocks_old_booking_but_keeps_faq_and_fresh_booking(
             "callback_data": coordinator._callback(reset_draft, "service", 0),
         })
         await process(2)
-        assert (await booking_repository.get_active_for_customer("42")).state["step"] == "staff"
+        assert (await booking_repository.get_active_for_customer("42")).state["step"] == "service"
         await accept(885, "", kind="callback", timestamp=reset_timestamp, data={
             "callback_data": f"booking:v1:{scenario_id.hex}:service:0",
         })
         await process(885)
         assert (await booking_repository.get_active_for_customer("42")).id == reset_draft.id
-        assert (await booking_repository.get_active_for_customer("42")).state["step"] == "staff"
+        assert (await booking_repository.get_active_for_customer("42")).state["step"] == "service"
     finally:
         await database.close()
 
@@ -283,7 +283,7 @@ async def test_contact_keeps_telegram_event_time_for_stop_order(client, db):
 async def test_delayed_stop_preserves_booking_started_by_last_message_in_batch(
     client, db, migrated_database_url, booking_text,
 ):
-    from tests.e2e.booking.test_telegram_booking import _coordinator
+    from tests.e2e.booking.telegram_helpers import coordinator as _coordinator
     from tests.e2e.test_message_delivery import FakeLLM, FakeTelegram
     from moroz.messaging.models import IncomingMessage
     from moroz.messaging.repository import MessageRepository

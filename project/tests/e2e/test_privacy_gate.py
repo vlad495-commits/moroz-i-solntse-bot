@@ -9,7 +9,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 import redis.asyncio as redis
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardRemove
 from httpx import ASGITransport, AsyncClient
 
 from config import (
@@ -566,13 +566,10 @@ async def test_duplicate_consent_done_callback_is_idempotent(
     assert [message["text"] for message in fake_telegram.sent_messages] == [
         START_REPLY
     ]
+    assert "например" in fake_telegram.last_text.casefold()
     keyboard = fake_telegram.sent_messages[0]["reply_markup"]
-    assert isinstance(keyboard, ReplyKeyboardMarkup)
-    assert [[button.text for button in row] for row in keyboard.keyboard] == [
-        ["📅 Записаться", "✨ Услуги и цены"],
-        ["📍 Адрес и режим", "👩‍💼 Позвать администратора"],
-    ]
-    assert keyboard.is_persistent is True
+    assert isinstance(keyboard, ReplyKeyboardRemove)
+    assert keyboard.remove_keyboard is True
 
 
 async def test_checked_policy_done_persists_only_versioned_consent(
@@ -1189,7 +1186,7 @@ async def test_start_without_consent_shows_gate_and_is_idempotent(
     ) == "telegram:consent_prompt:911"
 
 
-async def test_start_with_consent_shows_welcome_and_persistent_menu(
+async def test_start_with_consent_invites_free_text_and_removes_legacy_menu(
     client, db, fake_telegram
 ):
     await grant_policy_consent(client, update_id=920)
@@ -1202,13 +1199,10 @@ async def test_start_with_consent_shows_welcome_and_persistent_menu(
 
     assert response.status_code == 200
     assert fake_telegram.last_text == START_REPLY
+    assert "например" in fake_telegram.last_text.casefold()
     keyboard = fake_telegram.sent_messages[0]["reply_markup"]
-    assert isinstance(keyboard, ReplyKeyboardMarkup)
-    assert [[button.text for button in row] for row in keyboard.keyboard] == [
-        ["📅 Записаться", "✨ Услуги и цены"],
-        ["📍 Адрес и режим", "👩‍💼 Позвать администратора"],
-    ]
-    assert keyboard.is_persistent is True
+    assert isinstance(keyboard, ReplyKeyboardRemove)
+    assert keyboard.remove_keyboard is True
     assert await db.fetchval("SELECT count(*) FROM message_inbox") == 0
 
 

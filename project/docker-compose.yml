@@ -212,7 +212,7 @@ services:
       CONTEXT_MESSAGES_LIMIT: ${CONTEXT_MESSAGES_LIMIT:-40}
       MAX_INPUT_LENGTH: ${MAX_INPUT_LENGTH:-4000}
       INPUT_TOO_LONG_REPLY: ${INPUT_TOO_LONG_REPLY:-Сообщение слишком длинное. Сократите его, пожалуйста (лимит {limit} символов).}
-      START_REPLY: ${START_REPLY:-Привет! Я ИИ-ассистент. Задайте свой вопрос текстом, и я постараюсь помочь.}
+      START_REPLY: "${START_REPLY:-Здравствуйте! Напишите своими словами, чем помочь. Например: «Сколько стоит криосауна?» или «Запишите во вторник после 18:00».}"
       NON_TEXT_REPLY: ${NON_TEXT_REPLY:-Я понимаю только текстовые сообщения. Напишите ваш вопрос текстом, пожалуйста.}
       POLICY_URL: ${POLICY_URL:-https://example.com/privacy}
       LOG_FILE: ${LOG_FILE:-/app/logs/bot.log}

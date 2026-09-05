@@ -6,7 +6,6 @@ import logging
 
 from moroz.messaging.router import (
     bound_untrusted_context,
-    deterministic_route,
     route_message,
 )
 from moroz.security.guardrails import check_input
@@ -55,6 +54,10 @@ SLOT_OUTPUT_FALLBACK = (
 OFFTOPIC_REPLY = (
     "Я могу помочь по услугам, подготовке, контактам и записи в центр."
 )
+ROUTER_FALLBACK_REPLY = (
+    "Я не совсем понял запрос. Напишите, пожалуйста, что хотите узнать или "
+    "на какую услугу записаться. Если удобнее, я передам вопрос администратору."
+)
 
 def _zero(text: str, model: str = "security-local") -> LLMResponse:
     return LLMResponse(text, 0, 0, 0, 0, model)
@@ -87,6 +90,12 @@ def _usage_only(usages: tuple[LLMUsage, ...]) -> LLMResponse:
         usages[-1].model,
         usages,
     )
+
+
+def _combine_reply(answer: str, local_reply: str | None) -> str:
+    if not local_reply:
+        return answer
+    return f"{answer.rstrip()}\n\n{local_reply.lstrip()}"
 
 
 async def _cancel_and_drain(*tasks: asyncio.Task | None) -> None:
@@ -165,9 +174,9 @@ class SecurityPipeline:
         forbidden_raw = session.raw_values()
         accumulated: list[LLMResponse] = []
 
-        local_route = deterministic_route(masked_current.text)
-        route_source = "deterministic" if local_route is not None else "fallback"
-        needs_router = local_route is None and self.router is not None
+        local_route = None
+        route_source = "fallback"
+        needs_router = self.router is not None
         security_task = asyncio.create_task(
             self.input_security.classify(masked_current.text)
         )
@@ -227,11 +236,10 @@ class SecurityPipeline:
             raise
 
         if route_source == "fallback" and (dispatch is not None or self.router is not None):
-            return _aggregate(accumulated,
-                "Не удалось понять запрос. Попробуйте ещё раз или воспользуйтесь кнопками меню.",
-                "router-fallback")
+            return _aggregate(accumulated, ROUTER_FALLBACK_REPLY, "router-fallback")
         logger.info("intent_decision route=%s source=%s action=%s confidence=%s",
                     route.route, route_source, route.action, _confidence_bucket(route.confidence))
+        local_reply: str | None = None
         if dispatch is not None:
             if route.confidence < 0.6:
                 return _aggregate(accumulated,
@@ -239,10 +247,12 @@ class SecurityPipeline:
                     "router-clarification")
             reply = await dispatch(route)
             if reply is not None:
-                return _aggregate(accumulated, reply, "booking-local")
+                if not route.topics:
+                    return _aggregate(accumulated, reply, "booking-local")
+                local_reply = reply
         elif self.router is not None and route.route in {"booking", "booking_management"}:
             return _aggregate(accumulated,
-                "Запись внутри Telegram сейчас недоступна. Воспользуйтесь кнопками меню или напишите администратору.",
+                "Запись внутри Telegram сейчас недоступна. Напишите администратору.",
                 "booking-unavailable")
 
         route_metadata = (
@@ -254,7 +264,9 @@ class SecurityPipeline:
             return _aggregate(accumulated, OFFTOPIC_REPLY, "router-local")
         active_facts = self.facts
         catalog_block = ""
-        if catalog is not None and route.route == "consultation":
+        if catalog is not None and (
+            route.route == "consultation" or bool(route.topics)
+        ):
             if callable(catalog):
                 catalog = await catalog(route)
             catalog_block = catalog.data_block()
@@ -276,7 +288,10 @@ class SecurityPipeline:
                 )
                 return _aggregate(
                     accumulated,
-                    direct_reply if verdict.ok else SAFE_OUTPUT_FALLBACK,
+                    _combine_reply(
+                        direct_reply if verdict.ok else SAFE_OUTPUT_FALLBACK,
+                        local_reply,
+                    ),
                     "catalog-local" if verdict.ok else "security-fallback",
                 )
         owned_system = "\n\n".join(
@@ -347,7 +362,11 @@ class SecurityPipeline:
                     except UnknownPlaceholder:
                         validator_code = "unknown_placeholder"
                     else:
-                        return _aggregate(accumulated, restored, answer.model)
+                        return _aggregate(
+                            accumulated,
+                            _combine_reply(restored, local_reply),
+                            answer.model,
+                        )
                 else:
                     semantic = await self.output_validator.validate(
                         masked_input=masked_current.text,
@@ -377,7 +396,11 @@ class SecurityPipeline:
                         except UnknownPlaceholder:
                             validator_code = "unknown_placeholder"
                         else:
-                            return _aggregate(accumulated, restored, answer.model)
+                            return _aggregate(
+                                accumulated,
+                                _combine_reply(restored, local_reply),
+                                answer.model,
+                            )
                     else:
                         validator_code = semantic.decision.reason_code
             else:
@@ -393,6 +416,6 @@ class SecurityPipeline:
             }.get(validator_code, SAFE_OUTPUT_FALLBACK)
         return _aggregate(
             accumulated,
-            fallback,
+            _combine_reply(fallback, local_reply),
             "security-fallback",
         )

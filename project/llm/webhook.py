@@ -45,7 +45,7 @@ from moroz.messaging.ingress import decide_ingress
 from moroz.messaging.models import IncomingMessage
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.service import MessageService
-from moroz.messaging.telegram import deliver_claimed_outbound, main_menu_options
+from moroz.messaging.telegram import deliver_claimed_outbound, remove_keyboard_options
 from moroz.privacy import deletion_marker_key
 from moroz.privacy import customer_lock_subject
 from moroz.reactivation.policy import is_stop_request, is_draft_stop_request
@@ -652,7 +652,7 @@ def create_app(
                             delivery_options = None
                             if not processing_active:
                                 reply = START_REPLY
-                                delivery_options = main_menu_options()
+                                delivery_options = remove_keyboard_options()
                             elif wants_marketing:
                                 reply = MARKETING_ENABLED_REPLY
                             else:
@@ -853,7 +853,7 @@ def create_app(
                     chat_id=message.chat.id,
                     text=START_REPLY,
                     reply_kind="start",
-                    delivery_options=main_menu_options(),
+                    delivery_options=remove_keyboard_options(),
                 )
             else:
                 await send_static_reply(

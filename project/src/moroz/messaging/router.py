@@ -173,13 +173,8 @@ class RouterVerdict:
         return self.decision.confidence
 
 
-def deterministic_route(text: str) -> RouteDecision | None:
-    """Compatibility shim: human text no longer bypasses semantic routing."""
-    return None
-
-
 def route_message(text: str) -> RouteDecision:
-    return deterministic_route(text) or RouteDecision("consultation", 0.0)
+    return RouteDecision("consultation", 0.0)
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -291,7 +286,7 @@ def valid_route_action(decision: RouteDecision) -> bool:
         or decision.action not in {'continue', 'view', 'cancel', 'reschedule'}
     ):
         return False
-    if decision.action in {'provide_name', 'cancel_draft', 'clarify', 'clarify_cancel'}:
+    if decision.action in {'provide_name', 'cancel_draft', 'clarify_cancel'}:
         return decision.service is None and decision.date is None
     return True
 
@@ -307,8 +302,19 @@ def bound_routing_state(state: str | None, *, max_chars: int = 2000) -> str | No
     if not isinstance(source, Mapping):
         return None
     bounded = {}
-    for key, limit in {'mode': 32, 'today': 10, 'kind': 16, 'step': 32,
-                       'service': 160, 'date': 10, 'requested_date': 10, 'selected_date': 10}.items():
+    for key, limit in {
+        'mode': 32,
+        'today': 10,
+        'kind': 16,
+        'step': 32,
+        'service': 160,
+        'date': 10,
+        'requested_date': 10,
+        'selected_date': 10,
+        'time_from': 5,
+        'time_to': 5,
+        'staff': 160,
+    }.items():
         if isinstance(source.get(key), str):
             bounded[key] = source[key][:limit]
     if type(source.get('active')) is bool:

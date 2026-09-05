@@ -12,7 +12,7 @@ from moroz.messaging.router import (
     LLMIntentRouter,
     RouteDecision,
     RouterVerdict,
-    deterministic_route,
+    bound_routing_state,
     route_message,
 )
 from moroz.security.llm_gateway import LLMResponse, LLMUnavailable, LLMUsage
@@ -84,11 +84,11 @@ def test_routes_are_the_minimal_single_route_allowlist() -> None:
         ("Спасибо!", "smalltalk"),
     ],
 )
-def test_deterministic_route_resolves_only_unambiguous_cases(
+def test_local_fallback_does_not_classify_human_text(
     text: str,
     expected: str,
 ) -> None:
-    assert deterministic_route(text) is None
+    assert route_message(text).confidence == 0.0
 
 
 @pytest.mark.asyncio
@@ -117,6 +117,30 @@ async def test_router_parses_multi_intent_and_time_window() -> None:
     assert verdict.decision.service == "криосауна"
     assert verdict.decision.time_from == "18:00"
     assert verdict.decision.time_to is None
+
+
+@pytest.mark.asyncio
+async def test_router_clarification_keeps_known_booking_entities() -> None:
+    provider = ScriptedProvider(
+        router_response(
+            json.dumps(
+                v3_payload(
+                    action="clarify",
+                    services=["криосауна", "массаж"],
+                    time_from=None,
+                )
+            )
+        )
+    )
+
+    verdict = await LLMIntentRouter(provider).route(
+        "Криосауна или массаж 8 сентября",
+        [],
+    )
+
+    assert verdict.source == "llm"
+    assert verdict.decision.services == ("криосауна", "массаж")
+    assert verdict.decision.date == "2026-09-08"
 
 
 @pytest.mark.asyncio
@@ -168,10 +192,10 @@ def test_router_v3_schema_requires_every_bounded_field() -> None:
         "У вас есть вакансии?",
     ],
 )
-def test_deterministic_route_defers_context_mixed_and_nonlocal_cases(
+def test_local_fallback_defers_context_mixed_and_nonlocal_cases(
     text: str,
 ) -> None:
-    assert deterministic_route(text) is None
+    assert route_message(text).confidence == 0.0
 
 
 @pytest.mark.parametrize(
@@ -183,7 +207,7 @@ def test_deterministic_route_defers_context_mixed_and_nonlocal_cases(
     ],
 )
 def test_explicit_escalation_has_safe_local_priority(text: str) -> None:
-    assert deterministic_route(text) is None
+    assert route_message(text).confidence == 0.0
 
 
 @pytest.mark.parametrize(
@@ -194,7 +218,7 @@ def test_explicit_escalation_has_safe_local_priority(text: str) -> None:
     ],
 )
 def test_explicit_handoff_phrases_route_to_escalation(text: str) -> None:
-    assert deterministic_route(text) is None
+    assert route_message(text).confidence == 0.0
 
 
 @pytest.mark.parametrize(
@@ -211,8 +235,7 @@ def test_negated_complaint_does_not_create_false_escalation(
     text: str,
     expected: str | None,
 ) -> None:
-    decision = deterministic_route(text)
-    assert decision is None
+    assert route_message(text).confidence == 0.0
 
 
 @pytest.mark.parametrize(
@@ -225,10 +248,10 @@ def test_negated_complaint_does_not_create_false_escalation(
         "У вас есть мой телефон?",
     ],
 )
-def test_deterministic_route_does_not_guess_from_contact_metadata(
+def test_local_fallback_does_not_guess_from_contact_metadata(
     text: str,
 ) -> None:
-    assert deterministic_route(text) is None
+    assert route_message(text).confidence == 0.0
 
 
 @pytest.mark.parametrize(
@@ -245,8 +268,7 @@ def test_smalltalk_rule_is_anchored_to_the_whole_message(
     text: str,
     expected: str | None,
 ) -> None:
-    decision = deterministic_route(text)
-    assert decision is None
+    assert route_message(text).confidence == 0.0
 
 
 def test_route_message_uses_safe_general_fallback() -> None:
@@ -457,3 +479,25 @@ async def test_global_choice_index_beyond_first_hundred_is_valid():
         state='{"mode":"booking","active":true,"choices":[{"index":108,"label":"Массаж"}]}')
     assert result.source == 'llm'
     assert result.decision.choice == 108
+
+
+def test_bound_routing_state_keeps_conversation_constraints():
+    state = bound_routing_state(
+        json.dumps(
+            {
+                "mode": "booking",
+                "time_from": "18:00",
+                "time_to": "20:00",
+                "staff": "Анна",
+                "private": "+79991234567",
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    assert json.loads(state) == {
+        "mode": "booking",
+        "time_from": "18:00",
+        "time_to": "20:00",
+        "staff": "Анна",
+    }

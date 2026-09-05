@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from moroz.messaging.router import ROUTES, deterministic_route
+from moroz.messaging.router import ROUTES, route_message
 from moroz.security.pii import PiiSession
 
 
@@ -90,10 +90,11 @@ def test_router_v2_dataset_has_stable_unique_contract():
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda case: case["case_key"])
-def test_historical_router_cases_now_all_require_semantic_classification(case):
+def test_historical_router_cases_have_no_local_intent_classification(case):
     masked_input = PiiSession().mask(case["input"]).text
-    decision = deterministic_route(masked_input)
+    decision = route_message(masked_input)
 
     # v2 is an immutable migration seed. Its historical source is not today's
     # routing policy; the expected semantic destination remains applicable.
-    assert decision is None
+    assert decision.route == "consultation"
+    assert decision.confidence == 0.0
