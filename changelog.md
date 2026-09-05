@@ -1,5 +1,21 @@
 # Changelog
 
+[2026-09-05 07:04] Task4 завершён в5588ae4 (финальный scoped commit после review fixes): числовые минуты/family navigation, актуальные карточки без фиктивной длительности депозита, service/date/Moscow slot headers, stale callback explanations, сохранение URL при plain formatting. Последние review cases RED4/4 и2/2 → GREEN6/29.33s; independent re-review все Important resolved/spec+quality pass. Полный отчёт tmp/recovery-task4-report.md. Task4 ledger закрыт; далее STOP и общий gate, staging прежний.
+
+[2026-09-05 06:56] Task4 implementation69862ee: покрывающий первый набор126 passed/1 failed (регистрозависимый assert уточнения), финальные scoped45+12passed после casefold assertion. Независимое review выявило4 Important: сброс страницы family, повреждение ** в URL query, booking-oriented fallback после выхода из каталога, пустой экран при исчезнувшей категории. Task4 не принят; все4 отправлены на точечный RED/fix/re-review. Runtime/staging не менялся.
+
+[2026-09-05 06:44] Task4 targeted GREEN: 11 passed /43.53s на пересобранном Docker image, включая исходные дефекты, закрытый каталог при навигации и подпись пагинации слотов. Идут покрывающий набор и self-review; окончательный task review и rollout ещё впереди.
+
+[2026-09-05 06:43] Task4 после восстановления Docker получил достоверный targeted RED на свежем image: 8 failed, 1 passed /45.90s. Tracebacks подтверждают ожидаемые presentation assertions (slot headers, порядок минут/family grouping, объяснение stale slot, длительность депозита, plain **). Explicit HTML regression уже проходит. Начата минимальная runtime-реализация, staging не меняется.
+
+[2026-09-05 06:42] Read-only staging preflight: 8/8 контейнеров healthy, HEAD06e5c13, доступно 36G диска. Через внутренний браузер подтверждены действующая admin-сессия и «▶ Работает», настройки не менялись. Baseline207 сообщений/3 диалога записан в tmp/recovery-admin-preflight.md для сравнения после rollout. Канонический manual QA план прочитан по фактическому пути docs/qa/manual/План ручного тестирования.md.
+
+[2026-09-05 06:38] После повторного полного перезапуска пользователем Docker восстановлен: Server 29.5.3, version exit0; локальные postgres/redis/rabbitmq/admin healthy, оставшихся test-run контейнеров нет. Ветка codex/semantic-booking-repair сохранена. Возобновлён Task4 с существующих regression tests и отчёта; staging пока без изменений.
+
+[2026-09-05 06:27] Продолжение после сообщения пользователя о перезапуске Docker: ветка codex/semantic-booking-repair, незавершённые Task 4 tests сохранены. Read-only docker version снова завершился Docker Desktop Linux Engine API 500 после длительного ожидания. Оба com.docker.backend процесса имеют StartTime 04.09 14:48, то есть backend не перезапустился. Новые тесты, runtime-правки и staging rollout не запускались; требуется полное завершение/запуск Docker Desktop пользователем. Достоверный RED Task 4 по-прежнему заблокирован инфраструктурой.
+
+[2026-09-05 05:51] Task 4 добавил RED-проверки меню, слотов, депозита и plain-text formatting; Docker-прогон идёт, runtime ещё не менялся. Локальная среда временно замедлилась (read-only git status завершился с задержкой); тестовый процесс не прерывался. Внутренний браузер больше не содержал старых вкладок; открыта новая staging-admin login вкладка4, вход/TOTP пока не выполнен. Подготовлен защищённый NOT_READY post-rollout catalog sync script в tmp, не запускался.
+
 [2026-09-05 05:44] Task 3 окончательный review: spec compliant/quality approved, замечаний нет. Ledger обновлён; переход к Task 4 — компактный каталог, подписи даты/услуги и безопасное отображение текста. Task4a STOP и Task5 интеграция/выкладка остаются впереди.
 
 [2026-09-05 05:43] Дополнительные Task 3 fixes 846b48e/dad9a0b закрывают duration-only и служебные/денежные токены как ложное название. Последний RED 6 failed/1 passed, targeted7 passed, финальный scoped106 passed/39.57s. Короткие реальные exact/phrase имена RF сохранены; идёт узкий re-review последнего замечания. Runtime/staging пока прежние.

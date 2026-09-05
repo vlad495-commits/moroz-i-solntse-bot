@@ -79,4 +79,5 @@ Files: project/src/moroz/booking/telegram.py; project/src/moroz/booking/catalog.
 - Task 1 complete: 38b7ee3..8aa7ec7, review spec compliant / quality approved, no findings, Docker 120 passed. Ruff unavailable in image; full lint remains final gate.
 - Task 2 complete: f43e7d9..a18dcc1, review spec compliant / quality approved after stale-service fix. Docker 678 passed before fix + 42 covering passed on final fix, RED 3 failures reproduced stale/removed/updated catalog issue. Live model/Telegram verification pending.
 - Task 3 complete: c7e5a34..dad9a0b, review spec compliant / quality approved, no findings. Final covering106 passed. Real GET probe all76 exact names passed at c3f3531; final integrated probe remains pending. Collarium2/7 tariffs absent in source, owner informed.
-- Task4 in progress; Tasks4a,5 pending; briefs in root tmp. Task5 includes5 concrete full-unit gate defects from tmp/recovery-final-gate-fixes.md.
+- Task 4 complete: 682e7f2..5588ae4, independent re-review spec/quality pass, all Important resolved. Final review-fix6 passed/29.33s; earlier covering45/16 passed; global integrated suite pending. Full evidence tmp/recovery-task4-report.md.
+- Tasks4a,5 pending; briefs in root tmp. Task5 includes5 concrete full-unit gate defects from tmp/recovery-final-gate-fixes.md.
