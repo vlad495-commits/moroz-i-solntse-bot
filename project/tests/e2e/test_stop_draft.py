@@ -4,11 +4,16 @@ from uuid import uuid4
 import pytest
 
 from config import BOT_PAUSE_KEY, MARKETING_DISABLED_REPLY
+from tests.e2e import test_privacy_gate as privacy_fixtures
 from tests.e2e.test_privacy_gate import (
-    client, db, fake_telegram, redis_client,
     telegram_text_update, telegram_consent_callback, telegram_contact_update,
     grant_policy_consent,
 )
+
+client = privacy_fixtures.client
+db = privacy_fixtures.db
+fake_telegram = privacy_fixtures.fake_telegram
+redis_client = privacy_fixtures.redis_client
 
 pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio

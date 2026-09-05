@@ -139,6 +139,19 @@ class TelegramBookingCoordinator:
 
         scenario = await self._repository.get_active_for_customer(customer_id)
         menu_command = persistent_menu_command(text) if kind == "text" else None
+        if (
+            scenario is not None
+            and scenario.phase in {"collecting", "awaiting_confirmation"}
+            and scenario.idempotency_key == f"telegram:create:{update_id}"
+            and (
+                menu_command == _MENU_BOOK
+                or (menu_command is None and decision is not None
+                    and valid_route_action(decision)
+                    and decision.route == "booking" and decision.action == "create")
+            )
+        ):
+            # Coordinator checkpoints survive a rolled-back worker inbox transaction.
+            return await self._refresh_current(connection, scenario)
         if menu_command is not None:
             if menu_command == "✨ Услуги и цены" and scenario is not None and scenario.idempotency_key == f"telegram:catalog:{update_id}":
                 return await self._refresh_current(connection, scenario)

@@ -5,17 +5,19 @@ import pytest
 
 from config import BOT_PAUSE_KEY, MARKETING_DISABLED_REPLY
 from moroz.reactivation.policy import ProgramPolicy, template_checksum
+from tests.e2e import test_privacy_gate as privacy_fixtures
 from tests.e2e.test_privacy_gate import (
     MARKETING_DISABLE_CALLBACK_DATA,
-    client,
-    db,
-    fake_telegram,
     grant_policy_consent,
-    redis_client,
     telegram_consent_callback,
     telegram_photo_update,
     telegram_text_update,
 )
+
+client = privacy_fixtures.client
+db = privacy_fixtures.db
+fake_telegram = privacy_fixtures.fake_telegram
+redis_client = privacy_fixtures.redis_client
 
 
 pytest_plugins = ["tests.integration.conftest"]

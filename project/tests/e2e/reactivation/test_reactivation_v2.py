@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -17,19 +18,21 @@ from moroz.reactivation.policy import (
     template_checksum,
 )
 from moroz.reactivation.repository import ReactivationRepository
+from tests.e2e import test_privacy_gate as privacy_fixtures
 from tests.e2e.test_privacy_gate import (
     MARKETING_DISABLE_CALLBACK_DATA,
     MARKETING_ENABLE_CALLBACK_DATA,
-    client,
-    db,
-    fake_telegram,
     grant_policy_consent,
-    message_database,
-    redis_client,
     telegram_consent_callback,
     telegram_text_update,
 )
 from worker.main import MessageTaskHandler
+
+client = privacy_fixtures.client
+db = privacy_fixtures.db
+fake_telegram = privacy_fixtures.fake_telegram
+message_database = privacy_fixtures.message_database
+redis_client = privacy_fixtures.redis_client
 
 
 pytest_plugins = ["tests.integration.conftest"]
@@ -286,7 +289,17 @@ class ReactivationHarness:
         assert await self.db.fetchval(
             "SELECT suppression_reason FROM marketing_consents WHERE user_id='7'"
         ) == "user_stop"
-        assert await self.db.fetchval("SELECT count(*) FROM message_inbox") == 0
+        inbox = await self.db.fetch(
+            "SELECT channel, external_message_id, chat_id, status, payload FROM message_inbox"
+        )
+        assert len(inbox) == 1
+        marker = inbox[0]
+        assert (marker['channel'], marker['external_message_id'], marker['chat_id'], marker['status']) == (
+            'telegram', '1220', '42', 'processed',
+        )
+        payload = json.loads(marker['payload'])
+        assert payload == {'kind': 'booking_stop', 'received_at': NOW.isoformat()}
+        assert await self.db.fetchval("SELECT count(*) FROM messages") == 0
         assert await self.db.fetchval(
             "SELECT count(*) FROM task_outbox WHERE kind='process_message'"
         ) == 0

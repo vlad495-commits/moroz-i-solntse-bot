@@ -530,6 +530,103 @@ async def test_catalog_menu_retry_keeps_live_buttons(migrated_database_url):
         await database.close()
 
 
+@pytest.mark.parametrize('semantic', [False, True])
+async def test_create_retry_keeps_same_usable_draft(migrated_database_url, semantic):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    request = dict(customer_id='42', user_id='7', kind='text', data={},
+        update_id='retry-create', origin_update_id='batch-last',
+        text='Запиши на криокапсулу' if semantic else '📅 Записаться',
+        decision=RouteDecision('booking', .99, 'create', 'Криокапсула') if semantic else None)
+    try:
+        first = await _handle(coordinator, database, **request)
+        draft = await bookings.get_active_for_customer('42')
+        reply = await _handle(coordinator, database, **request)
+        active = await bookings.get_active_for_customer('42')
+        assert active is not None
+        assert active.id == draft.id
+        assert active.phase == 'collecting'
+        assert active.state == draft.state
+        assert active.state['origin_update_id'] == 'batch-last'
+        assert active.state['source'] == 'telegram'
+        assert reply == first
+        token = reply.delivery_options['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback',
+            data={'callback_data': token}, update_id='retry-create-click', text='')
+        active = await bookings.get_active_for_customer('42')
+        assert active.id == draft.id
+        assert active.state['step'] == ('available_date' if semantic else 'staff')
+        assert 'неактуальна' not in reply.text
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
+@pytest.mark.parametrize('semantic', [False, True])
+async def test_worker_create_retry_after_outbound_failure_keeps_single_draft(
+    migrated_database_url, monkeypatch, semantic,
+):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    try:
+        repository = MessageRepository(database)
+        pipeline = SecurityPipeline(Provider(), '', extract_structured_facts(''),
+            router=Router(), input_security=Security())
+        handler = MessageTaskHandler(database, pipeline.respond,
+            TelegramSender(FakeTelegram(), repository), booking_coordinator=coordinator)
+        await repository.accept(replace(_incoming('9101'),
+            text='Запиши на криокапсулу 5 сентября' if semantic else '📅 Записаться'))
+        task = QueueTask(kind='process_message', payload={'chat_id': '42', 'update_ids': ['9101']},
+            idempotency_key=process_message_key(['9101']))
+
+        async def crash_before_commit(*args, **kwargs):
+            raise RuntimeError('injected outbound failure before inbox commit')
+
+        with monkeypatch.context() as patch:
+            patch.setattr(handler._repository, 'enqueue_outbound_in_transaction', crash_before_commit)
+            with pytest.raises(RuntimeError, match='injected outbound failure'):
+                await handler.handle(task)
+        draft = await bookings.get_active_for_customer('42')
+        assert draft is not None
+        async with database.acquire() as connection:
+            assert await connection.fetchval('SELECT count(*) FROM messages') == 0
+            assert await connection.fetchval('SELECT count(*) FROM outbound_messages') == 0
+            assert await connection.fetchval('SELECT status FROM message_inbox') != 'processed'
+
+        await handler.handle(task)
+        await handler.handle(task)
+        active = await bookings.get_active_for_customer('42')
+        assert active is not None
+        assert active.id == draft.id
+        assert active.state == draft.state
+        async with database.acquire() as connection:
+            assert await connection.fetchval('SELECT count(*) FROM booking_scenarios') == 1
+            assert await connection.fetchval('SELECT count(*) FROM messages') == 2
+            assert await connection.fetchval('SELECT count(*) FROM outbound_messages') == 1
+            assert await connection.fetchval('SELECT status FROM message_inbox') == 'processed'
+            reply = await connection.fetchrow('SELECT text, delivery_options FROM outbound_messages')
+        assert reply['text'].startswith('Выберите время' if semantic else 'Выберите услугу')
+        assert 'inline_keyboard' in str(reply['delivery_options'])
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
+@pytest.mark.parametrize('phase', ['failed', 'confirmed'])
+async def test_create_retry_does_not_reopen_terminal_draft(migrated_database_url, phase):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    request = dict(customer_id='42', user_id='7', kind='text', data={},
+        update_id='terminal-create', text='📅 Записаться')
+    try:
+        await _handle(coordinator, database, **request)
+        draft = await bookings.get_active_for_customer('42')
+        await bookings.checkpoint(replace(draft, phase=phase), 'test_terminal')
+        await _handle(coordinator, database, **request)
+        assert await bookings.get_active_for_customer('42') is None
+        assert (await bookings.get_scenario(draft.id)).phase == phase
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
 async def test_catalog_paging_and_recovery_do_not_reuse_stale_prices(migrated_database_url):
     records = tuple(CatalogRecord(str(i + 331), '10', f'Массаж {i}', 'Массаж', 'Анна', 1500, 1500, 30) for i in range(10))
     database, bookings, adapter, coordinator = await _coordinator(migrated_database_url, catalog_records=records)
