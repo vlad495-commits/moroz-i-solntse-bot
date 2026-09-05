@@ -1,5 +1,7 @@
 # Changelog
 
+[2026-09-05 03:41] Staging обновлён до immutable 06e5c13e9f4fe0ce08448893946d15ec7fa73f1e через verified complete-history bundle. В server-only env включён только catalog grounding; флаг true подтверждён внутри worker. 8/8 healthy, exact image IDs, schema 0025, HTTPS/admin, scheduler smoke, webhook pending=0/error=false, safe logs clean. Rollback: /opt/moroz-staging-state/rollbacks/20260905T003849Z-06e5c13e9f4fe0ce08448893946d15ec7fa73f1e. Production, GitHub/main и реальные записи не менялись. Roadmap/plan обновлены, ожидается пользовательская приёмка цен.
+
 [2026-09-05 03:37] Завершён local price/UX repair: категории и карточки YCLIENTS, semantic context price lookup, объяснение выбора услуги с датой, safe catalog refresh/replay/page clamp. Read-only review замечания закрыты через RED/GREEN. Docker: расширенный gate 796 passed/599.50s, последние целевые 24 passed и 3 passed; Compose, compileall, runtime Ruff и diff-check пройдены. Подготовлен commit в codex/semantic-booking-repair; далее обновление того же staging с включением catalog grounding и сохранением rollback.
 
 [2026-09-05 03:28] RED воспроизвёл три дефекта; initial GREEN — 15 passed. Реализованы lazy grounding после semantic router, price/duration/staff действия без бизнес-regex, категории и карточки прайса через существующие protected callback. Дополнительный RED обнаружил подстановку первой цены при неоднозначном криомассаже; добавлены exact-match/ambiguity guard и сквозная worker-проверка. Идёт расширенный Docker regression и read-only review, staging пока не изменён.

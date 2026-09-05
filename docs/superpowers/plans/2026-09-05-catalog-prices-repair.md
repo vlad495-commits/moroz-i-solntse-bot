@@ -11,7 +11,8 @@
 - [x] RED/GREEN: `tests/e2e/booking/test_semantic_booking.py` — меню категорий, цены/длительность, карточка и переход в запись; неоднозначный массаж сохраняет дату и объясняет необходимость выбора.
 - [x] Implement: `booking/telegram.py` — категории по YCLIENTS, постраничные услуги с ценами, карточка с вариантами и существующим переходом в запись. Свежесть проверяется при открытии меню/категории/карточки и повторном выводе; старые callback и ownership проверяются существующим механизмом.
 - [x] Docker regression: unit security/messaging/booking, e2e booking/catalog/message_delivery — 796 passed in 599.50s; последние изменения: 24 passed и финальный targeted 3 passed.
-- [ ] Проверить diff, обновить roadmap/changelog, локальный commit; staging выкладывать отдельным подтверждённым rollout с включением `YCLIENTS_CATALOG_GROUNDING_ENABLED=true`. Production не менять.
+- [x] Diff/review проверены; runtime commit `06e5c13` развёрнут на том же staging, `YCLIENTS_CATALOG_GROUNDING_ENABLED=true` подтверждён внутри worker. 8/8 healthy, schema 0025, HTTPS/admin, webhook, scheduler и safe logs проходят. Production и GitHub не изменены.
+- [ ] Повторная ручная приёмка владельцем с реальной LLM.
 
 При неоднозначном контексте бот уточняет услугу, а не выбирает её молча. Диапазон цен отображается с пояснением вариантов. Walk-in услуги остаются без слотов. Проверки не создают реальные записи и не вызывают платную LLM.
 
