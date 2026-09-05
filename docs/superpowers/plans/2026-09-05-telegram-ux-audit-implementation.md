@@ -63,11 +63,11 @@
 - Consumes: existing category/family/service choices and callback revision.
 - Produces: price-bearing compact button labels, two buttons per row where they fit, `← Категории`, `Ещё варианты →`, page indicator, `Адрес и маршрут` for walk-in detail.
 
-- [ ] **Step 1: Write failing tests** asserting no duplicate textual tariff list for a walk-in family, compact price labels, category return, page indicator and walk-in address action.
-- [ ] **Step 2: Run RED** for the catalog tests in `tests/e2e/booking/test_semantic_booking.py`.
-- [ ] **Step 3: Implement minimal rendering** by reusing `_price_summary`, adding catalog-only row packing/navigation callbacks and keeping callback payloads under 64 bytes.
-- [ ] **Step 4: Run GREEN**, including stale callback and numeric ordering tests.
-- [ ] **Step 5: Update `changelog.md` and commit** as `feat: упростить Telegram-каталог услуг`.
+- [x] **Step 1: Write failing tests** asserting no duplicate textual tariff list for a walk-in family, compact price labels, category return, page indicator and walk-in address action.
+- [x] **Step 2: Run RED** for the catalog tests in `tests/e2e/booking/test_semantic_booking.py`.
+- [x] **Step 3: Implement minimal rendering** by reusing `_price_summary`, adding catalog-only row packing/navigation callbacks and keeping callback payloads under 64 bytes.
+- [x] **Step 4: Run GREEN**, including stale callback and numeric ordering tests.
+- [x] **Step 5: Update `changelog.md` and commit** as `feat: упростить Telegram-каталог услуг`.
 
 ### Task 4: Сравнение тарифов и безопасный подбор
 

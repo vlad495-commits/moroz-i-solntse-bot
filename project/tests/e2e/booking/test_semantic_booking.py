@@ -106,7 +106,9 @@ async def test_ambiguous_service_keeps_date_until_service_selection(migrated_dat
     try:
         reply = await _handle(coordinator, database, **base, update_id='a1', text='Массаж 5 сентября',
             decision=RouteDecision('booking', .98, 'create', 'массаж', '2026-09-05'))
-        assert set(_button_labels(reply)) == {'Массаж спины', 'Общий массаж тела'}
+        assert set(_button_labels(reply)) == {
+            'Массаж спины', 'Общий массаж тела', 'Выйти из оформления',
+        }
         reply = await _handle(coordinator, database, **base, update_id='repeat', text='На какие часы свободно?',
             decision=RouteDecision('booking', .98, 'continue'))
         assert '05.09.2026' in reply.text
@@ -177,15 +179,21 @@ async def test_catalog_walk_in_family_expands_exact_durations_in_numeric_order(
         )
 
         assert _button_labels(reply) == [
-            "Солярий 1 минут", "Солярий 7 минут", "Солярий 10 минут",
+            "1 мин · 100 ₽", "7 мин · 700 ₽", "10 мин · 1 000 ₽", "← Категории",
         ]
-        assert reply.text.index("100 ₽") < reply.text.index("700 ₽") < reply.text.index("1 000 ₽")
-        seven = reply.delivery_options["reply_markup"]["inline_keyboard"][1][0]["callback_data"]
+        assert "100 ₽" not in reply.text
+        seven = next(
+            button["callback_data"]
+            for row in reply.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "7 мин · 700 ₽"
+        )
         detail = await _handle(
             coordinator, database, **base, kind="callback",
             data={"callback_data": seven}, update_id="family-seven", text="",
         )
         assert "«Солярий 7 минут» — 700 ₽, 7 мин." in detail.text
+        assert "Адрес и маршрут" in _button_labels(detail)
         assert (adapter.list_calls, adapter.create_calls, adapter.reschedule_calls,
                 adapter.cancel_calls) == (0, 0, 0, 0)
         assert (await bookings.get_active_for_customer("42")).state["catalog_service_id"] == "7"
@@ -215,16 +223,41 @@ async def test_catalog_walk_in_family_keeps_selected_page(migrated_database_url)
             data={"callback_data": reply.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]},
             update_id="family-page-category", text="",
         )
-        next_page = first.delivery_options["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
+        next_page = next(
+            button["callback_data"]
+            for row in first.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Ещё варианты →"
+        )
         second = await _handle(
             coordinator, database, **base, kind="callback",
             data={"callback_data": next_page}, update_id="family-page-next", text="",
         )
 
         labels = _button_labels(second)
-        assert "Солярий 9 минут" in labels
-        assert "Солярий 10 минут" in labels
-        assert "Солярий 1 минут" not in labels
+        assert "9 мин · 900 ₽" in labels
+        assert "10 мин · 1 000 ₽" in labels
+        assert "1 мин · 100 ₽" not in labels
+        assert "← Предыдущие" in labels
+        assert "← Категории" in labels
+        assert "Страница 2 из 2" in second.text
+        categories = await _handle(
+            coordinator,
+            database,
+            **base,
+            kind="callback",
+            data={
+                "callback_data": next(
+                    button["callback_data"]
+                    for row in second.delivery_options["reply_markup"]["inline_keyboard"]
+                    for button in row
+                    if button["text"] == "← Категории"
+                )
+            },
+            update_id="family-page-root",
+            text="",
+        )
+        assert _button_labels(categories) == ["Загар"]
         assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
     finally:
         await database.close()
@@ -252,7 +285,9 @@ async def test_mixed_catalog_groups_walk_in_family_before_regular_service(
             data={"callback_data": reply.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]},
             update_id="mixed-category", text="",
         )
-        assert _button_labels(reply) == ["Солярий", "Депозит на загар"]
+        assert _button_labels(reply) == [
+            "Солярий", "Депозит на загар", "← Категории",
+        ]
         assert "Депозит на загар — 1 500 ₽" in reply.text
         assert "60 мин." not in reply.text
 
@@ -261,7 +296,9 @@ async def test_mixed_catalog_groups_walk_in_family_before_regular_service(
             coordinator, database, **base, kind="callback",
             data={"callback_data": family}, update_id="mixed-family", text="",
         )
-        assert _button_labels(variants) == ["Солярий 1 минута", "Солярий 10 минут"]
+        assert _button_labels(variants) == [
+            "1 мин · 100 ₽", "10 мин · 1 000 ₽", "← Категории",
+        ]
         assert (adapter.list_calls, adapter.create_calls, adapter.reschedule_calls,
                 adapter.cancel_calls) == (0, 0, 0, 0)
     finally:
@@ -345,7 +382,12 @@ async def test_old_catalog_page_callback_after_menu_exit_returns_to_prices(
             data={"callback_data": root.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]},
             update_id="old-page-open", text="",
         )
-        old_page = listing.delivery_options["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
+        old_page = next(
+            button["callback_data"]
+            for row in listing.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Ещё варианты →"
+        )
         await _handle(
             coordinator, database, **base, kind="text", data={},
             update_id="old-page-exit", text="📍 Адрес и режим",
@@ -426,7 +468,12 @@ async def test_removed_open_family_reopens_current_catalog_root(migrated_databas
             coordinator, database, **base, kind="callback",
             data={"callback_data": tanning}, update_id="removed-family-open", text="",
         )
-        next_page = listing.delivery_options["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
+        next_page = next(
+            button["callback_data"]
+            for row in listing.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Ещё варианты →"
+        )
         async with database.acquire() as connection:
             await connection.execute(
                 "DELETE FROM yclients_service_catalog WHERE category_name = 'Загар'"
@@ -475,7 +522,12 @@ async def test_slots_after_first_page_remain_selectable(migrated_database_url):
         await bookings.create_scenario(scenario)
         first = coordinator._render_current(scenario)
         assert '19:00' not in _button_labels(first)
-        next_page = first.delivery_options['reply_markup']['inline_keyboard'][-1][0]['callback_data']
+        next_page = next(
+            button['callback_data']
+            for row in first.delivery_options['reply_markup']['inline_keyboard']
+            for button in row
+            if button['text'] == 'Далее →'
+        )
         second = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback',
             data={'callback_data': next_page}, update_id='page', text='')
         assert second.text == 'Выберите время\nМассаж спины\n07.09.2026 · московское время'
@@ -684,7 +736,12 @@ async def test_catalog_paging_and_recovery_do_not_reuse_stale_prices(migrated_da
         reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='text', data={}, update_id='stale-menu', text='✨ Услуги и цены')
         token = reply.delivery_options['reply_markup']['inline_keyboard'][0][0]['callback_data']
         reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback', data={'callback_data': token}, update_id='stale-category', text='')
-        next_page = reply.delivery_options['reply_markup']['inline_keyboard'][-1][0]['callback_data']
+        next_page = next(
+            button['callback_data']
+            for row in reply.delivery_options['reply_markup']['inline_keyboard']
+            for button in row
+            if button['text'] == 'Ещё варианты →'
+        )
         async with database.acquire() as connection:
             await connection.execute("DELETE FROM yclients_service_catalog WHERE service_id::int > 332")
         reply = await _handle(coordinator, database, customer_id='42', user_id='7', kind='callback', data={'callback_data': next_page}, update_id='shrunk-page', text='')

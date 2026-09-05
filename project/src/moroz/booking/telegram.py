@@ -42,7 +42,7 @@ _WALK_IN_LABELS = {
     "collarium": "Коллариум",
     "solarium": "Солярий",
 }
-_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft", "clear_time_after")
+_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft", "clear_time_after", "catalog_root")
 _DRAFT_CANCEL_COMMANDS = frozenset({"отменить действие", "выйти из оформления"})
 _TIME_AFTER = re.compile(r"(?:после|не раньше)\s*(\d{1,2})(?:[:.](\d{2}))?", re.IGNORECASE)
 
@@ -476,6 +476,13 @@ class TelegramBookingCoordinator:
         return await self._refresh_current(connection, current)
 
     async def _recover_catalog_root(self, scenario, services):
+        current = await self._catalog_root(scenario, services)
+        return BookingReply(
+            f"{OUTDATED_BUTTON_REPLY}\n\n{current.text}",
+            current.delivery_options,
+        )
+
+    async def _catalog_root(self, scenario, services):
         state = self._state(scenario)
         for key in ("category", "catalog_family", "catalog_service_id", "detail", "service_name"):
             state.pop(key, None)
@@ -486,11 +493,7 @@ class TelegramBookingCoordinator:
             page=0,
         )
         updated = await self._checkpoint(scenario, state, "catalog_view_selected")
-        current = self._render_current(updated, catalog_fresh=True)
-        return BookingReply(
-            f"{OUTDATED_BUTTON_REPLY}\n\n{current.text}",
-            current.delivery_options,
-        )
+        return self._render_current(updated, catalog_fresh=True)
 
     async def _catalog_choice(self, connection, scenario, action, choice):
         services = await self._catalog.list_services(connection, self._now())
@@ -529,6 +532,13 @@ class TelegramBookingCoordinator:
                 )
                 updated = await self._checkpoint(scenario, state, "catalog_view_selected")
                 return self._render_current(updated, catalog_fresh=True)
+            if action == "catalog_book" and choice.get("address") is True:
+                return BookingReply(
+                    "Мы находимся: Тульская область, Новомосковск, "
+                    "ул. Трудовые резервы, 33Б, ТРЦ «Первый», цокольный этаж. "
+                    "Работаем ежедневно с 10:00 до 21:00.",
+                    main_menu_options(),
+                )
             service = next((s for s in services if s.service_id == choice["service_id"]), None)
             if service is None:
                 return BookingReply("Этой услуги больше нет в актуальном каталоге. Откройте «✨ Услуги и цены».", main_menu_options())
@@ -542,10 +552,20 @@ class TelegramBookingCoordinator:
             detail = CatalogGrounding("fresh", (service,), "price", False).direct_reply
             if family:
                 detail += "\nПредварительная запись не нужна — приходите ежедневно с 10:00 до 21:00."
-            state.update(step="catalog_book", detail=detail, catalog_service_id=service.service_id, service_name=service.service_name, choices=[] if family else [
-                {"label": "Свободное время", "service_id": service.service_id},
-                {"label": "Записаться", "service_id": service.service_id},
-            ])
+            state.update(
+                step="catalog_book",
+                detail=detail,
+                catalog_service_id=service.service_id,
+                service_name=service.service_name,
+                choices=(
+                    [{"label": "Адрес и маршрут", "address": True}]
+                    if family
+                    else [
+                        {"label": "Свободное время", "service_id": service.service_id},
+                        {"label": "Записаться", "service_id": service.service_id},
+                    ]
+                ),
+            )
         updated = await self._checkpoint(scenario, state, "catalog_view_selected")
         return self._render_current(updated, catalog_fresh=True)
 
@@ -603,6 +623,7 @@ class TelegramBookingCoordinator:
         return [
             {
                 "label": service.service_name,
+                "button_label": cls._catalog_family_button_label(service),
                 "service_id": service.service_id,
                 "summary": cls._price_summary(service),
             }
@@ -618,6 +639,17 @@ class TelegramBookingCoordinator:
                 ),
             )
         ]
+
+    @staticmethod
+    def _catalog_family_button_label(service):
+        minutes = min(variant.duration_minutes for variant in service.variants)
+        prices = [
+            price
+            for variant in service.variants
+            for price in (variant.price_min, variant.price_max)
+        ]
+        price = _range_text(min(prices), max(prices), suffix="₽")
+        return f"{minutes} мин · {price}"
 
     async def _handle_callback(
         self,
@@ -667,6 +699,14 @@ class TelegramBookingCoordinator:
             if selected_date:
                 return await self._choose_date(current, {"date": selected_date})
             return await self._refresh_current(connection, current)
+        if action == "catalog_root" and scenario.phase == "collecting":
+            services = await self._catalog.list_services(connection, self._now())
+            if not services:
+                return BookingReply(
+                    "Сейчас не могу подтвердить актуальные цены. Попробуйте позже.",
+                    main_menu_options(),
+                )
+            return await self._catalog_root(scenario, services)
         if action == "page" and scenario.phase == "collecting":
             choices = scenario.state.get("choices", ())
             if not 0 <= index <= (len(choices) - 1) // 8:
@@ -976,9 +1016,11 @@ class TelegramBookingCoordinator:
             if isinstance(item, Mapping)
             and str(item.get("starts_at", ""))[:10] == selected_date
         ]
-        requested_time_after = str(
-            scenario.state.get("requested_time_after", "")
-        ).strip()
+
+        raw_time_after = scenario.state.get("requested_time_after")
+        requested_time_after = (
+            raw_time_after.strip() if isinstance(raw_time_after, str) else ""
+        )
         if requested_time_after:
             slots = [
                 item
@@ -1128,19 +1170,33 @@ class TelegramBookingCoordinator:
         choices = scenario.state.get("choices")
         choices = choices if isinstance(choices, tuple) else ()
         page = min(int(scenario.state.get("page", 0)), max(0, (len(choices) - 1) // 8))
-        rows = [
-            [(str(choice["label"]), self._callback(scenario, action, index))]
+        visible = [
+            (str(choice.get("button_label", choice["label"])), self._callback(scenario, action, index))
             for index, choice in enumerate(choices)
             if page * 8 <= index < (page + 1) * 8
             if isinstance(choice, Mapping)
         ]
+        if action == "catalog_service" and visible and all(
+            len(label) <= 24 for label, _ in visible
+        ):
+            rows = [visible[index:index + 2] for index in range(0, len(visible), 2)]
+        else:
+            rows = [[item] for item in visible]
         navigation = []
         if page:
-            navigation.append(("← Назад", self._callback(scenario, "page", page - 1)))
+            navigation.append((
+                "← Предыдущие" if action.startswith("catalog_") else "← Назад",
+                self._callback(scenario, "page", page - 1),
+            ))
         if (page + 1) * 8 < len(choices):
-            navigation.append(("Далее →", self._callback(scenario, "page", page + 1)))
+            navigation.append((
+                "Ещё варианты →" if action.startswith("catalog_") else "Далее →",
+                self._callback(scenario, "page", page + 1),
+            ))
         if navigation:
             rows.append(navigation)
+        if action in {"catalog_service", "catalog_book"}:
+            rows.append([("← Категории", self._callback(scenario, "catalog_root", 0))])
         if action in {"service", "staff", "available_date", "slot"}:
             rows.append(
                 [("Выйти из оформления", self._callback(scenario, "cancel_draft", 0))]
@@ -1170,8 +1226,21 @@ class TelegramBookingCoordinator:
         if step == "catalog_service":
             page = int(scenario.state.get("page", 0))
             choices = scenario.state.get("choices", ())[page * 8:(page + 1) * 8]
-            text = str(scenario.state.get("category", "Услуги")) + "\n\n" + "\n".join(str(c["summary"]) for c in choices)
-            text += "\n\nЦена и длительность зависят от выбранного варианта и специалиста, если указан диапазон. Выберите услугу для подробностей."
+            pages = max(1, (len(scenario.state.get("choices", ())) + 7) // 8)
+            category = str(scenario.state.get("category", "Услуги"))
+            if scenario.state.get("catalog_family"):
+                text = (
+                    f"{category}\nВыберите длительность · "
+                    f"Страница {page + 1} из {pages}"
+                )
+            else:
+                text = category + "\n\n" + "\n".join(
+                    str(c["summary"]) for c in choices
+                )
+                text += (
+                    f"\n\nСтраница {page + 1} из {pages}. "
+                    "Выберите услугу для подробностей."
+                )
         elif step == "catalog_book":
             text = str(scenario.state.get("detail", ""))
         elif step == "slot":
@@ -1224,9 +1293,10 @@ class TelegramBookingCoordinator:
         if not service or not selected_date:
             return "Выберите время"
         day = datetime.fromisoformat(selected_date).strftime("%d.%m.%Y")
-        requested_time_after = str(
-            scenario.state.get("requested_time_after", "")
-        ).strip()
+        raw_time_after = scenario.state.get("requested_time_after")
+        requested_time_after = (
+            raw_time_after.strip() if isinstance(raw_time_after, str) else ""
+        )
         suffix = f" · после {requested_time_after}" if requested_time_after else ""
         return f"Выберите время\n{service}\n{day} · московское время{suffix}"
 
