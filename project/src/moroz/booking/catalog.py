@@ -94,6 +94,30 @@ class CatalogGrounding:
                 "Сейчас не могу надёжно подтвердить актуальную стоимость "
                 "или список специалистов. Пожалуйста, уточните у администратора."
             )
+        duration_family = _shared_duration_family(self.services)
+        if duration_family is not None and self.simple_kind in {"price", "duration"}:
+            label, core, extras = duration_family
+            lines = [f"{label}:"]
+            for service in core:
+                variant = service.variants[0]
+                price = _range_text(
+                    min(item.price_min for item in service.variants),
+                    max(item.price_max for item in service.variants),
+                    suffix="₽",
+                )
+                lines.append(f"{variant.duration_minutes} мин — {price}")
+            for service in extras:
+                variant = service.variants[0]
+                price = _range_text(
+                    min(item.price_min for item in service.variants),
+                    max(item.price_max for item in service.variants),
+                    suffix="₽",
+                )
+                lines.append(
+                    f"Отдельно есть комплекс «{service.service_name}» — "
+                    f"{price}, {variant.duration_minutes} мин."
+                )
+            return "\n".join(lines)
         if self.ambiguous:
             names = ", ".join(
                 f"«{service.service_name}»" for service in self.services
@@ -368,6 +392,24 @@ def match_catalog(records, text: str) -> CatalogGrounding:
 
     query_family = _query_walk_in_family(text)
     requested_minutes = _requested_minutes(text)
+    duration_family = tuple(
+        service
+        for service in grouped
+        if _duration_family_base(service.service_name) == normalized_query
+    )
+    if len(duration_family) > 1 and requested_minutes is None:
+        extras = tuple(
+            service
+            for service in grouped
+            if service not in duration_family
+            and normalized_query in _normalized_text(service.service_name)
+        )
+        return CatalogGrounding(
+            "fresh",
+            (*duration_family, *extras)[:_MAX_MATCHES],
+            kind,
+            False,
+        )
     phrase_matches = tuple(
         service for service in grouped
         if _meaningful_name_tokens(service.service_name, allow_short=True)
@@ -444,6 +486,9 @@ def match_catalog(records, text: str) -> CatalogGrounding:
         )
     )
     if not scored:
+        recommendations = _need_based_recommendations(grouped, normalized_query)
+        if recommendations:
+            return CatalogGrounding("fresh", recommendations, kind, False)
         return CatalogGrounding("fresh", (), kind, False)
     if kind is None:
         return CatalogGrounding(
@@ -457,6 +502,52 @@ def match_catalog(records, text: str) -> CatalogGrounding:
         service for score, service in scored if score == top_score
     )[:_MAX_MATCHES]
     return CatalogGrounding("fresh", top, kind, len(top) > 1)
+
+
+def _duration_family_base(service_name: str) -> str | None:
+    match = re.fullmatch(
+        r"(.+?)\s+\d+\s+мин(?:ута|уты|ут)?",
+        _normalized_text(service_name),
+    )
+    return match.group(1).strip() if match else None
+
+
+def _shared_duration_family(services):
+    core = tuple(service for service in services if _duration_family_base(service.service_name))
+    bases = {_duration_family_base(service.service_name) for service in core}
+    if len(core) < 2 or len(bases) != 1:
+        return None
+    base = next(iter(bases))
+    label = re.sub(
+        r"\s+\d+\s+мин(?:ута|уты|ут)?$",
+        "",
+        core[0].service_name,
+        flags=re.IGNORECASE,
+    ).strip()
+    extras = tuple(
+        service
+        for service in services
+        if service not in core and base in _normalized_text(service.service_name)
+    )
+    return label, core, extras
+
+
+def _need_based_recommendations(grouped, normalized_query: str):
+    wants_help = any(
+        token in normalized_query
+        for token in ("не знаю", "выбрать", "подобрать", "посовет")
+    )
+    if not wants_help or "расслаб" not in normalized_query:
+        return ()
+    selected = []
+    for service in grouped:
+        normalized_name = _normalized_text(service.service_name)
+        if (
+            _duration_family_base(service.service_name) == "водородотерапия"
+            or normalized_name in {"криокапсула", "общий массаж тела"}
+        ):
+            selected.append(service)
+    return tuple(selected[:4])
 
 
 def _group_records(records) -> tuple[CatalogService, ...]:

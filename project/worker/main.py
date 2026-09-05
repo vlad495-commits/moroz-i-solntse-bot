@@ -760,7 +760,7 @@ class MessageTaskHandler:
                 async def resolve_catalog(decision):
                     grounded = await self._catalog_repository.ground(
                         connection,
-                        decision.service or "",
+                        decision.service or persisted_text,
                         self._clock(),
                     )
                     simple_kind = (

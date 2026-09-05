@@ -81,11 +81,11 @@
 - Consumes: `CatalogGrounding.direct_reply`, свежие варианты одного семейства и consultation route.
 - Produces: один ответ со всеми основными тарифами семейства; для запроса «не знаю, что выбрать» — короткое потребностное уточнение или 2–3 варианта только из grounded catalog facts.
 
-- [ ] **Step 1: Write failing tests** for the exact audited phrases and ensure stale/missing catalog never exposes an old price.
-- [ ] **Step 2: Run RED** with `docker compose --env-file ../.env run --rm test pytest tests/unit/booking/test_catalog_matching.py tests/e2e/test_catalog_message_flow.py -q`.
-- [ ] **Step 3: Implement minimum grounding and prompt rules**: group same-family price variants, separate combo services, and instruct the assistant to answer need-first instead of requesting a known service name.
-- [ ] **Step 4: Run GREEN** and verify existing exact-price/99-minute protections remain green.
-- [ ] **Step 5: Update `changelog.md` and commit** as `feat: показывать варианты и цены без лишнего уточнения`.
+- [x] **Step 1: Write failing tests** for the exact audited phrases and ensure stale/missing catalog never exposes an old price.
+- [x] **Step 2: Run RED** with `docker compose --env-file ../.env run --rm test pytest tests/unit/booking/test_catalog_matching.py tests/e2e/test_catalog_message_flow.py -q`.
+- [x] **Step 3: Implement minimum grounding and prompt rules**: group same-family price variants, separate combo services, and instruct the assistant to answer need-first instead of requesting a known service name.
+- [x] **Step 4: Run GREEN** and verify existing exact-price/99-minute protections remain green.
+- [x] **Step 5: Update `changelog.md` and commit** as `feat: показывать варианты и цены без лишнего уточнения`.
 
 ### Task 5: Клиентские подписи и честные контакты
 

@@ -405,6 +405,43 @@ def test_direct_price_reply_is_concise_and_retains_missing_price_intent():
     assert missing.direct_reply == "Чтобы назвать цену, уточните услугу."
 
 
+def test_duration_family_price_question_returns_all_main_tariffs_at_once():
+    result = match_catalog(
+        (
+            record("30", "Водородотерапия 30 минут", price="1500", duration=30),
+            record("60", "Водородотерапия 60 минут", price="2400", duration=60),
+            record("90", "LED маска и Водородотерапия", price="3000", duration=60),
+        ),
+        "Сколько стоит водородотерапия?",
+    )
+
+    assert result.direct_reply == (
+        "Водородотерапия:\n"
+        "30 мин — 1 500 ₽\n"
+        "60 мин — 2 400 ₽\n"
+        "Отдельно есть комплекс «LED маска и Водородотерапия» — 3 000 ₽, 60 мин."
+    )
+
+
+def test_need_based_selection_grounds_only_current_catalog_options():
+    result = match_catalog(
+        (
+            record("30", "Водородотерапия 30 минут", price="1500", duration=30),
+            record("60", "Водородотерапия 60 минут", price="2400", duration=60),
+            record("70", "Криокапсула", price="2400", duration=15),
+            record("80", "Общий массаж тела", price="3000", duration=60),
+            record("90", "Солярий 10 минут", price="420", duration=10),
+        ),
+        "Я впервые, хочу расслабиться после работы и не знаю, что выбрать",
+    )
+
+    assert {service.service_id for service in result.services} == {
+        "30", "60", "70", "80",
+    }
+    assert "420 ₽" not in result.data_block()
+    assert result.direct_reply is None
+
+
 def test_catalog_data_labels_staff_neutrally_and_omits_missing_category():
     result = match_catalog(
         (
