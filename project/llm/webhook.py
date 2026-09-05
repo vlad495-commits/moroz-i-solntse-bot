@@ -38,6 +38,8 @@ from config import (
     TELEGRAM_WEBHOOK_SECRET,
 )
 from moroz.common.db import Database
+from moroz.booking.repository import BookingRepository
+from moroz.messaging.booking_stop import register_stop
 from moroz.messaging.buffer import MessageBuffer
 from moroz.messaging.ingress import decide_ingress
 from moroz.messaging.models import IncomingMessage
@@ -46,7 +48,7 @@ from moroz.messaging.service import MessageService
 from moroz.messaging.telegram import deliver_claimed_outbound, main_menu_options
 from moroz.privacy import deletion_marker_key
 from moroz.privacy import customer_lock_subject
-from moroz.reactivation.policy import is_stop_request
+from moroz.reactivation.policy import is_stop_request, is_draft_stop_request
 from moroz.reactivation.repository import ReactivationRepository
 from moroz.security.consent import (
     PROCESSING_CONSENT_VERSION,
@@ -729,12 +731,26 @@ def create_app(
                         source_event_id=str(update.update_id),
                         occurred_at=message.date,
                     )
-            await send_static_reply(
-                update_id=update.update_id,
-                chat_id=message.chat.id,
-                text=MARKETING_DISABLED_REPLY,
-                reply_kind="marketing_disabled",
-            )
+                    reply = MARKETING_DISABLED_REPLY
+                    if is_draft_stop_request(message.text):
+                        first_stop = await register_stop(
+                            connection, chat_id=str(message.chat.id),
+                            update_id=str(update.update_id), occurred_at=message.date,
+                        )
+                        if first_stop:
+                            closed, executing = await BookingRepository(webhook_app.state.database).stop_customer_drafts(
+                                connection, str(message.chat.id),
+                                update_id=str(update.update_id), occurred_at=message.date,
+                            )
+                            reply += (" Незавершённый черновик закрыт." if closed else " Сейчас нет незавершённого черновика для закрытия.")
+                            if executing:
+                                reply += " Запись уже обрабатывается; дождитесь результата — команда «Стоп» её не отменяет."
+                            reply += " Созданные записи сохраняются."
+                    outbound_id = await webhook_app.state.message_repository.enqueue_outbound_in_transaction(
+                        connection, channel="telegram", chat_id=str(message.chat.id),
+                        text=reply, idempotency_key=f"telegram:marketing_disabled:{update.update_id}",
+                    )
+            await deliver_static_reply(outbound_id)
             return Response(status_code=200)
         if await is_bot_paused():
             await send_static_reply(
@@ -771,7 +787,7 @@ def create_app(
                     chat_id=str(message.chat.id),
                     user_id=user_id,
                     text="",
-                    received_at=received_at,
+                    received_at=message.date,
                     correlation_id=uuid4(),
                     kind="contact",
                     data={

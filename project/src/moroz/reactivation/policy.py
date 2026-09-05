@@ -183,10 +183,18 @@ def next_send_at(now: datetime) -> datetime:
 
 
 def is_stop_request(text: str) -> bool:
+    return _normalize_stop_command(text) in _STOP_PHRASES
+
+
+def is_draft_stop_request(text: str) -> bool:
+    return _normalize_stop_command(text) in {"стоп", "stop"}
+
+
+def _normalize_stop_command(text: str) -> str:
     normalized = re.sub(r"\s+", " ", normalize("NFKC", text).lower()).strip()
     while normalized and category(normalized[-1]).startswith("P"):
         normalized = normalized[:-1].rstrip()
-    return normalized in _STOP_PHRASES
+    return normalized
 
 
 def _activity_anchor(value: EligibilityInput) -> datetime | None:

@@ -8,6 +8,7 @@ import asyncpg
 from moroz.booking.models import BookingEvent, BookingScenario, ExternalBooking
 from moroz.common.db import Database
 from moroz.notifications.planner import plan_booking_notifications
+from moroz.messaging.booking_stop import before_stop
 
 
 def _thaw_json(value: object) -> object:
@@ -30,6 +31,44 @@ class BookingRepository:
     def __init__(self, database: Database, *, schedule_notifications: bool = True):
         self._database = database
         self._schedule_notifications = schedule_notifications
+
+    async def stop_customer_drafts(self, connection, customer_id: str, *, update_id: str, occurred_at) -> tuple[int, bool]:
+        """Customer lock first, then the same scenario lock used by execution."""
+        rows = await connection.fetch(
+            "SELECT id FROM booking_scenarios WHERE customer_id=$1 "
+            "AND phase IN ('collecting','awaiting_confirmation','executing') ORDER BY id",
+            customer_id,
+        )
+        closed = 0
+        executing = False
+        stop = {"external_message_id": update_id, "payload": {"received_at": occurred_at.isoformat()}}
+        for row in rows:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                f"booking:scenario:{row['id']}",
+            )
+            scenario = await connection.fetchrow("SELECT * FROM booking_scenarios WHERE id=$1 FOR UPDATE", row["id"])
+            if scenario["phase"] == "executing":
+                executing = True
+                continue
+            if scenario["phase"] not in {"collecting", "awaiting_confirmation"}:
+                continue
+            state = _load_json(scenario["state"])
+            origin = state.get("origin_update_id")
+            if origin:
+                payload = await connection.fetchval(
+                    "SELECT payload FROM message_inbox WHERE channel='telegram' AND chat_id=$1 AND external_message_id=$2",
+                    customer_id, origin,
+                )
+                if payload and not before_stop(origin, _load_json(payload), stop):
+                    continue
+            await connection.execute(
+                "UPDATE booking_scenarios SET phase='failed', error_code='user_stop', updated_at=clock_timestamp() WHERE id=$1",
+                scenario["id"],
+            )
+            await self._insert_event(connection, scenario["id"], "booking_flow_stopped", {"source_update_id": update_id})
+            closed += 1
+        return closed, executing
 
     @asynccontextmanager
     async def serialized_scenario(

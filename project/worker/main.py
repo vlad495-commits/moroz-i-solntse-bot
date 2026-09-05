@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import signal
+from itertools import groupby
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -50,7 +51,8 @@ from moroz.common.config import database_url_from_env
 from moroz.common.db import Database
 from moroz.common.queue import MAX_RETRIES, QueueTask, RabbitQueue
 from moroz.messaging.buffer import BUFFER_TTL_SECONDS, MessageBuffer
-from moroz.messaging.outbox import OutboxRelay, process_message_key
+from moroz.messaging.outbox import OutboxRelay, process_message_key, enqueue_process_message_in_transaction
+from moroz.messaging.booking_stop import STOPPED_ACTION_REPLY, before_stop, stop_markers
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.router import route_message
 from moroz.messaging.telegram import TelegramSender, main_menu_options
@@ -594,6 +596,29 @@ class MessageTaskHandler:
                     None,
                 )
                 accepted_ids = [row["external_message_id"] for row in accepted]
+                stops = await stop_markers(connection, chat_id)
+                callback_origin = None
+                if stops and interaction_kind == "callback" and self._booking_coordinator is not None:
+                    callback_origin = await self._booking_coordinator.callback_origin(
+                        connection, chat_id, interaction_data.get("callback_data"),
+                    )
+                stopped = [
+                    any(
+                        before_stop(row["external_message_id"], payload, stop)
+                        and not (callback_origin and not before_stop(callback_origin["update_id"], callback_origin, stop))
+                        for stop in stops
+                    )
+                    for row, payload in zip(accepted, payloads)
+                ]
+                if len(set(stopped)) > 1:
+                    # Keep old and new turns separate even when Redis buffered across STOP.
+                    # Existing outbox keys make splitting atomic and replay-safe.
+                    for _, group in groupby(zip(accepted_ids, stopped), key=lambda item: item[1]):
+                        await enqueue_process_message_in_transaction(
+                            connection, update_ids=tuple(item[0] for item in group),
+                        )
+                    return
+                booking_stopped = stopped[0]
 
                 human_mode = await connection.fetchval(
                     "SELECT enabled FROM human_mode WHERE customer_id = $1",
@@ -628,7 +653,7 @@ class MessageTaskHandler:
                     if menu_index == len(payloads) - 1:
                         persisted_text = str(menu_command)
                     else:
-                        if self._booking_coordinator is not None:
+                        if self._booking_coordinator is not None and not booking_stopped:
                             await self._booking_coordinator.handle(
                                 connection,
                                 customer_id=chat_id,
@@ -644,7 +669,13 @@ class MessageTaskHandler:
 
                 booking_reply = None
                 booking_route = route_message(persisted_text).route
-                if self._booking_coordinator is not None:
+                if booking_stopped and (
+                    interaction_kind == "contact"
+                    or (interaction_kind == "callback" and str(interaction_data.get("callback_data", "")).startswith("booking:"))
+                    or (interaction_kind == "text" and persistent_menu_command(persisted_text) in {"📅 Записаться", "✨ Услуги и цены"})
+                ):
+                    booking_reply = BookingReply(STOPPED_ACTION_REPLY, main_menu_options())
+                elif self._booking_coordinator is not None and not booking_stopped:
                     booking_reply = await self._booking_coordinator.handle(
                         connection,
                         customer_id=chat_id,
@@ -654,7 +685,7 @@ class MessageTaskHandler:
                         kind=interaction_kind,
                         data=interaction_data,
                     )
-                elif booking_route in {"booking", "booking_management"}:
+                elif self._booking_coordinator is None and booking_route in {"booking", "booking_management"}:
                     booking_reply = BookingReply(
                         "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору.",
                         {},
@@ -755,12 +786,15 @@ class MessageTaskHandler:
                 if self._catalog_repository is not None:
                     llm_options["catalog"] = resolve_catalog
                 if self._booking_coordinator is not None:
-                    llm_options["booking_context"] = await self._booking_coordinator.routing_context(chat_id)
+                    llm_options["booking_context"] = {} if booking_stopped else await self._booking_coordinator.routing_context(chat_id)
 
                 async def dispatch(decision):
                     nonlocal booking_reply
                     if decision.route not in {"booking", "booking_management"}:
                         return None
+                    if booking_stopped:
+                        booking_reply = BookingReply(STOPPED_ACTION_REPLY, main_menu_options())
+                        return booking_reply.text
                     if self._booking_coordinator is None:
                         return "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору."
                     booking_reply = await self._booking_coordinator.handle(

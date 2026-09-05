@@ -88,6 +88,33 @@ class TelegramBookingCoordinator:
         self._port = port
         self._now = now
 
+    async def callback_origin(self, connection, customer_id: str, raw_callback: object):
+        """A current button on a new draft proves it was issued after its origin.
+
+        This is the timestamp substitute for Telegram callbacks after an ID reset.
+        """
+        parsed = self._parse_callback(raw_callback)
+        if parsed is None:
+            return None
+        row = await connection.fetchrow(
+            "SELECT * FROM booking_scenarios WHERE id=$1 AND customer_id=$2 "
+            "AND phase IN ('collecting','awaiting_confirmation')",
+            parsed[0], customer_id,
+        )
+        if row is None:
+            return None
+        scenario = self._repository._scenario_from_row(row)
+        if parsed[3] != self._callback_revision(scenario):
+            return None
+        origin = scenario.state.get("origin_update_id")
+        if not origin:
+            return None
+        payload = await connection.fetchval(
+            "SELECT payload FROM message_inbox WHERE channel='telegram' AND chat_id=$1 AND external_message_id=$2",
+            customer_id, origin,
+        )
+        return json.loads(payload) if isinstance(payload, str) else payload
+
     async def handle(
         self,
         connection: asyncpg.Connection,
@@ -315,6 +342,7 @@ class TelegramBookingCoordinator:
             state={
                 "step": "booking_management",
                 "management_operation": operation,
+                "origin_update_id": update_id,
                 "source": "telegram",
                 "choices": choices,
             },
@@ -362,6 +390,7 @@ class TelegramBookingCoordinator:
             customer_id=customer_id,
             state={
                 "step": "service",
+                "origin_update_id": update_id,
                 "source": "telegram",
                 "choices": choices,
                 "requested_date": decision.date if decision is not None else None,
@@ -391,7 +420,7 @@ class TelegramBookingCoordinator:
         categories = sorted({service.category_name or "Другие услуги" for service in services})
         scenario = BookingScenario(
             uuid4(), "create", "collecting", f"telegram:catalog:{update_id}", customer_id,
-            {"source": "telegram", "step": "catalog_category", "choices": [
+            {"source": "telegram", "origin_update_id": update_id, "step": "catalog_category", "choices": [
                 {"label": category, "category": category} for category in categories]},
             None, self._now(), self._now(),
         )
@@ -708,6 +737,7 @@ class TelegramBookingCoordinator:
         await self._repository.checkpoint(closed, "booking_management_completed")
         base_state = {
             "source": "telegram",
+            "origin_update_id": management.state.get("origin_update_id"),
             "external_id": str(selected["external_id"]),
             "booking_key": str(selected["booking_key"]),
             "starts_at": str(selected["starts_at"]),
