@@ -47,11 +47,11 @@
 - Consumes: raw Telegram text and stored `available_slots`.
 - Produces: scenario field `requested_time_after` (`HH:MM`), filtered slot choices, header suffix `после HH:MM`, explicit no-slot reply with buttons to show all times or return to date selection.
 
-- [ ] **Step 1: Write failing tests** for `после 18:00`, repeated `только после 18`, persistence across service/date selection, and absence of unsuitable slot buttons.
-- [ ] **Step 2: Run RED** with `docker compose --env-file ../.env run --rm test pytest tests/e2e/booking/test_semantic_booking.py -q`.
-- [ ] **Step 3: Implement minimal parser and filter** in the coordinator using stdlib `re`/`datetime`; retain all YCLIENTS slots in state so a later change of the limit can refilter without a provider mutation.
-- [ ] **Step 4: Run GREEN** and confirm the targeted file passes.
-- [ ] **Step 5: Update `changelog.md` and commit** as `fix: учитывать желаемое время в Telegram-записи`.
+- [x] **Step 1: Write failing tests** for `после 18:00`, repeated `только после 18`, persistence across service/date selection, and absence of unsuitable slot buttons.
+- [x] **Step 2: Run RED** with `docker compose --env-file ../.env run --rm test pytest tests/e2e/booking/test_semantic_booking.py -q`.
+- [x] **Step 3: Implement minimal parser and filter** in the coordinator using stdlib `re`/`datetime`; retain all YCLIENTS slots in state so a later change of the limit can refilter without a provider mutation.
+- [x] **Step 4: Run GREEN** and confirm the targeted file passes.
+- [x] **Step 5: Update `changelog.md` and commit** as `fix: учитывать желаемое время в Telegram-записи`.
 
 ### Task 3: Компактный каталог и явная навигация
 

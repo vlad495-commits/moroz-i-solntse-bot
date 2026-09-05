@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 import json
 import hashlib
+import re
 
 import asyncpg
 
@@ -41,8 +42,9 @@ _WALK_IN_LABELS = {
     "collarium": "Коллариум",
     "solarium": "Солярий",
 }
-_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft")
+_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft", "clear_time_after")
 _DRAFT_CANCEL_COMMANDS = frozenset({"отменить действие", "выйти из оформления"})
+_TIME_AFTER = re.compile(r"(?:после|не раньше)\s*(\d{1,2})(?:[:.](\d{2}))?", re.IGNORECASE)
 
 
 def persistent_menu_command(text: str) -> str | None:
@@ -140,8 +142,24 @@ class TelegramBookingCoordinator:
 
         scenario = await self._repository.get_active_for_customer(customer_id)
         menu_command = persistent_menu_command(text) if kind == "text" else None
+        requested_time_after = self._requested_time_after(text) if kind == "text" else None
         if kind == "text" and text.strip().casefold() in _DRAFT_CANCEL_COMMANDS:
             return await self._cancel_draft(scenario)
+        if (
+            requested_time_after is not None
+            and scenario is not None
+            and scenario.phase == "collecting"
+            and not str(scenario.state.get("step", "")).startswith("catalog_")
+        ):
+            state = self._state(scenario)
+            state["requested_time_after"] = requested_time_after
+            scenario = await self._checkpoint(
+                scenario, state, "booking_time_limit_requested"
+            )
+            if state.get("step") == "slot" and state.get("selected_date"):
+                return await self._choose_date(
+                    scenario, {"date": state["selected_date"]}
+                )
         if (
             scenario is not None
             and scenario.phase in {"collecting", "awaiting_confirmation"}
@@ -226,13 +244,31 @@ class TelegramBookingCoordinator:
                 return BookingReply(CLARIFY_REPLY, {})
             if scenario is not None:
                 await self._repository.checkpoint(replace(scenario, phase='failed', updated_at=self._now()), 'booking_flow_switched')
-            return await self._start(connection, customer_id, update_id, decision=decision, origin_update_id=origin_update_id)
+            return await self._start(
+                connection,
+                customer_id,
+                update_id,
+                decision=decision,
+                origin_update_id=origin_update_id,
+                requested_time_after=requested_time_after,
+            )
         if step not in {'service', 'staff', 'available_date', 'slot', 'contact', 'name', 'confirm', 'confirm_change', 'booking_management', 'booking_action'}:
             return BookingReply(CLARIFY_REPLY, {})
         if decision.service and decision.action == 'create':
             decision = replace(decision, date=decision.date or scenario.state.get('requested_date'))
             await self._repository.checkpoint(replace(scenario, phase='failed', updated_at=self._now()), 'booking_flow_switched')
-            return await self._start(connection, customer_id, update_id, decision=decision, origin_update_id=origin_update_id)
+            return await self._start(
+                connection,
+                customer_id,
+                update_id,
+                decision=decision,
+                origin_update_id=origin_update_id,
+                requested_time_after=(
+                    requested_time_after
+                    or str(scenario.state.get("requested_time_after", ""))
+                    or None
+                ),
+            )
         if decision.service and step != 'service':
             selected_service = str(scenario.state.get('service_name', '')).casefold().replace('ё', 'е')
             if decision.service.casefold().replace('ё', 'е').strip() != selected_service:
@@ -377,6 +413,7 @@ class TelegramBookingCoordinator:
         update_id: str,
         *, decision: RouteDecision | None = None,
         origin_update_id: str | None = None,
+        requested_time_after: str | None = None,
     ) -> BookingReply:
         services = await self._catalog.list_services(connection, self._now())
         if not services:
@@ -401,6 +438,7 @@ class TelegramBookingCoordinator:
                 "source": "telegram",
                 "choices": choices,
                 "requested_date": decision.date if decision is not None else None,
+                "requested_time_after": requested_time_after,
             },
             error_code=None,
             created_at=self._now(),
@@ -619,6 +657,16 @@ class TelegramBookingCoordinator:
             )
         if action == "cancel_draft" and scenario.phase == "collecting":
             return await self._cancel_draft(scenario)
+        if action == "clear_time_after" and scenario.phase == "collecting":
+            state = self._state(scenario)
+            state.pop("requested_time_after", None)
+            current = await self._checkpoint(
+                scenario, state, "booking_time_limit_cleared"
+            )
+            selected_date = current.state.get("selected_date")
+            if selected_date:
+                return await self._choose_date(current, {"date": selected_date})
+            return await self._refresh_current(connection, current)
         if action == "page" and scenario.phase == "collecting":
             choices = scenario.state.get("choices", ())
             if not 0 <= index <= (len(choices) - 1) // 8:
@@ -666,24 +714,9 @@ class TelegramBookingCoordinator:
                     "Эта кнопка меню уже неактуальна. Откройте «✨ Услуги и цены».",
                     main_menu_options(),
                 )
-        return await self._recover_callback(
-            connection, customer_id, update_id
-        )
-
-    async def _cancel_draft(self, scenario: BookingScenario | None) -> BookingReply:
-        if scenario is None:
-            return BookingReply("Сейчас нет незавершённого оформления.", main_menu_options())
-        cancelled = replace(
-            scenario,
-            phase="failed",
-            error_code="user_cancelled",
-            updated_at=self._now(),
-        )
-        await self._repository.checkpoint(cancelled, "booking_flow_cancelled")
-        return BookingReply(
-            "Оформление остановлено. Новая запись не создана.",
-            main_menu_options(),
-        )
+            return await self._recover_callback(
+                connection, customer_id, update_id
+            )
         choices = scenario.state.get("choices")
         if not isinstance(choices, tuple) or not 0 <= index < len(choices):
             return await self._recover_callback(
@@ -709,6 +742,32 @@ class TelegramBookingCoordinator:
         if action == "booking_action":
             return await self._begin_change(scenario, choice)
         return await self._recover_callback(connection, customer_id, update_id)
+
+    async def _cancel_draft(self, scenario: BookingScenario | None) -> BookingReply:
+        if scenario is None:
+            return BookingReply("Сейчас нет незавершённого оформления.", main_menu_options())
+        cancelled = replace(
+            scenario,
+            phase="failed",
+            error_code="user_cancelled",
+            updated_at=self._now(),
+        )
+        await self._repository.checkpoint(cancelled, "booking_flow_cancelled")
+        return BookingReply(
+            "Оформление остановлено. Новая запись не создана.",
+            main_menu_options(),
+        )
+
+    @staticmethod
+    def _requested_time_after(text: str) -> str | None:
+        match = _TIME_AFTER.search(text)
+        if match is None:
+            return None
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        if hour > 23 or minute > 59:
+            return None
+        return f"{hour:02}:{minute:02}"
 
     async def _recover_callback(
         self,
@@ -917,11 +976,33 @@ class TelegramBookingCoordinator:
             if isinstance(item, Mapping)
             and str(item.get("starts_at", ""))[:10] == selected_date
         ]
+        requested_time_after = str(
+            scenario.state.get("requested_time_after", "")
+        ).strip()
+        if requested_time_after:
+            slots = [
+                item
+                for item in slots
+                if datetime.fromisoformat(str(item["starts_at"])).astimezone(MOSCOW).strftime("%H:%M")
+                >= requested_time_after
+            ]
         state = self._state(scenario)
         state.update(
             {"step": "slot", "selected_date": selected_date, "choices": slots}
         )
         updated = await self._checkpoint(scenario, state, "booking_date_selected")
+        if requested_time_after and not slots:
+            day = datetime.fromisoformat(selected_date).strftime("%d.%m.%Y")
+            return BookingReply(
+                f"После {requested_time_after} на {day} свободного времени нет. "
+                "Можно посмотреть все часы или назвать другую дату.",
+                self._inline_options(
+                    [
+                        [("Показать всё время", self._callback(updated, "clear_time_after", 0))],
+                        [("Выйти из оформления", self._callback(updated, "cancel_draft", 0))],
+                    ]
+                ),
+            )
         return self._choice_reply(updated, self._slot_header(updated), "slot")
 
     async def _choose_slot(
@@ -1143,7 +1224,11 @@ class TelegramBookingCoordinator:
         if not service or not selected_date:
             return "Выберите время"
         day = datetime.fromisoformat(selected_date).strftime("%d.%m.%Y")
-        return f"Выберите время\n{service}\n{day} · московское время"
+        requested_time_after = str(
+            scenario.state.get("requested_time_after", "")
+        ).strip()
+        suffix = f" · после {requested_time_after}" if requested_time_after else ""
+        return f"Выберите время\n{service}\n{day} · московское время{suffix}"
 
     @staticmethod
     def _service_choice(service: CatalogService) -> dict[str, object]:
@@ -1202,7 +1287,7 @@ class TelegramBookingCoordinator:
     @classmethod
     def _callback_revision(cls, scenario: BookingScenario) -> str:
         state = cls._state(scenario)
-        view = {key: state.get(key) for key in ("step", "choices", "selected_slot_id", "new_starts_at", "selected_booking", "requested_date", "selected_date")}
+        view = {key: state.get(key) for key in ("step", "choices", "selected_slot_id", "new_starts_at", "selected_booking", "requested_date", "selected_date", "requested_time_after")}
         return hashlib.sha256(json.dumps(view, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
 
     @classmethod

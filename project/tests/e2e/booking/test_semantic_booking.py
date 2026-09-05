@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import datetime
 import json
 
 import pytest
@@ -16,7 +17,7 @@ from moroz.messaging.outbox import process_message_key
 from moroz.common.queue import QueueTask
 from moroz.booking.yclients_catalog import CatalogRecord
 from moroz.booking.catalog import CatalogRepository
-from moroz.booking.models import BookingScenario
+from moroz.booking.models import BookingScenario, Slot
 from uuid import uuid4
 from worker.main import MessageTaskHandler
 
@@ -479,6 +480,55 @@ async def test_slots_after_first_page_remain_selectable(migrated_database_url):
             data={'callback_data': next_page}, update_id='page', text='')
         assert second.text == 'Выберите время\nМассаж спины\n07.09.2026 · московское время'
         assert '19:00' in _button_labels(second)
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_requested_time_after_filters_slots_and_survives_followup(
+    migrated_database_url,
+):
+    database, bookings, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    adapter._slots = {
+        slot.id: slot
+        for slot in (
+            Slot("afternoon", ("331",), "10", datetime.fromisoformat("2026-09-05T17:00:00+03:00"), 60),
+            Slot("evening", ("331",), "10", datetime.fromisoformat("2026-09-05T19:00:00+03:00"), 60),
+        )
+    }
+    base = dict(customer_id="42", user_id="7", kind="text", data={})
+    try:
+        reply = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="after-start",
+            text="Покажи время на криокапсулу 5 сентября после 18:00",
+            decision=RouteDecision(
+                "booking", .99, "create", "Криокапсула", "2026-09-05"
+            ),
+        )
+        assert "после 18:00" in reply.text
+        assert "19:00" in _button_labels(reply)
+        assert "17:00" not in _button_labels(reply)
+        assert (await bookings.get_active_for_customer("42")).state[
+            "requested_time_after"
+        ] == "18:00"
+
+        no_match = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="after-followup",
+            text="Мне нужно только после 20",
+            decision=RouteDecision("booking", .99, "continue"),
+        )
+        assert no_match.text.startswith("После 20:00 на 05.09.2026 свободного времени нет.")
+        assert "Показать всё время" in _button_labels(no_match)
+        assert "17:00" not in _button_labels(no_match)
+        assert "19:00" not in _button_labels(no_match)
         assert adapter.create_calls == 0
     finally:
         await database.close()
