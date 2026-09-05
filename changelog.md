@@ -1,5 +1,7 @@
 # Changelog
 
+[2026-09-05 08:20] Владелец разрешил синхронизацию локального main/GitHub/staging и отложил нюанс99мин. Preflight: checkout чист, origin/main=localmain=a92aee0, текущая ветка впереди на25коммитов без расхождений; serverHEADbc800553 чист, GitHub доступен с сервера. project/ у проверенного runtime и текущегоHEAD идентичен. Запущен свежий Docker unit gate; Ruff/Compose clean. Выбран безопасный fast-forward без force/reset и без удаления остальных веток; staging checkout перейдёт на main, immutable runtime не требует перезапуска при идентичном дереве project/.
+
 [2026-09-05 08:16] Повторный post-QA server gate: exactbc800553, bot:paused=0,8/8healthy; с05:04UTC ERROR/CRITICAL/Exception/Traceback markers в bot/worker/scheduler/admin по0. Документный итог фиксируется локально отдельным commit без изменения staging runtime/GitHub/main.
 
 [2026-09-05 08:15] Живая targeted QA stagingbc800553 завершена: цены/две услуги/точная длительность/категории/депозит, массаж07→08сентября, stale callback, консультация→возврат и просмотр записей вместо создания подтверждены. Админка отражает новые сообщения, screenshot показывает правильный порядок; bot-control «Работает». Реальные записи/marketing consent не менялись. Найден некритичный generic clarification на «А99минут?» без выдуманной цены — отдельная roadmap задача. Обновлены roadmap, ledger плана и tmp/manual-test-20260905-0804/Отчет по тестированию бота.md; полный production acceptance не заявлен.
