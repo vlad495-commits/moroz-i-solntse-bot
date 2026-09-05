@@ -128,8 +128,8 @@
 
 ### Task 7: Staging rollout и ручная приёмка
 
-- [ ] **Step 1: Выполнить server preflight и создать code/env/database/image rollback-артефакты.**
-- [ ] **Step 2: Передать точный commit на staging без GitHub push, собрать immutable RC и применить server-only короткий `START_REPLY`.**
-- [ ] **Step 3: Проверить migration current/heads, 8/8 health, HTTPS, webhook, scheduler/catalog и safe logs.**
-- [ ] **Step 4: Проверить исправленные ответы через локальный Telegram Web без создания реальной записи.**
-- [ ] **Step 5: Обновить roadmap, changelog и ручной QA-отчёт точным runtime evidence.**
+- [x] **Step 1: Выполнить server preflight и создать code/env/database/image rollback-артефакты.**
+- [x] **Step 2: Передать точный commit на staging без GitHub push, собрать immutable RC и применить server-only короткий `START_REPLY`.**
+- [x] **Step 3: Проверить migration current/heads, 8/8 health, HTTPS, webhook, scheduler/catalog и safe logs.**
+- [x] **Step 4: Проверить исправленные ответы через локальный Telegram Web без создания реальной записи.**
+- [x] **Step 5: Обновить roadmap, changelog и ручной QA-отчёт точным runtime evidence.**
