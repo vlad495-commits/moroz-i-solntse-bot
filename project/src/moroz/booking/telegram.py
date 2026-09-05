@@ -48,7 +48,7 @@ _WALK_IN_LABELS = {
     "collarium": "Коллариум",
     "solarium": "Солярий",
 }
-_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft", "clear_time_after", "catalog_root", "choose_date", "catalog_back")
+_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft", "clear_time_after", "catalog_root", "choose_date", "catalog_back", "booking_back")
 _DRAFT_CANCEL_COMMANDS = frozenset({"отменить действие", "выйти из оформления"})
 _TIME_AFTER = re.compile(r"(?:после|не раньше)\s*(\d{1,2})(?:[:.](\d{2}))?", re.IGNORECASE)
 
@@ -348,6 +348,7 @@ class TelegramBookingCoordinator:
                           (selected.get('service_id'), selected.get('walk_in'))), None)
             if index is None:
                 return BookingReply('Этой услуги больше нет в актуальном каталоге. Откройте список кнопкой «📅 Записаться».', main_menu_options())
+            scenario = self._remember_booking_step(scenario)
             state = self._state(scenario)
             state['choices'] = fresh_choices
             if decision.date:
@@ -355,6 +356,8 @@ class TelegramBookingCoordinator:
             scenario = replace(scenario, state=state)
             return await self._choose_service(scenario, scenario.state['choices'][index])
         if decision.date:
+            if scenario.state.get("step") in {"service", "staff", "available_date", "slot"}:
+                scenario = self._remember_booking_step(scenario)
             state = self._state(scenario)
             state["requested_date"] = decision.date
             if requested_time_after is not None:
@@ -767,6 +770,17 @@ class TelegramBookingCoordinator:
             )
         if action == "cancel_draft" and scenario.phase == "collecting":
             return await self._cancel_draft(scenario)
+        if action == "booking_back" and index == 0 and scenario.phase in {"collecting", "awaiting_confirmation"}:
+            history = scenario.state.get("booking_history", ())
+            if not history or str(scenario.state.get("step", "")).startswith("catalog_"):
+                return await self._refresh_current(connection, scenario)
+            state = self._state_item(history[-1])
+            state["booking_history"] = list(history[:-1])
+            if state.get("step") == "service":
+                services = await self._catalog.list_services(connection, self._now())
+                state["choices"] = self._service_choices(services)
+            current = await self._checkpoint(replace(scenario, phase="collecting"), state, "booking_step_back")
+            return await self._refresh_current(connection, current)
         if action == "clear_time_after" and scenario.phase == "collecting":
             state = self._state(scenario)
             state.pop("requested_time_after", None)
@@ -867,6 +881,8 @@ class TelegramBookingCoordinator:
             )
         if action in {"catalog_category", "catalog_service", "catalog_book"}:
             return await self._catalog_choice(connection, self._remember_catalog_callback(scenario, raw_callback, update_id), action, choice)
+        if action in {"service", "staff", "available_date", "slot"}:
+            scenario = self._remember_booking_step(scenario)
         if action == "service":
             return await self._choose_service(scenario, choice)
         if action == "staff":
@@ -885,6 +901,12 @@ class TelegramBookingCoordinator:
         # Persist together with the resulting view, so an inbox retry can recover it.
         state = self._state(scenario)
         state.update(last_catalog_callback=raw_callback, last_catalog_update_id=update_id)
+        return replace(scenario, state=state)
+
+    def _remember_booking_step(self, scenario):
+        state = self._state(scenario)
+        previous = {key: value for key, value in state.items() if key not in {"booking_history", "view_revision"}}
+        state["booking_history"] = [*state.get("booking_history", ()), previous][-12:]
         return replace(scenario, state=state)
 
     async def _cancel_draft(self, scenario: BookingScenario | None) -> BookingReply:
@@ -990,7 +1012,7 @@ class TelegramBookingCoordinator:
             await self._repository.create_scenario(scenario)
             return BookingReply(
                 f"Отменить запись на {format_booking_time(str(selected['starts_at']))}?",
-                self._inline_options(
+                self._booking_options(scenario,
                     [[("Да, отменить", self._callback(scenario, "confirm_change", 0))]]
                 ),
             )
@@ -1148,7 +1170,7 @@ class TelegramBookingCoordinator:
             return BookingReply(
                 f"После {requested_time_after} на {day} свободного времени нет. "
                 "Можно посмотреть все часы или назвать другую дату.",
-                self._inline_options(
+                self._booking_options(updated,
                     [
                         [("Показать всё время", self._callback(updated, "clear_time_after", 0))],
                         [("Выбрать другую дату", self._callback(updated, "choose_date", 0))],
@@ -1177,7 +1199,7 @@ class TelegramBookingCoordinator:
             await self._repository.checkpoint(updated, "booking_reschedule_collected")
             return BookingReply(
                 f"Перенести запись на {format_booking_time(str(choice['starts_at']))}?",
-                self._inline_options(
+                self._booking_options(updated,
                     [[("Да, перенести", self._callback(updated, "confirm_change", 0))]]
                 ),
             )
@@ -1260,7 +1282,7 @@ class TelegramBookingCoordinator:
         )
         return BookingReply(
             text,
-            self._inline_options(
+            self._booking_options(updated,
                 [[("Подтвердить", self._callback(updated, "confirm", 0))]]
             ),
         )
@@ -1269,6 +1291,8 @@ class TelegramBookingCoordinator:
         self, scenario: BookingScenario, state: Mapping[str, object], event: str
     ) -> BookingScenario:
         state = dict(state)
+        if event != "booking_confirmation_received" and state.get("step") in {"service", "staff", "available_date", "slot", "contact", "name", "confirm", "confirm_change"}:
+            state["view_revision"] = int(scenario.state.get("view_revision", 0)) + 1
         if state.get("step") != scenario.state.get("step"):
             state["page"] = 0
         updated = replace(scenario, state=state, updated_at=self._now())
@@ -1316,7 +1340,14 @@ class TelegramBookingCoordinator:
             rows.append(
                 [("Выйти из оформления", self._callback(scenario, "cancel_draft", 0))]
             )
-        return BookingReply(text, self._inline_options(rows))
+        options = self._booking_options(scenario, rows) if action in {"service", "staff", "available_date", "slot"} else self._inline_options(rows)
+        return BookingReply(text, options)
+
+    def _booking_options(self, scenario, rows):
+        rows = list(rows)
+        if scenario.state.get("booking_history"):
+            rows.append([("Назад", self._callback(scenario, "booking_back", 0))])
+        return {**self._inline_options(rows), "booking_card": str(scenario.id)}
 
     def _choice_options(self, scenario: BookingScenario, action: str):
         return self._choice_reply(scenario, "", action).delivery_options
@@ -1360,7 +1391,7 @@ class TelegramBookingCoordinator:
         if step == "confirm":
             return BookingReply(
                 text,
-                self._inline_options(
+                self._booking_options(scenario,
                     [[("Подтвердить", self._callback(scenario, "confirm", 0))]]
                 ),
             )
@@ -1379,7 +1410,7 @@ class TelegramBookingCoordinator:
                 return BookingReply(STALE_REPLY, {})
             return BookingReply(
                 text,
-                self._inline_options(
+                self._booking_options(scenario,
                     [[(label, self._callback(scenario, "confirm_change", 0))]]
                 ),
             )
@@ -1458,6 +1489,8 @@ class TelegramBookingCoordinator:
     def _callback_revision(cls, scenario: BookingScenario) -> str:
         state = cls._state(scenario)
         view = {key: state.get(key) for key in ("step", "choices", "selected_slot_id", "new_starts_at", "selected_booking", "requested_date", "selected_date", "requested_time_after")}
+        if "view_revision" in state:
+            view["view_revision"] = state["view_revision"]
         return hashlib.sha256(json.dumps(view, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
 
     @classmethod

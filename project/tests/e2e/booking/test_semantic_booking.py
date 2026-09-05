@@ -288,7 +288,7 @@ async def test_mixed_catalog_groups_walk_in_family_before_regular_service(
         assert _button_labels(reply) == [
             "Солярий", "Депозит на загар — 1 500 ₽", "← Категории",
         ]
-        assert "Депозит на загар — 1 500 ₽" in reply.text
+        assert "₽" not in reply.text
         assert "60 мин." not in reply.text
 
         family = reply.delivery_options["reply_markup"]["inline_keyboard"][0][0]["callback_data"]

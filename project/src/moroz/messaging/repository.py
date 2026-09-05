@@ -292,7 +292,31 @@ class MessageRepository:
                     outbound.channel,
                     outbound.chat_id,
                 )
-                yield None if row is None else _outbound_from_row(row)
+                if row is None:
+                    yield None
+                    return
+                current = _outbound_from_row(row)
+                # The edit target is resolved only inside the privacy fence.
+                current.delivery_options.pop("edit_message_id", None)
+                booking_card = current.delivery_options.get("booking_card")
+                if booking_card:
+                    edit_message_id = await connection.fetchval(
+                        """
+                        SELECT external_message_id
+                        FROM outbound_messages
+                        WHERE channel = $1 AND chat_id = $2
+                          AND status = 'sent' AND external_message_id IS NOT NULL
+                          AND delivery_options->>'booking_card' = $3
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                        """,
+                        current.channel,
+                        current.chat_id,
+                        booking_card,
+                    )
+                    if edit_message_id is not None:
+                        current.delivery_options["edit_message_id"] = edit_message_id
+                yield current
 
     async def mark_outbound_sent(
         self,

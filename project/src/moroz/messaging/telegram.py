@@ -215,7 +215,31 @@ async def deliver_claimed_outbound(
                 send_arguments["reply_markup"] = markup
             if parse_mode is not None:
                 send_arguments["parse_mode"] = str(parse_mode)
-            sent_message = await telegram.send_message(**send_arguments)
+            edit_message_id = current.delivery_options.get("edit_message_id")
+            if edit_message_id is not None:
+                if reply_markup is not None and not isinstance(
+                    send_arguments["reply_markup"], InlineKeyboardMarkup
+                ):
+                    raise ValueError("booking card requires inline reply markup")
+                try:
+                    await telegram.edit_message_text(
+                        message_id=int(edit_message_id), **send_arguments
+                    )
+                except TelegramBadRequest as error:
+                    description = error.message.casefold()
+                    if "message is not modified" in description:
+                        pass
+                    elif any(reason in description for reason in (
+                        "message to edit not found", "message can't be edited",
+                    )):
+                        sent_message = await telegram.send_message(**send_arguments)
+                        edit_message_id = sent_message.message_id
+                    else:
+                        raise
+                external_message_id = str(edit_message_id)
+            else:
+                sent_message = await telegram.send_message(**send_arguments)
+                external_message_id = str(sent_message.message_id)
     except BaseException as error:
         if not isinstance(error, (Exception, asyncio.CancelledError)):
             await repository.release_outbound_delivery(outbound.id)
@@ -265,7 +289,7 @@ async def deliver_claimed_outbound(
     completed, context_chat_id = await _complete_post_provider(
         lambda: repository.mark_outbound_sent(
             outbound.id,
-            str(sent_message.message_id),
+            external_message_id,
             delivery_hook=delivery_hook if managed else None,
             now=clock(),
         ),

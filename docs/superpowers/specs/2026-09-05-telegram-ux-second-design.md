@@ -14,3 +14,13 @@
 - Повтор одного callback после перехода не создаёт ещё одну карточку; чужие/устаревшие callback не выполняют действие. Recovery остаётся fail-closed. Новых миграций и зависимостей нет.
 
 Проверка: Docker RED→GREEN, независимый review, свежий объединённый gate, exact staging RC с code/env/database/image rollback, Telegram Web targeted acceptance, финальный server audit. Production, GitHub push и YCLIENTS mutations запрещены.
+
+## Дополнение владельца: редактируемая карточка записи
+
+2026-09-05: разрешено реализовать отдельным логическим коммитом в этой же ветке.
+- Использовать уже сохранённый outbound_messages.external_message_id; без новой миграции и без Mini App.
+- Только структурные ответы записи получают delivery_options.booking_card=scenario UUID. Catalog/consultation и финальный результат маркера не получают.
+- Delivery под существующей fence ищет последний успешно доставленный outbound с тем же booking_card и chat_id и редактирует его. «message is not modified» считается успешным результатом. Только достоверная невозможность edit допускает send fallback; сетевой timeout не запускает второй send.
+- В сценарии сохраняется ограниченная история показанных шагов; append-only action booking_back возвращает предыдущий шаг в той же карточке. Счётчик view_revision запрещает повторное использование старых кнопок после движения назад.
+- RED→GREEN: forward, back, stale после back, double callback, edit success, not-modified, fallback not-found, network error без send, permanent completion и consultation без edit.
+- Независимые части: coordinator/history реализует основной агент; delivery/fence тестирует отдельный агент. Финальный commit собирает обе части после проверок.

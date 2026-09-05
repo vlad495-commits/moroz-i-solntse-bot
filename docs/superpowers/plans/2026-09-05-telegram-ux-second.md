@@ -31,3 +31,9 @@ Files: project/src/moroz/booking/telegram.py, project/worker/main.py, project/te
 Commands (из project/): docker compose -p moroz-ux-second --env-file ../tmp/ux-second.env --profile test build test; docker compose -p moroz-ux-second --env-file ../tmp/ux-second.env --profile test run --rm test pytest tests/unit/booking/test_telegram_ux_second.py -q.
 
 Baseline: обнаружен выключенный Docker daemon; запущен Docker Desktop. До рабочего daemon runtime-код не изменяется.
+
+## 4. Дополнение: плавные переходы записи (отдельный commit)
+- [ ] RED→GREEN coordinator: booking_card marker только structural reply, snapshot показанных шагов, booking_back, monotonic view revision, постоянное confirmation message.
+- [ ] RED→GREEN delivery: lookup по chat + scenario под fence, editMessageText, not-modified success, fallback только подтверждённый BadRequest, сеть без повторного send.
+- [ ] Независимый review, combined Docker gate, отдельный logical commit.
+- [ ] Включить forward/back/repeat/stale/fallback в приёмку и затем exact staging rollout.
