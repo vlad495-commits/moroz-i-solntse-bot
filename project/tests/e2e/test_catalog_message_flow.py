@@ -10,7 +10,9 @@ from moroz.booking.catalog import (
     CatalogGrounding,
     CatalogService,
     CatalogVariant,
+    match_catalog,
 )
+from moroz.booking.yclients_catalog import CatalogRecord
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask
 from moroz.messaging.models import IncomingMessage
@@ -58,13 +60,28 @@ class SecurityOnlyGateway(ForbiddenGateway):
         )
 
 
-class PriceRouter:
+class CatalogAnswerGateway:
     def __init__(self):
+        self.requests = []
+
+    async def complete(self, request):
+        self.requests.append(request)
+        text = (
+            "OK"
+            if request.purpose == "security"
+            else "Нашла обе услуги в актуальном каталоге."
+        )
+        return LLMResponse(text, 1, 1, 0, 2, f"{request.purpose}-test")
+
+
+class PriceRouter:
+    def __init__(self, service="Криотерапия"):
         self.calls = 0
+        self.service = service
 
     async def route(self, _text, _context, *, state=None):
         self.calls += 1
-        return RouterVerdict(RouteDecision('consultation', .99, 'price', 'Криотерапия'))
+        return RouterVerdict(RouteDecision('consultation', .99, 'price', self.service))
 
 
 class AllowingInputSecurity:
@@ -82,6 +99,16 @@ class CatalogRepository:
     async def ground(self, connection, text, now):
         self.calls.append((connection, text, now))
         return self.grounding
+
+
+class MatchingCatalogRepository:
+    def __init__(self, records):
+        self.records = records
+        self.calls = []
+
+    async def ground(self, connection, text, now):
+        self.calls.append((connection, text, now))
+        return match_catalog(self.records, text)
 
 
 @pytest_asyncio.fixture
@@ -304,6 +331,69 @@ async def test_complex_catalog_grounding_reaches_llm_without_extra_history(datab
     assert "UNTRUSTED_CATALOG_DATA" not in "".join(
         row["content"] for row in contents
     )
+
+
+async def test_price_action_with_two_explicit_services_keeps_both_for_answer(database):
+    text = "Сколько стоят криомассаж головы и прессотерапия?"
+    service_query = "Криомассаж головы и прессотерапия"
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("catalog-two-prices", text))
+    gateway = CatalogAnswerGateway()
+    pipeline = SecurityPipeline(
+        gateway,
+        "",
+        extract_structured_facts(""),
+        router=PriceRouter(service_query),
+        input_security=AllowingInputSecurity(),
+    )
+
+    async def llm(text, context, *, recent_message_count, catalog):
+        return await pipeline.respond(
+            text, context, recent_message_count=recent_message_count,
+            catalog=catalog,
+        )
+
+    records = (
+        CatalogRecord(
+            "20", "10", "Криомассаж головы", "Крио", "Анна",
+            Decimal("1200"), Decimal("1200"), 15,
+        ),
+        CatalogRecord(
+            "21", "11", "Прессотерапия", "Тело", "Аппарат 1",
+            Decimal("1500"), Decimal("1500"), 30,
+        ),
+        CatalogRecord(
+            "22", "12", "Криомассаж лица", "Крио", "Мария",
+            Decimal("1300"), Decimal("1300"), 10,
+        ),
+    )
+    catalog_repository = MatchingCatalogRepository(records)
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+        catalog_repository=catalog_repository,
+        catalog_grounding_enabled=True,
+        clock=lambda: NOW,
+    )
+
+    await handler.handle(QueueTask(
+        kind="process_message",
+        payload={"chat_id": "42", "update_ids": ["catalog-two-prices"]},
+        idempotency_key=process_message_key(["catalog-two-prices"]),
+    ))
+
+    async with database.acquire() as connection:
+        answer = await connection.fetchval(
+            "SELECT content FROM messages WHERE role = 'assistant'"
+        )
+    assert answer == "Нашла обе услуги в актуальном каталоге."
+    assert catalog_repository.calls[0][1] == service_query
+    assert [request.purpose for request in gateway.requests] == ["answer"]
+    answer_system = gateway.requests[-1].messages[0]["content"]
+    assert "Криомассаж головы" in answer_system
+    assert "Прессотерапия" in answer_system
+    assert "Криомассаж лица" not in answer_system
 
 
 async def test_catalog_reply_rolls_back_when_outbound_insert_fails(database):

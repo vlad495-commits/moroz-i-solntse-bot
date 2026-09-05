@@ -657,7 +657,9 @@ async def test_catalog_direct_reply_runs_after_input_guard_and_without_answer_ca
     )
     assert "Криотерапия" in result.text
     assert "1 230,50" in result.text
-    assert "Анна" in result.text
+    assert "3 мин." in result.text
+    assert "Анна" not in result.text
+    assert "мин.." not in result.text
     assert result.total_tokens == 0
     assert [request.purpose for request in gateway.requests] == ["security"]
 

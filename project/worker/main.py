@@ -730,12 +730,25 @@ class MessageTaskHandler:
                         decision.service or "",
                         self._clock(),
                     )
-                    query = (decision.service or "").casefold().replace("ё", "е").strip()
-                    exact = tuple(s for s in grounded.services if s.service_name.casefold().replace("ё", "е").strip() == query)
-                    services = exact or grounded.services
-                    return replace(grounded, services=services, ambiguous=len(services) > 1, simple_kind=(
-                        decision.action if decision.action in {"price", "duration", "staff"} else None
-                    ))
+                    simple_kind = (
+                        decision.action
+                        if decision.action in {"price", "duration", "staff"}
+                        else None
+                    )
+                    return replace(
+                        grounded,
+                        simple_kind=(
+                            None if grounded.multiple_requested else simple_kind
+                        ),
+                        ambiguous=(
+                            grounded.ambiguous
+                            or bool(
+                                simple_kind
+                                and len(grounded.services) > 1
+                                and not grounded.multiple_requested
+                            )
+                        ),
+                    )
                 llm_options = {
                     "recent_message_count": int(recent_message_count),
                 }

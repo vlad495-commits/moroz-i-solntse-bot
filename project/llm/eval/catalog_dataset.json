@@ -33,7 +33,7 @@
       "ambiguous": false,
       "services": []
     },
-    "expected_contains": ["Уточните", "название услуги"],
+    "expected_contains": ["Чтобы назвать цену", "уточните услугу"],
     "forbidden_keywords": ["9 999"]
   },
   {
