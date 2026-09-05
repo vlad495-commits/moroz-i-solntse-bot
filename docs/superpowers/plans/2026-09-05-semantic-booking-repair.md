@@ -19,6 +19,10 @@
 - [x] Исправить переходы, устаревшие кнопки, время и повторные ответы.
 - [x] Проверить целевые unit/integration/e2e через `docker compose --env-file ../.env --profile test run --rm test pytest ...`.
 - [x] Провести review diff, обновить дорожную карту и changelog, подготовить локальный коммит результата.
+- [x] По отдельному разрешению владельца развернуть `98c7ec9` на staging: 2026-09-05 03:01 MSK, 8/8 healthy, schema 0025, HTTPS/admin, webhook, scheduler и safe logs проходят.
+- [ ] Ручная приёмка владельцем в staging Telegram с реальной LLM.
+
+Deployment note: SSH-wrapper использует umask 077. После checkout изменённого bind-mounted `project/llm/prompts/system.md` и при rollback необходимо восстановить owner `10001:10001`, mode `0660`, выполнить `ops/prepare-runtime-dirs.sh` и проверить чтение файла от runtime-user до cutover. Иначе worker не стартует с PermissionError. При rollout этот дефект обнаружен health gate, права исправлены, повторное переключение успешно. Runtime-код и immutable образы не менялись.
 
 При недоступном роутере — понятный ответ с предложением кнопок, без угадывания операции. При консультации черновик сохраняется. Отмена черновика и отмена реальной записи различаются; неясная отмена уточняется. Платные LLM-прогоны, реальные YCLIENTS mutations и deployment в этот локальный gate не входят.
 
