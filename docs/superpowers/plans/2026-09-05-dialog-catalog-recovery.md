@@ -65,4 +65,5 @@ Files: project/src/moroz/booking/telegram.py; project/src/moroz/booking/catalog.
 
 ## Progress ledger
 
-- Plan approved in scope by user; execution started. Task 1 pending, Tasks 2–5 pending.
+- Task 1 complete: 38b7ee3..8aa7ec7, review spec compliant / quality approved, no findings, Docker 120 passed. Ruff unavailable in image; full lint remains final gate.
+- Task 2 in progress. Tasks 3–5 pending.

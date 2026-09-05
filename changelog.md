@@ -1,5 +1,9 @@
 # Changelog
 
+[2026-09-05 04:24] Task 1 review: spec compliant, quality approved, без замечаний. Переход к Task 2: отдельный бюджет состояния/истории и безопасные semantic transitions; существующий baseline router/pipeline/booking — 83 passed. Worktree по решению владельца не создаётся.
+
+[2026-09-05 04:22] Task 1 импорт категорий реализован в 8aa7ec7: отдельный category map + category_id, legacy fallback, validation. Правильный RED после rebuild: 9 failed/27 passed; финальный Docker GREEN 120 passed. Первый прогон без rebuild показал старые 26 тестов и отклонён как evidence; дальнейшие изменения проверяются с --build или актуальным bind. Ruff в test image отсутствует, lint не объявлен пройденным. Запущен read-only task review; stage не менялся.
+
 [2026-09-05 04:10] Владелец утвердил комплексное исправление и работу в текущей ветке без worktree. Создан implementation plan 2026-09-05-dialog-catalog-recovery.md и task brief в tmp; начата TDD-реализация. Runtime/staging ещё не изменены.
 
 [2026-09-05 04:05] Завершён targeted Telegram QA: 13 сценариев с разделением OK/ошибок/непроверенного, отчёт tmp/manual-test-20260905-0357/Отчет по тестированию бота.md. Финально 8/8 healthy, bot:paused отсутствует, новые error-marker lines bot/worker/scheduler/admin с 00:55 UTC — 0. Admin login доступен, внутренние UI-диалоги/статистика без TOTP не проверены. P1 остаются открыты; broad release gate запланирован, не объявлен пройденным.
