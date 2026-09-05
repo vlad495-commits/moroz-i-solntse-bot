@@ -20,6 +20,7 @@ from config import (
     YCLIENTS_CATALOG_GROUNDING_ENABLED,
 )
 from llm import generate_response, init_llm, prompt_reload_listener
+from moroz.booking.display import asks_component_duration
 from moroz.booking.catalog import (
     CATALOG_SYNC_KIND,
     CatalogRepository,
@@ -55,7 +56,7 @@ from moroz.messaging.outbox import OutboxRelay, process_message_key, enqueue_pro
 from moroz.messaging.booking_stop import STOPPED_ACTION_REPLY, before_stop, stop_markers
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.router import route_message
-from moroz.messaging.telegram import TelegramSender, main_menu_options
+from moroz.messaging.telegram import TelegramSender, main_menu_options, consultation_options
 from moroz.notifications.feedback import FeedbackService
 from moroz.notifications.handlers import (
     STAGING_SCHEDULER_SMOKE_KIND,
@@ -771,7 +772,7 @@ class MessageTaskHandler:
                     return replace(
                         grounded,
                         simple_kind=(
-                            None if grounded.multiple_requested else simple_kind
+                            None if grounded.multiple_requested or asks_component_duration(persisted_text) else simple_kind
                         ),
                         ambiguous=(
                             grounded.ambiguous
@@ -847,7 +848,7 @@ class MessageTaskHandler:
                     text=result.text,
                     idempotency_key=reply_key,
                     delivery_options=(booking_reply.delivery_options if booking_reply is not None else
-                                      main_menu_options() if result.model in {"router-fallback", "router-clarification", "booking-unavailable"} else {}),
+                                      main_menu_options() if result.model in {"router-fallback", "router-clarification", "booking-unavailable"} else consultation_options(persisted_text, result.text)),
                 )
                 await connection.execute(
                     """

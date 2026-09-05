@@ -130,7 +130,7 @@ def _button_labels(reply):
     ]
 
 
-async def test_walk_in_services_are_grouped_and_never_call_booking_adapter(
+async def test_walk_in_services_are_excluded_and_never_call_booking_adapter(
     migrated_database_url,
 ):
     records = tuple(
@@ -149,69 +149,12 @@ async def test_walk_in_services_are_grouped_and_never_call_booking_adapter(
         migrated_database_url, catalog_records=records
     )
     try:
-        expected = ["Коллагенарий", "Коллариум", "Солярий", "Криокапсула"]
-        for offset, expected_index in enumerate(range(3)):
-            customer_id = str(100 + offset)
-            reply = await _handle(
-                coordinator,
-                database,
-                customer_id=customer_id,
-                user_id="7",
-                update_id=f"walk-in-start-{offset}",
-                text="Записаться",
-                kind="text",
-                data={},
-            )
-            assert reply.text == "Выберите услугу"
-            scenario = await repository.get_active_for_customer(customer_id)
-            assert [choice["label"] for choice in scenario.state["choices"]] == expected
-
-            callback = f"booking:v1:{scenario.id.hex}:service:{expected_index}"
-            walk_in = await _handle(
-                coordinator,
-                database,
-                customer_id=customer_id,
-                user_id="7",
-                update_id=f"walk-in-select-{offset}",
-                text="",
-                kind="callback",
-                data={"callback_data": callback},
-            )
-
-            assert "предварительная запись не нужна" in walk_in.text.casefold()
-            assert "10:00 до 21:00" in walk_in.text
-            assert _button_labels(walk_in) == [*expected, "Выйти из оформления"]
-            stored = await repository.get_scenario(scenario.id)
-            assert (stored.phase, stored.error_code, stored.state["step"]) == (
-                "collecting",
-                None,
-                "service",
-            )
-            assert (await repository.get_active_for_customer(customer_id)).id == scenario.id
-
-            if offset == 0:
-                other_service = await _handle(
-                    coordinator,
-                    database,
-                    customer_id=customer_id,
-                    user_id="7",
-                    update_id="walk-in-original-other-service",
-                    text="",
-                    kind="callback",
-                    data={
-                        "callback_data": (
-                            f"booking:v1:{scenario.id.hex}:service:3"
-                        )
-                    },
-                )
-                assert other_service.text.startswith("Свободного времени пока нет")
-                assert "неактуальна" not in other_service.text.casefold()
-        assert (
-            adapter.list_calls,
-            adapter.create_calls,
-            adapter.reschedule_calls,
-            adapter.cancel_calls,
-        ) == (1, 0, 0, 0)
+        reply = await _handle(coordinator, database, customer_id='42', user_id='7',
+            update_id='walkin-filter', text='Записаться', kind='text', data={})
+        assert _button_labels(reply) == ['Криокапсула', 'Выйти из оформления']
+        stored = await repository.get_active_for_customer('42')
+        assert [choice['label'] for choice in stored.state['choices']] == ['Криокапсула']
+        assert (adapter.list_calls, adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0, 0)
     finally:
         await database.close()
 

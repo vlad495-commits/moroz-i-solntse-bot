@@ -559,3 +559,18 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
     assert "9999" not in answer
     assert "администратор" in answer.lower()
     assert gateway.calls == 1
+
+
+async def test_component_duration_never_uses_total_direct_reply(database):
+    repository = MessageRepository(database)
+    update = incoming('parts-duration', 'Сколько минут длится каждая часть Фреш дня?')
+    assert await repository.accept(update)
+
+    async def llm(text, context, *, recent_message_count, catalog):
+        result = await catalog(RouteDecision('consultation', .99, 'duration', 'Фреш день'))
+        assert result.direct_reply is None
+        return LLMResponse('Разбивка времени не подтверждена.', 1, 1, 0, 2, 'test')
+
+    handler = MessageTaskHandler(database, llm, TelegramSender(FakeTelegram(), repository),
+        catalog_repository=CatalogRepository(grounding()), catalog_grounding_enabled=True, clock=lambda: NOW)
+    await handler.handle(QueueTask(kind='process_message', payload={'chat_id': '42', 'update_ids': ['parts-duration']}, idempotency_key=process_message_key(['parts-duration'])))

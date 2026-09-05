@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Awaitable, Callable
 from uuid import UUID
 
+
 from aiogram.exceptions import (
     TelegramBadRequest,
     TelegramForbiddenError,
@@ -43,6 +44,18 @@ def _plain_text(text: str) -> str:
         ),
         text,
     )
+
+
+def consultation_options(question: str, answer: str) -> dict:
+    """Add approved gift actions only to a substantive certificate answer."""
+    if "сертификат" not in answer.casefold() or not any(
+        word in question.casefold() for word in ("сертификат", "подар")
+    ):
+        return {}
+    return {"reply_markup": {"inline_keyboard": [
+        [{"text": "Оформить сертификат", "url": "https://n1321481.yclients.com"}],
+        [{"text": "Уточнить у администратора", "url": "https://t.me/krio_71"}],
+    ]}}
 
 
 def main_menu_options() -> dict[str, object]:
