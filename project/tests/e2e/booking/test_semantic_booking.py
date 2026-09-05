@@ -147,7 +147,9 @@ async def test_catalog_menu_shows_prices_then_opens_booking(migrated_database_ur
         assert state['service'] == 'Массаж спины'
         assert 'Свободное время' in _button_labels(reply)
         reply = await click(reply, 'start-booking')
-        assert (await bookings.get_active_for_customer('42')).state['step'] == 'staff'
+        assert (
+            await bookings.get_active_for_customer("42")
+        ).state["step"] == "available_date"
         assert adapter.create_calls == 0
     finally:
         await database.close()
@@ -537,6 +539,38 @@ async def test_slots_after_first_page_remain_selectable(migrated_database_url):
         await database.close()
 
 
+async def test_my_bookings_menu_opens_management_instead_of_returning_empty(
+    migrated_database_url,
+):
+    database, bookings, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    base = dict(customer_id="42", user_id="7", kind="text", data={})
+    try:
+        await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="draft-before-management",
+            text="📅 Записаться",
+        )
+        reply = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="open-management-menu",
+            text="📋 Мои записи",
+            decision=RouteDecision("booking_management", 1.0, "view"),
+        )
+
+        assert reply is not None
+        assert reply.text.startswith("Здесь можно управлять только будущими записями")
+        assert await bookings.get_active_for_customer("42") is None
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
 async def test_requested_time_after_filters_slots_and_survives_followup(
     migrated_database_url,
 ):
@@ -579,8 +613,112 @@ async def test_requested_time_after_filters_slots_and_survives_followup(
         )
         assert no_match.text.startswith("После 20:00 на 05.09.2026 свободного времени нет.")
         assert "Показать всё время" in _button_labels(no_match)
+        assert "Выбрать другую дату" in _button_labels(no_match)
         assert "17:00" not in _button_labels(no_match)
         assert "19:00" not in _button_labels(no_match)
+        choose_date = next(
+            button["callback_data"]
+            for row in no_match.delivery_options["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Выбрать другую дату"
+        )
+        date_reply = await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="choose-another-date",
+            text="",
+            kind="callback",
+            data={"callback_data": choose_date},
+        )
+        assert date_reply.text.startswith("Выберите другую дату")
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_consultation_question_with_after_time_does_not_change_slot_filter(
+    migrated_database_url,
+):
+    database, bookings, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    base = dict(customer_id="42", user_id="7", kind="text", data={})
+    try:
+        await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="slot-before-consultation",
+            text="Покажи время на криокапсулу 5 сентября",
+            decision=RouteDecision(
+                "booking", .99, "create", "Криокапсула", "2026-09-05"
+            ),
+        )
+        before = await bookings.get_active_for_customer("42")
+
+        reply = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="consult-after-hours",
+            text="Вы работаете после 18:00?",
+            decision=RouteDecision("consultation", .99),
+        )
+
+        after = await bookings.get_active_for_customer("42")
+        assert reply is None
+        assert after.id == before.id
+        assert after.state.get("requested_time_after") == before.state.get(
+            "requested_time_after"
+        )
+        assert after.state["choices"] == before.state["choices"]
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_new_date_and_time_limit_replace_old_slot_screen(
+    migrated_database_url,
+):
+    database, bookings, adapter, coordinator = await _coordinator(
+        migrated_database_url
+    )
+    adapter._slots = {
+        slot.id: slot
+        for slot in (
+            Slot("old-day", ("331",), "10", datetime.fromisoformat("2026-09-05T19:00:00+03:00"), 60),
+            Slot("new-day", ("331",), "10", datetime.fromisoformat("2026-09-06T21:00:00+03:00"), 60),
+        )
+    }
+    base = dict(customer_id="42", user_id="7", kind="text", data={})
+    try:
+        await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="old-slot-screen",
+            text="Покажи время на криокапсулу 5 сентября после 18",
+            decision=RouteDecision(
+                "booking", .99, "create", "Криокапсула", "2026-09-05"
+            ),
+        )
+        reply = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="new-date-and-time",
+            text="Лучше 6 сентября после 20",
+            decision=RouteDecision("booking", .99, "continue", date="2026-09-06"),
+        )
+
+        state = (await bookings.get_active_for_customer("42")).state
+        assert state["requested_date"] == "2026-09-06"
+        assert state["selected_date"] == "2026-09-06"
+        assert state["requested_time_after"] == "20:00"
+        assert "21:00" in _button_labels(reply)
+        assert "19:00" not in _button_labels(reply)
         assert adapter.create_calls == 0
     finally:
         await database.close()

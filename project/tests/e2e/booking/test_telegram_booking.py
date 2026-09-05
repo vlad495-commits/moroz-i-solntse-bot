@@ -529,16 +529,35 @@ async def test_create_booking_flow_uses_server_choices_and_mutates_once(
         mine = await _handle(
             coordinator,
             database,
-            **{**base, "update_id": "109", "text": "Мои записи", "kind": "text"},
+            **{
+                **base,
+                "update_id": "109",
+                "text": "📋 Мои записи",
+                "kind": "text",
+                "decision": RouteDecision("booking_management", 1.0, "view"),
+            },
         )
         assert "Криокапсула" in mine.text
         management = await repository.get_active_for_customer("42")
+        retry = await _handle(
+            coordinator,
+            database,
+            **{
+                **base,
+                "update_id": "109",
+                "text": "📋 Мои записи",
+                "kind": "text",
+                "decision": RouteDecision("booking_management", 1.0, "view"),
+            },
+        )
+        assert retry.text == mine.text
+        assert (await repository.get_active_for_customer("42")).id == management.id
         management_token = management.id.hex
         assert management.state["step"] == "booking_action"
         forged = f"booking:v1:{management_token}:booking_action:99"
-        assert (await _handle(
+        assert "Что сделать?" in (await _handle(
             coordinator, database, **{**base, "update_id": "110", "data": {"callback_data": forged}}
-        )).text == "Выберите действие"
+        )).text
 
         reschedule = f"booking:v1:{management_token}:booking_action:0"
         assert (await _handle(

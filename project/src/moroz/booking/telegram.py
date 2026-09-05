@@ -29,15 +29,17 @@ STALE_REPLY = "Эта кнопка уже неактуальна. Начните
 OUTDATED_BUTTON_REPLY = "Эта кнопка уже неактуальна. Показываю текущий шаг."
 CLARIFY_REPLY = "Уточните, пожалуйста: хотите узнать об услуге, посмотреть свободное время или свои записи?"
 _MENU_BOOK = "📅 Записаться"
+_MENU_CATALOG = "✨ Услуги и цены"
+_MENU_MY_BOOKINGS = "📋 Мои записи"
 _MENU_LABELS = frozenset(
     {
         _MENU_BOOK,
-        "✨ Услуги и цены",
+        _MENU_CATALOG,
         "📍 Адрес и режим",
         "👩‍💼 Позвать администратора",
         "👩‍💼 Связаться с администратором",
         "🧭 Подобрать процедуру",
-        "📋 Мои записи",
+        _MENU_MY_BOOKINGS,
     }
 )
 _WALK_IN_LABELS = {
@@ -45,7 +47,7 @@ _WALK_IN_LABELS = {
     "collarium": "Коллариум",
     "solarium": "Солярий",
 }
-_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft", "clear_time_after", "catalog_root")
+_CALLBACK_ACTIONS = ("service", "staff", "available_date", "slot", "booking_management", "booking_action", "confirm", "confirm_change", "page", "catalog_category", "catalog_service", "catalog_book", "cancel_draft", "clear_time_after", "catalog_root", "choose_date")
 _DRAFT_CANCEL_COMMANDS = frozenset({"отменить действие", "выйти из оформления"})
 _TIME_AFTER = re.compile(r"(?:после|не раньше)\s*(\d{1,2})(?:[:.](\d{2}))?", re.IGNORECASE)
 
@@ -150,6 +152,13 @@ class TelegramBookingCoordinator:
             return await self._cancel_draft(scenario)
         if (
             requested_time_after is not None
+            and decision is not None
+            and valid_route_action(decision)
+            and decision.route == "booking"
+            and decision.action in {"create", "continue"}
+            and decision.service is None
+            and decision.date is None
+            and decision.choice is None
             and scenario is not None
             and scenario.phase == "collecting"
             and not str(scenario.state.get("step", "")).startswith("catalog_")
@@ -177,7 +186,13 @@ class TelegramBookingCoordinator:
             # Coordinator checkpoints survive a rolled-back worker inbox transaction.
             return await self._refresh_current(connection, scenario)
         if menu_command is not None:
-            if menu_command == "✨ Услуги и цены" and scenario is not None and scenario.idempotency_key == f"telegram:catalog:{update_id}":
+            if menu_command == _MENU_CATALOG and scenario is not None and scenario.idempotency_key == f"telegram:catalog:{update_id}":
+                return await self._refresh_current(connection, scenario)
+            if (
+                menu_command == _MENU_MY_BOOKINGS
+                and scenario is not None
+                and scenario.idempotency_key == f"telegram:manage:{update_id}"
+            ):
                 return await self._refresh_current(connection, scenario)
             if scenario is not None:
                 if scenario.phase == "executing":
@@ -196,8 +211,15 @@ class TelegramBookingCoordinator:
                 )
             if menu_command == _MENU_BOOK:
                 return await self._start(connection, customer_id, update_id, origin_update_id=origin_update_id)
-            if menu_command == "✨ Услуги и цены":
+            if menu_command == _MENU_CATALOG:
                 return await self._start_catalog(connection, customer_id, update_id, origin_update_id=origin_update_id)
+            if menu_command == _MENU_MY_BOOKINGS:
+                return await self._start_management(
+                    customer_id,
+                    update_id,
+                    operation="view",
+                    origin_update_id=origin_update_id,
+                )
             return None
         if decision is None:
             if scenario is not None and scenario.state.get("step") == "contact" and (
@@ -302,6 +324,8 @@ class TelegramBookingCoordinator:
         if decision.date:
             state = self._state(scenario)
             state["requested_date"] = decision.date
+            if requested_time_after is not None:
+                state["requested_time_after"] = requested_time_after
             scenario = await self._checkpoint(scenario, state, "booking_date_requested")
             if state.get("service_id"):
                 return await self._choose_staff(scenario, {"staff_id": state.get("staff_id"), "label": state.get("staff_name", "Любой специалист")})
@@ -702,6 +726,19 @@ class TelegramBookingCoordinator:
             if selected_date:
                 return await self._choose_date(current, {"date": selected_date})
             return await self._refresh_current(connection, current)
+        if action == "choose_date" and scenario.phase == "collecting":
+            state = self._state(scenario)
+            state.update(step="available_date", choices=[])
+            state.pop("selected_date", None)
+            state.pop("requested_date", None)
+            current = await self._checkpoint(
+                scenario, state, "booking_date_reselection_requested"
+            )
+            return self._choice_reply(
+                current,
+                "Выберите другую дату: напишите, например, «завтра» или «10 сентября».",
+                "available_date",
+            )
         if action == "catalog_root" and scenario.phase == "collecting":
             services = await self._catalog.list_services(connection, self._now())
             if not services:
@@ -1050,6 +1087,7 @@ class TelegramBookingCoordinator:
                 self._inline_options(
                     [
                         [("Показать всё время", self._callback(updated, "clear_time_after", 0))],
+                        [("Выбрать другую дату", self._callback(updated, "choose_date", 0))],
                         [("Выйти из оформления", self._callback(updated, "cancel_draft", 0))],
                     ]
                 ),
@@ -1254,6 +1292,10 @@ class TelegramBookingCoordinator:
             text = str(scenario.state.get("detail", ""))
         elif step == "slot":
             text = self._slot_header(scenario)
+        elif step == "booking_action":
+            selected = scenario.state.get("selected_booking")
+            if isinstance(selected, Mapping):
+                text = f"Запись: {selected.get('label', 'Запись')}\nЧто сделать?"
         elif step == "service" and scenario.state.get("requested_date"):
             day = datetime.fromisoformat(str(scenario.state["requested_date"])).strftime("%d.%m.%Y")
             text = f"Покажу свободное время на {day}. Сначала уточните услугу: доступное время зависит от её вида, длительности и специалиста."

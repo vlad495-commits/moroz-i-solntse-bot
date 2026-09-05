@@ -120,11 +120,11 @@
 - Consumes: all completed tasks.
 - Produces: reproducible Docker evidence and exact local branch status.
 
-- [ ] **Step 1: Run focused combined gate** for all modified tests in a freshly rebuilt Docker test image.
-- [ ] **Step 2: Run broader booking/catalog/delivery regression**, Ruff, `compileall`, `docker compose config`, and `git diff --check`.
-- [ ] **Step 3: Review every audit item** and document any deliberately unimplemented part with the concrete reason.
-- [ ] **Step 4: Update roadmap, plan checkboxes and changelog**, then commit as `docs: завершить реализацию UX-аудита Telegram`.
-- [ ] **Step 5: Commit** as `docs: завершить реализацию UX-аудита Telegram`.
+- [x] **Step 1: Run focused combined gate** for all modified tests in a freshly rebuilt Docker test image.
+- [x] **Step 2: Run broader booking/catalog/delivery regression**, Ruff, `compileall`, `docker compose config`, and `git diff --check`.
+- [x] **Step 3: Review every audit item** and document any deliberately unimplemented part with the concrete reason.
+- [x] **Step 4: Update roadmap, plan checkboxes and changelog**, then commit as `docs: завершить реализацию UX-аудита Telegram`.
+- [x] **Step 5: Commit** as `docs: завершить реализацию UX-аудита Telegram`.
 
 ### Task 7: Staging rollout и ручная приёмка
 
