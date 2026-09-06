@@ -16,19 +16,21 @@ from tests.unit.security.test_pipeline import CapturingGateway, response
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "text,fields,active,needs_answer",
+    "text,fields,active,needs_answer,has_mixed_boundary",
     [
-        ("Сколько стоит криокапсула?", {"route": "consultation", "topics": ["price"]}, False, True),
-        ("Сколько стоит и запишите на криокапсулу", {"topics": ["price"]}, False, True),
-        ("Запишите на криокапсулу", {}, False, False),
-        ("Лучше к Марии после 18:00", {"action": "continue", "staff": "Мария", "time_from": "18:00"}, True, False),
-        ("7 сентября", {"action": "continue", "date": "2026-09-07"}, True, False),
-        ("7 сентября", {"route": "booking_management", "action": "continue", "date": "2026-09-07"}, True, False),
-        ("Как подготовиться?", {"route": "consultation", "topics": ["preparation"]}, True, True),
+        ("Сколько стоит криокапсула?", {"route": "consultation", "topics": ["price"]}, False, True, False),
+        ("Сколько стоит и запишите на криокапсулу", {"topics": ["price"]}, False, True, True),
+        ("Запишите на криокапсулу", {}, False, False, False),
+        ("Лучше к Марии после 18:00", {"action": "continue", "staff": "Мария", "time_from": "18:00"}, True, False, False),
+        ("7 сентября", {"action": "continue", "date": "2026-09-07"}, True, False, False),
+        ("7 сентября", {"route": "booking_management", "action": "continue", "date": "2026-09-07"}, True, False, False),
+        ("Как подготовиться?", {"route": "consultation", "topics": ["preparation"]}, True, True, False),
     ],
     ids=["faq", "price-and-booking", "booking", "preferences", "date-only", "reschedule", "faq-in-draft"],
 )
-async def test_router_path_provider_counts(text, fields, active, needs_answer, caplog):
+async def test_router_path_provider_counts(
+    text, fields, active, needs_answer, has_mixed_boundary, caplog
+):
     payload = {
         "route": "booking", "action": "create", "confidence": 0.99,
         "services": ["Криокапсула"], "topics": [], "date": None,
@@ -70,6 +72,15 @@ async def test_router_path_provider_counts(text, fields, active, needs_answer, c
     if needs_answer:
         expected.update(answer=1, validator=1)
     assert Counter(request.purpose for request in provider.requests) == expected
+    answer_requests = [
+        request for request in provider.requests if request.purpose == "answer"
+    ]
+    if answer_requests:
+        answer_system = answer_requests[0].messages[0]["content"]
+        assert ("ГРАНИЦА СМЕШАННОГО ЗАПРОСА" in answer_system) is has_mixed_boundary
+        if has_mixed_boundary:
+            assert "разрешённым темам маршрута: price" in answer_system
+            assert local_reply not in answer_system
     assert not provider.events
     assert len(dispatched) == 1
     assert dispatched[0].route == payload["route"]
@@ -81,6 +92,8 @@ async def test_router_path_provider_counts(text, fields, active, needs_answer, c
     if payload["route"] in {"booking", "booking_management"}:
         expected_text = f"{expected_text}\n\n{local_reply}" if expected_text else local_reply
     assert result.text == expected_text
+    if payload["route"] in {"booking", "booking_management"}:
+        assert result.text.count(local_reply) == 1
     assert not [
         record for record in caplog.records
         if record.name.startswith("moroz.security") and record.levelno >= logging.WARNING

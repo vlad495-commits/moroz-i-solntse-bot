@@ -267,9 +267,19 @@ class SecurityPipeline:
         if route.route == "offtopic":
             return _aggregate(accumulated, OFFTOPIC_REPLY, "router-local")
         active_facts = self.facts
+        mixed_boundary = (
+            "ГРАНИЦА СМЕШАННОГО ЗАПРОСА: транзакционная часть уже обработана "
+            "кодом, и отдельный детерминированный ответ о ней будет добавлен после "
+            "твоего ответа. Ответь только на консультационную часть по разрешённым "
+            f"темам маршрута: {', '.join(route.topics)}. Не задавай и не повторяй "
+            "вопросы о записи, дате, времени, статусе или слотах. Не обещай создать, "
+            "изменить или подтвердить запись."
+            if local_reply is not None
+            else None
+        )
         owned_system = "\n\n".join(
             part
-            for part in (self.system_prompt, route_metadata)
+            for part in (self.system_prompt, route_metadata, mixed_boundary)
             if part
         )
         answer_context = masked_context
