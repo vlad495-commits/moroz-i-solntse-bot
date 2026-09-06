@@ -1,5 +1,7 @@
 # Free Dialogue Orchestration Implementation Plan
 
+> Исторический план локально выполненной реализации; не исполнять заново. Task 9 / staging отложен поздним решением владельца. Новое продолжение ограничено аудитом и [spec ручной консультационной KB](../specs/2026-09-06-manual-consultation-knowledge-design.md); написание кода после разбора владельцем. Старые инструкции о скиллах ниже относятся к прежней реализации, а не к документному аудиту. Контекстные кнопки и последовательные уточнения допустимы по решению владельца 2026-09-06.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Перевести Telegram-бота на свободный LLM-диалог без persistent-меню и жёсткой анкеты, сохранив подтверждение и backend-гарантии реальных YCLIENTS-операций.

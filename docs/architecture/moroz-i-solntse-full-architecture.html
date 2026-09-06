@@ -119,6 +119,7 @@
 <body>
   <header>
     <h1>МОРОЗ И СОЛНЦЕ — ПОЛНАЯ АРХИТЕКТУРА ПРОЕКТА</h1>
+    <p class="sub"><b>Решение владельца 06.09.2026, ещё не реализация:</b> консультации основного LLM — по ручному системному промпту; YCLIENTS — технические услуги, специалисты, слоты и операции записи. Первый пакет убирает только консультационное grounding. Router V3 выбирает один маршрут; контекстные кнопки и последовательные уточнения допустимы. Текущий статус смотрите только в <a href="../../Дорожная%20карта.md">дорожной карте</a>; срезы ниже исторические. <a href="../superpowers/specs/2026-09-06-manual-consultation-knowledge-design.md">Узкая спецификация</a>.</p>
     <p class="sub">Один файл: фактический staging-контур, код с незакрытым внешним evidence и полная согласованная целевая архитектура.</p>
     <p class="sub"><b>Срез 17.08.2026</b> · staging git <code>833db15</code> · Alembic <code>0011_yclients_service_catalog</code> · staging runtime: <code>bot</code>, <code>worker</code>, <code>admin</code>, <code>Caddy</code>, <code>redis</code>, <code>postgres</code>, <code>rabbitmq</code> · scheduler disabled in staging</p>
     <p class="sub"><b>Цветное:</b> РАБОТАЕТ · <b style="color:#7b6014">Жёлтая плашка:</b> КОД ЕСТЬ · НУЖНА ПРОВЕРКА · <b style="color:#818c96">Серое пунктирное:</b> ПЛАН</p>
@@ -228,7 +229,7 @@
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#7d4fa8">Запись</span><div class="node proc"><b>Свободный booking draft</b><small>факты в любом порядке; только короткий выбор, контакт и явное подтверждение детерминированы</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#b97018">Уведомления</span><div class="node proc"><b>notification / lifecycle</b><small>реализованы в подтверждённой code/test boundary</small><span class="status done">РАБОТАЕТ</span></div></div>
       <div class="bcol"><div class="arr short"></div><span class="bhead" style="background:#a3473d">Человек</span><div class="node term"><b>Эскалация</b><small>durable запись, human mode, admin queue и идемпотентный ответ клиенту через outbox</small><span class="status done">РАБОТАЕТ</span></div></div>
-    </div><p class="bnote" style="text-align:center;margin-top:12px">Постоянного меню и жёсткой анкеты нет. Router сохраняет совместимые темы и до трёх услуг; backend не доверяет LLM факты о слотах и не выполняет мутацию без подписанного подтверждения.</p></div>
+    </div><p class="bnote" style="text-align:center;margin-top:12px">Большого постоянного меню нет. Контекстные кнопки и последовательные уточнения допустимы. Router выбирает один маршрут, сохраняет совместимые темы и до трёх услуг; backend не доверяет LLM факты о слотах и не выполняет мутацию без подписанного подтверждения.</p></div>
   </section>
 
   <section id="llm-security">
