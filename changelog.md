@@ -1,5 +1,11 @@
 # Changelog
 
+[2026-09-06 10:40] Объединённый Docker gate задачи 7: 193 passed (54.62s), включая реальные conversational coordinator E2E; JUnit router-audit-paths.xml. Read-only review нового измерения Critical/Important не выявил, уточнил границы fake provider/dispatch. Добавлены проверки сохранения action и отсутствия security/validator warning-fallback, чтобы успешные пути не смешивались с fail-open. Продолжение переноса и production-код не исправлялись этим тестом.
+
+[2026-09-06 10:37] Baseline semantic dispatch — 7 passed (2.29s). Добавлен characterization test семи путей через реальные LLMIntentRouter/InputSecurity/OutputValidator/SecurityPipeline с подставным provider: 7 passed (2.13s). Производственный код не менялся; это измерение текущего поведения, не TDD-исправление. Уточнён state.kind для кейса continue переноса; запускается объединённая проверка с реальными coordinator E2E. Один обычный booking turn вызывает Security+Router; FAQ/mixed дополнительно answer+validator при включённом semantic validator и без Compact/retry.
+
+[2026-09-06 10:35] Владелец поручил продолжить и проверить Git-процесс. Main чистый 9e3c5d4; linked worktree чистый 785f619 на codex/reference-simplification; main...HEAD=0/7, линейные отдельные коммиты без расхождения. Продолжение в том же worktree, без push/merge/rebase/удаления старых веток. Cached origin/main отстаёт от local main на 36 коммитов (без fetch это не актуальная проверка GitHub). Начата задача 7: измерение pipeline fake-provider calls и сценарное сравнение; production Router не меняется до узкого согласованного решения.
+
 [2026-09-06 10:30] Финальная сверка: Compose config и diff --check — exit 0; JUnit подтверждает 1296/0/0/0. Отчёт, roadmap, план и исторический аудит согласованы с результатом full + post-fix и решением удалить редактор. Подготовлен локальный документно-тестовый коммит приёмки; push/merge/rollout не выполняются.
 
 [2026-09-06 10:28] Финальный Docker unit suite — 1296 passed (47.17s), exit 0; JUnit сохранён. Задача 6 закрывается по full + post-fix evidence: первый полный 2334 passed/3 document failures, все три исправлены, 16 targeted и весь unit suite зелёные. Новый полный повтор не выполнялся, это явно записано; production runtime после c283fdd не менялся. Roadmap/отчёт обновлены, следующий этап — задача 7. Main/staging/production не изменялись.
