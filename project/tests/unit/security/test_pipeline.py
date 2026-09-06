@@ -913,6 +913,31 @@ async def test_history_placeholder_cannot_be_restored() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trusted_public_contact_placeholder_from_history_can_be_restored() -> None:
+    phone = "+7 (902) 906-61-66"
+    gateway = CapturingGateway(
+        "Телефон администратора: <PII_PHONE_1>",
+        "Повторный ответ после ошибочного отклонения",
+    )
+    subject = SecurityPipeline(
+        gateway,
+        f"Телефон администратора: {phone}",
+        StructuredFacts(frozenset(), frozenset({phone}), frozenset()),
+    )
+
+    result = await subject.respond(
+        "Напомните телефон администратора",
+        [{"role": "assistant", "content": f"Телефон администратора: {phone}"}],
+    )
+
+    assert result.text == f"Телефон администратора: {phone}"
+    assert [request.purpose for request in gateway.requests] == [
+        "security",
+        "answer",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_invalid_output_retries_once_then_returns_safe_fallback() -> None:
     rejected_raw = "Цена 9999 руб. raw-output-sentinel"
     gateway = CapturingGateway(

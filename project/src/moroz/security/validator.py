@@ -425,6 +425,10 @@ class StructuredFacts:
             ),
         )
 
+    def contains_public_contact(self, value: str) -> bool:
+        contacts = _contacts(value)
+        return bool(contacts) and contacts <= self.public_contacts
+
 
 @dataclass(frozen=True, slots=True)
 class ValidationVerdict:

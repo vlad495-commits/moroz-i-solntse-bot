@@ -267,6 +267,11 @@ class SecurityPipeline:
         if route.route == "offtopic":
             return _aggregate(accumulated, OFFTOPIC_REPLY, "router-local")
         active_facts = self.facts
+        allowed_placeholders = masked_current.placeholders | frozenset(
+            placeholder
+            for placeholder, value in masked_current.mapping.items()
+            if active_facts.contains_public_contact(value)
+        )
         mixed_boundary = (
             "ГРАНИЦА СМЕШАННОГО ЗАПРОСА: транзакционная часть уже обработана "
             "кодом, и отдельный детерминированный ответ о ней будет добавлен после "
@@ -332,7 +337,7 @@ class SecurityPipeline:
             verdict = validate_output(
                 answer.text,
                 active_facts,
-                masked_current.placeholders,
+                allowed_placeholders,
                 forbidden_raw=forbidden_raw,
             )
             if verdict.ok:
@@ -340,7 +345,7 @@ class SecurityPipeline:
                     try:
                         restored = session.restore_validated(
                             answer.text,
-                            masked_current.placeholders,
+                            allowed_placeholders,
                         )
                     except UnknownPlaceholder:
                         validator_code = "unknown_placeholder"
@@ -374,7 +379,7 @@ class SecurityPipeline:
                         try:
                             restored = session.restore_validated(
                                 answer.text,
-                                masked_current.placeholders,
+                                allowed_placeholders,
                             )
                         except UnknownPlaceholder:
                             validator_code = "unknown_placeholder"
