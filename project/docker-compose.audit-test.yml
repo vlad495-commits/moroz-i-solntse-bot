@@ -1,0 +1,23 @@
+# Disposable local test infrastructure only. Never use for deployment.
+services:
+  test:
+    environment:
+      DATABASE_URL: postgresql://audit_test:audit_test@postgres:5432/audit_test
+      POSTGRES_USER: audit_test
+      POSTGRES_PASSWORD: audit_test
+      POSTGRES_DB: audit_test
+      REDIS_URL: redis://:audit_test@redis:6379/0
+      RABBITMQ_URL: amqp://audit_test:audit_test@rabbitmq:5672/
+      PYTHONPATH: /workspace:/workspace/src:/workspace/llm:/workspace/admin
+  postgres:
+    environment:
+      POSTGRES_USER: audit_test
+      POSTGRES_PASSWORD: audit_test
+      POSTGRES_DB: audit_test
+  redis:
+    environment:
+      REDIS_PASSWORD: audit_test
+  rabbitmq:
+    environment:
+      RABBITMQ_DEFAULT_USER: audit_test
+      RABBITMQ_DEFAULT_PASS: audit_test

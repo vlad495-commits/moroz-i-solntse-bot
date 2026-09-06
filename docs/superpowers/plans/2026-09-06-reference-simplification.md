@@ -65,10 +65,12 @@
 
 **Files:** создать `project/docker-compose.audit-test.yml`; проверить `project/Dockerfile.test`, `project/tests/integration/conftest.py`, `project/tests/e2e/test_security_pipeline.py`. Не менять рабочий `.env`.
 
+**Выполнено 06.09:** baseline 56 passed; integration каталога 9 passed. Одноразовый env хранится в root tmp/audit-test.env; рабочий .env не копируется. Запуск с -w /workspace и --rootdir=/workspace обязателен для загрузки общих fixtures. Миграции LF проходят.
+
 **Interfaces:** вход — текущий checkout; выход — отдельный Compose project `moroz-reference-test`, в котором test использует исключительно test postgres/redis/rabbitmq. Во всех командах ниже рабочая папка `project/`.
 
-- [ ] Прочитать `using-git-worktrees`, подготовить отдельный `codex/reference-simplification` checkout по правилам навыка. Перенести файл кандидата из root tmp исходного checkout в root tmp рабочего через apply_patch. Проверить `git status`, исходную ветку/commit, не перезаписать пользовательские изменения.
-- [ ] Создать override (пароль ниже — только для одноразовой локальной тестовой сети без опубликованных портов):
+- [x] Прочитать `using-git-worktrees`, подготовить отдельный `codex/reference-simplification` checkout по правилам навыка. Перенести файл кандидата из root tmp исходного checkout в root tmp рабочего через apply_patch. Проверить `git status`, исходную ветку/commit, не перезаписать пользовательские изменения.
+- [x] Создать override (пароль ниже — только для одноразовой локальной тестовой сети без опубликованных портов):
 
 ```yaml
 services:
@@ -95,18 +97,18 @@ services:
       RABBITMQ_DEFAULT_PASS: audit_test
 ```
 
-- [ ] Проверить `docker compose --env-file ../.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml config --quiet`. Не выводить полный config с рабочими секретами. Проверить выбранные endpoints test и labels создаваемых volumes/network; ни один не должен быть external или принадлежать рабочему контуру.
-- [ ] Запустить только инфраструктуру тестового проекта:
+- [x] Проверить `docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml config --quiet`. Не выводить полный config с рабочими секретами. Проверить выбранные endpoints test и labels создаваемых volumes/network; ни один не должен быть external или принадлежать рабочему контуру.
+- [x] Запустить только инфраструктуру тестового проекта:
 
 ```powershell
-docker compose --env-file ../.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml up -d postgres redis rabbitmq
-docker compose --env-file ../.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm --build test pytest -q /workspace/tests/unit/security/test_pipeline.py
+docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml up -d postgres redis rabbitmq
+docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm --build -w /workspace test pytest --rootdir=/workspace -q -p no:cacheprovider /workspace/tests/unit/security/test_pipeline.py
 ```
 
 Ожидание: baseline результатов сохранён; существующее падение не приписывается новой правке. Не запускать bot/worker/admin/scheduler этого Compose project.
 
-- [ ] До integration/E2E проверить известный checksum-блокер Windows из побочного аудита. Если он воспроизводится, исправить воспроизводимость LF отдельным коммитом с проверкой checksum; не менять принятую запись checksum в существующей БД и не скрывать сбой skip-маркером. Unit-работу можно продолжать, но общий gate остаётся незакрытым.
-- [ ] Коммит `test: isolate reference simplification checks`; log и roadmap. Очистка — только `down` точно этого Compose project, без `-v` по умолчанию и без удаления рабочего Redis.
+- [x] До integration/E2E проверить известный checksum-блокер Windows из побочного аудита. Если он воспроизводится, исправить воспроизводимость LF отдельным коммитом с проверкой checksum; не менять принятую запись checksum в существующей БД и не скрывать сбой skip-маркером. Unit-работу можно продолжать, но общий gate остаётся незакрытым.
+- [x] Коммит `test: isolate reference simplification checks`; log и roadmap. Очистка — только `down` точно этого Compose project, без `-v` по умолчанию и без удаления рабочего Redis.
 
 ## Задача 2 — заменить консультационный путь одним LLM
 
@@ -249,7 +251,7 @@ rg -n 'CatalogGrounding|direct_reply|resolve_catalog|catalog_grounding_enabled|Y
 - [ ] Выполнить весь suite нового checkout в изолированном test container:
 
 ```powershell
-docker compose --env-file ../.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm --build test pytest -q /workspace/tests
+docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm --build -w /workspace test pytest --rootdir=/workspace -q -p no:cacheprovider /workspace/tests
 git diff --check
 ```
 
