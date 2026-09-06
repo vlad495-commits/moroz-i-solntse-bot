@@ -1244,7 +1244,7 @@ async def test_router_v3_migration_seeds_structured_cases_and_preserves_history(
     try:
         assert await conn.fetchval(
             "SELECT count(*) FROM eval_cases WHERE suite = 'router_v3'"
-        ) == 25
+        ) == 26
         assert await conn.fetchval(
             "SELECT count(*) FROM eval_cases WHERE suite = 'router_v2'"
         ) == 24

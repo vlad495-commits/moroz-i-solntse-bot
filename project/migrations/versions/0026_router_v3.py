@@ -17,7 +17,7 @@ branch_labels = None
 depends_on = None
 
 ROUTER_V3_DATASET_SHA256 = (
-    "22b602995f82dfea49732c613d889f07db9f0c9ed1618996207ad963cbe4a868"
+    "a0d23048e2ce0d396985bb82ff0832d7b63f0a0f7296227554cb0f6984d736a1"
 )
 
 

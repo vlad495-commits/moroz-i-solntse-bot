@@ -160,6 +160,14 @@
     "critical": true
   },
   {
+    "case_key": "router-v3-context-phone",
+    "category": "context",
+    "input": "+7 900 111-22-33",
+    "context": [{"role": "assistant", "content": "Отправьте контакт или напишите номер телефона"}],
+    "expected": {"route": "booking", "action": "continue", "topics": [], "services": [], "date": null, "time_from": null, "time_to": null, "staff": null, "choice": null},
+    "critical": true
+  },
+  {
     "case_key": "router-v3-wrong-layout",
     "category": "context",
     "input": "[jxe pfgbcfnmcz yf rhbjcfey",

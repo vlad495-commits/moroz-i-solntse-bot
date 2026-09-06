@@ -74,7 +74,11 @@ def _normalise(value: object) -> str:
 
 
 def _is_any_staff(value: object) -> bool:
-    return _normalise(value) in _ANY_STAFF
+    normalized = _normalise(value)
+    padded = f" {normalized} "
+    return normalized in _ANY_STAFF or any(
+        f" {phrase} " in padded for phrase in _ANY_STAFF
+    )
 
 
 class TelegramBookingCoordinator:
@@ -186,6 +190,19 @@ class TelegramBookingCoordinator:
         elif scenario.phase == "awaiting_confirmation":
             scenario = replace(scenario, phase="collecting", updated_at=self._now())
         state = merge_draft(self._state(scenario), decision)
+        if (
+            decision.staff is not None
+            and state.get("service_id")
+            and not self._resolve_staff_preference(state)
+        ):
+            scenario = await self._checkpoint(
+                scenario, state, "booking_details_merged"
+            )
+            return await self._save_step(
+                scenario,
+                "staff",
+                "Уточните имя специалиста или напишите «любой специалист».",
+            )
         if (
             decision.action == "clarify"
             and not decision.time_from
@@ -854,9 +871,14 @@ class TelegramBookingCoordinator:
                     [[("Да, перенести", self._callback(updated, "confirm_change", 0))]]
                 ),
             )
-        state.update({"step": "contact", "starts_at": str(choice["starts_at"])})
+        state["starts_at"] = str(choice["starts_at"])
         updated = await self._checkpoint(scenario, state, "booking_slot_selected")
-        return await self._request_contact(updated)
+        requirement = next_requirement(updated.state)
+        if requirement == "contact":
+            return await self._request_contact(updated)
+        if requirement == "name":
+            return await self._save_step(updated, "name", "Как вас зовут?")
+        return await self._show_confirmation(updated, self._state(updated))
 
     async def _save_step(
         self, scenario: BookingScenario, step: str, text: str

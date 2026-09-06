@@ -719,9 +719,14 @@ class MessageTaskHandler:
                     chat_id,
                 )
                 async def resolve_catalog(decision):
+                    service_query = (
+                        " и ".join(decision.services)
+                        if decision.services
+                        else decision.service or ""
+                    )
                     grounded = await self._catalog_repository.ground(
                         connection,
-                        decision.service or "",
+                        service_query,
                         self._clock(),
                     )
                     simple_kind = next(
@@ -760,13 +765,14 @@ class MessageTaskHandler:
 
                 async def dispatch(decision):
                     nonlocal booking_reply
-                    if decision.route not in {"booking", "booking_management"}:
-                        return None
-                    if booking_stopped:
+                    is_booking = decision.route in {"booking", "booking_management"}
+                    if booking_stopped and is_booking:
                         booking_reply = BookingReply(STOPPED_ACTION_REPLY, {})
                         return booking_reply.text
                     if self._booking_coordinator is None:
-                        return "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору."
+                        if is_booking:
+                            return "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору."
+                        return None
                     booking_reply = await self._booking_coordinator.handle(
                         connection, customer_id=chat_id, user_id=str(user_id),
                         update_id=accepted_ids[0], text=persisted_text,

@@ -12,6 +12,7 @@ from moroz.booking.catalog import (
     CatalogVariant,
     match_catalog,
 )
+from moroz.booking.telegram import BookingReply
 from moroz.booking.yclients_catalog import CatalogRecord
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask
@@ -394,6 +395,88 @@ async def test_price_action_with_two_explicit_services_keeps_both_for_answer(dat
     assert "Криомассаж головы" in answer_system
     assert "Прессотерапия" in answer_system
     assert "Криомассаж лица" not in answer_system
+
+
+async def test_mixed_booking_with_two_services_grounds_both_and_keeps_clarification(
+    database,
+):
+    class MixedRouter:
+        async def route(self, _text, _context, *, state=None):
+            return RouterVerdict(
+                RouteDecision(
+                    "booking",
+                    0.99,
+                    "clarify",
+                    topics=("price",),
+                    services=("Криомассаж головы", "Прессотерапия"),
+                )
+            )
+
+    class Coordinator:
+        async def routing_context(self, _customer_id):
+            return '{"mode":"idle","active":false}'
+
+        async def handle(self, _connection, **_kwargs):
+            return BookingReply("Уточните, какую одну услугу записать.", {})
+
+    text = "Сколько стоят криомассаж головы и прессотерапия, и запишите меня?"
+    repository = MessageRepository(database)
+    assert await repository.accept(incoming("mixed-two-services", text))
+    gateway = CatalogAnswerGateway()
+    pipeline = SecurityPipeline(
+        gateway,
+        "",
+        extract_structured_facts(""),
+        router=MixedRouter(),
+        input_security=AllowingInputSecurity(),
+    )
+
+    async def llm(text, context, *, recent_message_count, catalog, **options):
+        return await pipeline.respond(
+            text,
+            context,
+            recent_message_count=recent_message_count,
+            catalog=catalog,
+            dispatch=options.get("dispatch"),
+            booking_context=options.get("booking_context"),
+        )
+
+    records = (
+        CatalogRecord(
+            "20", "10", "Криомассаж головы", "Крио", "Анна",
+            Decimal("1200"), Decimal("1200"), 15,
+        ),
+        CatalogRecord(
+            "21", "11", "Прессотерапия", "Тело", "Аппарат 1",
+            Decimal("1500"), Decimal("1500"), 30,
+        ),
+    )
+    catalog_repository = MatchingCatalogRepository(records)
+    handler = MessageTaskHandler(
+        database,
+        llm,
+        TelegramSender(FakeTelegram(), repository),
+        catalog_repository=catalog_repository,
+        catalog_grounding_enabled=True,
+        booking_coordinator=Coordinator(),
+        clock=lambda: NOW,
+    )
+
+    await handler.handle(
+        QueueTask(
+            "process_message",
+            {"chat_id": "42", "update_ids": ["mixed-two-services"]},
+            process_message_key(["mixed-two-services"]),
+        )
+    )
+
+    assert catalog_repository.calls[0][1] == "Криомассаж головы и Прессотерапия"
+    async with database.acquire() as connection:
+        answer = await connection.fetchval(
+            "SELECT content FROM messages WHERE role = 'assistant'"
+        )
+    assert "обе услуги" in answer
+    assert "какую одну услугу" in answer
 
 
 async def test_price_action_with_only_duration_does_not_select_single_tariff(database):

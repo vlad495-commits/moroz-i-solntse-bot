@@ -482,6 +482,131 @@ async def test_any_staff_preference_does_not_loop_on_staff_question(migrated_dat
         await database.close()
 
 
+async def test_staff_correction_after_service_filters_new_slots(migrated_database_url):
+    slots = [
+        Slot("anna-slot", ("331",), "10", datetime(2026, 9, 5, 13, tzinfo=MOSCOW), 60),
+        Slot("maria-slot", ("331",), "11", datetime(2026, 9, 5, 14, tzinfo=MOSCOW), 60),
+    ]
+    database, bookings, adapter, coordinator = await _coordinator(
+        migrated_database_url,
+        slots=slots,
+    )
+    base = {"customer_id": "42", "user_id": "7", "text": ""}
+    try:
+        initial = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="staff-initial",
+            kind="text",
+            data={},
+            decision=booking_decision(),
+        )
+        assert _button_labels(initial) == ["13:00", "14:00"]
+
+        corrected = await _handle(
+            coordinator,
+            database,
+            **{**base, "text": "Лучше к Марии"},
+            update_id="staff-corrected",
+            kind="text",
+            data={},
+            decision=RouteDecision(
+                "booking", 0.99, "continue", staff="Мария"
+            ),
+        )
+
+        assert _button_labels(corrected) == ["14:00"]
+        draft = await bookings.get_active_for_customer("42")
+        assert draft.state["staff_id"] == "11"
+        assert draft.state["staff_name"] == "Мария"
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_date_correction_after_contact_does_not_request_contact_twice(
+    migrated_database_url,
+):
+    slots = [
+        Slot("first-day", ("331",), "10", datetime(2026, 9, 5, 13, tzinfo=MOSCOW), 60),
+        Slot("second-day", ("331",), "10", datetime(2026, 9, 6, 14, tzinfo=MOSCOW), 60),
+    ]
+    database, bookings, adapter, coordinator = await _coordinator(
+        migrated_database_url,
+        slots=slots,
+    )
+    base = {"customer_id": "42", "user_id": "7", "text": ""}
+    try:
+        first = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="late-date-start",
+            kind="text",
+            data={},
+            decision=booking_decision(),
+        )
+        contact = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="late-date-first-slot",
+            kind="callback",
+            data={
+                "callback_data": first.delivery_options["reply_markup"][
+                    "inline_keyboard"
+                ][0][0]["callback_data"]
+            },
+        )
+        assert contact.delivery_options["reply_markup"]["keyboard"]
+        await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="late-date-contact",
+            kind="contact",
+            data={
+                "contact_user_id": "7",
+                "phone_number": "+79001112233",
+                "first_name": "Иван",
+            },
+        )
+
+        second = await _handle(
+            coordinator,
+            database,
+            **{**base, "text": "Лучше 6 сентября"},
+            update_id="late-date-correct",
+            kind="text",
+            data={},
+            decision=RouteDecision(
+                "booking", 0.99, "continue", date="2026-09-06"
+            ),
+        )
+        confirmation = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="late-date-second-slot",
+            kind="callback",
+            data={
+                "callback_data": second.delivery_options["reply_markup"][
+                    "inline_keyboard"
+                ][0][0]["callback_data"]
+            },
+        )
+
+        assert _button_labels(confirmation) == ["Подтвердить"]
+        draft = await bookings.get_active_for_customer("42")
+        assert draft.phase == "awaiting_confirmation"
+        assert draft.state["customer_phone"] == "+79001112233"
+        assert draft.state["customer_name"] == "Иван"
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
+
+
 async def test_manual_phone_then_name_reaches_confirmation(migrated_database_url):
     database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
     base = {"customer_id": "42", "user_id": "7", "text": ""}

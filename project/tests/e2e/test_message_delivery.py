@@ -698,7 +698,12 @@ async def test_manual_phone_and_name_traverse_worker_semantic_path(
                 booking_context=None,
             ):
                 self.calls.append((text, context))
-                reply = await dispatch(RouteDecision("booking", 0.99, "continue"))
+                decision = (
+                    RouteDecision("consultation", 0.99)
+                    if text.startswith("+7")
+                    else RouteDecision("booking", 0.99, "continue")
+                )
+                reply = await dispatch(decision)
                 return SimpleNamespace(
                     text=reply,
                     prompt_tokens=0,

@@ -33,9 +33,11 @@ def test_router_v3_dataset_has_bounded_structured_coverage():
     keys = [case["case_key"] for case in cases]
     categories = {case["category"] for case in cases}
 
-    assert len(cases) >= 25
+    assert len(cases) >= 26
     name_case = next(case for case in cases if case["case_key"] == "router-v3-context-name")
     assert name_case["expected"]["action"] == "continue"
+    phone_case = next(case for case in cases if case["case_key"] == "router-v3-context-phone")
+    assert phone_case["expected"]["action"] == "continue"
     assert len(keys) == len(set(keys))
     assert all(key.startswith("router-v3-") for key in keys)
     assert {
