@@ -1,0 +1,296 @@
+# План реализации доказательного аудита Lucky Hair
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. В этой задаче выбран последовательный режим в текущем чате: отдельные агенты не требуются.
+
+**Goal:** приблизить архитектуру Moroz к подтверждённым принципам Lucky Hair, убрав дублирующие консультационные механизмы и сохранив надёжную запись через YCLIENTS.
+
+**Architecture:** основной LLM отвечает по одному ручному промпту; Router выбирает маршрут, а booking coordinator выполняет операции с реальным провайдером. Существующие Security, Validator, Compact, admin editor и durable delivery сохраняются. Упрощение измеряется удалёнными потребителями и ветками, а не числом полей JSON или внешним сходством меню.
+
+**Tech Stack:** Python 3.12, aiogram 3.x, существующий LLM gateway, PostgreSQL, Redis, RabbitMQ, Docker Compose, pytest. Новые библиотеки и сервисы приложения не нужны.
+
+## Global Constraints
+
+- Источник решений: [доказательный аудит](<../../audits/Аудит упрощения архитектуры по Lucky Hair 2026-09-06.md>), §§2–8. Контракт первого пакета: [spec](../specs/2026-09-06-manual-consultation-knowledge-design.md). Живой статус ведётся в [дорожной карте](<../../../Дорожная карта.md>).
+- Канонический Lucky Hair: commit `5398f909829f5db1b5052087f5a826c2bbcd5244` в `D:/AI_OS/30_Sources/Automation_Courses/01_Raw_Materials/2026-08-13_lucky_hair_llm_chatbot_reference/project-edu-public`. Читать через `git show`, не грязный working tree.
+- Основание локального runtime аудита — `82205a5`; на момент планирования HEAD `069145d`, последующие изменения до текущей плановой правки документные. Staging не считать равным локальному HEAD.
+- Ответы Светы не блокируют реализацию. Использовать v1.8-draft.2; спорные цены и доступность не достраивать. Владелец уже отправил [вопросы](<../../../Вопросы Свете.md>).
+- Не возвращать постоянное меню, не делать rollback свободного диалога, не заменять YCLIENTS локальными записями референса.
+- Сохранять ownership, consent, явное подтверждение, live-проверку слота, идемпотентность, unknown outcome, STOP/privacy, durable inbox/outbox.
+- Все исполнения проекта только Docker. Тестовая инфраструктура отдельная, без host ports и доступа к рабочим БД/Redis; один другой номер Redis DB не заменяет изоляцию экземпляра.
+- Paid LLM, Telegram/YCLIENTS mutations, push и rollout — только по отдельному разрешению. Локальные fake-provider тесты входят в реализацию.
+- Новые расходники только в корневом `tmp/`. Перед переносом кандидата проверить его наличие; если утрачен, восстановить по сохранённым материалам с повторной сверкой, не подставлять старый укороченный вариант.
+- Рабочие изменения пользователя сохранять. Коммитить явный список своих файлов после каждого законченного тестового цикла. Логировать действия в `changelog.md`.
+
+## Что уже сделано и не выполняется повторно
+
+| Результат | Доказательство | Как используется |
+|---|---|---|
+| Удалены постоянное меню и большой wizard, реализован свободный сбор draft | Runtime `82205a5`, roadmap, предыдущий план свободного диалога | Это исходное состояние, не задача данного плана |
+| Выполнено сравнение с Lucky Hair | Аудит 06.09 и канонический commit | Не повторять общий аудит с нуля |
+| Получен серверный каталог 76 услуг / 9 категорий | Снимок 06.09 06:00:18 МСК | Разовое основание прайса, не новый runtime-источник консультации |
+| Проверены материалы и подготовлен кандидат | Аудит знаний, v1.8-draft.2 | Перенести при реализации пакета A |
+| Подготовлены и отправлены вопросы Свете | Файл вопросов, сообщение владельца | Ответы — последующая правка содержимого |
+| Есть editor/history/reload/rollback | `project/admin/prompt_routes.py`, `project/llm/llm.py` | Переиспользовать, не строить второй редактор |
+
+Пакет A ещё не реализован. Предыдущие `2344 passed` не являются проверкой нового кандидата.
+
+## Очередь всего аудита
+
+| Этап | Конкретный результат | Условие перехода |
+|---|---|---|
+| A | Один консультационный путь без catalog grounding, работающий ручной прайс, сохранённая запись | Задачи 1–6 ниже и свежий локальный gate |
+| B | Карта оставшихся aliases/topics и сборки mixed reply; удаление только доказанных дублей | Задача 7; любое изменение публичного Router-контракта — отдельная узкая spec |
+| C | Проверенный вход/возврат в запись и обоснованная частота технического sync | Задача 8; текущие значения сохраняются, если упрощение не даёт доказанного выигрыша |
+| Release | Исправлены релизные блокеры, пройдена приёмка точного кандидата | Задача 9; отдельное разрешение на staging |
+
+Архитектурная цель достигнута не после одного промпта: по каждому отличию из §2 аудита должно быть решение «перенесено / сохранено с обоснованием», с проверкой соответствующего пользовательского пути.
+
+## Карта файлов пакета A
+
+| Файл | Ответственность / планируемое изменение |
+|---|---|
+| `project/worker/main.py` | Убрать resolver консультационного каталога и его передачу LLM; сохранить booking coordinator и markup |
+| `project/llm/llm.py` | Убрать параметр catalog; сохранить атомарный prompt/facts reload |
+| `project/src/moroz/security/pipeline.py` | Убрать catalog block/direct reply/facts merge; сохранить ответ действия при сбое answer LLM |
+| `project/src/moroz/security/validator.py` | Ограниченно поддержать расчёты минут из ручного тарифа, не ослабляя остальные проверки |
+| `project/admin/eval_runner.py` | Тот же prompt-only контракт, без альтернативного catalog аргумента |
+| `project/src/moroz/booking/catalog.py` | После анализа потребителей удалить только consultation-only части; оставить технический lookup |
+| `project/llm/prompts/system.md` | Перенести согласованный временный кандидат с неизвестными условиями, без старого catalog блока |
+| `project/tests/unit/security/test_pipeline.py`, `test_validator.py`, `test_system_prompt_catalog.py`, `test_eval_catalog.py` | Заменить прежние ожидания grounding новыми контрактами, сохранить защитные проверки |
+| `project/tests/unit/test_worker.py`, `project/tests/e2e/test_catalog_message_flow.py` | Проверить отсутствие ground у консультации и сохранение booking |
+| `project/tests/integration/messaging/test_prompt_reload.py` | Применение prompt/facts, rollback, ошибка hash и восстановление |
+| `project/docker-compose.audit-test.yml` | Создать только тестовый override из задачи 1 |
+
+## Задача 1 — безопасный тестовый контур
+
+**Files:** создать `project/docker-compose.audit-test.yml`; проверить `project/Dockerfile.test`, `project/tests/integration/conftest.py`, `project/tests/e2e/test_security_pipeline.py`. Не менять рабочий `.env`.
+
+**Interfaces:** вход — текущий checkout; выход — отдельный Compose project `moroz-reference-test`, в котором test использует исключительно test postgres/redis/rabbitmq. Во всех командах ниже рабочая папка `project/`.
+
+- [ ] Прочитать `using-git-worktrees`, подготовить отдельный `codex/reference-simplification` checkout по правилам навыка. Перенести файл кандидата из root tmp исходного checkout в root tmp рабочего через apply_patch. Проверить `git status`, исходную ветку/commit, не перезаписать пользовательские изменения.
+- [ ] Создать override (пароль ниже — только для одноразовой локальной тестовой сети без опубликованных портов):
+
+```yaml
+services:
+  test:
+    environment:
+      DATABASE_URL: postgresql://audit_test:audit_test@postgres:5432/audit_test
+      POSTGRES_USER: audit_test
+      POSTGRES_PASSWORD: audit_test
+      POSTGRES_DB: audit_test
+      REDIS_URL: redis://:audit_test@redis:6379/0
+      RABBITMQ_URL: amqp://audit_test:audit_test@rabbitmq:5672/
+      PYTHONPATH: /workspace:/workspace/src:/workspace/llm:/workspace/admin
+  postgres:
+    environment:
+      POSTGRES_USER: audit_test
+      POSTGRES_PASSWORD: audit_test
+      POSTGRES_DB: audit_test
+  redis:
+    environment:
+      REDIS_PASSWORD: audit_test
+  rabbitmq:
+    environment:
+      RABBITMQ_DEFAULT_USER: audit_test
+      RABBITMQ_DEFAULT_PASS: audit_test
+```
+
+- [ ] Проверить `docker compose --env-file ../.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml config --quiet`. Не выводить полный config с рабочими секретами. Проверить выбранные endpoints test и labels создаваемых volumes/network; ни один не должен быть external или принадлежать рабочему контуру.
+- [ ] Запустить только инфраструктуру тестового проекта:
+
+```powershell
+docker compose --env-file ../.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml up -d postgres redis rabbitmq
+docker compose --env-file ../.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm --build test pytest -q /workspace/tests/unit/security/test_pipeline.py
+```
+
+Ожидание: baseline результатов сохранён; существующее падение не приписывается новой правке. Не запускать bot/worker/admin/scheduler этого Compose project.
+
+- [ ] До integration/E2E проверить известный checksum-блокер Windows из побочного аудита. Если он воспроизводится, исправить воспроизводимость LF отдельным коммитом с проверкой checksum; не менять принятую запись checksum в существующей БД и не скрывать сбой skip-маркером. Unit-работу можно продолжать, но общий gate остаётся незакрытым.
+- [ ] Коммит `test: isolate reference simplification checks`; log и roadmap. Очистка — только `down` точно этого Compose project, без `-v` по умолчанию и без удаления рабочего Redis.
+
+## Задача 2 — заменить консультационный путь одним LLM
+
+**Files:** worker/main.py, llm/llm.py, security/pipeline.py, admin/eval_runner.py, prompts/system.md и unit/e2e файлы из карты.
+
+**Interfaces:** `SecurityPipeline.respond(user_message, context, *, recent_message_count=1, dispatch=None, booking_context=None)` — без `catalog`; аналогично удалить `catalog` из `generate_response`, `_generate_bot_response`, `run_case`. Возвращаемый `LLMResponse` не меняется. `dispatch` и `booking_context` сохраняются.
+
+- [ ] Добавить в `test_pipeline.py` контракт отсутствия consultation API:
+
+```python
+def test_pipeline_has_no_catalog_argument():
+    import inspect
+    assert "catalog" not in inspect.signature(SecurityPipeline.respond).parameters
+
+@pytest.mark.asyncio
+async def test_consultation_uses_owned_prompt_and_answer_gateway():
+    gateway = CapturingGateway("Солярий — 42 ₽ за минуту.")
+    owned = "Солярий — 42 ₽ за минуту."
+    from moroz.security.validator import extract_structured_facts
+    subject = SecurityPipeline(gateway, owned, extract_structured_facts(owned))
+    result = await subject.respond("Сколько стоит солярий?", [])
+    answers = [r for r in gateway.requests if r.purpose == "answer"]
+    assert len(answers) == 1
+    assert owned in answers[0].messages[0]["content"]
+    assert "UNTRUSTED_CATALOG_DATA" not in answers[0].messages[0]["content"]
+    assert result.text == "Солярий — 42 ₽ за минуту."
+```
+
+- [ ] Запустить команду test из задачи 1 с `pytest -q /workspace/tests/unit/security/test_pipeline.py -k 'no_catalog_argument or owned_prompt'`. Ожидание до изменения: signature test FAIL, после — оба PASS.
+- [ ] В pipeline удалить ветку от `catalog_block = ""` до сборки `owned_system`, включая `direct_reply`. Сборка должна остаться:
+
+```python
+active_facts = self.facts
+owned_system = "\n\n".join(
+    part for part in (self.system_prompt, route_metadata) if part
+)
+```
+
+Удалить параметр и больше не передавать его из всех трёх callers. В worker удалить вложенный `resolve_catalog` и добавление `llm_options["catalog"]`; оставить `recent_message_count`, booking routing context и dispatch. Удалить неиспользуемые imports только после поиска потребителей.
+
+- [ ] Перенести полный v1.8-draft.2 в `project/llm/prompts/system.md` через apply_patch. В шапке отличить локальную реализацию от deployment; сохранить 16 разделов, canary, 12 описаний и оговорки. Не объявлять ответы Светы полученными.
+- [ ] В worker-тестах использовать repository fake, чей `ground` вызывает `AssertionError("consultation must not query catalog")`; обычная консультация должна дойти до answer gateway, booking — до технического `list_services`. Удалить только ожидания `catalog-local`/вызова ground, не сами privacy/ownership сценарии.
+- [ ] В `test_eval_catalog.py` и `test_system_prompt_catalog.py` заменить прежние ожидания каталога проверками нового интерфейса и отсутствия `UNTRUSTED_CATALOG_DATA`. Сохранить проверки контактов, неизвестных цен и canary.
+- [ ] Запустить unit/security, unit/test_worker.py и e2e/test_catalog_message_flow.py через изолированный test. Ожидание: PASS; при отказе DB gate результат не считать полным.
+- [ ] Коммит `refactor: use manual prompt for consultation`; перечислить изменённые callers и удалённые ветки в changelog.
+
+## Задача 3 — расчёт минут без глобального разрешения новых цен
+
+**Files:** validator.py, test_validator.py, pipeline.py, prompts/system.md.
+
+**Interfaces:** сохранить `extract_structured_facts(*sources, slots=())` и `validate_output(...)`. Добавить к `StructuredFacts` поле `minute_rates: tuple[tuple[str, str], ...] = ()` — услуга и Decimal-совместимая строка тарифа. Поле строится только из явно маркированных строк ручного промпта, а не из истории/ответа/YCLIENTS. Имена дополнительных локальных helpers: `_minute_rates(sources)` и `_validated_minute_prices(text, rates)`.
+
+Решение: не добавлять все кратные 42/51 в общий allowlist. Для производной суммы требовать явную связку «длительность + услуга + итог» и проверить произведение через Decimal. Если короткое «10 минут — 420 ₽» невозможно привязать к услуге надёжно, разрешённый формат ответа — «10 минут солярия — 420 ₽». Это всё ещё один короткий ответ, а не таблица. Не использовать Router для назначения медицински допустимого времени.
+
+- [ ] Добавить отдельные параметризованные проверки:
+
+```python
+@pytest.mark.parametrize("text,ok", [
+    ("13 минут солярия — 546 ₽.", True),
+    ("13 минут солярия — 547 ₽.", False),
+    ("13 минут коллариума — 546 ₽.", False),
+    ("Криокапсула — 546 ₽.", False),
+    ("13 минут солярия — 546 ₽. LED-маска — 546 ₽.", False),
+])
+def test_minute_price_is_bound_to_service_and_occurrence(text, ok):
+    facts = extract_structured_facts(
+        "Солярий — 42 ₽ за минуту.\nКоллариум — 51 ₽ за минуту."
+    )
+    assert validate_output(text, facts, frozenset()).ok is ok
+```
+
+- [ ] Запустить `test_validator.py -k minute_price`; правильный новый расчёт до реализации должен FAIL. Неверные суммы должны оставаться запрещёнными.
+- [ ] Реализовать парсинг только явных тарифных строк трёх услуг (`солярий`, `коллариум`, `коллагенарий`), без нечётких совпадений и без float. Проверять **каждое вхождение суммы**, а не множество чисел: производное разрешение не должно легализовать вторую такую же цену у другой услуги. Нулевая/отрицательная длительность, дробные минуты без утверждённого формата, неоднозначный тариф, скидка и перепутанная услуга должны давать существующий `invented_price`.
+
+Ядро арифметики в helper:
+
+```python
+from decimal import Decimal
+
+def _minute_total(rate: str, minutes: str) -> Decimal | None:
+    if not minutes.isascii() or not minutes.isdigit():
+        return None
+    count = int(minutes)
+    if count <= 0:
+        return None
+    return Decimal(rate.replace(",", ".")) * count
+```
+
+Результат используется только для совпавшего span конкретного выражения, не объединяется с `facts.prices`. Старый контроль raw PII, canary, контактов, гарантий и слотов остаётся до/после проверки цены как сейчас. Общий семантический контроль фиксированных цен не объявлять реализованным этим helper.
+
+- [ ] Добавить тесты: тариф 43 вместо 42 → 13 минут = 559; удалённый тариф → 546 запрещено; сумма из истории не разрешается; 5 и 10 минут двух услуг проверяются отдельно. Согласовать примеры промпта с форматом, понятным validator.
+- [ ] Запустить test_validator.py, test_pipeline.py и test_output_validator.py. Коммит `fix: validate minute totals against owned tariffs` только при зелёном gate.
+
+## Задача 4 — не терять действие при сбое консультации
+
+**Files:** pipeline.py, test_pipeline.py, unit/test_worker.py, существующие booking E2E.
+
+**Interfaces:** `_combine_reply(answer: str, local_reply: str | None) -> str` уже существует; не создавать новый composer. Local reply сформирован trusted dispatch, а worker отдельно сохраняет его markup.
+
+- [ ] Расширить mixed booking test двумя ошибками gateway: `LLMUnavailable` и `NonRetryableLLMError`. Проверить, что ответ содержит прежний local next step и что gateway outage не вызывает повторный dispatch/мутацию. Использовать существующие fake gateway/router/dispatch из test_pipeline.py.
+- [ ] Запустить `test_pipeline.py -k 'unavailable or nonretryable or dispatch'`: новый тест должен воспроизвести потерю local reply.
+- [ ] В существующей ветке исключения выполнить точечную замену:
+
+```python
+except (LLMUnavailable, NonRetryableLLMError):
+    return _aggregate(
+        accumulated,
+        _combine_reply(SAFE_OUTPUT_FALLBACK, local_reply),
+        "security-fallback",
+    )
+```
+
+- [ ] Проверить mixed ответы в worker: «цена + запись», «подготовка внутри draft», ошибка answer LLM после подготовки подтверждения. Assert: текст и клавиатура описывают одну операцию, draft сохранён, booking success только из результата backend, повторного provider вызова нет.
+- [ ] Прогнать unit pipeline/worker и booking E2E в отдельной инфраструктуре. Коммит `fix: preserve booking reply on answer outage`. Это закрывает P2-2 побочного аудита только при соответствующем regression evidence, остальные дефекты не закрывает.
+
+## Задача 5 — обновление промпта и очистка хвостов
+
+**Files:** llm.py, integration/messaging/test_prompt_reload.py, admin/prompt_routes.py при доказанной необходимости; catalog.py, config и tests только по найденным потребителям.
+
+**Interfaces:** сохранить payload reload `{version_id, request_id, sha256}` и существующий ack; `_load_prompt(expected_sha256=None)` атомарно обновляет system prompt и facts. Никаких новых API админки/таблиц.
+
+- [ ] Добавить к reload integration тесту тарифы 42 → 43; проверить после ack новую пару `_system_prompt` и `_pipeline.facts`, новый расчёт 559 и отказ старого 546. Использовать существующий publisher/listener с test REDIS_URL.
+- [ ] Добавить сценарии неверного hash, пустого prompt, rollback и reconnect. Ожидание: ошибочная версия не применяется, отсутствие ack не отображается как успех; следующий подтверждённый reload использует актуальный файл. При выявленной потере reconnect применить минимальное перечитывание через `_load_prompt`, не новую очередь.
+- [ ] Прогнать integration/messaging/test_prompt_reload.py и existing admin prompt save/rollback tests, найденные командой `rg -n 'prompt.*save|rollback|reload' tests`. Не менять owner-only/CSRF проверки.
+- [ ] Выполнить поиск потребителей:
+
+```powershell
+rg -n 'CatalogGrounding|direct_reply|resolve_catalog|catalog_grounding_enabled|YCLIENTS_CATALOG_GROUNDING_ENABLED|merge_structured_facts' worker llm admin src tests
+```
+
+Удалять helper/type/import только если после предыдущих задач нет production-потребителей. Оставить list_services, reader, sync, service/staff IDs и provider DTO. Тесты технического каталога сохраняются. Если deployment flag временно оставлен для совместимости, пометить его no-op для консультации и записать причину, не использовать как выключатель booking.
+- [ ] Прогнать unit/security, unit/booking/test_catalog_matching.py, test_catalog_sync.py, integration/booking/test_catalog_lookup.py, test_catalog_projection.py. Коммит `refactor: remove unused consultation catalog consumers`.
+
+## Задача 6 — приёмка пакета A и запись результата
+
+**Files:** тесты выше, дорожная карта, changelog; сохранить evidence в `docs/audits/Приёмка ручных консультаций 2026-09-06.md` (создать при фактической проверке).
+
+- [ ] Выполнить весь suite нового checkout в изолированном test container:
+
+```powershell
+docker compose --env-file ../.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm --build test pytest -q /workspace/tests
+git diff --check
+```
+
+Зафиксировать commit, exact command, pass/fail/skip, происхождение кода /workspace, границы fake-provider проверки. Падение из-за checksum не считать pass и не суммировать результаты разных деревьев.
+- [ ] Пройти матрицу spec: известное/неизвестное, минута/расчёт/сравнение, неверная цена, reload/rollback, mixed draft, LLM outage, YCLIENTS outage, STOP/injection/чужая запись. Для LLM-качества без разрешения paid evals отметить «live не проверено», а не «бот отвечает идеально».
+- [ ] Проверить структурное доказательство: consultation не вызывает ground, каждый простой разрешённый FAQ идёт в answer LLM, каталог не входит в его prompt, booking по-прежнему использует list_services и живой слот. До/после перечислить удалённые ветки и сохранённые границы.
+- [ ] Использовать requesting-code-review/verification-before-completion по правилам навыков на стадии реализации. Исправить найденные дефекты, повторить затронутые проверки.
+- [ ] Обновить roadmap и changelog; локальный коммит результата. Не применять промпт/код на staging автоматически. Сообщить владельцу границы выполненного и перейти к аналитической задаче 7, не запрашивая заново цель проекта.
+
+## Задача 7 — оставшиеся дубли Router и mixed reply
+
+**Files для чтения:** messaging/router.py, booking/conversation.py, booking/telegram.py, security/pipeline.py, worker/main.py; канонические `project/llm/router.py`, `project/worker.py` референса. Документ результата — дополнение §4 исходного аудита, а не второй общий аудит.
+
+- [ ] Для `services`, legacy `service`, `topics`, `action/choice`, date/time/staff построить таблицу producer → consumer → необходимый сценарий уже после пакета A.
+- [ ] Сопоставить «цена + запись», изменение предпочтений, ответ только датой, continue переноса, consultation внутри draft. Измерить число реально выполняемых LLM вызовов и источников состояния на пути; не использовать длину JSON как метрику.
+- [ ] Если alias/ветка не имеет потребителей, удалить минимальным diff с воспроизводящим unit-тестом и локальным коммитом. Если меняет Router schema, семантику извлечения или UI, сначала оформить отдельную spec и implementation plan; не скрывать этот redesign внутри cleanup.
+- [ ] Если поле требуется booking, явно оставить с обоснованием. Допустимый итог этапа — доказанное отсутствие безопасного дальнейшего удаления. Не вводить новый orchestration framework ради схожести с референсом.
+
+## Задача 8 — вход в запись и техническая свежесть
+
+- [ ] Проверить нынешний вход обычным текстом, возврат после FAQ и продолжение с контекстной кнопкой; не возвращать постоянное меню. Зафиксировать конкретные затруднения, а не предполагать необходимость новой кнопки.
+- [ ] Если текущий UX удовлетворяет сценариям, сохранить. Изменение кнопки или последовательности отдельно показать владельцу перед кодом.
+- [ ] Подтвердить существующие sync 1 час и TTL 24 часа по коду. Описать последствия пропущенного sync, изменения услуги и недоступности провайдера. Консультация уже не зависит от этого snapshot.
+- [ ] По умолчанию сохранить текущую частоту. Любое изменение требует согласованного SLA свежести и согласованного TTL с запасом на сбой; нельзя просто включить суточный sync при TTL 24 часа. Не менять расписание на сервере в аналитической задаче.
+
+## Задача 9 — релизные условия и завершение общей цели
+
+- [ ] Сверить открытые дефекты побочного аудита: изоляция Redis, checksum Windows, kind при continue, фазы переноса, незавершённый выбор специалиста, доступ к четвёртой записи. Они не являются основанием переписать архитектуру целиком, но релизные блокеры нельзя забыть. Для оставшихся — отдельные исправления с regression-тестами до rollout.
+- [ ] Свести различия референса из §2 аудита: Router, dispatch, консультация, запись, UI, вопросы внутри записи, перенос/отмена, редактор, надёжность. Каждое либо адаптировано и проверено, либо намеренно сохранено с причиной.
+- [ ] Представить владельцу проверенный exact кандидат, оставшиеся бизнес-неизвестные и результаты live-проверок либо их отсутствие. Только после отдельного разрешения использовать deploy/manual-qa навыки и staging rollout с backup owner prompt, rollback и проверкой runtime.
+- [ ] Согласованные ответы Светы вносить отдельными content-коммитами через тот же ручной источник, с повторной проверкой цен/составов. Отсутствие ответа не разрешает обещать спорные услуги.
+
+## Проверка полноты плана
+
+| Требование spec | Задачи |
+|---|---|
+| Единый источник, сохранность содержания, отсутствие автоматического прайса | 2, 5, 6 |
+| Поминутные цены и проверка произведений | 3, 5, 6 |
+| Все consultation callers и admin runner | 2, 5 |
+| Reload/ack/rollback, пара prompt+facts, owner protection | 5 |
+| Mixed reply, сохранность draft и fallback | 4, 6 |
+| Технический каталог, TTL, YCLIENTS guarantees | 2, 5, 6, 8 |
+| Последующие этапы исходного аудита | 7–9 |
+| Изоляция, известные блокеры, отдельный rollout | 1, 6, 9 |
+
+Этот план фиксирует оставшуюся работу, а не её выполнение. Следующее исполняемое действие — задача 1, затем пакет A. Режим — последовательно в текущем чате; после каждого логического результата обновлять roadmap. Повторно спрашивать исходный фронт работ не требуется.
