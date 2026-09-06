@@ -972,7 +972,8 @@ class TelegramBookingCoordinator:
         if active is None or str(active.state.get("step", "")).startswith("catalog_"):
             return BookingReply(STALE_REPLY, remove_keyboard_options())
         current = self._render_current(active)
-        return BookingReply(f"{STALE_REPLY}\n\n{current.text}", current.delivery_options)
+        text = f"{STALE_REPLY}\n\n{current.text}"
+        return BookingReply(text, current.outbound_options(text))
 
     def _render_current(self, scenario: BookingScenario) -> BookingReply:
         step = str(scenario.state.get("step", ""))

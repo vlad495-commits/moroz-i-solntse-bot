@@ -6,8 +6,9 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import DeliveryResult, TelegramSender
-from tests.e2e.test_message_delivery import database
+from tests.e2e.test_message_delivery import database as database_fixture
 
+database = database_fixture
 pytest_plugins = ["tests.integration.conftest"]
 pytestmark = pytest.mark.asyncio
 
@@ -125,6 +126,18 @@ async def test_real_callback_preserves_card_identity_and_contact_is_new(migrated
         assert len(telegram.sent) == 2
         assert len(telegram.edited) == 1
         assert telegram.sent[-1]["reply_markup"].keyboard[0][0].request_contact is True
+        confirmation = await handle(
+            booking, database, **base, update_id="fourth", kind="contact",
+            data={"contact_user_id": "7", "phone_number": "+79001112233", "first_name": "Иван"},
+        )
+        await deliver(repository, telegram, confirmation.outbound_options(confirmation.text), confirmation.text)
+        assert "Криокапсула" in telegram.sent[-1]["text"]
+        assert "Иван" in telegram.sent[-1]["text"]
+        stale = await handle(booking, database, **base, update_id="stale", kind="callback", data={"callback_data": raw})
+        await deliver(repository, telegram, stale.outbound_options(stale.text, callback=True), stale.text)
+        assert len(telegram.edited) == 1, "Stale callback must not erase full confirmation details"
+        assert "booking_card" not in stale.delivery_options
+        assert len(telegram.sent) == 4
         assert adapter.create_calls == 0
     finally:
         await database.close()
