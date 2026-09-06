@@ -9,7 +9,6 @@ from moroz.security.validator import (
     StructuredFacts,
     ValidationVerdict,
     extract_structured_facts,
-    merge_structured_facts,
     validate_output,
 )
 
@@ -59,24 +58,6 @@ def test_minute_price_rejects_long_minutes_without_integer_conversion_crash():
     text = "9" * 4400 + " минут солярия — 42 ₽."
     facts = extract_structured_facts("Солярий — 42 ₽ за минуту.")
     assert validate_output(text, facts, frozenset()).ok is False
-
-
-def test_merge_structured_facts_unions_each_allowlist_without_mutation() -> None:
-    base = StructuredFacts(
-        frozenset({"2400"}), frozenset({"https://example.ru"}),
-        frozenset({"2026-08-16 10:00"}), frozenset({"анна"}),
-    )
-    catalog = StructuredFacts(
-        frozenset({"1230,50"}), frozenset(), frozenset(), frozenset({"мария"}),
-    )
-
-    merged = merge_structured_facts(base, catalog)
-
-    assert merged.prices == frozenset({"2400", "1230.5"})
-    assert merged.public_contacts == base.public_contacts
-    assert merged.slots == base.slots
-    assert merged.public_pii == frozenset({"анна", "мария"})
-    assert base.prices == frozenset({"2400"})
 
 
 def test_validator_accepts_catalog_decimal_but_rejects_other_decimal() -> None:

@@ -59,24 +59,21 @@ async def seed_job(connection, status, timestamp):
 async def test_nonempty_snapshot_is_fresh_at_exact_24_hour_boundary(database):
     async with database.acquire() as connection:
         await seed_row(connection, NOW - timedelta(hours=24))
-        result = await CatalogRepository(database).ground(
-            connection, "Сколько стоит криотерапия?", NOW
+        result = await CatalogRepository(database).list_services(
+            connection, NOW
         )
 
-    assert result.status == "fresh"
-    assert len(result.services) == 1
+    assert len(result) == 1
 
 
 async def test_snapshot_one_microsecond_older_is_stale_and_returns_no_rows(database):
     async with database.acquire() as connection:
         await seed_row(connection, NOW - timedelta(hours=24, microseconds=1))
-        result = await CatalogRepository(database).ground(
-            connection, "Сколько стоит криотерапия?", NOW
+        result = await CatalogRepository(database).list_services(
+            connection, NOW
         )
 
-    assert result.status == "stale"
-    assert result.services == ()
-    assert result.simple_kind == "price"
+    assert result == ()
 
 
 async def test_empty_success_uses_finished_job_and_ignores_newer_non_success(database):
@@ -85,29 +82,26 @@ async def test_empty_success_uses_finished_job_and_ignores_newer_non_success(dat
         await seed_job(connection, "finished", success)
         for status in ("failed", "skipped", "pending", "claimed"):
             await seed_job(connection, status, NOW - timedelta(hours=1))
-        result = await CatalogRepository(database).ground(
-            connection, "Сколько стоит криотерапия?", NOW
+        result = await CatalogRepository(database).list_services(
+            connection, NOW
         )
 
-    assert result.status == "fresh"
-    assert result.services == ()
+    assert result == ()
 
 
 async def test_no_success_is_missing_even_when_failed_job_exists(database):
     async with database.acquire() as connection:
         await seed_job(connection, "failed", NOW - timedelta(minutes=5))
-        result = await CatalogRepository(database).ground(
-            connection, "Какая цена криотерапии?", NOW
+        result = await CatalogRepository(database).list_services(
+            connection, NOW
         )
 
-    assert result.status == "missing"
-    assert result.services == ()
-    assert result.simple_kind == "price"
+    assert result == ()
 
 
-async def test_ground_requires_aware_now(database):
+async def test_list_services_requires_aware_now(database):
     async with database.acquire() as connection:
         with pytest.raises(ValueError, match="timezone-aware"):
-            await CatalogRepository(database).ground(
-                connection, "цена криотерапии", NOW.replace(tzinfo=None)
+            await CatalogRepository(database).list_services(
+                connection, NOW.replace(tzinfo=None)
             )

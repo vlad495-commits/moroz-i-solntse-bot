@@ -37,7 +37,6 @@ def valid_env():
         "YCLIENTS_USER_TOKEN": "user-token",
         "YCLIENTS_COMPANY_ID": "12345",
         "YCLIENTS_BASE_URL": "https://api.yclients.com",
-        "YCLIENTS_CATALOG_GROUNDING_ENABLED": "true",
         "BACKUP_ENCRYPTION_KEY": "backup-secret-value-min-32-characters",
     }
 
@@ -76,17 +75,12 @@ def test_validate_env_requires_secure_admin_cookie():
     assert "ADMIN_COOKIE_SECURE must be true in production" in errors
 
 
-def test_validate_env_requires_catalog_grounding_after_yclients_acceptance():
+def test_validate_env_does_not_require_removed_catalog_grounding_flag():
     validator = load_validator()
     env = valid_env()
+    assert validator.validate(env) == []
     env["YCLIENTS_CATALOG_GROUNDING_ENABLED"] = "false"
-
-    errors = validator.validate(env)
-
-    assert (
-        "YCLIENTS_CATALOG_GROUNDING_ENABLED must be true in production"
-        in errors
-    )
+    assert validator.validate(env) == []
 
 
 def test_validate_env_rejects_missing_webhook_yclients_and_http_public_url():

@@ -1349,60 +1349,17 @@ async def test_stop_cancels_stubborn_pump_with_bounded_wait(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_supervisor_owns_and_cancels_prompt_reload_listener():
-    queue = FakeQueue("wait")
-    stop = asyncio.Event()
-    started = asyncio.Event()
-    cancelled = asyncio.Event()
-
-    async def prompt_listener():
-        started.set()
-        try:
-            await asyncio.Future()
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
-
-    supervised = asyncio.create_task(
-        worker_main._supervise(
-            queue,
-            stop,
-            prompt_listener=prompt_listener,
-        )
-    )
-    await started.wait()
-
-    stop.set()
-    await supervised
-
-    assert cancelled.is_set()
-    assert queue.close_calls == 1
-
-
-@pytest.mark.asyncio
 async def test_supervisor_uses_one_deadline_for_all_stubborn_tasks(
     monkeypatch, tmp_path
 ):
     queue = StubbornCleanupQueue()
     pump = StubbornPump()
-    prompt_started = asyncio.Event()
-    prompt_cancelled = asyncio.Event()
-    prompt_release = asyncio.Event()
     readiness = tmp_path / "worker-ready"
-
-    async def stubborn_prompt():
-        prompt_started.set()
-        try:
-            await asyncio.Future()
-        except asyncio.CancelledError:
-            prompt_cancelled.set()
-            await prompt_release.wait()
 
     async def release_later():
         await asyncio.sleep(0.2)
         queue.release.set()
         pump.release.set()
-        prompt_release.set()
 
     monkeypatch.setattr(
         worker_main,
@@ -1417,13 +1374,11 @@ async def test_supervisor_uses_one_deadline_for_all_stubborn_tasks(
             stop,
             readiness,
             pump=pump,
-            prompt_listener=stubborn_prompt,
         )
     )
     await asyncio.gather(
         queue.started.wait(),
         pump.started.wait(),
-        prompt_started.wait(),
     )
     release_task = asyncio.create_task(release_later())
     started_at = asyncio.get_running_loop().time()
@@ -1435,7 +1390,6 @@ async def test_supervisor_uses_one_deadline_for_all_stubborn_tasks(
     assert elapsed < 0.15
     assert queue.cancelled
     assert pump.cancelled.is_set()
-    assert prompt_cancelled.is_set()
     assert queue.close_calls == 1
     assert not readiness.exists()
     await release_task

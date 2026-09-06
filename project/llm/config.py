@@ -80,10 +80,6 @@ DATABASE_URL = database_url_from_env(os.environ, required=False)
 CONTEXT_MESSAGES_LIMIT = int(os.getenv("CONTEXT_MESSAGES_LIMIT", "40"))
 COMPACT_THRESHOLD = int(os.getenv("COMPACT_THRESHOLD", "30"))
 COMPACT_KEEP_RECENT = int(os.getenv("COMPACT_KEEP_RECENT", "10"))
-YCLIENTS_CATALOG_GROUNDING_ENABLED = _parse_boolean(
-    os.getenv("YCLIENTS_CATALOG_GROUNDING_ENABLED"),
-    default=False,
-)
 TELEGRAM_YCLIENTS_BOOKING_ENABLED = _parse_boolean(
     os.getenv("TELEGRAM_YCLIENTS_BOOKING_ENABLED"),
     default=False,
@@ -160,8 +156,6 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 ADMIN_SESSION_SECRET = os.getenv("ADMIN_SESSION_SECRET", "change-me-in-production")
 ADMIN_SESSION_TTL_SEC = int(os.getenv("ADMIN_SESSION_TTL_SEC", "86400"))
 
-# --- Prompt hot reload ---
-PROMPT_RELOAD_CHANNEL = "prompt:reload"
 
 # --- Bot on/off toggle ---
 BOT_PAUSE_KEY = "bot:paused"

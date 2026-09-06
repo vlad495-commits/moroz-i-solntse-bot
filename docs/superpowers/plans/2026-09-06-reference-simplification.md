@@ -256,16 +256,18 @@ docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docke
 - [x] Зафиксировать Docker admin E2E + активную загрузку промпта; локальный коммит удаления редактора.
 
 Evidence удаления редактора: RED 6 failed / 2 passed; промежуточный gate 185 passed / 1 stale navigation assertion, ожидание обновлено. После пересборки test image: **186 passed in 9.60s** — весь e2e/admin, unit/test_active_sanitization.py, unit/test_llm_providers.py, unit/security/test_system_prompt_catalog.py, integration/messaging/test_prompt_reload.py. Compose config и admin prompt read-only mount проверены. Сам prompt и БД не менялись; worker listener пока сохранён для следующего отдельного cleanup.
-- [ ] Проверить оставшийся worker reload listener/lifecycle по потребителям, удалить неиспользуемое после исчезновения publisher отдельным тестируемым шагом. Проверить файл → prompt+facts при старте и новый тариф без admin editor. Не добавлять новую очередь или механизм доставки промпта.
+- [x] Проверить оставшийся worker reload listener/lifecycle по потребителям, удалить неиспользуемое после исчезновения publisher отдельным тестируемым шагом. Проверить файл → prompt+facts при старте и новый тариф без admin editor. Не добавлять новую очередь или механизм доставки промпта.
 
-- [ ] Выполнить поиск потребителей:
+- [x] Выполнить поиск потребителей:
 
 ```powershell
 rg -n 'CatalogGrounding|direct_reply|resolve_catalog|catalog_grounding_enabled|YCLIENTS_CATALOG_GROUNDING_ENABLED|merge_structured_facts' worker llm admin src tests
 ```
 
 Удалять helper/type/import только если после предыдущих задач нет production-потребителей. Оставить list_services, reader, sync, service/staff IDs и provider DTO. Тесты технического каталога сохраняются. Если deployment flag временно оставлен для совместимости, пометить его no-op для консультации и записать причину, не использовать как выключатель booking.
-- [ ] Прогнать unit/security, unit/booking/test_catalog_matching.py, test_catalog_sync.py, integration/booking/test_catalog_lookup.py, test_catalog_projection.py. Коммит `refactor: remove unused consultation catalog consumers`.
+- [x] Прогнать unit/security, unit/booking/test_catalog_boundary.py, test_catalog_sync.py, integration/booking/test_catalog_lookup.py, test_catalog_projection.py. Коммит `refactor: remove unused consultation catalog consumers`.
+
+**Evidence cleanup (2026-09-06):** reload RED 1 failed/1 passed → 79 passed (6.75s); catalog API boundary RED 1 failed. Объединённый gate 627 passed/6 failed выявил ошибки адаптации тестов, они исправлены; повтор всех затронутых файлов — **42 passed (92.03s)**. Review critical/important нет. Удалены listener/ack/lifecycle-hook, ground/match_catalog/output DTO/helpers, merge facts и no-op флаг (Compose/validate_env/examples/PowerShell allowlist). Реальные list_services/DTO/grouping/hourly sync/TTL сохранены. Matcher unit-тесты удалены вместе с API; технические freshness tests перенесены на list_services, human-mode/atomicity/replay/booking E2E сохранены. Это не результат полного suite — он запускается в задаче 6.
 
 ## Задача 6 — приёмка пакета A и запись результата
 

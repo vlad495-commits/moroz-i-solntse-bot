@@ -1,6 +1,3 @@
-import asyncio
-import hashlib
-import json
 import logging
 from types import SimpleNamespace
 
@@ -13,10 +10,6 @@ import llm_status
 
 
 class RedisOperationError(RuntimeError):
-    pass
-
-
-class PromptListenerError(RuntimeError):
     pass
 
 
@@ -190,94 +183,6 @@ def test_prompt_reload_rejects_missing_file_without_clearing_active_state(
 
     assert llm_module._system_prompt == "old prompt"
     assert llm_module._pipeline is old_pipeline
-
-
-@pytest.mark.asyncio
-async def test_worker_rejects_digest_mismatch_and_sends_negative_ack(
-    monkeypatch, tmp_path
-):
-    prompt_path = tmp_path / "system.md"
-    prompt_path.write_text("different prompt\n", encoding="utf-8")
-    old_pipeline = SimpleNamespace(
-        gateway=object(),
-        system_prompt="old prompt",
-        facts="old facts",
-    )
-    acknowledgements = []
-
-    class Client:
-        async def set(self, key, value, *, ex):
-            acknowledgements.append((key, value, ex))
-
-    monkeypatch.setattr(llm_module, "SYSTEM_PROMPT_PATH", prompt_path)
-    monkeypatch.setattr(llm_module, "_system_prompt", "old prompt")
-    monkeypatch.setattr(llm_module, "_pipeline", old_pipeline)
-    payload = json.dumps(
-        {
-            "version_id": 17,
-            "request_id": "a" * 32,
-            "sha256": hashlib.sha256(b"expected prompt\n").hexdigest(),
-        }
-    )
-
-    assert await llm_module._process_prompt_reload(Client(), payload) is False
-    assert acknowledgements == [
-        ("prompt:reload:ack:" + "a" * 32, "rejected", 30)
-    ]
-    assert llm_module._system_prompt == "old prompt"
-    assert llm_module._pipeline is old_pipeline
-
-
-@pytest.mark.asyncio
-async def test_prompt_listener_failure_is_redacted_and_resources_close(
-    monkeypatch, caplog
-):
-    class FailingPubSub:
-        def __init__(self):
-            self.close_calls = 0
-
-        async def subscribe(self, _channel):
-            return None
-
-        async def listen(self):
-            raise PromptListenerError(
-                "redis://user:password@redis reload-payload-sentinel"
-            )
-            yield
-
-        async def aclose(self):
-            self.close_calls += 1
-
-    class ListenerClient:
-        def __init__(self, pubsub):
-            self._pubsub = pubsub
-            self.close_calls = 0
-
-        def pubsub(self):
-            return self._pubsub
-
-        async def aclose(self):
-            self.close_calls += 1
-
-    pubsub = FailingPubSub()
-    client = ListenerClient(pubsub)
-    monkeypatch.setattr(
-        llm_module.aioredis, "from_url", lambda *_args, **_kwargs: client
-    )
-
-    async def stop_after_failure(_delay):
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(llm_module.asyncio, "sleep", stop_after_failure)
-
-    with caplog.at_level(logging.ERROR, logger=llm_module.logger.name):
-        with pytest.raises(asyncio.CancelledError):
-            await llm_module.prompt_reload_listener()
-
-    assert pubsub.close_calls == 1
-    assert client.close_calls == 1
-    assert "prompt_reload_listener_failed error_type=PromptListenerError" in caplog.text
-    assert "reload-payload-sentinel" not in caplog.text
 
 
 def test_init_llm_does_not_log_raw_custom_base_url(monkeypatch, caplog):

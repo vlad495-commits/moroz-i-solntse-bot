@@ -1,5 +1,13 @@
 # Changelog
 
+[2026-09-06 09:40] Cleanup задачи 5 проверен: после исправления тестов 42 passed (92.03s), повторный read-only review critical/important нет; diff --check/Compose корректны. Удалён obsolete флаг из .env.example. План/spec/roadmap актуализированы: 1–5 выполнены, полный suite задачи 6 ещё впереди. Удалённые файлы восстановимы из Git; runtime данные/секреты/БД не удалялись.
+
+[2026-09-06 09:38] Объединённый gate: 627 passed / 6 failed. Причины в адаптации тестов: четыре оставшихся вызова ground, устаревший allowlist PowerShell и случайно объединённые human-mode/consultation проверки. Замечания review подтверждены выводом pytest и git diff; восстановлены отдельные сценарии, вызовы заменены на list_services, allowlist синхронизирован. Production-код по этим падениям не менялся.
+
+[2026-09-06 09:35] Reload RED 1 failed / 1 passed, после удаления listener/ack/supervisor-hook — 79 passed (6.75s). Grounding-boundary RED воспроизведён; удалены CatalogGrounding, ground/match_catalog и консультационные helpers, merge facts, worker-only поле/флаг и obsolete production requirement. Технические DTO/list_services/sync/TTL сохранены. E2E очищены от неподключённых фикстур; freshness integration переключены на реальный list_services. Запущен объединённый gate; полный suite впереди.
+
+[2026-09-06 09:32] Продолжены задачи 5–6 по прямому «делай». Linked worktree чистый на codex/reference-simplification; runtime publisher редактора удалён, reload остался только у worker и тестов. Добавлены контракты отсутствия hook и согласованной загрузки файла/тарифа 42→43. Консультационные match_catalog/ground не имеют production callers; list_services и sync сохраняются. Начата локальная очистка без live операций.
+
 [2026-09-06 09:27] Редактор удалён локально. Первый gate 185 passed / 1 stale menu assertion; после обновления ожидаемого меню и пересборки — 186 passed (9.60s). Compose config и read-only /app/prompts для admin подтверждены. Spec/план/roadmap приведены к решению владельца: файл → проверка → выпуск; editor-save больше не критерий. Удалённые исходники восстановимы из Git; prompt_versions и system.md не изменялись. Worker listener остаётся на отдельный cleanup, задача 5 ещё открыта.
 
 [2026-09-06 09:24] RED удаления: 6 failed / 2 passed. Удалены router CRUD/rollback/publisher, приватный prompt_database и два шаблона; снята регистрация и ссылка меню. Админке оставлен read-only prompt volume для eval_runner; runtime prompt и таблица истории сохранены. Удалены только тесты удалённых функций, добавлены HTTP 404 и навигационные контракты; CSRF/RBAC других функций и worker load/reload проверки сохранены.

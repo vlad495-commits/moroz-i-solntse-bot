@@ -16,9 +16,8 @@ from config import (
     CONTEXT_MESSAGES_LIMIT,
     DATA_RETENTION_DAYS,
     TELEGRAM_YCLIENTS_BOOKING_ENABLED,
-    YCLIENTS_CATALOG_GROUNDING_ENABLED,
 )
-from llm import generate_response, init_llm, prompt_reload_listener
+from llm import generate_response, init_llm
 from moroz.booking.catalog import (
     CATALOG_SYNC_KIND,
     CatalogRepository,
@@ -245,9 +244,7 @@ class MessageTaskHandler:
         admin_booking_commands=None,
         retention_cleanup=None,
         reactivation=None,
-        catalog_repository=None,
         booking_coordinator=None,
-        catalog_grounding_enabled=False,
         clock=None,
         scheduler_handler=handle_scheduler_job,
     ):
@@ -264,9 +261,6 @@ class MessageTaskHandler:
         self._admin_booking_commands = admin_booking_commands
         self._retention_cleanup = retention_cleanup
         self._reactivation = reactivation
-        self._catalog_repository = (
-            catalog_repository if catalog_grounding_enabled else None
-        )
         self._booking_coordinator = booking_coordinator
         self._clock = clock or (lambda: datetime.now(UTC))
         self._scheduler_handler = scheduler_handler
@@ -977,7 +971,6 @@ async def _supervise(
     *,
     handler=handle,
     pump: PipelinePump | None = None,
-    prompt_listener=None,
     shutdown_budget: ShutdownBudget | None = None,
 ) -> None:
     shutdown_budget = shutdown_budget or ShutdownBudget()
@@ -990,16 +983,11 @@ async def _supervise(
     )
     waiter = asyncio.create_task(stop.wait())
     pump_task = asyncio.create_task(pump.run(stop)) if pump else None
-    prompt_task = (
-        asyncio.create_task(prompt_listener()) if prompt_listener else None
-    )
     primary_error = None
     try:
         watched = {consumer, waiter}
         if pump_task:
             watched.add(pump_task)
-        if prompt_task:
-            watched.add(prompt_task)
         done, _ = await asyncio.wait(
             watched,
             return_when=asyncio.FIRST_COMPLETED,
@@ -1012,9 +1000,6 @@ async def _supervise(
         elif pump_task in done:
             await pump_task
             raise RuntimeError("Pipeline pump stopped unexpectedly")
-        elif prompt_task in done:
-            await prompt_task
-            raise RuntimeError("Prompt reload listener stopped unexpectedly")
     except BaseException as error:
         primary_error = error
     finally:
@@ -1030,7 +1015,7 @@ async def _supervise(
         )
         tasks = tuple(
             task
-            for task in (consumer, waiter, pump_task, prompt_task)
+            for task in (consumer, waiter, pump_task)
             if task is not None
         )
         try:
@@ -1262,8 +1247,6 @@ async def run() -> None:
             admin_booking_commands=admin_booking_commands,
             retention_cleanup=retention_cleanup,
             reactivation=reactivation,
-            catalog_repository=catalog_repository,
-            catalog_grounding_enabled=YCLIENTS_CATALOG_GROUNDING_ENABLED,
             booking_coordinator=telegram_booking,
         )
         async def runtime_handler(task: QueueTask) -> None:
@@ -1283,7 +1266,6 @@ async def run() -> None:
             stop,
             handler=runtime_handler,
             pump=pump,
-            prompt_listener=prompt_reload_listener,
             shutdown_budget=shutdown_budget,
         )
     except BaseException as error:

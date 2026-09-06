@@ -1,19 +1,12 @@
 import json
 from datetime import UTC, datetime
-from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 
-from moroz.booking.catalog import (
-    CatalogGrounding,
-    CatalogService,
-    CatalogVariant,
-)
 from moroz.booking.telegram import BookingReply
-from moroz.booking.yclients_catalog import CatalogRecord
 from moroz.common.db import Database
 from moroz.common.queue import QueueTask
 from moroz.messaging.models import IncomingMessage
@@ -57,7 +50,7 @@ async def test_worker_keeps_real_booking_catalog_with_ground_forbidden(
         raise AssertionError("consultation must not query catalog")
 
     monkeypatch.setattr(RealCatalogRepository, "list_services", list_services)
-    monkeypatch.setattr(RealCatalogRepository, "ground", forbidden_ground)
+    monkeypatch.setattr(RealCatalogRepository, "ground", forbidden_ground, raising=False)
 
     class Router:
         async def route(self, text, context, *, state=None):
@@ -124,7 +117,6 @@ async def test_worker_keeps_real_booking_catalog_with_ground_forbidden(
         ))
         handler = MessageTaskHandler(
             database, llm, TelegramSender(FakeTelegram(), repository),
-            catalog_repository=booking._catalog, catalog_grounding_enabled=True,
             booking_coordinator=booking, clock=lambda: BOOKING_NOW,
         )
         await handler.handle(QueueTask(
@@ -199,26 +191,6 @@ class AllowingInputSecurity:
         )
 
 
-class CatalogRepository:
-    def __init__(self, grounding):
-        self.grounding = grounding
-        self.calls = []
-
-    async def ground(self, connection, text, now):
-        self.calls.append((connection, text, now))
-        raise AssertionError("consultation must not query catalog")
-
-
-class MatchingCatalogRepository:
-    def __init__(self, records):
-        self.records = records
-        self.calls = []
-
-    async def ground(self, connection, text, now):
-        self.calls.append((connection, text, now))
-        raise AssertionError("consultation must not query catalog")
-
-
 @pytest_asyncio.fixture
 async def database(migrated_database_url):
     database = Database(migrated_database_url, min_size=1, max_size=2)
@@ -227,25 +199,6 @@ async def database(migrated_database_url):
         yield database
     finally:
         await database.close()
-
-
-def grounding():
-    return CatalogGrounding(
-        "fresh",
-        (
-            CatalogService(
-                "20", "Криотерапия", "Крио",
-                (
-                    CatalogVariant(
-                        "10", "Анна", Decimal("1230.00"),
-                        Decimal("1230.00"), 3,
-                    ),
-                ),
-            ),
-        ),
-        "price",
-        False,
-    )
 
 
 def incoming(update_id="catalog-1", text="Сколько стоит криотерапия?"):
@@ -279,13 +232,10 @@ async def test_manual_consultation_reply_is_atomic_and_duplicate_safe(database):
             text, context, recent_message_count=recent_message_count,
         )
 
-    catalog_repository = CatalogRepository(grounding())
     handler = MessageTaskHandler(
         database,
         llm,
         TelegramSender(FakeTelegram(), repository),
-        catalog_repository=catalog_repository,
-        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     task = QueueTask(
@@ -313,7 +263,6 @@ async def test_manual_consultation_reply_is_atomic_and_duplicate_safe(database):
     assert len(outbound) == 1
     assert usage is not None
     assert usage['total_tokens'] == 2
-    assert catalog_repository.calls == []
     assert len(gateway.requests) == 1
     assert router.calls == 1
 
@@ -323,7 +272,6 @@ async def test_pre_yclients_mode_skips_catalog_and_uses_normal_answer(database):
     assert await repository.accept(
         incoming("catalog-disabled", "Сколько стоит криокапсула?")
     )
-    catalog_repository = CatalogRepository(grounding())
     calls = []
 
     async def llm(text, context, *, recent_message_count):
@@ -337,8 +285,6 @@ async def test_pre_yclients_mode_skips_catalog_and_uses_normal_answer(database):
         database,
         llm,
         TelegramSender(FakeTelegram(), repository),
-        catalog_repository=catalog_repository,
-        catalog_grounding_enabled=False,
         clock=lambda: NOW,
     )
     await handler.handle(QueueTask(
@@ -353,7 +299,6 @@ async def test_pre_yclients_mode_skips_catalog_and_uses_normal_answer(database):
         )
     assert answer == "Криокапсула — 1 500 ₽ по базе знаний."
     assert len(calls) == 1
-    assert catalog_repository.calls == []
 
 
 async def test_human_mode_never_reads_catalog_or_calls_llm(database):
@@ -369,32 +314,20 @@ async def test_human_mode_never_reads_catalog_or_calls_llm(database):
             uuid4(),
         )
 
-    class ForbiddenCatalog:
-        async def ground(self, *_args):
-            raise AssertionError("human mode must not read catalog")
-
     async def forbidden_llm(*_args, **_kwargs):
         raise AssertionError("human mode must not call LLM")
 
     handler = MessageTaskHandler(
-        database,
-        forbidden_llm,
-        TelegramSender(FakeTelegram(), repository),
-        catalog_repository=ForbiddenCatalog(),
-        catalog_grounding_enabled=True,
+        database, forbidden_llm, TelegramSender(FakeTelegram(), repository),
         clock=lambda: NOW,
     )
     await handler.handle(QueueTask(
-        kind="process_message",
-        payload={"chat_id": "42", "update_ids": ["catalog-human"]},
-        idempotency_key=process_message_key(["catalog-human"]),
+        "process_message", {"chat_id": "42", "update_ids": ["catalog-human"]},
+        process_message_key(["catalog-human"]),
     ))
-
     async with database.acquire() as connection:
         roles = await connection.fetch("SELECT role FROM messages")
-        outbound = await connection.fetchval(
-            "SELECT count(*) FROM outbound_messages"
-        )
+        outbound = await connection.fetchval("SELECT count(*) FROM outbound_messages")
     assert [row["role"] for row in roles] == ["user"]
     assert outbound == 0
 
@@ -402,10 +335,6 @@ async def test_human_mode_never_reads_catalog_or_calls_llm(database):
 async def test_consultation_reaches_llm_without_catalog_or_extra_history(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming("catalog-complex", "Сравни криотерапию"))
-    complex_grounding = CatalogGrounding(
-        "fresh", grounding().services, None, False,
-    )
-    catalog_repository = CatalogRepository(complex_grounding)
     calls = []
 
     async def llm(text, context, *, recent_message_count):
@@ -416,8 +345,6 @@ async def test_consultation_reaches_llm_without_catalog_or_extra_history(databas
         database,
         llm,
         TelegramSender(FakeTelegram(), repository),
-        catalog_repository=catalog_repository,
-        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     await handler.handle(QueueTask(
@@ -431,7 +358,6 @@ async def test_consultation_reaches_llm_without_catalog_or_extra_history(databas
             "SELECT content FROM messages ORDER BY id"
         )
     assert len(calls) == 1
-    assert catalog_repository.calls == []
     assert [row["content"] for row in contents] == [
         "Сравни криотерапию",
         "Сравнение по актуальному каталогу",
@@ -460,27 +386,10 @@ async def test_price_action_with_two_explicit_services_keeps_both_for_answer(dat
             text, context, recent_message_count=recent_message_count,
         )
 
-    records = (
-        CatalogRecord(
-            "20", "10", "Криомассаж головы", "Крио", "Анна",
-            Decimal("1200"), Decimal("1200"), 15,
-        ),
-        CatalogRecord(
-            "21", "11", "Прессотерапия", "Тело", "Аппарат 1",
-            Decimal("1500"), Decimal("1500"), 30,
-        ),
-        CatalogRecord(
-            "22", "12", "Криомассаж лица", "Крио", "Мария",
-            Decimal("1300"), Decimal("1300"), 10,
-        ),
-    )
-    catalog_repository = MatchingCatalogRepository(records)
     handler = MessageTaskHandler(
         database,
         llm,
         TelegramSender(FakeTelegram(), repository),
-        catalog_repository=catalog_repository,
-        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
 
@@ -495,7 +404,6 @@ async def test_price_action_with_two_explicit_services_keeps_both_for_answer(dat
             "SELECT content FROM messages WHERE role = 'assistant'"
         )
     assert answer == "Нашла обе услуги в ручном промпте."
-    assert catalog_repository.calls == []
     assert [request.purpose for request in gateway.requests] == ["answer"]
     answer_system = gateway.requests[-1].messages[0]["content"]
     assert "Криомассаж головы" in answer_system
@@ -546,23 +454,10 @@ async def test_mixed_booking_with_two_services_keeps_manual_answer_and_clarifica
             booking_context=options.get("booking_context"),
         )
 
-    records = (
-        CatalogRecord(
-            "20", "10", "Криомассаж головы", "Крио", "Анна",
-            Decimal("1200"), Decimal("1200"), 15,
-        ),
-        CatalogRecord(
-            "21", "11", "Прессотерапия", "Тело", "Аппарат 1",
-            Decimal("1500"), Decimal("1500"), 30,
-        ),
-    )
-    catalog_repository = MatchingCatalogRepository(records)
     handler = MessageTaskHandler(
         database,
         llm,
         TelegramSender(FakeTelegram(), repository),
-        catalog_repository=catalog_repository,
-        catalog_grounding_enabled=True,
         booking_coordinator=Coordinator(),
         clock=lambda: NOW,
     )
@@ -575,7 +470,6 @@ async def test_mixed_booking_with_two_services_keeps_manual_answer_and_clarifica
         )
     )
 
-    assert catalog_repository.calls == []
     async with database.acquire() as connection:
         answer = await connection.fetchval(
             "SELECT content FROM messages WHERE role = 'assistant'"
@@ -603,18 +497,10 @@ async def test_price_action_with_only_duration_does_not_select_single_tariff(dat
             text, context, recent_message_count=recent_message_count,
         )
 
-    catalog_repository = MatchingCatalogRepository((
-        CatalogRecord(
-            "30", "10", "Солярий 30 минут", "Солярий", "Кабина 1",
-            Decimal("420"), Decimal("420"), 30,
-        ),
-    ))
     handler = MessageTaskHandler(
         database,
         llm,
         TelegramSender(FakeTelegram(), repository),
-        catalog_repository=catalog_repository,
-        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
 
@@ -629,7 +515,6 @@ async def test_price_action_with_only_duration_does_not_select_single_tariff(dat
             "SELECT content FROM messages WHERE role = 'assistant'"
         )
     assert answer == "Чтобы назвать цену, уточните услугу."
-    assert catalog_repository.calls == []
     assert len(gateway.requests) == 1
 
 
@@ -672,8 +557,6 @@ async def test_catalog_reply_rolls_back_when_outbound_insert_fails(database):
         database,
         llm,
         TelegramSender(FakeTelegram(), repository),
-        catalog_repository=CatalogRepository(grounding()),
-        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     try:
@@ -714,7 +597,6 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
             VALUES (42, 7, 'assistant', 'Старая цена 9999 руб.')
             """
         )
-    stale = CatalogGrounding("stale", (), "price", False)
     gateway = CatalogAnswerGateway("Цена 9999 руб.")
     pipeline = SecurityPipeline(gateway, "", extract_structured_facts(""), router=PriceRouter())
 
@@ -727,8 +609,6 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
         database,
         llm,
         TelegramSender(FakeTelegram(), repository),
-        catalog_repository=CatalogRepository(stale),
-        catalog_grounding_enabled=True,
         clock=lambda: NOW,
     )
     await handler.handle(QueueTask(

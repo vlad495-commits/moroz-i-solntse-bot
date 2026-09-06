@@ -426,18 +426,6 @@ class StructuredFacts:
         )
 
 
-def merge_structured_facts(
-    base: StructuredFacts,
-    extra: StructuredFacts,
-) -> StructuredFacts:
-    return StructuredFacts(
-        prices=base.prices | extra.prices,
-        public_contacts=base.public_contacts | extra.public_contacts,
-        slots=base.slots | extra.slots,
-        public_pii=base.public_pii | extra.public_pii,
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class ValidationVerdict:
     ok: bool
