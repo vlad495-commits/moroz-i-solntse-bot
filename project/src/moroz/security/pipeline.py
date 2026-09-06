@@ -53,8 +53,9 @@ OFFTOPIC_REPLY = (
     "Я могу помочь по услугам, подготовке, контактам и записи в центр."
 )
 ROUTER_FALLBACK_REPLY = (
-    "Я не совсем понял запрос. Напишите, пожалуйста, что хотите узнать или "
-    "на какую услугу записаться. Если удобнее, я передам вопрос администратору."
+    "Сейчас не могу обработать запрос из-за технической ошибки. "
+    "Попробуйте ещё раз позже или свяжитесь с администратором: "
+    "+7 (902) 906-61-66."
 )
 
 def _zero(text: str, model: str = "security-local") -> LLMResponse:
@@ -215,7 +216,8 @@ class SecurityPipeline:
                     local_route = route_message(masked_current.text)
                     route_source = "fallback"
                     logger.warning(
-                        "router_decision_fallback reason_code=router_internal_error"
+                        "router_decision_fallback category=internal_error "
+                        "purpose=router http_status=none"
                     )
                 else:
                     local_route = router_verdict.decision
@@ -223,9 +225,14 @@ class SecurityPipeline:
                     if router_verdict.usage:
                         accumulated.append(_usage_only(router_verdict.usage))
                     if router_verdict.reason_code is not None:
+                        category = {
+                            "invalid_router_output": "invalid_output",
+                            "router_unavailable": "provider_unavailable",
+                        }.get(router_verdict.reason_code, "internal_error")
                         logger.warning(
-                            "router_decision_fallback reason_code=%s",
-                            router_verdict.reason_code,
+                            "router_decision_fallback category=%s "
+                            "purpose=router http_status=none",
+                            category,
                         )
             route = local_route or route_message(masked_current.text)
         except asyncio.CancelledError:

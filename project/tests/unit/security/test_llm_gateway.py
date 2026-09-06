@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -292,7 +293,7 @@ async def test_anthropic_ignores_provider_schema_but_keeps_local_contract():
     assert result.usage[0].purpose == "router"
 
 
-def _status_error(kind, status):
+def _status_error(kind, status, *, param=None):
     request = httpx.Request(
         "POST",
         "https://user:password-sentinel@provider.invalid/v1",
@@ -304,10 +305,13 @@ def _status_error(kind, status):
         if kind == "openai"
         else anthropic.APIStatusError
     )
+    body = {"detail": "raw-response-sentinel"}
+    if param is not None:
+        body["param"] = param
     return error_type(
         "raw-provider-sentinel",
         response=response,
-        body={"detail": "raw-response-sentinel"},
+        body=body,
     )
 
 
@@ -360,9 +364,57 @@ async def test_non_retryable_sdk_statuses_are_sanitized(kind, status):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "param", "category"),
+    [
+        (400, "response_format", "invalid_schema"),
+        (400, "model", "invalid_request"),
+        (401, None, "authentication"),
+        (429, None, "rate_limit"),
+    ],
+)
+async def test_provider_failure_log_keeps_only_safe_diagnostics(
+    status, param, category, caplog
+):
+    client = OpenAIClient(_status_error("openai", status, param=param))
+    llm_request = LLMRequest(
+        messages=({"role": "user", "content": "private-user-sentinel"},),
+        purpose="router",
+        response_format={"type": "json_schema"},
+    )
+
+    with caplog.at_level(logging.WARNING, logger="moroz.security.llm_gateway"):
+        with pytest.raises((RetryableLLMError, NonRetryableLLMError)):
+            await provider(client, "openai").complete(llm_request)
+
+    assert (
+        f"llm_provider_failure category={category} purpose=router "
+        f"http_status={status}"
+    ) in caplog.text
+    assert "sentinel" not in caplog.text
+    assert "provider.invalid" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_invalid_provider_output_log_is_safe(caplog):
+    client = OpenAIClient(openai_response(choices=[]))
+
+    with caplog.at_level(logging.WARNING, logger="moroz.security.llm_gateway"):
+        with pytest.raises(NonRetryableLLMError):
+            await provider(client, "openai").complete(request("answer"))
+
+    assert (
+        "llm_provider_failure category=invalid_output purpose=answer "
+        "http_status=none"
+    ) in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["openai", "anthropic"])
 @pytest.mark.parametrize("error_name", ["connection", "timeout"])
-async def test_sdk_connection_and_timeout_are_retryable(kind, error_name):
+async def test_sdk_connection_and_timeout_are_retryable(
+    kind, error_name, caplog
+):
     raw_request = httpx.Request("POST", "https://provider.invalid/v1")
     module = openai if kind == "openai" else anthropic
     error_type = (
@@ -377,11 +429,16 @@ async def test_sdk_connection_and_timeout_are_retryable(kind, error_name):
         else AnthropicClient(error)
     )
 
-    with pytest.raises(RetryableLLMError) as raised:
-        await provider(client, kind).complete(request())
+    with caplog.at_level(logging.WARNING, logger="moroz.security.llm_gateway"):
+        with pytest.raises(RetryableLLMError) as raised:
+            await provider(client, kind).complete(request())
 
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
+    assert (
+        f"llm_provider_failure category={error_name} purpose=answer "
+        "http_status=none"
+    ) in caplog.text
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
+import logging
 from typing import Literal, Protocol
 
 import anthropic
@@ -8,6 +10,7 @@ import openai
 
 
 _MISSING = object()
+logger = logging.getLogger(__name__)
 
 
 class _SafeLLMError(RuntimeError):
@@ -75,6 +78,37 @@ class Provider(Protocol):
 
 def _retryable_status(status: int) -> bool:
     return status in {408, 409, 429} or 500 <= status <= 599
+
+
+def _failure_category(status: int, *, response_format_error: bool) -> str:
+    if status in {401, 403}:
+        return "authentication"
+    if status == 429:
+        return "rate_limit"
+    if status == 408:
+        return "timeout"
+    if status in {400, 422}:
+        return "invalid_schema" if response_format_error else "invalid_request"
+    if 500 <= status <= 599:
+        return "provider_unavailable"
+    return "provider_error"
+
+
+def _is_response_format_error(error: object) -> bool:
+    param = getattr(error, "param", None)
+    body = getattr(error, "body", None)
+    if param is None and isinstance(body, Mapping):
+        param = body.get("param")
+    return param == "response_format"
+
+
+def _log_failure(category: str, purpose: str, status: int | None = None) -> None:
+    logger.warning(
+        "llm_provider_failure category=%s purpose=%s http_status=%s",
+        category,
+        purpose,
+        status if status is not None else "none",
+    )
 
 
 def _count(source: object, name: str, *, optional: bool = False) -> int:
@@ -173,6 +207,8 @@ class SDKProvider:
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         translated_error: type[_SafeLLMError] | None = None
+        failure_category = "provider_error"
+        http_status: int | None = None
         try:
             if self.kind == "anthropic":
                 system, messages = _anthropic_messages(request.messages)
@@ -202,28 +238,40 @@ class SDKProvider:
                 if request.response_format is not None:
                     arguments["response_format"] = request.response_format
                 response = await self.client.chat.completions.create(**arguments)
-        except (
-            openai.APITimeoutError,
-            openai.APIConnectionError,
-            anthropic.APITimeoutError,
-            anthropic.APIConnectionError,
-        ):
+        except (openai.APITimeoutError, anthropic.APITimeoutError):
             translated_error = RetryableLLMError
+            failure_category = "timeout"
+        except (openai.APIConnectionError, anthropic.APIConnectionError):
+            translated_error = RetryableLLMError
+            failure_category = "connection"
         except (openai.APIStatusError, anthropic.APIStatusError) as error:
+            http_status = error.status_code
+            failure_category = _failure_category(
+                http_status,
+                response_format_error=(
+                    request.response_format is not None
+                    and _is_response_format_error(error)
+                ),
+            )
             translated_error = (
                 RetryableLLMError
-                if _retryable_status(error.status_code)
+                if _retryable_status(http_status)
                 else NonRetryableLLMError
             )
         except (openai.APIError, anthropic.APIError):
             translated_error = NonRetryableLLMError
 
         if translated_error is not None:
-            raise translated_error
-        if self.kind == "anthropic":
-            adapted = _anthropic_response(response, self.model)
-        else:
-            adapted = _openai_response(response, self.model)
+            _log_failure(failure_category, request.purpose, http_status)
+            raise translated_error from None
+        try:
+            if self.kind == "anthropic":
+                adapted = _anthropic_response(response, self.model)
+            else:
+                adapted = _openai_response(response, self.model)
+        except NonRetryableLLMError:
+            _log_failure("invalid_output", request.purpose)
+            raise
         return replace(
             adapted,
             usage=(

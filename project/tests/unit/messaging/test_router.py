@@ -178,6 +178,21 @@ def test_router_v3_schema_requires_every_bounded_field() -> None:
         "confidence",
     }
     assert schema["properties"]["services"]["maxItems"] == 3
+    assert "uniqueItems" not in schema["properties"]["topics"]
+
+
+@pytest.mark.asyncio
+async def test_router_rejects_duplicate_topics_locally() -> None:
+    verdict = await LLMIntentRouter(
+        ScriptedProvider(
+            router_response(
+                json.dumps(v3_payload(topics=["price", "price"]))
+            )
+        )
+    ).route("Сколько стоит криосауна?", [])
+
+    assert verdict.source == "fallback"
+    assert verdict.reason_code == "invalid_router_output"
 
 
 @pytest.mark.parametrize(

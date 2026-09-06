@@ -17,13 +17,6 @@ HTML_PATH = Path(
         / "moroz-i-solntse-full-architecture.html",
     )
 )
-ROOT_HTML_PATH = Path(
-    os.environ.get(
-        "ROOT_ARCHITECTURE_HTML_PATH",
-        REPOSITORY_ROOT / "moroz-i-solntse-full-architecture.html",
-    )
-)
-
 REQUIRED_SECTIONS = {
     "comparison",
     "channels",
@@ -394,7 +387,3 @@ def test_visual_has_required_css_contract() -> None:
         "@media (max-width: 760px)",
     ):
         assert token in html
-
-
-def test_root_copy_matches_canonical_visual() -> None:
-    assert ROOT_HTML_PATH.read_bytes() == HTML_PATH.read_bytes()

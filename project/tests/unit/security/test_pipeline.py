@@ -497,7 +497,7 @@ async def test_parallel_allow_or_block_matrix(
 
 
 @pytest.mark.asyncio
-async def test_router_error_after_allow_uses_safe_general_answer_path():
+async def test_router_error_after_allow_uses_safe_general_answer_path(caplog):
     gateway = CapturingGateway(
         security_response(),
         response("answer"),
@@ -507,8 +507,47 @@ async def test_router_error_after_allow_uses_safe_general_answer_path():
     result = await pipeline(gateway, router=router).respond("Да, завтра", [])
 
     assert result.text == ROUTER_FALLBACK_REPLY
+    assert "+7 (902) 906-61-66" in result.text
+    assert "техничес" in result.text.casefold()
+    assert "передам" not in result.text.casefold()
     assert all(request.purpose != "answer" for request in gateway.requests)
     assert "router-response-sentinel" not in repr(gateway.requests)
+    assert "router-response-sentinel" not in caplog.text
+    assert (
+        "router_decision_fallback category=internal_error purpose=router "
+        "http_status=none"
+    ) in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_router_failure_keeps_draft_and_never_dispatches_external_action():
+    gateway = CapturingGateway(security_response())
+    draft = '{"mode":"booking","active":true,"step":"confirmation"}'
+    dispatched = []
+
+    class Router:
+        state = None
+
+        async def route(self, _text, _context, *, state=None):
+            self.state = state
+            raise ValueError("router-response-sentinel")
+
+    router = Router()
+
+    async def dispatch(decision):
+        dispatched.append(decision)
+        return "must-not-run"
+
+    result = await pipeline(gateway, router=router).respond(
+        "Подтверждаю",
+        [],
+        dispatch=dispatch,
+        booking_context=draft,
+    )
+
+    assert result.text == ROUTER_FALLBACK_REPLY
+    assert dispatched == []
+    assert router.state == draft
 
 
 @pytest.mark.asyncio
