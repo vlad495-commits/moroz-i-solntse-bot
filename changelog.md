@@ -1,5 +1,13 @@
 # Changelog
 
+[2026-09-06 11:02] B0 расширенный Docker gate: 297 passed (270.46s), exit 0, JUnit tmp/b0-broad.xml. Включены последние проверки неизменённого continue после выбора слота. Независимый read-only review: соответствие spec, без Critical/Important/Minor. Diff --check чистый; исходные service guards и Router/prompt неизменны. Исправление с 9 E2E фиксируется отдельным локальным fix-коммитом; main/сервер не менялись.
+
+[2026-09-06 10:57] Корректный B0 RED: 8 failed / 1 passed по ожидаемым причинам. Минимально изменён telegram.py (+15/-1), focused GREEN 9 passed (32.59s). Дополнительные assertions повторного continue включены в запущенный расширенный Docker gate (unit/booking, все booking E2E, semantic dispatch, mixed outage, pipeline, Router counts, worker); начат независимый read-only review. Service ownership/time/confirmation guards и Router-контракт не изменены.
+
+[2026-09-06 10:55] Добавлены B0 E2E для обоих маршрутов continue, коррекции date/time/staff, старого подтверждения, FAQ и явного create. Первый RED выявил ожидаемые дефекты phase/idle continue и ошибку тестового route faq (исправлена на consultation); выполняется корректный повтор до production-правки. План синхронизирован с одобрением владельца.
+
+[2026-09-06 10:51] Владелец одобрил реализацию B0 без промежуточных согласований. Spec/roadmap отмечены в работе; начато TDD-воспроизведение реального coordinator/repository/service с fake YCLIENTS. Проверена изоляция: codex/reference-simplification на da18117, main остаётся 9e3c5d4. Правки и проверки только локально, без push/merge/rollout.
+
 [2026-09-06 10:46] Read-only review §4.2 и узкого B0 не выявил важных замечаний: измерения не подменяют live/перенос, backend-only граница обоснована. Аналитическая задача 7 отмечена выполненной; B0 оставлен предложением до подтверждения. Roadmap/план синхронизированы, production-файлы с начала текущего шага не менялись. Завершается отдельный документный коммит без merge/push; Git-процесс сохранён.
 
 [2026-09-06 10:44] Подготовлен узкий B0 контракт и пошаговый план целостности продолжения переноса: backend следует активному kind, сохраняет исходные данные записи и повторное подтверждение после коррекции. Публичная схема/промпт Router и datasets не меняются; legacy cleanup/topics вынесены позже. Документ — предложение владельцу до production-кода, не объявление исправления.

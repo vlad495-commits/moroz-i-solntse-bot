@@ -165,7 +165,15 @@ class TelegramBookingCoordinator:
             return BookingReply("Запись уже обрабатывается. Дождитесь результата.", {})
         if decision.action == "cancel_draft":
             return await self._cancel_draft(scenario)
-        if decision.route == "booking_management":
+        management = decision.route == "booking_management"
+        if decision.action == "continue":
+            if scenario is None:
+                return BookingReply(CLARIFY_REPLY, {})
+            management = (
+                scenario.kind in {"reschedule", "cancel"}
+                or scenario.state.get("mode") == "management"
+            )
+        if management:
             return await self._handle_management(
                 connection,
                 customer_id,
@@ -533,6 +541,12 @@ class TelegramBookingCoordinator:
             if decision.action not in {"none", "continue", "clarify", "reschedule"}:
                 return BookingReply(CLARIFY_REPLY, {})
             state = merge_draft(self._state(active), decision)
+            # For a reschedule this is the original booking time, not the new slot.
+            state["starts_at"] = active.state["starts_at"]
+            if active.phase == "awaiting_confirmation":
+                if state.get("selected_slot_id"):
+                    return self._render_current(active)
+                active = replace(active, phase="collecting", updated_at=self._now())
             if not self._resolve_staff_preference(state):
                 updated = await self._checkpoint(
                     active, state, "booking_reschedule_details_merged"
