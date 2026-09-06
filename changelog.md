@@ -1,5 +1,11 @@
 # Changelog
 
+[2026-09-06 10:46] Read-only review §4.2 и узкого B0 не выявил важных замечаний: измерения не подменяют live/перенос, backend-only граница обоснована. Аналитическая задача 7 отмечена выполненной; B0 оставлен предложением до подтверждения. Roadmap/план синхронизированы, production-файлы с начала текущего шага не менялись. Завершается отдельный документный коммит без merge/push; Git-процесс сохранён.
+
+[2026-09-06 10:44] Подготовлен узкий B0 контракт и пошаговый план целостности продолжения переноса: backend следует активному kind, сохраняет исходные данные записи и повторное подтверждение после коррекции. Публичная схема/промпт Router и datasets не меняются; legacy cleanup/topics вынесены позже. Документ — предложение владельцу до production-кода, не объявление исправления.
+
+[2026-09-06 10:42] После review новый characterization gate — 7 passed (2.34s), сохранён в d208f8d. В §4.2 исходного аудита добавлены измеренные вызовы, границы состояний и решения по Router/mixed reply; предложен порядок continuation integrity → legacy cleanup → отдельное решение topics/Evaluation. В план добавлены правила локальной ветки/коммитов и pre-merge gate. Производственная логика не менялась; опасные продолжения переноса остаются открытыми.
+
 [2026-09-06 10:40] Объединённый Docker gate задачи 7: 193 passed (54.62s), включая реальные conversational coordinator E2E; JUnit router-audit-paths.xml. Read-only review нового измерения Critical/Important не выявил, уточнил границы fake provider/dispatch. Добавлены проверки сохранения action и отсутствия security/validator warning-fallback, чтобы успешные пути не смешивались с fail-open. Продолжение переноса и production-код не исправлялись этим тестом.
 
 [2026-09-06 10:37] Baseline semantic dispatch — 7 passed (2.29s). Добавлен characterization test семи путей через реальные LLMIntentRouter/InputSecurity/OutputValidator/SecurityPipeline с подставным provider: 7 passed (2.13s). Производственный код не менялся; это измерение текущего поведения, не TDD-исправление. Уточнён state.kind для кейса continue переноса; запускается объединённая проверка с реальными coordinator E2E. Один обычный booking turn вызывает Security+Router; FAQ/mixed дополнительно answer+validator при включённом semantic validator и без Compact/retry.
