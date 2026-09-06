@@ -199,8 +199,7 @@ class TelegramBookingCoordinator:
             scenario = replace(scenario, phase="collecting", updated_at=self._now())
         state = merge_draft(self._state(scenario), decision)
         if (
-            decision.staff is not None
-            and state.get("service_id")
+            state.get("service_id")
             and not self._resolve_staff_preference(state)
         ):
             scenario = await self._checkpoint(
