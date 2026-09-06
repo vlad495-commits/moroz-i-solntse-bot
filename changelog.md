@@ -1,5 +1,7 @@
 # Changelog
 
+[2026-09-06 18:12] Повторный task review 7608087: Spec PASS, Quality Approved, замечаний нет. История codex/telegram-ux-second объединена намеренным merge -s ours после выборочного переноса совместимого UX: новый свободный диалог — явно выбранная основа. До/после merge project tree одинаковый; ancestry обеих исходных веток подтверждён. Это не автоматическое принятие старых menu/grounding/wizard файлов. Начинается full rebuilt Docker gate на замороженном кандидате.
+
 [2026-09-06 18:11] Review-fix сохранён в 7608087: stale confirmation RED1/9.69s, GREEN35/95.41s; Ruff всего проекта зелёный, test fixture import исправлен без подавления правил. Передан узкий diff повторному reviewer. Runtime замораживается для полного gate; отдельные родительские документы сохраняют исходные точки и ограничения синхронизации.
 
 [2026-09-06 18:06] Узкий UX сохранён в ad1bd21: baseline58, ожидаемый RED9/5, GREEN87/264.91s и follow-up23/57.98s. Test image rebuilt, compileall и Compose config exit0. Ruff выявил только 5 F811 в импорте переиспользуемой fixture; исполнитель исправил alias, rerun зелёный. Независимый runtime review выявил stale-confirmation, при котором старый callback мог заменить полную сводку generic-текстом; добавляется regression и исправление до полного gate. Скрипты rollout прошли независимый review после фикса exact rollback; добавлены безопасный возврат checkout при build failure, fail-closed проверка очереди и isolated-store validation перед compat.
