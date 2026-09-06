@@ -50,7 +50,7 @@ PUBLIC_ACTIONS = (
 MAX_CHOICE_INDEX = 9_999
 ROUTE_ACTIONS = {
     'consultation': {'none', 'price', 'duration', 'staff', 'clarify'},
-    'booking': {'none', 'create', 'cancel_draft', 'continue', 'provide_name', 'clarify', 'clarify_cancel'},
+    'booking': {'none', 'create', 'cancel_draft', 'continue', 'clarify', 'clarify_cancel'},
     'booking_management': {'none', 'view', 'cancel', 'reschedule', 'continue', 'clarify', 'clarify_cancel'},
     'escalation': {'none', 'clarify'},
     'smalltalk': {'none', 'clarify'},
@@ -135,7 +135,8 @@ time_from/time_to — точные границы HH:MM. «После 18:00» д
 staff — имя или публичное предпочтение без provider ID, иначе null.
 choice — исходный глобальный index явно выбранного варианта из choices текущей страницы, иначе null.
 Не пересчитывай index от начала страницы. choice допустим с continue или view/cancel/reschedule,
-но не с create, provide_name или none. Не придумывай отсутствующие варианты.
+но не с create или none. Имя после вопроса «Как вас зовут?» — booking/continue;
+не включай само имя в JSON. Не придумывай отсутствующие варианты.
 Подтверждение реальной записи и её отмены требует кнопки, не выполняется по тексту.
 Не угадывай выбор среди нескольких услуг/записей. Не включай имя/телефон в JSON."""
 
@@ -286,7 +287,7 @@ def valid_route_action(decision: RouteDecision) -> bool:
         or decision.action not in {'continue', 'view', 'cancel', 'reschedule'}
     ):
         return False
-    if decision.action in {'provide_name', 'cancel_draft', 'clarify_cancel'}:
+    if decision.action in {'cancel_draft', 'clarify_cancel'}:
         return decision.service is None and decision.date is None
     return True
 

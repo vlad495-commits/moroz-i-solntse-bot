@@ -18,6 +18,10 @@ class CapturingRouter:
         return self.verdict
 
 
+def test_router_eval_token_budget_matches_runtime_floor():
+    assert eval_runner.ROUTER_MAX_TOKENS >= 256
+
+
 def router_case(**overrides):
     value = {
         "id": 7,

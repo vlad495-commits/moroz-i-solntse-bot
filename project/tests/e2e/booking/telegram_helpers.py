@@ -98,7 +98,7 @@ async def handle(booking_coordinator, database, **kwargs):
             "Записаться": RouteDecision("booking", 1, "create"),
             "Мои записи": RouteDecision("booking_management", 1, "view"),
             "Отменить действие": RouteDecision("booking", 1, "cancel_draft"),
-            "Иван": RouteDecision("booking", 1, "provide_name"),
+            "Иван": RouteDecision("booking", 1, "continue"),
         }.get(kwargs.get("text"))
         if decision:
             kwargs["decision"] = decision

@@ -202,7 +202,7 @@ def test_compose_process_environment_overrides_external_test_credentials():
         "ROUTER_MODEL": "${ROUTER_MODEL:-}",
         "ROUTER_API_KEY": "${ROUTER_API_KEY:-}",
         "ROUTER_BASE_URL": "${ROUTER_BASE_URL:-}",
-        "ROUTER_MAX_TOKENS": "${ROUTER_MAX_TOKENS:-120}",
+        "ROUTER_MAX_TOKENS": "${ROUTER_MAX_TOKENS:-256}",
         "SECURITY_MODEL": "${SECURITY_MODEL:-}",
         "SECURITY_API_KEY": "${SECURITY_API_KEY:-}",
         "SECURITY_BASE_URL": "${SECURITY_BASE_URL:-}",

@@ -18,6 +18,7 @@ from moroz.booking.service import BookingService
 from moroz.booking.time_display import MOSCOW, format_booking_time
 from moroz.booking.yclients_catalog import walk_in_family
 from moroz.messaging.router import RouteDecision, bound_routing_state, valid_route_action
+from moroz.messaging.telegram import remove_keyboard_options
 
 
 STALE_REPLY = "Эта кнопка уже неактуальна. Напишите, пожалуйста, что хотите сделать."
@@ -31,6 +32,16 @@ _CALLBACK_ACTIONS = (
     "confirm_change",
 )
 _MAX_CHOICES = 3
+_ANY_STAFF = {
+    "без разницы",
+    "все равно",
+    "кто угодно",
+    "любая",
+    "любой",
+    "любой специалист",
+    "не важно",
+    "неважно",
+}
 
 
 def _utc_now() -> datetime:
@@ -60,6 +71,10 @@ def _normalise(value: object) -> str:
     return " ".join(
         str(value or "").strip().casefold().replace("ё", "е").replace("|", " ").split()
     )
+
+
+def _is_any_staff(value: object) -> bool:
+    return _normalise(value) in _ANY_STAFF
 
 
 class TelegramBookingCoordinator:
@@ -129,14 +144,14 @@ class TelegramBookingCoordinator:
         scenario = await self._repository.get_active_for_customer(customer_id)
         if kind == "contact":
             if scenario is None or scenario.kind != "create":
-                return BookingReply(STALE_REPLY, {})
+                return BookingReply(STALE_REPLY, remove_keyboard_options())
             return await self._collect_contact(connection, scenario, user_id, text, kind, data)
+        if scenario is not None and next_requirement(scenario.state) == "contact":
+            if normalize_russian_phone(text) is not None:
+                return await self._collect_contact(
+                    connection, scenario, user_id, text, kind, data
+                )
         if decision is None:
-            if scenario is not None and next_requirement(scenario.state) == "contact":
-                if normalize_russian_phone(text) is not None:
-                    return await self._collect_contact(
-                        connection, scenario, user_id, text, kind, data
-                    )
             return None
         if not valid_route_action(decision):
             return BookingReply(CLARIFY_REPLY, {})
@@ -148,14 +163,18 @@ class TelegramBookingCoordinator:
             return await self._cancel_draft(scenario)
         if decision.route == "booking_management":
             return await self._handle_management(
-                customer_id, update_id, decision, scenario, origin_update_id
+                connection,
+                customer_id,
+                update_id,
+                decision,
+                scenario,
+                origin_update_id,
             )
         if decision.action not in {
             "create",
             "continue",
             "clarify",
             "none",
-            "provide_name",
         }:
             return BookingReply(CLARIFY_REPLY, {})
         if scenario is None or scenario.kind != "create":
@@ -327,7 +346,7 @@ class TelegramBookingCoordinator:
         state.pop("service_candidates", None)
         state.pop("choices", None)
         staff_query = _normalise(state.get("staff_query"))
-        if staff_query:
+        if staff_query and not _is_any_staff(staff_query):
             variants = [
                 item
                 for item in service.variants
@@ -486,17 +505,60 @@ class TelegramBookingCoordinator:
 
     async def _handle_management(
         self,
+        connection: asyncpg.Connection,
         customer_id: str,
         update_id: str,
         decision: RouteDecision,
         active: BookingScenario | None,
         origin_update_id: str | None,
     ) -> BookingReply:
-        if active is not None and active.state.get("mode") == "management":
+        if active is not None and active.kind == "reschedule":
+            if decision.action not in {"none", "continue", "clarify", "reschedule"}:
+                return BookingReply(CLARIFY_REPLY, {})
+            state = merge_draft(self._state(active), decision)
+            if not self._resolve_staff_preference(state):
+                updated = await self._checkpoint(
+                    active, state, "booking_reschedule_details_merged"
+                )
+                return await self._save_step(
+                    updated,
+                    "staff",
+                    "Уточните имя специалиста или напишите «любой специалист».",
+                )
+            updated = await self._checkpoint(
+                active, state, "booking_reschedule_details_merged"
+            )
             if decision.choice is not None:
                 return await self._apply_choice(
-                    None, active, customer_id, update_id, decision.choice
+                    connection, updated, customer_id, update_id, decision.choice
                 )
+            return await self._advance(connection, updated)
+        if active is not None and active.kind == "cancel":
+            return self._render_current(active)
+        if active is not None and active.state.get("mode") == "management":
+            state = self._state(active)
+            if decision.action in {"cancel", "reschedule"}:
+                state["management_operation"] = decision.action
+            if decision.date is not None:
+                state["requested_date"] = decision.date
+            if decision.time_from is not None or decision.time_to is not None:
+                state["time_from"] = decision.time_from
+                state["time_to"] = decision.time_to
+            if decision.staff is not None:
+                state["staff_query"] = decision.staff
+            if state != active.state:
+                active = await self._checkpoint(
+                    active, state, "booking_management_details_merged"
+                )
+            if decision.choice is not None:
+                return await self._apply_choice(
+                    connection, active, customer_id, update_id, decision.choice
+                )
+            if (
+                active.state.get("step") == "booking_action"
+                and decision.action in {"cancel", "reschedule"}
+            ):
+                return await self._begin_change(active, decision.action)
             return self._render_current(active)
         if active is not None:
             await self._close_draft(active, "booking_flow_switched")
@@ -627,7 +689,19 @@ class TelegramBookingCoordinator:
             "date": management.state.get("requested_date"),
             "time_from": management.state.get("time_from"),
             "time_to": management.state.get("time_to"),
+            "staff_query": management.state.get("staff_query"),
         }
+        if not self._resolve_staff_preference(state):
+            scenario = replace(scenario, state=state)
+            await self._repository.create_scenario(scenario)
+            stored = await self._repository.get_scenario(scenario.id)
+            if stored is None:
+                raise RuntimeError("created reschedule scenario is missing")
+            return await self._save_step(
+                stored,
+                "staff",
+                "Уточните имя специалиста или напишите «любой специалист».",
+            )
         scenario = replace(scenario, state=state)
         await self._repository.create_scenario(scenario)
         stored = await self._repository.get_scenario(scenario.id)
@@ -638,6 +712,26 @@ class TelegramBookingCoordinator:
                 stored, "date", "На какую новую дату перенести запись?"
             )
         return await self._offer_slots(stored)
+
+    @staticmethod
+    def _resolve_staff_preference(state: dict[str, object]) -> bool:
+        query = _normalise(state.get("staff_query"))
+        if not query or _is_any_staff(query):
+            state["staff_id"] = None
+            state["staff_name"] = "Любой специалист"
+            return True
+        staff_names = state.get("staff_names")
+        if not isinstance(staff_names, Mapping):
+            return False
+        matches = [
+            (str(staff_id), str(staff_name))
+            for staff_id, staff_name in staff_names.items()
+            if query in _normalise(staff_name) or _normalise(staff_name) in query
+        ]
+        if len(matches) != 1:
+            return False
+        state["staff_id"], state["staff_name"] = matches[0]
+        return True
 
     async def _handle_callback(
         self,
@@ -805,7 +899,7 @@ class TelegramBookingCoordinator:
     async def _recover_callback(self, customer_id: str) -> BookingReply:
         active = await self._repository.get_active_for_customer(customer_id)
         if active is None or str(active.state.get("step", "")).startswith("catalog_"):
-            return BookingReply(STALE_REPLY, {})
+            return BookingReply(STALE_REPLY, remove_keyboard_options())
         current = self._render_current(active)
         return BookingReply(f"{STALE_REPLY}\n\n{current.text}", current.delivery_options)
 

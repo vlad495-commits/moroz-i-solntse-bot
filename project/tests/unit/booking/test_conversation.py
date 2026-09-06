@@ -37,7 +37,11 @@ def test_date_correction_invalidates_slot_but_keeps_service():
         "service_name": "Криосауна",
         "date": "2026-09-08",
         "available_slots": [{"slot_id": "old"}],
+        "choices": ({"slot_id": "old", "label": "18:00"},),
+        "slot_query": {"starts_after": "2026-09-08T00:00:00+03:00"},
+        "step": "slot",
         "selected_slot_id": "old",
+        "selected_staff_id": "staff-2",
         "starts_at": "2026-09-08T18:00:00+03:00",
     }
 
@@ -46,7 +50,11 @@ def test_date_correction_invalidates_slot_but_keeps_service():
     assert merged["service_id"] == "7"
     assert merged["date"] == "2026-09-09"
     assert "available_slots" not in merged
+    assert "choices" not in merged
+    assert "slot_query" not in merged
+    assert "step" not in merged
     assert "selected_slot_id" not in merged
+    assert "selected_staff_id" not in merged
     assert "starts_at" not in merged
 
 

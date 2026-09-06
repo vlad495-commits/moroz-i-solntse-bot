@@ -13,7 +13,11 @@ Requirement = Literal["service", "date", "time", "slot", "contact", "name", "con
 
 _SLOT_FIELDS = (
     "available_slots",
+    "choices",
+    "slot_query",
+    "step",
     "selected_slot_id",
+    "selected_staff_id",
     "selected_date",
     "starts_at",
     "new_starts_at",

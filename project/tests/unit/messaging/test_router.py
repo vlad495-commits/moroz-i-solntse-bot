@@ -402,7 +402,7 @@ async def test_router_extracts_structured_service_and_date():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('field,value', [('date', '2026-02-30'), ('choice', True), ('choice', -1), ('action', 'confirm'), ('service', 12)])
+@pytest.mark.parametrize('field,value', [('date', '2026-02-30'), ('choice', True), ('choice', -1), ('action', 'confirm'), ('action', 'provide_name'), ('service', 12)])
 async def test_bad_booking_parameters_never_dispatch(field, value):
     payload = {'route': 'booking', 'confidence': .97, 'action': 'create',
                'service': 'массаж', 'date': None, 'choice': None}

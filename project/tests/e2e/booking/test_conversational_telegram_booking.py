@@ -136,6 +136,60 @@ async def test_question_during_draft_is_not_swallowed_or_reset(migrated_database
         await database.close()
 
 
+async def test_date_correction_with_no_slots_invalidates_old_callback(migrated_database_url):
+    slots = [
+        Slot("old-slot", ("331",), "10", datetime(2026, 9, 5, 18, tzinfo=MOSCOW), 60)
+    ]
+    database, bookings, adapter, coordinator = await _coordinator(
+        migrated_database_url,
+        slots=slots,
+    )
+    base = {"customer_id": "42", "user_id": "7", "text": ""}
+    try:
+        offered = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="old-date",
+            kind="text",
+            data={},
+            decision=booking_decision(),
+        )
+        old_callback = offered.delivery_options["reply_markup"]["inline_keyboard"][0][0][
+            "callback_data"
+        ]
+
+        unavailable = await _handle(
+            coordinator,
+            database,
+            **{**base, "text": "Лучше 6 сентября"},
+            update_id="new-date",
+            kind="text",
+            data={},
+            decision=RouteDecision(
+                "booking", 0.99, "continue", date="2026-09-06"
+            ),
+        )
+        assert "не нашлось" in unavailable.text
+
+        stale = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="old-slot-callback",
+            kind="callback",
+            data={"callback_data": old_callback},
+        )
+        draft = await bookings.get_active_for_customer("42")
+        assert "неактуальна" in stale.text
+        assert draft.state["date"] == "2026-09-06"
+        assert "choices" not in draft.state
+        assert "slot_query" not in draft.state
+        assert (adapter.create_calls, adapter.reschedule_calls, adapter.cancel_calls) == (0, 0, 0)
+    finally:
+        await database.close()
+
+
 async def test_legacy_catalog_callback_is_stale_without_reply_menu(migrated_database_url):
     database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
     try:
@@ -363,6 +417,71 @@ async def test_reschedule_uses_new_date_and_confirmation(migrated_database_url):
         await database.close()
 
 
+async def test_management_followup_keeps_new_date_and_time(migrated_database_url):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    base = {"customer_id": "42", "user_id": "7", "text": ""}
+    try:
+        await _create_owned_booking(coordinator, database)
+        selected = await _handle(
+            coordinator,
+            database,
+            **base,
+            update_id="manage-view",
+            kind="text",
+            data={},
+            decision=RouteDecision("booking_management", 0.99, "view"),
+        )
+        assert _button_labels(selected) == ["Перенести", "Отменить"]
+
+        offered = await _handle(
+            coordinator,
+            database,
+            **{**base, "text": "Перенесите на 6 сентября после 14:00"},
+            update_id="manage-followup",
+            kind="text",
+            data={},
+            decision=RouteDecision(
+                "booking_management",
+                0.99,
+                "reschedule",
+                date="2026-09-06",
+                time_from="14:00",
+            ),
+        )
+
+        assert _button_labels(offered) == ["14:00"]
+        draft = await bookings.get_active_for_customer("42")
+        assert draft.kind == "reschedule"
+        assert draft.state["date"] == "2026-09-06"
+        assert draft.state["time_from"] == "14:00"
+        assert adapter.reschedule_calls == 0
+    finally:
+        await database.close()
+
+
+async def test_any_staff_preference_does_not_loop_on_staff_question(migrated_database_url):
+    database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
+    try:
+        offered = await _handle(
+            coordinator,
+            database,
+            customer_id="42",
+            user_id="7",
+            update_id="any-staff",
+            text="Криокапсула 5 сентября, специалист без разницы",
+            kind="text",
+            data={},
+            decision=booking_decision(staff="без разницы"),
+        )
+
+        assert _button_labels(offered) == ["13:00"]
+        draft = await bookings.get_active_for_customer("42")
+        assert draft.state["staff_id"] is None
+        assert draft.state["staff_name"] == "Любой специалист"
+    finally:
+        await database.close()
+
+
 async def test_manual_phone_then_name_reaches_confirmation(migrated_database_url):
     database, bookings, adapter, coordinator = await _coordinator(migrated_database_url)
     base = {"customer_id": "42", "user_id": "7", "text": ""}
@@ -395,6 +514,7 @@ async def test_manual_phone_then_name_reaches_confirmation(migrated_database_url
             update_id="manual-phone",
             kind="text",
             data={},
+            decision=RouteDecision("booking", 0.99, "continue"),
         )
         assert name.text == "Как вас зовут?"
         confirmation = await _handle(
@@ -404,7 +524,7 @@ async def test_manual_phone_then_name_reaches_confirmation(migrated_database_url
             update_id="manual-name",
             kind="text",
             data={},
-            decision=RouteDecision("booking", 0.99, "provide_name"),
+            decision=RouteDecision("booking", 0.99, "continue"),
         )
 
         assert _button_labels(confirmation) == ["Подтвердить"]

@@ -37,6 +37,7 @@ from moroz.messaging.repository import (
     MessageRepository,
     OutboundDeliveryBlocked,
 )
+from moroz.messaging.router import RouteDecision
 from moroz.messaging.telegram import (
     DeliveryResult,
     TelegramSender,
@@ -645,6 +646,102 @@ async def test_booking_text_uses_one_semantic_path(database):
             "SELECT text FROM outbound_messages WHERE idempotency_key = $1",
             "reply:process_message:100",
         ) == "Ответ записи"
+
+
+async def test_manual_phone_and_name_traverse_worker_semantic_path(
+    migrated_database_url,
+):
+    from tests.e2e.booking.telegram_helpers import coordinator as make_coordinator
+    from tests.e2e.booking.telegram_helpers import handle as booking_handle
+
+    database, bookings, adapter, coordinator = await make_coordinator(
+        migrated_database_url
+    )
+    base = {"customer_id": "42", "user_id": "7", "text": ""}
+    try:
+        offered = await booking_handle(
+            coordinator,
+            database,
+            **base,
+            update_id="worker-setup",
+            kind="text",
+            data={},
+            decision=RouteDecision(
+                "booking",
+                0.99,
+                "create",
+                services=("Криокапсула",),
+                date="2026-09-05",
+            ),
+        )
+        await booking_handle(
+            coordinator,
+            database,
+            **base,
+            update_id="worker-slot",
+            kind="callback",
+            data={
+                "callback_data": offered.delivery_options["reply_markup"][
+                    "inline_keyboard"
+                ][0][0]["callback_data"]
+            },
+        )
+
+        class BookingLLM(FakeLLM):
+            async def __call__(
+                self,
+                text,
+                context,
+                *,
+                recent_message_count=1,
+                dispatch=None,
+                booking_context=None,
+            ):
+                self.calls.append((text, context))
+                reply = await dispatch(RouteDecision("booking", 0.99, "continue"))
+                return SimpleNamespace(
+                    text=reply,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    cached_tokens=0,
+                    total_tokens=0,
+                    model="booking-local",
+                )
+
+        repository = MessageRepository(database)
+        handler = MessageTaskHandler(
+            database,
+            BookingLLM(),
+            TelegramSender(FakeTelegram(), repository),
+            booking_coordinator=coordinator,
+        )
+
+        assert await repository.accept(
+            incoming("worker-phone", "+7 900 111-22-33")
+        )
+        await handler.handle(
+            QueueTask(
+                "process_message",
+                {"chat_id": "42", "update_ids": ["worker-phone"]},
+                process_message_key(["worker-phone"]),
+            )
+        )
+        assert await repository.accept(incoming("worker-name", "Иван"))
+        await handler.handle(
+            QueueTask(
+                "process_message",
+                {"chat_id": "42", "update_ids": ["worker-name"]},
+                process_message_key(["worker-name"]),
+            )
+        )
+
+        draft = await bookings.get_active_for_customer("42")
+        assert draft.phase == "awaiting_confirmation"
+        assert draft.state["customer_phone"] == "+79001112233"
+        assert draft.state["customer_name"] == "Иван"
+        assert adapter.create_calls == 0
+    finally:
+        await database.close()
 
 
 async def test_text_batch_is_sent_once_without_menu_splitting(database):
