@@ -1,5 +1,13 @@
 # Changelog
 
+[2026-09-06 12:25] Финальная проверка: документные команды 8 passed (0.73s), Compose config --quiet и git diff --check exit 0; post-fix JUnit 1315/0/0/0. Project diff относительно c5ac62e пустой. Main чистый 9e3c5d4, worktree остаётся codex/reference-simplification; завершается отдельный документный итог. Для следующего шага нужен отдельный допуск staging/live, push/merge/rollout не выполнялись.
+
+[2026-09-06 12:24] Итоговые roadmap/планы/аудиты синхронизированы: B0–B2 и локальная техническая часть задач 8–9 закрыты, live/Света/rollout открыты. Исправлена историческая ссылка B0 на номера P1-3/P1-4. Из документов удалены устаревшие указания «B0 следующий»; результаты полного и post-fix запусков не смешиваются. Выполняется финальная проверка документов/Compose/Git, затем документный commit; main/сервер не менялись.
+
+[2026-09-06 12:22] Post-fix весь unit suite: 1315 passed (30.80s), exit 0; JUnit reference-final-unit.xml. Полный evidence 2379 passed/1 document failure сохранён без подмены зелёным полным повтором. Создан итоговый отчёт локальной приёмки с командами, границами fake/live и условиями внешнего выпуска. Runtime/tests после c5ac62e не менялись; готовится документный итог и финальная сверка Git.
+
+[2026-09-06 12:20] Полный rebuilt Docker gate c5ac62e: 2379 passed / 1 failed (2236.23s), JUnit tmp/reference-final-full.xml. Единственное падение — документный contract test: B2 план дублировал команду audit-test.env вне канонического плана. Дубликат заменён ссылкой на владельца команды, test guard не ослаблен. Runtime и тесты не меняются. Whole-branch read-only review main..c5ac62e существенных замечаний не выявил. Запускается post-fix весь unit suite; это full + document correction evidence, не зелёный повтор полного suite.
+
 [2026-09-06 11:43] Pagination сохранена в eae41c3. FAQ-inline characterization GREEN 2 passed (10.38s); B1/B2 планы и roadmap отмечают локальные пакеты выполненными, общий gate остаётся открыт. Начинается полная пересборка test image и проверка всех /workspace/tests на текущем кандидате. Исторические migrations/datasets не изменены. Файлы замораживаются на время gate.
 
 [2026-09-06 11:41] B2 страницы: расширенный Docker GREEN 125 passed (123.19s), включая семь page cases и границы 10 000/10 001, staff/B0/conversational/unit booking. Review PASS; изменения заморожены. Запущены два FAQ-inline characterization перед полным gate. Pagination сохраняется отдельным локальным commit.

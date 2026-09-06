@@ -35,9 +35,9 @@ Files: project/src/moroz/booking/telegram.py; новый project/tests/e2e/booki
 
 ## Проверки и завершение
 
-Префикс запуска из project/: docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm -v ../tmp:/reports -w /workspace test pytest --rootdir=/workspace -q -p no:cacheprovider.
+Запускать из project/ командой из раздела «Задача 1 — безопасный тестовый контур» [канонического плана](2026-09-06-reference-simplification.md), заменив только путь теста указанным ниже. Это единственный владелец команд изолированного контура; не подставлять рабочий env. Для полного gate использовать команду задачи 6 того же плана с обязательной пересборкой test image.
 
 Focused аргумент — /workspace/tests/e2e/booking/test_staff_preference_integrity.py либо /workspace/tests/e2e/booking/test_booking_management_pages.py --tb=short --show-capture=no.
 
-- [ ] Свести B1/B2 в расширенный gate, затем полный suite текущего кандидата; записать точное evidence.
-- [ ] Обновить roadmap, исходный аудит и changelog. Внешняя приёмка и выпуск требуют отдельного разрешения; локальную готовность не выдавать за rollout.
+- [x] B1/B2 сведены в expanded gates и полный rebuilt suite c5ac62e: 2379 passed/1 document failure; после исправления документа весь unit suite 1315 passed. Это full + post-fix evidence, не зелёный повтор полного suite.
+- [x] Roadmap, исходный аудит и changelog обновлены; [итоговый отчёт](<../../audits/Приёмка упрощения архитектуры 2026-09-06.md>). Внешняя приёмка и выпуск требуют отдельного разрешения; локальная готовность не означает rollout.
