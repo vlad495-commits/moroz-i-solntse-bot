@@ -1408,7 +1408,6 @@ def test_admin_client_factory_disables_sdk_retries(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     captured = {}
-    catalog = object()
 
     class Provider:
         def __init__(self, client, kind, model, temperature, max_tokens):
@@ -1428,13 +1427,11 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
             context,
             *,
             recent_message_count,
-            catalog,
         ):
             captured["request"] = (
                 question,
                 context,
                 recent_message_count,
-                catalog,
             )
             return LLMResponse("safe", 1, 1, 0, 2, "fake")
 
@@ -1451,7 +1448,6 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     assert await eval_runner._generate_bot_response(
         "Вопрос",
         "Цена 2400 руб.",
-        catalog=catalog,
     ) == "safe"
     primary_provider, reserve_provider = captured["providers"]
     assert primary_provider.values[:3] == (
@@ -1467,7 +1463,7 @@ async def test_admin_bot_response_uses_shared_security_pipeline(monkeypatch):
     _, source_prompt, facts = captured["pipeline"]
     assert source_prompt == "Цена 2400 руб."
     assert "2400" in facts.prices
-    assert captured["request"] == ("Вопрос", [], 1, catalog)
+    assert captured["request"] == ("Вопрос", [], 1)
 
 
 @pytest.mark.asyncio

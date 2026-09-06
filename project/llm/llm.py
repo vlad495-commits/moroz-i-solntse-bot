@@ -350,7 +350,6 @@ async def generate_response(
     user_message: str,
     context: list[dict[str, str]],
     recent_message_count: int = 1,
-    catalog=None,
     dispatch=None,
     booking_context=None,
 ) -> LLMResponse:
@@ -369,7 +368,6 @@ async def generate_response(
         user_message,
         context,
         recent_message_count=recent_message_count,
-        catalog=catalog,
         dispatch=dispatch,
         booking_context=booking_context,
     )

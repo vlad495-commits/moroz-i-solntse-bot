@@ -10,7 +10,6 @@ from moroz.booking.catalog import (
     CatalogGrounding,
     CatalogService,
     CatalogVariant,
-    match_catalog,
 )
 from moroz.booking.telegram import BookingReply
 from moroz.booking.yclients_catalog import CatalogRecord
@@ -36,41 +35,87 @@ pytestmark = pytest.mark.asyncio
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
 
+async def test_worker_keeps_real_booking_catalog_with_ground_forbidden(
+    migrated_database_url, monkeypatch
+):
+    from moroz.booking.catalog import CatalogRepository as RealCatalogRepository
+    from tests.e2e.booking.telegram_helpers import coordinator, NOW as BOOKING_NOW
+
+    database, bookings, adapter, booking = await coordinator(migrated_database_url)
+    list_calls = []
+    original_list = RealCatalogRepository.list_services
+
+    async def list_services(self, connection, now):
+        list_calls.append(now)
+        return await original_list(self, connection, now)
+
+    async def forbidden_ground(*_args, **_kwargs):
+        raise AssertionError("consultation must not query catalog")
+
+    monkeypatch.setattr(RealCatalogRepository, "list_services", list_services)
+    monkeypatch.setattr(RealCatalogRepository, "ground", forbidden_ground)
+
+    class Router:
+        async def route(self, text, context, *, state=None):
+            return RouterVerdict(RouteDecision(
+                "booking", 0.99, "create", services=("Криокапсула",),
+                date="2026-09-05", topics=("price",),
+            ))
+
+    gateway = CatalogAnswerGateway("Криокапсула — 2 400 ₽.")
+    prompt = "Криокапсула — 2 400 ₽."
+    pipeline = SecurityPipeline(
+        gateway, prompt, extract_structured_facts(prompt),
+        router=Router(), input_security=AllowingInputSecurity(),
+    )
+
+    async def llm(text, context, **options):
+        return await pipeline.respond(text, context, **options)
+
+    try:
+        repository = MessageRepository(database)
+        assert await repository.accept(incoming(
+            "real-booking", "Запишите на криокапсулу 5 сентября и сколько стоит?"
+        ))
+        handler = MessageTaskHandler(
+            database, llm, TelegramSender(FakeTelegram(), repository),
+            catalog_repository=booking._catalog, catalog_grounding_enabled=True,
+            booking_coordinator=booking, clock=lambda: BOOKING_NOW,
+        )
+        await handler.handle(QueueTask(
+            "process_message", {"chat_id": "42", "update_ids": ["real-booking"]},
+            process_message_key(["real-booking"]),
+        ))
+        assert list_calls
+        assert await bookings.get_active_for_customer("42") is not None
+        assert adapter.create_calls == 0
+        assert [request.purpose for request in gateway.requests] == ["answer"]
+        async with database.acquire() as connection:
+            outgoing = await connection.fetchrow(
+                "SELECT text, delivery_options FROM outbound_messages"
+            )
+        assert "2 400 ₽" in outgoing["text"]
+        assert outgoing["delivery_options"]
+    finally:
+        await database.close()
+
+
 class FakeTelegram:
     async def send_message(self, **_kwargs):
         return SimpleNamespace(message_id=1)
 
 
-class ForbiddenGateway:
-    def __init__(self):
-        self.calls = 0
-
-    async def complete(self, _request):
-        self.calls += 1
-        raise AssertionError("simple catalog answer must not call LLM")
-
-
-class SecurityOnlyGateway(ForbiddenGateway):
-    async def complete(self, request):
-        self.calls += 1
-        if request.purpose != "security":
-            raise AssertionError("stale catalog must not call answer LLM")
-        return LLMResponse(
-            "OK",
-            1, 1, 0, 2, "security-test",
-        )
-
-
 class CatalogAnswerGateway:
-    def __init__(self):
+    def __init__(self, answer="Нашла обе услуги в ручном промпте."):
         self.requests = []
+        self.answer = answer
 
     async def complete(self, request):
         self.requests.append(request)
         text = (
             "OK"
             if request.purpose == "security"
-            else "Нашла обе услуги в актуальном каталоге."
+            else self.answer
         )
         return LLMResponse(text, 1, 1, 0, 2, f"{request.purpose}-test")
 
@@ -99,7 +144,7 @@ class CatalogRepository:
 
     async def ground(self, connection, text, now):
         self.calls.append((connection, text, now))
-        return self.grounding
+        raise AssertionError("consultation must not query catalog")
 
 
 class MatchingCatalogRepository:
@@ -109,7 +154,7 @@ class MatchingCatalogRepository:
 
     async def ground(self, connection, text, now):
         self.calls.append((connection, text, now))
-        return match_catalog(self.records, text)
+        raise AssertionError("consultation must not query catalog")
 
 
 @pytest_asyncio.fixture
@@ -154,23 +199,22 @@ def incoming(update_id="catalog-1", text="Сколько стоит криоте
     )
 
 
-async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database):
+async def test_manual_consultation_reply_is_atomic_and_duplicate_safe(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming())
-    gateway = ForbiddenGateway()
+    gateway = CatalogAnswerGateway("Криотерапия — 1 230 ₽.")
     router = PriceRouter()
     pipeline = SecurityPipeline(
         gateway,
-        "",
-        extract_structured_facts(""),
+        "Криотерапия — 1 230 ₽. Криомассаж головы и Прессотерапия.",
+        extract_structured_facts("Криотерапия — 1 230 ₽."),
         router=router,
         input_security=AllowingInputSecurity(),
     )
 
-    async def llm(text, context, *, recent_message_count, catalog):
+    async def llm(text, context, *, recent_message_count):
         return await pipeline.respond(
             text, context, recent_message_count=recent_message_count,
-            catalog=catalog,
         )
 
     catalog_repository = CatalogRepository(grounding())
@@ -205,9 +249,10 @@ async def test_fresh_simple_catalog_reply_is_atomic_and_duplicate_safe(database)
     assert [row["role"] for row in messages] == ["user", "assistant"]
     assert "1 230 ₽" in messages[-1]["content"]
     assert len(outbound) == 1
-    assert usage is None
-    assert len(catalog_repository.calls) == 1
-    assert gateway.calls == 0
+    assert usage is not None
+    assert usage['total_tokens'] == 2
+    assert catalog_repository.calls == []
+    assert len(gateway.requests) == 1
     assert router.calls == 1
 
 
@@ -292,7 +337,7 @@ async def test_human_mode_never_reads_catalog_or_calls_llm(database):
     assert outbound == 0
 
 
-async def test_complex_catalog_grounding_reaches_llm_without_extra_history(database):
+async def test_consultation_reaches_llm_without_catalog_or_extra_history(database):
     repository = MessageRepository(database)
     assert await repository.accept(incoming("catalog-complex", "Сравни криотерапию"))
     complex_grounding = CatalogGrounding(
@@ -301,9 +346,8 @@ async def test_complex_catalog_grounding_reaches_llm_without_extra_history(datab
     catalog_repository = CatalogRepository(complex_grounding)
     calls = []
 
-    async def llm(text, context, *, recent_message_count, catalog):
-        resolved = await catalog(RouteDecision('consultation', .99, service='Криотерапия'))
-        calls.append((text, context, recent_message_count, resolved))
+    async def llm(text, context, *, recent_message_count):
+        calls.append((text, context, recent_message_count))
         return LLMResponse("Сравнение по актуальному каталогу", 4, 3, 0, 7, "fake")
 
     handler = MessageTaskHandler(
@@ -324,7 +368,8 @@ async def test_complex_catalog_grounding_reaches_llm_without_extra_history(datab
         contents = await connection.fetch(
             "SELECT content FROM messages ORDER BY id"
         )
-    assert calls[0][3] == complex_grounding
+    assert len(calls) == 1
+    assert catalog_repository.calls == []
     assert [row["content"] for row in contents] == [
         "Сравни криотерапию",
         "Сравнение по актуальному каталогу",
@@ -342,16 +387,15 @@ async def test_price_action_with_two_explicit_services_keeps_both_for_answer(dat
     gateway = CatalogAnswerGateway()
     pipeline = SecurityPipeline(
         gateway,
-        "",
-        extract_structured_facts(""),
+        "Криотерапия — 1 230 ₽. Криомассаж головы и Прессотерапия.",
+        extract_structured_facts("Криотерапия — 1 230 ₽."),
         router=PriceRouter(service_query),
         input_security=AllowingInputSecurity(),
     )
 
-    async def llm(text, context, *, recent_message_count, catalog):
+    async def llm(text, context, *, recent_message_count):
         return await pipeline.respond(
             text, context, recent_message_count=recent_message_count,
-            catalog=catalog,
         )
 
     records = (
@@ -388,8 +432,8 @@ async def test_price_action_with_two_explicit_services_keeps_both_for_answer(dat
         answer = await connection.fetchval(
             "SELECT content FROM messages WHERE role = 'assistant'"
         )
-    assert answer == "Нашла обе услуги в актуальном каталоге."
-    assert catalog_repository.calls[0][1] == service_query
+    assert answer == "Нашла обе услуги в ручном промпте."
+    assert catalog_repository.calls == []
     assert [request.purpose for request in gateway.requests] == ["answer"]
     answer_system = gateway.requests[-1].messages[0]["content"]
     assert "Криомассаж головы" in answer_system
@@ -397,7 +441,7 @@ async def test_price_action_with_two_explicit_services_keeps_both_for_answer(dat
     assert "Криомассаж лица" not in answer_system
 
 
-async def test_mixed_booking_with_two_services_grounds_both_and_keeps_clarification(
+async def test_mixed_booking_with_two_services_keeps_manual_answer_and_clarification(
     database,
 ):
     class MixedRouter:
@@ -425,18 +469,17 @@ async def test_mixed_booking_with_two_services_grounds_both_and_keeps_clarificat
     gateway = CatalogAnswerGateway()
     pipeline = SecurityPipeline(
         gateway,
-        "",
-        extract_structured_facts(""),
+        "Криотерапия — 1 230 ₽. Криомассаж головы и Прессотерапия.",
+        extract_structured_facts("Криотерапия — 1 230 ₽."),
         router=MixedRouter(),
         input_security=AllowingInputSecurity(),
     )
 
-    async def llm(text, context, *, recent_message_count, catalog, **options):
+    async def llm(text, context, *, recent_message_count, **options):
         return await pipeline.respond(
             text,
             context,
             recent_message_count=recent_message_count,
-            catalog=catalog,
             dispatch=options.get("dispatch"),
             booking_context=options.get("booking_context"),
         )
@@ -470,7 +513,7 @@ async def test_mixed_booking_with_two_services_grounds_both_and_keeps_clarificat
         )
     )
 
-    assert catalog_repository.calls[0][1] == "Криомассаж головы и Прессотерапия"
+    assert catalog_repository.calls == []
     async with database.acquire() as connection:
         answer = await connection.fetchval(
             "SELECT content FROM messages WHERE role = 'assistant'"
@@ -484,19 +527,18 @@ async def test_price_action_with_only_duration_does_not_select_single_tariff(dat
     service_query = "30 минут"
     repository = MessageRepository(database)
     assert await repository.accept(incoming("catalog-duration-only", text))
-    gateway = ForbiddenGateway()
+    gateway = CatalogAnswerGateway("Чтобы назвать цену, уточните услугу.")
     pipeline = SecurityPipeline(
         gateway,
-        "",
-        extract_structured_facts(""),
+        "Криотерапия — 1 230 ₽. Криомассаж головы и Прессотерапия.",
+        extract_structured_facts("Криотерапия — 1 230 ₽."),
         router=PriceRouter(service_query),
         input_security=AllowingInputSecurity(),
     )
 
-    async def llm(text, context, *, recent_message_count, catalog):
+    async def llm(text, context, *, recent_message_count):
         return await pipeline.respond(
             text, context, recent_message_count=recent_message_count,
-            catalog=catalog,
         )
 
     catalog_repository = MatchingCatalogRepository((
@@ -525,8 +567,8 @@ async def test_price_action_with_only_duration_does_not_select_single_tariff(dat
             "SELECT content FROM messages WHERE role = 'assistant'"
         )
     assert answer == "Чтобы назвать цену, уточните услугу."
-    assert catalog_repository.calls[0][1] == service_query
-    assert gateway.calls == 0
+    assert catalog_repository.calls == []
+    assert len(gateway.requests) == 1
 
 
 async def test_catalog_reply_rolls_back_when_outbound_insert_fails(database):
@@ -550,19 +592,18 @@ async def test_catalog_reply_rolls_back_when_outbound_insert_fails(database):
             """
         )
 
-    gateway = ForbiddenGateway()
+    gateway = CatalogAnswerGateway("Криотерапия — 1 230 ₽.")
     pipeline = SecurityPipeline(
         gateway,
-        "",
-        extract_structured_facts(""),
+        "Криотерапия — 1 230 ₽. Криомассаж головы и Прессотерапия.",
+        extract_structured_facts("Криотерапия — 1 230 ₽."),
         router=PriceRouter(),
         input_security=AllowingInputSecurity(),
     )
 
-    async def llm(text, context, *, recent_message_count, catalog):
+    async def llm(text, context, *, recent_message_count):
         return await pipeline.respond(
             text, context, recent_message_count=recent_message_count,
-            catalog=catalog,
         )
 
     handler = MessageTaskHandler(
@@ -612,13 +653,12 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
             """
         )
     stale = CatalogGrounding("stale", (), "price", False)
-    gateway = SecurityOnlyGateway()
+    gateway = CatalogAnswerGateway("Цена 9999 руб.")
     pipeline = SecurityPipeline(gateway, "", extract_structured_facts(""), router=PriceRouter())
 
-    async def llm(text, context, *, recent_message_count, catalog):
+    async def llm(text, context, *, recent_message_count):
         return await pipeline.respond(
             text, context, recent_message_count=recent_message_count,
-            catalog=catalog,
         )
 
     handler = MessageTaskHandler(
@@ -641,4 +681,4 @@ async def test_stale_catalog_never_reuses_price_from_history(database):
         )
     assert "9999" not in answer
     assert "администратор" in answer.lower()
-    assert gateway.calls == 1
+    assert len(gateway.requests) == 3

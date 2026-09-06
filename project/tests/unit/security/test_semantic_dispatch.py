@@ -4,13 +4,20 @@ from moroz.messaging.router import RouteDecision, RouterVerdict
 from moroz.security.pipeline import SecurityPipeline
 from moroz.security.input_security import InputSecurityDecision, InputSecurityVerdict
 from moroz.security.validator import extract_structured_facts
-from moroz.booking.catalog import CatalogGrounding, CatalogService, CatalogVariant
-from decimal import Decimal
+from moroz.security.llm_gateway import LLMResponse
 
 
 class Gateway:
     async def complete(self, request):
         raise AssertionError('Booking must dispatch without generating an answer')
+
+
+class AnswerGateway:
+    async def complete(self, request):
+        assert request.purpose == 'answer'
+        assert '1 500 ₽' in request.messages[0]['content']
+        assert 'UNTRUSTED_CATALOG_DATA' not in request.messages[0]['content']
+        return LLMResponse('Стоимость — 1 500 ₽.', 1, 1, 0, 2, 'answer-test')
 
 
 class Security:
@@ -73,31 +80,23 @@ async def test_security_block_prevents_booking_dispatch():
 
 
 @pytest.mark.asyncio
-async def test_catalog_resolves_followup_after_semantic_router():
+async def test_owned_prompt_answers_followup_after_semantic_router():
     class PriceRouter:
         async def route(self, text, context, *, state=None):
             assert context[0]['content'] == 'Расскажи про криомассаж головы'
             return RouterVerdict(RouteDecision('consultation', .99, service='Криомассаж головы'))
 
-    seen = []
-    async def catalog(decision):
-        seen.append(decision.service)
-        return CatalogGrounding('fresh', (CatalogService('1', 'Криомассаж головы', 'Крио',
-            (CatalogVariant('10', 'Анна', Decimal(1500), Decimal(1500), 30),)),), 'price', False)
-
-    result = await SecurityPipeline(Gateway(), '', extract_structured_facts(''),
+    prompt = 'Криомассаж головы — 1 500 ₽.'
+    result = await SecurityPipeline(AnswerGateway(), prompt, extract_structured_facts(prompt),
         router=PriceRouter(), input_security=Security()).respond('Сколько стоит?',
-            [{'role': 'user', 'content': 'Расскажи про криомассаж головы'}], catalog=catalog)
-    assert seen == ['Криомассаж головы']
+            [{'role': 'user', 'content': 'Расскажи про криомассаж головы'}])
     assert '1 500 ₽' in result.text
 
 
 @pytest.mark.asyncio
-async def test_failed_router_does_not_load_catalog():
-    async def forbidden(decision):
-        raise AssertionError('catalog must not load on failed router')
+async def test_failed_router_does_not_call_answer():
     result = await SecurityPipeline(Gateway(), '', extract_structured_facts(''),
-        router=Router('fallback'), input_security=Security()).respond('Сколько стоит?', [], catalog=forbidden)
+        router=Router('fallback'), input_security=Security()).respond('Сколько стоит?', [])
     assert result.model == 'router-fallback'
 
 
@@ -117,7 +116,7 @@ async def test_booking_without_dispatch_returns_natural_safe_reply():
 
 
 @pytest.mark.asyncio
-async def test_multi_intent_combines_grounded_price_and_booking_progress():
+async def test_multi_intent_combines_manual_price_and_booking_progress():
     router = Router(
         decision=RouteDecision(
             'booking',
@@ -131,31 +130,17 @@ async def test_multi_intent_combines_grounded_price_and_booking_progress():
     async def dispatch(decision):
         return 'Выберите удобное время: 18:00 или 19:00.'
 
-    async def catalog(decision):
-        return CatalogGrounding(
-            'fresh',
-            (
-                CatalogService(
-                    '1',
-                    'Криокапсула',
-                    'Крио',
-                    (CatalogVariant('10', 'Анна', Decimal(1500), Decimal(1500), 30),),
-                ),
-            ),
-            'price',
-            False,
-        )
+    prompt = 'Криокапсула — 1 500 ₽.'
 
     result = await SecurityPipeline(
-        Gateway(),
-        '',
-        extract_structured_facts(''),
+        AnswerGateway(),
+        prompt,
+        extract_structured_facts(prompt),
         router=router,
         input_security=Security(),
     ).respond(
         'Сколько стоит криокапсула и запишите после 18:00',
         [],
-        catalog=catalog,
         dispatch=dispatch,
     )
 

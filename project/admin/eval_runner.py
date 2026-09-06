@@ -439,8 +439,6 @@ async def _compact_semantic_judge(
 async def _generate_bot_response(
     question: str,
     system_prompt: str,
-    *,
-    catalog=None,
 ) -> str:
     """Сгенерировать ответ через общий runtime/eval security pipeline."""
     primary = SDKProvider(
@@ -465,11 +463,11 @@ async def _generate_bot_response(
         PrimaryReserveGateway(primary, reserve),
         system_prompt,
         extract_structured_facts(system_prompt),
-    ).respond(question, [], recent_message_count=1, catalog=catalog)
+    ).respond(question, [], recent_message_count=1)
     return result.text
 
 
-async def run_case(case: dict, run_id: int, *, catalog=None) -> dict:
+async def run_case(case: dict, run_id: int) -> dict:
     """Прогнать один тест-кейс. Записать результат в БД. Вернуть запись результата."""
     started = time.time()
     system_prompt = _read_system_prompt()
@@ -496,7 +494,6 @@ async def run_case(case: dict, run_id: int, *, catalog=None) -> dict:
             actual_answer = await _generate_bot_response(
                 case["question"],
                 system_prompt,
-                catalog=catalog,
             )
 
             # 2. Слой 1: regex/keywords

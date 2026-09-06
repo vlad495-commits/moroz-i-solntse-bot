@@ -21,8 +21,6 @@ from moroz.security.llm_gateway import (
 from moroz.security.pii import PiiSession, UnknownPlaceholder
 from moroz.security.validator import (
     StructuredFacts,
-    extract_structured_facts,
-    merge_structured_facts,
     validate_output,
 )
 
@@ -144,7 +142,6 @@ class SecurityPipeline:
         context: list[dict[str, str]],
         *,
         recent_message_count: int = 1,
-        catalog=None,
         dispatch=None,
         booking_context=None,
     ) -> LLMResponse:
@@ -263,40 +260,9 @@ class SecurityPipeline:
         if route.route == "offtopic":
             return _aggregate(accumulated, OFFTOPIC_REPLY, "router-local")
         active_facts = self.facts
-        catalog_block = ""
-        if catalog is not None and (
-            route.route == "consultation" or bool(route.topics)
-        ):
-            if callable(catalog):
-                catalog = await catalog(route)
-            catalog_block = catalog.data_block()
-            extracted = extract_structured_facts(catalog_block)
-            catalog_facts = StructuredFacts(
-                prices=extracted.prices,
-                public_contacts=frozenset(),
-                slots=frozenset(),
-                public_pii=catalog.public_display_values(),
-            )
-            active_facts = merge_structured_facts(self.facts, catalog_facts)
-            direct_reply = catalog.direct_reply
-            if direct_reply is not None:
-                verdict = validate_output(
-                    direct_reply,
-                    active_facts,
-                    masked_current.placeholders,
-                    forbidden_raw=forbidden_raw,
-                )
-                return _aggregate(
-                    accumulated,
-                    _combine_reply(
-                        direct_reply if verdict.ok else SAFE_OUTPUT_FALLBACK,
-                        local_reply,
-                    ),
-                    "catalog-local" if verdict.ok else "security-fallback",
-                )
         owned_system = "\n\n".join(
             part
-            for part in (self.system_prompt, route_metadata, catalog_block)
+            for part in (self.system_prompt, route_metadata)
             if part
         )
         answer_context = masked_context

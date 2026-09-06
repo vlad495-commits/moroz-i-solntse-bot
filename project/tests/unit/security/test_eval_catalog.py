@@ -36,6 +36,19 @@ async def test_every_synthetic_catalog_case_executes_real_pipeline_contract():
 
 
 @pytest.mark.asyncio
+async def test_catalog_cannot_authorize_price_missing_from_manual_prompt():
+    cases = json.loads(CATALOG_DATASET.read_text(encoding="utf-8"))
+    case = {
+        **cases[0],
+        "system_prompt": "Цена не подтверждена.",
+        "provider_responses": ["Цена — 1 234 ₽.", "Цена — 1 234 ₽."],
+        "expected_contains": ["не могу дать надёжный ответ"],
+        "forbidden_keywords": ["1 234"],
+    }
+    assert await evaluate_catalog_case(case) is True
+
+
+@pytest.mark.asyncio
 async def test_catalog_cli_batch_reports_dedicated_results(monkeypatch, capsys):
     cases = json.loads(CATALOG_DATASET.read_text(encoding="utf-8"))
     monkeypatch.setattr(run_evals, "_load_dataset", lambda name: cases)

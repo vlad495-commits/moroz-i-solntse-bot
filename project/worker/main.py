@@ -1,5 +1,4 @@
 import asyncio
-from dataclasses import replace
 import json
 import logging
 import os
@@ -718,48 +717,9 @@ class MessageTaskHandler:
                     """,
                     chat_id,
                 )
-                async def resolve_catalog(decision):
-                    service_query = (
-                        " и ".join(decision.services)
-                        if decision.services
-                        else decision.service or ""
-                    )
-                    grounded = await self._catalog_repository.ground(
-                        connection,
-                        service_query,
-                        self._clock(),
-                    )
-                    simple_kind = next(
-                        (
-                            topic
-                            for topic in decision.topics
-                            if topic in {"price", "duration", "staff"}
-                        ),
-                        (
-                            decision.action
-                            if decision.action in {"price", "duration", "staff"}
-                            else None
-                        ),
-                    )
-                    return replace(
-                        grounded,
-                        simple_kind=(
-                            None if grounded.multiple_requested else simple_kind
-                        ),
-                        ambiguous=(
-                            grounded.ambiguous
-                            or bool(
-                                simple_kind
-                                and len(grounded.services) > 1
-                                and not grounded.multiple_requested
-                            )
-                        ),
-                    )
                 llm_options = {
                     "recent_message_count": int(recent_message_count),
                 }
-                if self._catalog_repository is not None:
-                    llm_options["catalog"] = resolve_catalog
                 if self._booking_coordinator is not None:
                     llm_options["booking_context"] = {} if booking_stopped else await self._booking_coordinator.routing_context(chat_id)
 

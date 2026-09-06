@@ -32,7 +32,7 @@
 | Подготовлены и отправлены вопросы Свете | Файл вопросов, сообщение владельца | Ответы — последующая правка содержимого |
 | Есть editor/history/reload/rollback | `project/admin/prompt_routes.py`, `project/llm/llm.py` | Переиспользовать, не строить второй редактор |
 
-Пакет A ещё не реализован. Предыдущие `2344 passed` не являются проверкой нового кандидата.
+Пакет A реализуется: задачи 1–2 выполнены в отдельной ветке; задачи 3–6 остаются открыты. Предыдущие `2344 passed` не являются проверкой нового кандидата.
 
 ## Очередь всего аудита
 
@@ -116,7 +116,7 @@ docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docke
 
 **Interfaces:** `SecurityPipeline.respond(user_message, context, *, recent_message_count=1, dispatch=None, booking_context=None)` — без `catalog`; аналогично удалить `catalog` из `generate_response`, `_generate_bot_response`, `run_case`. Возвращаемый `LLMResponse` не меняется. `dispatch` и `booking_context` сохраняются.
 
-- [ ] Добавить в `test_pipeline.py` контракт отсутствия consultation API:
+- [x] Добавить в `test_pipeline.py` контракт отсутствия consultation API:
 
 ```python
 def test_pipeline_has_no_catalog_argument():
@@ -137,8 +137,8 @@ async def test_consultation_uses_owned_prompt_and_answer_gateway():
     assert result.text == "Солярий — 42 ₽ за минуту."
 ```
 
-- [ ] Запустить команду test из задачи 1 с `pytest -q /workspace/tests/unit/security/test_pipeline.py -k 'no_catalog_argument or owned_prompt'`. Ожидание до изменения: signature test FAIL, после — оба PASS.
-- [ ] В pipeline удалить ветку от `catalog_block = ""` до сборки `owned_system`, включая `direct_reply`. Сборка должна остаться:
+- [x] Запустить команду test из задачи 1 с `pytest -q /workspace/tests/unit/security/test_pipeline.py -k 'no_catalog_argument or owned_prompt'`. Ожидание до изменения: signature test FAIL, после — оба PASS.
+- [x] В pipeline удалить ветку от `catalog_block = ""` до сборки `owned_system`, включая `direct_reply`. Сборка должна остаться:
 
 ```python
 active_facts = self.facts
@@ -149,11 +149,19 @@ owned_system = "\n\n".join(
 
 Удалить параметр и больше не передавать его из всех трёх callers. В worker удалить вложенный `resolve_catalog` и добавление `llm_options["catalog"]`; оставить `recent_message_count`, booking routing context и dispatch. Удалить неиспользуемые imports только после поиска потребителей.
 
-- [ ] Перенести полный v1.8-draft.2 в `project/llm/prompts/system.md` через apply_patch. В шапке отличить локальную реализацию от deployment; сохранить 16 разделов, canary, 12 описаний и оговорки. Не объявлять ответы Светы полученными.
-- [ ] В worker-тестах использовать repository fake, чей `ground` вызывает `AssertionError("consultation must not query catalog")`; обычная консультация должна дойти до answer gateway, booking — до технического `list_services`. Удалить только ожидания `catalog-local`/вызова ground, не сами privacy/ownership сценарии.
-- [ ] В `test_eval_catalog.py` и `test_system_prompt_catalog.py` заменить прежние ожидания каталога проверками нового интерфейса и отсутствия `UNTRUSTED_CATALOG_DATA`. Сохранить проверки контактов, неизвестных цен и canary.
-- [ ] Запустить unit/security, unit/test_worker.py и e2e/test_catalog_message_flow.py через изолированный test. Ожидание: PASS; при отказе DB gate результат не считать полным.
-- [ ] Коммит `refactor: use manual prompt for consultation`; перечислить изменённые callers и удалённые ветки в changelog.
+- [x] Перенести полный v1.8-draft.2 в `project/llm/prompts/system.md` через apply_patch. В шапке отличить локальную реализацию от deployment; сохранить 16 разделов, canary, 12 описаний и оговорки. Не объявлять ответы Светы полученными.
+- [x] В worker-тестах использовать repository fake, чей `ground` вызывает `AssertionError("consultation must not query catalog")`; обычная консультация должна дойти до answer gateway, booking — до технического `list_services`. Удалить только ожидания `catalog-local`/вызова ground, не сами privacy/ownership сценарии.
+- [x] В `test_eval_catalog.py` и `test_system_prompt_catalog.py` заменить прежние ожидания каталога проверками нового интерфейса и отсутствия `UNTRUSTED_CATALOG_DATA`. Сохранить проверки контактов, неизвестных цен и canary.
+- [x] Запустить unit/security, unit/test_worker.py и e2e/test_catalog_message_flow.py через изолированный test. Ожидание: PASS; при отказе DB gate результат не считать полным.
+- [x] Коммит `refactor: use manual prompt for consultation`; перечислить изменённые callers и удалённые ветки в changelog.
+
+**Evidence задачи 2 (2026-09-06):** база diff `74b12fb`; RED нового API-контракта — 1 failed / 1 passed, после удаления catalog — 2 passed. Единый целевой gate — **691 passed in 82.17s**, exit 0; Compose config и git diff --check — exit 0. Read-only reviewer не нашёл важных runtime-дефектов; его пробел покрытия закрыт E2E настоящего coordinator/list_services с запрещённым ground, draft/markup и create_calls=0. Кандидат побайтово сравнен после нормализации переводов строк: отличается только статусом локального применения. Нет изменений booking-кода, миграций или Router-контракта. Paid LLM, live Telegram/YCLIENTS и rollout не выполнялись; общий suite задачи 6 ещё не запускался.
+
+Точная команда gate (из project/ рабочего дерева):
+
+```powershell
+docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm --build -w /workspace test pytest --rootdir=/workspace -q -p no:cacheprovider /workspace/tests/unit/security /workspace/tests/unit/test_eval_privacy.py /workspace/tests/unit/test_worker.py /workspace/tests/e2e/test_catalog_message_flow.py /workspace/tests/unit/booking/test_catalog_matching.py /workspace/tests/unit/booking/test_catalog_sync.py /workspace/tests/integration/booking/test_catalog_lookup.py /workspace/tests/integration/booking/test_catalog_projection.py /workspace/tests/contract/booking/test_yclients_catalog.py
+```
 
 ## Задача 3 — расчёт минут без глобального разрешения новых цен
 
@@ -298,4 +306,4 @@ git diff --check
 | Последующие этапы исходного аудита | 7–9 |
 | Изоляция, известные блокеры, отдельный rollout | 1, 6, 9 |
 
-Этот план фиксирует оставшуюся работу, а не её выполнение. Следующее исполняемое действие — задача 1, затем пакет A. Режим — последовательно в текущем чате; после каждого логического результата обновлять roadmap. Повторно спрашивать исходный фронт работ не требуется.
+Выполненные пункты помечены выше; весь аудит не завершён. Следующее исполняемое действие — задача 3, затем задачи 4–6 пакета A. Режим — последовательно в текущем чате; после каждого логического результата обновлять roadmap. Повторно спрашивать исходный фронт работ не требуется.
