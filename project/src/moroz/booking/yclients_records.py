@@ -179,6 +179,8 @@ def _projection_record(value: object, timezone: ZoneInfo) -> ProjectionRecord:
 
 
 def _booking_marker(value: object) -> tuple[UUID | None, Literal["absent", "valid", "invalid"]]:
+    if isinstance(value, list) and not value:
+        return None, "absent"
     if not isinstance(value, Mapping):
         raise ValueError("custom fields are malformed")
     raw = value.get(_BOOKING_KEY_FIELD)

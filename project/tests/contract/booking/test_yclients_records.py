@@ -176,6 +176,29 @@ async def test_projects_booking_marker_state(
 
 
 @pytest.mark.asyncio
+async def test_empty_custom_fields_list_is_absent_on_records_page() -> None:
+    fake = FakeHttp([_page([_record(custom_fields=[])])])
+
+    snapshot = await YclientsRecordsReader(_config(), http=fake).read_window(NOW)
+
+    assert (snapshot.records[0].bot_marker_state, snapshot.records[0].booking_key) == (
+        "absent", None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_rejects_nonempty_custom_fields_list() -> None:
+    fake = FakeHttp([
+        _page([_record(custom_fields=[{"moroz_booking_key": str(BOOKING_KEY)}])])
+    ])
+
+    with pytest.raises(YclientsProjectionError) as raised:
+        await YclientsRecordsReader(_config(), http=fake).read_window(NOW)
+
+    assert raised.value.code == "yclients_response_shape"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("attendance", "deleted", "expected"),
     [
@@ -448,3 +471,15 @@ async def test_single_record_lookup_accepts_provider_single_item_list_envelope()
 
     assert record is not None
     assert record.client_id == "55"
+
+
+@pytest.mark.asyncio
+async def test_single_record_lookup_treats_empty_custom_fields_list_as_absent() -> None:
+    fake = FakeHttp([_response(_record(9001, custom_fields=[]))])
+
+    record = await YclientsClientHistoryReader(
+        _config(), http=fake
+    ).read_record("9001")
+
+    assert record is not None
+    assert (record.bot_marker_state, record.booking_key) == ("absent", None)
