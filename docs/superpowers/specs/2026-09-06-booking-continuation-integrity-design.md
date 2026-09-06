@@ -1,6 +1,6 @@
 # Узкий пакет B0: целостность продолжения переноса
 
-Статус: предложение для подтверждения владельцем; production-код ещё не изменён.
+Статус: одобрен владельцем и реализован локально 2026-09-06 в codex/reference-simplification, fix-коммит ad2a4be. Без merge/push/rollout.
 
 ## Зачем
 
@@ -48,3 +48,17 @@ Lucky Hair 5398f90, project/llm/worker.py:717–726, при активном п�
 4. Обновить исходный аудит, roadmap и changelog отдельным документным итогом. Полный итоговый release gate нужен перед объединением/выпуском всей ветки; локальная коррекция не означает rollout.
 
 Работа остаётся в codex/reference-simplification. Main не изменяется; не создавать ещё одно рабочее дерево для последовательного исправления того же пакета.
+
+## Результат проверки 2026-09-06
+
+Минимальное исправление в TelegramBookingCoordinator: продолжение выбирает обработчик по сохранённому kind/mode, отсутствие активного сценария даёт уточнение. На границе переноса сохраняется исходное starts_at; исправление нового слота снимает старое подтверждение. Неизменённый повтор сохраняет актуальную кнопку. BookingService, Router schema/prompt и datasets не менялись.
+
+Девять новых E2E в test_booking_continuation_integrity.py используют реальные coordinator/repository/service и fake YCLIENTS. Корректный RED — 8 failed / 1 passed; focused GREEN — 9 passed (32.59s). После дополнительных assertions повторного continue расширенный gate — **297 passed (270.46s)**, exit 0. Проверены unit/booking, все booking E2E, semantic dispatch, mixed answer outage, pipeline, Router path counts и worker. Независимый read-only review: spec/quality одобрены, замечаний нет.
+
+Воспроизводимая команда из project/ (только изолированный Docker-контур):
+
+```powershell
+docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm -v ../tmp:/reports -w /workspace test pytest --rootdir=/workspace -q -p no:cacheprovider /workspace/tests/unit/booking /workspace/tests/e2e/booking /workspace/tests/unit/security/test_semantic_dispatch.py /workspace/tests/unit/security/test_mixed_answer_outage.py /workspace/tests/unit/security/test_pipeline.py /workspace/tests/unit/security/test_router_path_counts.py /workspace/tests/unit/test_worker.py --tb=short --show-capture=no --junitxml=/reports/b0-broad.xml
+```
+
+Это проверка backend при заданном RouteDecision, не оценка живой LLM-классификации и не live YCLIENTS acceptance. Полный suite всей ветки после B0 ещё не запускался; итоговый release gate остаётся перед объединением/выпуском.

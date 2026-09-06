@@ -117,6 +117,12 @@
 
 **Evidence:** объединённый Docker gate — 193 passed (54.62s): новая матрица, semantic dispatch, mixed outage, pipeline, Router, conversation и настоящие conversational Telegram coordinator E2E. После review усилена проверка action/fallback: 7 passed (2.34s). JUnit — root tmp/router-audit-paths.xml. Полный suite в этом шаге не запускался; paid/live проверки не проводились. Сценарии, не покрытые существующими E2E (включая проблемный continue), не объявлены исправленными.
 
+### 4.3. Последующее исправление B0
+
+После одобрения владельца backend-дефекты продолжения переноса из §4.2 исправлены локально в ad2a4be. Continue следует сохранённому kind/mode; исходные ID/время записи сохраняются; коррекция даты/времени/специалиста инвалидирует выбранный слот и старое подтверждение. Без активного сценария continue только уточняет, явный create по-прежнему переключает операцию.
+
+Доказательство: новые реальные coordinator/repository/service E2E с fake YCLIENTS — RED 8 failed / 1 passed, затем focused 9 passed; расширенный Docker gate **297 passed (270.46s)**, review без замечаний. [Контракт, команда и границы проверки B0](../superpowers/specs/2026-09-06-booking-continuation-integrity-design.md). Исторический анализ выше сохранён; Router schema/prompt/Evaluation не менялись, live acceptance и полный итоговый gate не заявляются выполненными. Остальные известные дефекты записи остаются открытыми в дорожной карте.
+
 ## 5. Ручная база: содержание и применение
 
 > Историческое описание ниже относится к исходному состоянию. По последующему решению владельца редактор и hot reload удалены в ветке codex/reference-simplification; актуальное локальное evidence — в [приёмке пакета A](<Приёмка ручных консультаций 2026-09-06.md>). Старую цепочку save/reload не восстанавливать по этому разделу.

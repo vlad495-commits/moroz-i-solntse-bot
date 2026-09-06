@@ -1,5 +1,7 @@
 # Changelog
 
+[2026-09-06 11:03] B0 исправление сохранено в ad2a4be. Spec дополнена точной командой, RED/GREEN и границами проверки; roadmap закрывает только локальный B0, план и исходный аудит синхронизированы. Подготовлен отдельный документный итог. Полный release gate, live acceptance, остальные дефекты и legacy cleanup остаются открытыми; ветка/worktree сохраняются без merge/push/rollout.
+
 [2026-09-06 11:02] B0 расширенный Docker gate: 297 passed (270.46s), exit 0, JUnit tmp/b0-broad.xml. Включены последние проверки неизменённого continue после выбора слота. Независимый read-only review: соответствие spec, без Critical/Important/Minor. Diff --check чистый; исходные service guards и Router/prompt неизменны. Исправление с 9 E2E фиксируется отдельным локальным fix-коммитом; main/сервер не менялись.
 
 [2026-09-06 10:57] Корректный B0 RED: 8 failed / 1 passed по ожидаемым причинам. Минимально изменён telegram.py (+15/-1), focused GREEN 9 passed (32.59s). Дополнительные assertions повторного continue включены в запущенный расширенный Docker gate (unit/booking, все booking E2E, semantic dispatch, mixed outage, pipeline, Router counts, worker); начат независимый read-only review. Service ownership/time/confirmation guards и Router-контракт не изменены.
