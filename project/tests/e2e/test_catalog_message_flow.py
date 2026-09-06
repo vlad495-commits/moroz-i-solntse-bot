@@ -143,7 +143,10 @@ async def test_worker_keeps_real_booking_catalog_with_ground_forbidden(
         markup = outgoing["delivery_options"]
         if isinstance(markup, str):
             markup = json.loads(markup)
-        assert markup == replies[0].delivery_options
+        assert markup["reply_markup"] == replies[0].delivery_options["reply_markup"]
+        assert "booking_card" not in markup
+        assert "edit_booking_card" not in markup
+        assert "edit_message_id" not in markup
         await handler.handle(QueueTask(
             "process_message", {"chat_id": "42", "update_ids": ["real-booking"]},
             process_message_key(["real-booking"]),
