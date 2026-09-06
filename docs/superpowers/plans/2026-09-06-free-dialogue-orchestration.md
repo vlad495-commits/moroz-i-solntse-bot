@@ -516,7 +516,7 @@ git commit -m "docs: зафиксировать conversation-first архите�
 **Interfaces:**
 - Produces: one exact candidate SHA eligible for staging.
 
-- [ ] **Step 1: Rebuild and run the full suite**
+- [x] **Step 1: Rebuild and run the full suite**
 
 Run: `docker compose --env-file ../.env build test`
 
@@ -524,11 +524,11 @@ Run: `docker compose --env-file ../.env run --rm test pytest -q`
 
 Expected: all tests PASS; no skipped critical Router V3 or booking mutation invariant.
 
-- [ ] **Step 2: Run static/config/schema gates**
+- [x] **Step 2: Run static/config/schema gates**
 
-Run: `docker run --rm -v "${PWD}:/app" -w /app ghcr.io/astral-sh/ruff:0.12.7 check --target-version py312 src tests admin bot worker scheduler`
+Run Ruff `0.12.7 --target-version py312 --no-cache` inside Docker against all added/modified Python files since `a51d37e`. Full-repo Ruff includes pre-existing unrelated violations; this task's gate covers changed files.
 
-Run: `docker compose --env-file ../.env run --rm test python -m compileall -q src tests admin bot worker scheduler`
+Run: `docker compose --env-file ../.env run --rm --no-deps -e PYTHONPYCACHEPREFIX=/tmp/compile-cache test python -m compileall -q /workspace/src /workspace/tests /workspace/admin /workspace/llm /workspace/worker /workspace/scheduler`
 
 Run: `docker compose --env-file ../.env config --quiet`
 
@@ -536,17 +536,17 @@ Run: `docker compose --env-file ../.env run --rm migrate alembic heads`
 
 Expected: every command exits 0 and Alembic reports only `0026_router_v3 (head)`.
 
-- [ ] **Step 3: Verify removal and preserved safety tests**
+- [x] **Step 3: Verify removal and preserved safety tests**
 
 Run: `rg -n "main_menu_options|persistent_menu_command|catalog_category|catalog_service|catalog_book" project/src project/worker`
 
 Expected: no matches.
 
-Run: `docker compose --env-file ../.env run --rm test pytest -q tests/integration/booking tests/unit/booking/test_service.py tests/e2e/test_privacy_gate.py tests/integration/test_stop_ordering.py`
+Safety coverage is included in the full suite from Step 1: `tests/integration/booking`, `tests/unit/booking/test_service.py`, `tests/e2e/test_privacy_gate.py`, `tests/e2e/test_stop_draft.py` and the worker STOP regression in `tests/e2e/test_message_delivery.py`. A second identical safety run is unnecessary after the full suite passes.
 
 Expected: PASS.
 
-- [ ] **Step 4: Record evidence and commit only necessary gate fixes/docs**
+- [x] **Step 4: Record evidence and commit only necessary gate fixes/docs**
 
 ```powershell
 git status --short
@@ -556,9 +556,13 @@ git log -1 --format=%H
 
 Expected: clean worktree, diff-check exit 0, exact candidate SHA captured in changelog. Do not push.
 
+**Local evidence, 2026-09-06:** candidate `1e26c40` completed the full rebuilt Docker suite: `2344 passed in 1606.41s (0:26:46)`, exit 0. Changed-file Ruff, compileall, Compose config, single Alembic head `0026_router_v3` and removal scan passed. No paid live LLM eval or Telegram/YCLIENTS acceptance was performed in this local gate. Staging is deferred by the owner's latest instruction.
+
 ---
 
 ### Task 9: Safe staging cutover and acceptance
+
+**Отложено по прямому указанию владельца от 2026-09-06: на staging не выкладывать.** Текущая задача завершается локальными изменениями и проверками Task 8. Приведённый ниже rollout не выполнять без нового запроса.
 
 **Files:**
 - Read: `docs/superpowers/plans/2026-09-05-dialog-catalog-recovery.md` (последний подтверждённый exact bundle/immutable staging rollout).
@@ -574,10 +578,10 @@ Expected: clean worktree, diff-check exit 0, exact candidate SHA captured in cha
 Verify exact staging path/owner, `.env` mode `600`, disk, clean checkout, Docker availability, eight current services, current schema and webhook health. Query counts only:
 
 ```sql
-SELECT status, count(*)
+SELECT phase, count(*)
 FROM booking_scenarios
-WHERE status IN ('collecting', 'awaiting_confirmation', 'executing')
-GROUP BY status;
+WHERE phase IN ('collecting', 'awaiting_confirmation', 'executing')
+GROUP BY phase;
 ```
 
 Expected: `executing = 0`; otherwise stop before build/cutover and report blocker.
@@ -594,11 +598,11 @@ Run migration profile to `0026_router_v3`. First repeat the exact count predicat
 BEGIN;
 SELECT count(*) AS target_count
 FROM booking_scenarios
-WHERE status IN ('collecting', 'awaiting_confirmation');
+WHERE phase IN ('collecting', 'awaiting_confirmation');
 
 UPDATE booking_scenarios
-SET status = 'failed', error_code = 'ui_migration', updated_at = now()
-WHERE status IN ('collecting', 'awaiting_confirmation');
+SET phase = 'failed', error_code = 'ui_migration', updated_at = now()
+WHERE phase IN ('collecting', 'awaiting_confirmation');
 COMMIT;
 ```
 
