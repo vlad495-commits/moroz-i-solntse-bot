@@ -292,7 +292,38 @@ class MessageRepository:
                     outbound.channel,
                     outbound.chat_id,
                 )
-                yield None if row is None else _outbound_from_row(row)
+                if row is None:
+                    yield None
+                    return
+                current = _outbound_from_row(row)
+                # Resolve the target under the same privacy fence as the send.
+                current.delivery_options.pop("edit_message_id", None)
+                booking_card = current.delivery_options.get("booking_card")
+                markup = current.delivery_options.get("reply_markup")
+                if (
+                    booking_card
+                    and current.delivery_options.get("edit_booking_card") is True
+                    and isinstance(markup, dict)
+                    and "inline_keyboard" in markup
+                ):
+                    edit_message_id = await connection.fetchval(
+                        """
+                        SELECT external_message_id
+                        FROM outbound_messages
+                        WHERE channel = $1 AND chat_id = $2
+                          AND status = 'sent' AND external_message_id IS NOT NULL
+                          AND delivery_options->>'booking_card' = $3
+                          AND delivery_options->'reply_markup' ? 'inline_keyboard'
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                        """,
+                        current.channel,
+                        current.chat_id,
+                        booking_card,
+                    )
+                    if edit_message_id is not None:
+                        current.delivery_options["edit_message_id"] = edit_message_id
+                yield current
 
     async def mark_outbound_sent(
         self,

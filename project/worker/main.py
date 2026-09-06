@@ -676,7 +676,9 @@ class MessageTaskHandler:
                         chat_id=chat_id,
                         text=booking_reply.text,
                         idempotency_key=reply_key,
-                        delivery_options=booking_reply.delivery_options,
+                        delivery_options=booking_reply.outbound_options(
+                            booking_reply.text, callback=interaction_kind == "callback"
+                        ),
                     )
                     await connection.execute(
                         "UPDATE message_inbox SET status = 'processed' "
@@ -776,7 +778,7 @@ class MessageTaskHandler:
                     chat_id=chat_id,
                     text=result.text,
                     idempotency_key=reply_key,
-                    delivery_options=(booking_reply.delivery_options if booking_reply is not None else
+                    delivery_options=(booking_reply.outbound_options(result.text) if booking_reply is not None else
                                       {}),
                 )
                 await connection.execute(

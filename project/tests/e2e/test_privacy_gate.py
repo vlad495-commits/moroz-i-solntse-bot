@@ -9,7 +9,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 import redis.asyncio as redis
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import InlineKeyboardMarkup, LinkPreviewOptions, ReplyKeyboardRemove
 from httpx import ASGITransport, AsyncClient
 
 from config import (
@@ -1517,7 +1517,7 @@ async def test_claimed_outbound_with_empty_options_sends_without_markup(
 
     assert claimed.delivery_options == {}
     assert fake_telegram.sent_messages == [
-        {"chat_id": 42, "text": NON_TEXT_REPLY}
+        {"chat_id": 42, "text": NON_TEXT_REPLY, "link_preview_options": LinkPreviewOptions(is_disabled=True)}
     ]
     assert await db.fetchval(
         "SELECT status FROM outbound_messages WHERE id = $1", outbound_id

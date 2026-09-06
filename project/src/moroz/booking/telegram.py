@@ -11,6 +11,7 @@ import asyncpg
 
 from moroz.booking.catalog import CatalogRepository, CatalogService
 from moroz.booking.conversation import filter_slots, merge_draft, next_requirement
+from moroz.booking.display import service_display_name
 from moroz.booking.models import BookingIdentity, BookingScenario, Slot, SlotQuery
 from moroz.booking.ports import BookingPort
 from moroz.booking.repository import BookingRepository
@@ -53,6 +54,15 @@ def _utc_now() -> datetime:
 class BookingReply:
     text: str
     delivery_options: dict[str, object]
+
+    def outbound_options(self, text: str, *, callback: bool = False) -> dict[str, object]:
+        options = dict(self.delivery_options)
+        options.pop("edit_booking_card", None)
+        if text != self.text:
+            options.pop("booking_card", None)
+        elif callback and options.get("booking_card"):
+            options["edit_booking_card"] = True
+        return options
 
 
 def normalize_russian_phone(value: str) -> str | None:
@@ -355,7 +365,7 @@ class TelegramBookingCoordinator:
         if walk_in_family(service.service_name) is not None:
             await self._close_draft(scenario, "booking_walk_in_selected")
             return BookingReply(
-                f"{service.service_name}: предварительная запись не нужна. "
+                f"{service_display_name(service.service_name)}: предварительная запись не нужна. "
                 "Можно прийти ежедневно с 10:00 до 21:00.",
                 {},
             )
@@ -521,7 +531,7 @@ class TelegramBookingCoordinator:
         masked = f"{phone[:2]}******{phone[-4:]}"
         return BookingReply(
             "Проверьте запись:\n"
-            f"{state['service_name']}\n{state['staff_name']}\n"
+            f"{service_display_name(str(state['service_name']))}\n{state['staff_name']}\n"
             f"{format_booking_time(str(state['starts_at']))}\n"
             f"{state['customer_name']}, {masked}",
             self._inline_options(
@@ -621,7 +631,7 @@ class TelegramBookingCoordinator:
                     "staff_id": state.get("selected_staff_id"),
                     "staff_name": str(state.get("staff_name", "Любой специалист")),
                     "staff_names": self._state_item(state.get("staff_names", {})),
-                    "label": f"{format_booking_time(booking.starts_at)} — {service_name}",
+                    "label": f"{format_booking_time(booking.starts_at)} — {service_display_name(service_name)}",
                 }
             )
         scenario = BookingScenario(
@@ -1051,7 +1061,7 @@ class TelegramBookingCoordinator:
 
     @staticmethod
     def _service_choice(service: CatalogService) -> dict[str, object]:
-        return {"service_id": service.service_id, "label": service.service_name}
+        return {"service_id": service.service_id, "label": service_display_name(service.service_name)}
 
     @staticmethod
     def _slot_choice(slot: Slot) -> dict[str, object]:
@@ -1110,9 +1120,11 @@ class TelegramBookingCoordinator:
         except (ValueError, TypeError, IndexError):
             return None
 
-    @staticmethod
-    def _inline_options(rows: list[list[tuple[str, str]]]) -> dict[str, object]:
+    @classmethod
+    def _inline_options(cls, rows: list[list[tuple[str, str]]]) -> dict[str, object]:
+        parsed = cls._parse_callback(rows[0][0][1]) if rows and rows[0] else None
         return {
+            **({"booking_card": str(parsed[0])} if parsed is not None else {}),
             "reply_markup": {
                 "inline_keyboard": [
                     [
@@ -1155,5 +1167,5 @@ class TelegramBookingCoordinator:
         day = datetime.fromisoformat(str(state["date"])).strftime("%d.%m.%Y")
         return (
             "Выберите время\n"
-            f"{state['service_name']}\n{day}{cls._window_text(state)} · московское время"
+            f"{service_display_name(str(state['service_name']))}\n{day}{cls._window_text(state)} · московское время"
         )

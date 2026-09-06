@@ -17,6 +17,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import (
     InlineKeyboardMarkup,
+    LinkPreviewOptions,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
@@ -164,7 +165,7 @@ async def test_worker_does_not_send_sent_outbound_twice(database):
     assert await sender.send(outbound_id) == DeliveryResult.SENT
     assert await sender.send(outbound_id) == DeliveryResult.SKIPPED
 
-    assert telegram.sent_messages == [{"chat_id": 42, "text": "Ответ"}]
+    assert telegram.sent_messages == [{"chat_id": 42, "text": "Ответ", "link_preview_options": LinkPreviewOptions(is_disabled=True)}]
     async with database.acquire() as connection:
         assert await connection.fetchval(
             "SELECT status FROM outbound_messages WHERE id = $1", outbound_id
@@ -191,6 +192,7 @@ async def test_plain_text_removes_only_balanced_bold_markers(database):
             "Важный ответ\nhttps://example.com/a**b**\n"
             "https://example.com/a?x=**b**\n2 ** 3\nЛитерал **"
         ),
+        "link_preview_options": LinkPreviewOptions(is_disabled=True),
     }]
 
 
@@ -210,6 +212,7 @@ async def test_explicit_html_delivery_is_unchanged(database):
         "chat_id": 42,
         "text": "<b>Согласие</b> **как есть**",
         "parse_mode": "HTML",
+        "link_preview_options": LinkPreviewOptions(is_disabled=True),
     }]
 
 
@@ -334,7 +337,7 @@ async def test_send_holds_customer_lock_until_provider_call_finishes(
             if not task.done():
                 task.cancel()
 
-    assert telegram.sent_messages == [{"chat_id": 42, "text": "Успевший ответ"}]
+    assert telegram.sent_messages == [{"chat_id": 42, "text": "Успевший ответ", "link_preview_options": LinkPreviewOptions(is_disabled=True)}]
 
 
 async def test_network_send_result_is_terminal_and_safe(
@@ -584,7 +587,8 @@ async def test_process_message_materializes_reply_and_history_once(database):
     assert [tuple(row.values()) for row in tasks] == [("send_outbound", "pending")]
 
 
-async def test_booking_text_uses_one_semantic_path(database):
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_booking_text_uses_one_semantic_path(database, mixed):
     class BookingCoordinator:
         def __init__(self):
             self.calls = []
@@ -595,7 +599,10 @@ async def test_booking_text_uses_one_semantic_path(database):
         async def handle(self, connection, **kwargs):
             self.calls.append((connection, kwargs))
             return BookingReply(
-                "Ответ записи", {"reply_markup": {"remove_keyboard": True}}
+                "Ответ записи", {
+                    "booking_card": "draft",
+                    "reply_markup": {"inline_keyboard": [[{"text": "Выбрать", "callback_data": "x"}]]},
+                }
             )
 
     class SemanticLLM(FakeLLM):
@@ -611,7 +618,7 @@ async def test_booking_text_uses_one_semantic_path(database):
             self.calls.append((text, context))
             reply = await dispatch(SimpleNamespace(route="booking"))
             return SimpleNamespace(
-                text=reply,
+                text=f"Цена 1000. {reply}" if mixed else reply,
                 prompt_tokens=0,
                 completion_tokens=0,
                 cached_tokens=0,
@@ -645,7 +652,13 @@ async def test_booking_text_uses_one_semantic_path(database):
         assert await connection.fetchval(
             "SELECT text FROM outbound_messages WHERE idempotency_key = $1",
             "reply:process_message:100",
-        ) == "Ответ записи"
+        ) == ("Цена 1000. Ответ записи" if mixed else "Ответ записи")
+        options = json.loads(await connection.fetchval(
+            "SELECT delivery_options FROM outbound_messages WHERE idempotency_key=$1",
+            "reply:process_message:100",
+        ))
+        assert ("booking_card" in options) is not mixed
+        assert not options.get("edit_booking_card")
 
 
 async def test_manual_phone_and_name_traverse_worker_semantic_path(
