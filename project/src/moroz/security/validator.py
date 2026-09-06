@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal, localcontext
 from typing import AbstractSet, Iterable
 
 from moroz.security.pii import PLACEHOLDER_RE, PiiSession
@@ -19,6 +20,19 @@ _PRICE_RE = re.compile(
     rf"(?<!\d)(?P<values>{_PRICE_VALUE_PATTERN}"
     rf"(?:\s*/\s*{_PRICE_VALUE_PATTERN})*)"
     r"\s*(?:руб(?:\.|лей?)?|₽)",
+    re.IGNORECASE,
+)
+_MINUTE_RATE_RE = re.compile(
+    rf"^[ \t]*(?:[-*] )?(?P<service>солярий|коллариум|коллагенарий)"
+    rf"[ \t]*[—–:-][ \t]*(?P<rate>{_PRICE_VALUE_PATTERN})"
+    r"[ \t]*(?:₽|руб(?:\.|лей?)?)[ \t]+за минуту[.!]?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_MINUTE_CALC_RE = re.compile(
+    r"(?:^|(?<=[;!?\n])|(?<=\.)(?!\d))\s*"
+    r"(?P<minutes>[+-]?\d+(?:[.,]\d+)?)\s+минут(?:а|ы)?\s+"
+    r"(?P<service>солярия|коллариума|коллагенария)\s*[—–:-]\s*"
+    + _PRICE_RE.pattern,
     re.IGNORECASE,
 )
 _URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
@@ -240,6 +254,50 @@ def _prices(text: str) -> frozenset[str]:
     )
 
 
+def _minute_rates(sources: Iterable[str]) -> tuple[tuple[str, str], ...]:
+    rates: dict[str, set[str]] = {}
+    for source in sources:
+        for match in _MINUTE_RATE_RE.finditer(source):
+            rates.setdefault(match["service"].casefold(), set()).add(
+                _normalize_price(match["rate"])
+            )
+    return tuple(
+        (service, next(iter(values)))
+        for service, values in rates.items()
+        if len(values) == 1 and Decimal(next(iter(values))) > 0
+    )
+
+
+def _validated_minute_prices(
+    text: str, rates: tuple[tuple[str, str], ...]
+) -> dict[tuple[int, int], bool]:
+    # ponytail: one explicit calculation format, not a Russian NLP parser.
+    names = {"солярия": "солярий", "коллариума": "коллариум",
+             "коллагенария": "коллагенарий"}
+    tariffs = dict(rates)
+    verdicts = {}
+    for match in _MINUTE_CALC_RE.finditer(text):
+        rate = tariffs.get(names[match["service"].casefold()])
+        minutes = match["minutes"]
+        ok = False
+        tail = text[match.end():].lstrip(" \t")
+        if (
+            rate and minutes.isascii() and minutes.isdigit()
+            and Decimal(minutes) > 0
+            and (match.group(0).endswith(".") or not tail or tail[0] in ".;!?\n")
+        ):
+            # Enough precision for the exact product; no float or rounding.
+            with localcontext() as context:
+                context.prec = len(rate) + len(minutes) + 2
+                ok = (
+                    "/" not in match["values"]
+                    and Decimal(_normalize_price(match["values"]))
+                    == Decimal(rate) * Decimal(minutes)
+                )
+        verdicts[match.span("values")] = ok
+    return verdicts
+
+
 def _normalize_slot(value: str) -> str:
     return " ".join(value.strip().split()).casefold()
 
@@ -335,6 +393,7 @@ class StructuredFacts:
         default_factory=frozenset,
         repr=False,
     )
+    minute_rates: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -407,6 +466,7 @@ def extract_structured_facts(
         ),
         slots=frozenset(slots),
         public_pii=frozenset(public_pii),
+        minute_rates=_minute_rates(sources),
     )
 
 
@@ -475,9 +535,13 @@ def validate_output(
         blocked=_MEDICAL_GUARANTEE_RULES,
     ):
         return ValidationVerdict(False, "medical_guarantee")
-    output_prices = _prices(text)
-    if output_prices - facts.prices:
-        return ValidationVerdict(False, "invented_price")
+    minute_prices = _validated_minute_prices(text, facts.minute_rates)
+    for price in _PRICE_RE.finditer(text):
+        calculated = minute_prices.get(price.span("values"))
+        if calculated is False or (
+            calculated is None and _prices(price.group(0)) - facts.prices
+        ):
+            return ValidationVerdict(False, "invented_price")
     if _matches_after_removing(
         text,
         ignored=(

@@ -24,3 +24,10 @@ def test_system_prompt_keeps_center_facts_and_uncertain_program_boundaries():
     assert "не предлагай неподтверждённые программы инициативно" in folded
     assert "не назначай число минут" in folded
     assert "не рассчитывай стоимость пакета сложением разовых цен" in folded
+
+
+def test_minute_examples_do_not_duplicate_editable_prices():
+    prompt = Path("/workspace/llm/prompts/system.md").read_text(encoding="utf-8")
+    examples = prompt.split("## 14.")[1].split('Вопрос: "Что выбрать')[0]
+    assert not re.search(r"\d+\s*₽", examples)
+    assert "название услуги" in examples

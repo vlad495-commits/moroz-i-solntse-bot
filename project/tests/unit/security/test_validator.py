@@ -14,6 +14,53 @@ from moroz.security.validator import (
 )
 
 
+@pytest.mark.parametrize("text,ok", [
+    ("13 минут солярия — 546 ₽.", True),
+    ("13 минут солярия — 547 ₽.", False),
+    ("13 минут коллариума — 546 ₽.", False),
+    ("Криокапсула — 546 ₽.", False),
+    ("13 минут солярия — 546 ₽. LED-маска — 546 ₽.", False),
+    ("LED-маска — 546 ₽. 13 минут солярия — 546 ₽.", False),
+    ("5 минут солярия — 210 ₽; 10 минут коллариума — 510 ₽.", True),
+    ("13 минут коллагенария — 546 ₽.", True),
+    ("13 МИНУТ СОЛЯРИЯ: 546,00 руб.", True),
+    ("13 минут солярия — 546 руб. 14 минут солярия — 588 руб.", True),
+    ("13 минут солярия — 546 руб. Расчёт по разовому тарифу.", True),
+    ("13 минут солярия — 546 руб. LED-маска — 546 руб.", False),
+    ("0 минут солярия — 42 ₽.", False),
+    ("-1 минут солярия — 42 ₽.", False),
+    ("1,5 минут солярия — 42 ₽.", False),
+    ("13 минут солярия — 42 ₽.", False),
+    ("13 минут — 546 ₽.", False),
+    ("13 минут солярия со скидкой — 500 ₽.", False),
+    ("13 минут солярия — 546 ₽ со скидкой.", False),
+])
+def test_minute_price_is_bound_to_service_and_occurrence(text, ok):
+    facts = extract_structured_facts(
+        "Солярий — 42 ₽ за минуту.\nКоллариум — 51 ₽ за минуту.\n"
+        "Коллагенарий — 42 ₽ за минуту."
+    )
+    assert validate_output(text, facts, frozenset()).ok is ok
+
+
+@pytest.mark.parametrize("prompt,text,ok", [
+    ("Солярий — 43 ₽ за минуту.", "13 минут солярия — 559 ₽.", True),
+    ("Солярий — 43 ₽ за минуту.\nПример: 546 ₽.", "13 минут солярия — 546 ₽.", False),
+    ("Пример: 546 ₽.", "13 минут солярия — 546 ₽.", False),
+    ("Солярий — 42 ₽ за минуту.\nСолярий — 43 ₽ за минуту.", "13 минут солярия — 546 ₽.", False),
+    ("- СОЛЯРИЙ: 42,50 руб. за минуту.", "13 минут солярия — 552,50 ₽.", True),
+    ("Солярий — 0 ₽ за минуту.", "13 минут солярия — 0 ₽.", False),
+])
+def test_minute_price_uses_only_unambiguous_current_tariff(prompt, text, ok):
+    assert validate_output(text, extract_structured_facts(prompt), frozenset()).ok is ok
+
+
+def test_minute_price_rejects_long_minutes_without_integer_conversion_crash():
+    text = "9" * 4400 + " минут солярия — 42 ₽."
+    facts = extract_structured_facts("Солярий — 42 ₽ за минуту.")
+    assert validate_output(text, facts, frozenset()).ok is False
+
+
 def test_merge_structured_facts_unions_each_allowlist_without_mutation() -> None:
     base = StructuredFacts(
         frozenset({"2400"}), frozenset({"https://example.ru"}),

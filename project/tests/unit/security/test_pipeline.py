@@ -59,6 +59,36 @@ async def test_consultation_uses_owned_prompt_and_answer_gateway():
     assert result.text == owned
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second,expected", [
+    ("13 минут солярия — 546 ₽.", "13 минут солярия — 546 ₽."),
+    ("13 минут — 546 ₽.", SAFE_OUTPUT_FALLBACK),
+])
+async def test_minute_calculation_retries_once_in_owned_format(second, expected):
+    from moroz.security.validator import extract_structured_facts
+
+    prompt = "Солярий — 42 ₽ за минуту."
+    gateway = CapturingGateway("13 минут — 546 ₽.", second)
+    result = await SecurityPipeline(gateway, prompt, extract_structured_facts(prompt)).respond(
+        "Сколько стоят 13 минут солярия?", []
+    )
+    assert result.text == expected
+    answers = [request for request in gateway.requests if request.purpose == "answer"]
+    assert len(answers) == 2
+    assert "VALIDATOR_RETRY code=invented_price" in answers[1].messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_minute_rate_from_history_does_not_authorize_calculation():
+    from moroz.security.validator import extract_structured_facts
+
+    gateway = CapturingGateway("13 минут солярия — 546 ₽.", "13 минут солярия — 546 ₽.")
+    result = await SecurityPipeline(gateway, "", extract_structured_facts("")).respond(
+        "А 13 минут?", [{"role": "assistant", "content": "Солярий — 42 ₽ за минуту."}]
+    )
+    assert result.text == SAFE_OUTPUT_FALLBACK
+
+
 class CapturingGateway:
     def __init__(self, *events: LLMResponse | BaseException | str) -> None:
         self.events = list(events)
