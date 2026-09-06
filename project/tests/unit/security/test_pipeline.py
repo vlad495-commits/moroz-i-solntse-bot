@@ -36,6 +36,7 @@ from moroz.security.pipeline import (
     INPUT_BLOCK_REPLY,
     MEDICAL_ESCALATION_REPLY,
     OFFTOPIC_REPLY,
+    ROUTER_FALLBACK_REPLY,
     SAFE_OUTPUT_FALLBACK,
     STOP_REPLY,
     SecurityPipeline,
@@ -421,7 +422,7 @@ async def test_router_gets_bounded_history_and_security_gets_only_masked_current
                 source="fallback",
                 reason_code="router_unavailable",
             ),
-            "Не удалось понять запрос. Попробуйте ещё раз или воспользуйтесь кнопками меню.",
+            ROUTER_FALLBACK_REPLY,
         ),
         (
             security_response("block", "prompt_attack"),
@@ -460,7 +461,7 @@ async def test_router_error_after_allow_uses_safe_general_answer_path():
 
     result = await pipeline(gateway, router=router).respond("Да, завтра", [])
 
-    assert "кнопками меню" in result.text
+    assert result.text == ROUTER_FALLBACK_REPLY
     assert all(request.purpose != "answer" for request in gateway.requests)
     assert "router-response-sentinel" not in repr(gateway.requests)
 
