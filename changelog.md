@@ -1,5 +1,15 @@
 # Changelog
 
+[2026-09-06 18:55] Test-only fix сохранён в 13bae0e: exact клавиатура и явное отсутствие edit metadata у mixed FAQ. Повтор четырёх связанных файлов: 91 passed/270.20s, JUnit91/0/0/0; все девять прежних падений закрыты. Ruff и diff-check exit0, независимый test-review PASS. Runtime diff от полного c536c7e отсутствует, изменён только тест; локальная техническая проверка завершена, результаты внесены в план/аудит/дорожную карту. Начинается разрешённая синхронизация main/GitHub и staging через deploy workflow.
+
+[2026-09-06 18:49] Полный rebuilt Docker gate c536c7e завершён: 2392 passed / 9 failed за 2279.90s; JUnit2401/9/0errors/0skipped. Прочитаны все девять traceback: исключительно test_catalog_message_flow.py:146, expected booking_card у mixed FAQ; клавиатура совпадает. Разрешён только test-contract fix и повтор всего связанного блока; runtime не меняется. Полный результат сохранён честно, отдельный GREEN не будет назван повторным полным suite.
+
+[2026-09-06 18:37] Отдельный изолированный diagnostic [new-None] воспроизвёл точную причину: test_catalog_message_flow.py ожидает booking_card у mixed FAQ, хотя новый контракт снимает эту метку; клавиатура, текст, phase и отсутствие provider mutation проверены до assertion. RED 1 failed/13.93s, runtime не менялся. Diagnostic контейнеры завершены, отдельные volumes сохранены. Дорожная карта актуализирована: интеграция/review завершены, gate продолжается; старый блокер расхождения веток закрыт последующим решением владельца.
+
+[2026-09-06 18:26] Полный suite обнаружил девять последовательных падений; публикация и rollout остаются заблокированы до разбора и зелёного gate. Запрошен один диагностический case в отдельном disposable Compose project, без изменения основного test store и runtime. Уточнена историческая формулировка merge в плане. Повторный независимый review deploy helpers: deploy-ready, открытых Critical/Important нет.
+
+[2026-09-06 18:20] Независимый review всей итоговой ветки c536c7e завершён без замечаний; merge допускается после полного gate. Review финализирующего deploy helper выявил относительный Git pathspec из project/: заменён на anchored :(top)project, bash -n exit0. Это временный ops helper, runtime замороженного кандидата не менялся. Полный Docker suite продолжается без падений; staging пока не переключён.
+
 [2026-09-06 18:12] Повторный task review 7608087: Spec PASS, Quality Approved, замечаний нет. История codex/telegram-ux-second объединена намеренным merge -s ours после выборочного переноса совместимого UX: новый свободный диалог — явно выбранная основа. До/после merge project tree одинаковый; ancestry обеих исходных веток подтверждён. Это не автоматическое принятие старых menu/grounding/wizard файлов. Начинается full rebuilt Docker gate на замороженном кандидате.
 
 [2026-09-06 18:11] Review-fix сохранён в 7608087: stale confirmation RED1/9.69s, GREEN35/95.41s; Ruff всего проекта зелёный, test fixture import исправлен без подавления правил. Передан узкий diff повторному reviewer. Runtime замораживается для полного gate; отдельные родительские документы сохраняют исходные точки и ограничения синхронизации.
