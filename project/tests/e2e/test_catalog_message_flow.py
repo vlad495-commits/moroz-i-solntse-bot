@@ -181,7 +181,10 @@ class PriceRouter:
 
     async def route(self, _text, _context, *, state=None):
         self.calls += 1
-        return RouterVerdict(RouteDecision('consultation', .99, 'price', self.service))
+        return RouterVerdict(RouteDecision(
+            'consultation', .99, topics=('price',),
+            services=(self.service,) if self.service else (),
+        ))
 
 
 class AllowingInputSecurity:

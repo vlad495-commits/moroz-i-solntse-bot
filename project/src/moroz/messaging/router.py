@@ -49,9 +49,9 @@ PUBLIC_ACTIONS = (
 # Four index digits keep the existing Telegram callback within 64 bytes.
 MAX_CHOICE_INDEX = 9_999
 ROUTE_ACTIONS = {
-    'consultation': {'none', 'price', 'duration', 'staff', 'clarify'},
-    'booking': {'none', 'create', 'cancel_draft', 'continue', 'clarify', 'clarify_cancel'},
-    'booking_management': {'none', 'view', 'cancel', 'reschedule', 'continue', 'clarify', 'clarify_cancel'},
+    'consultation': {'none', 'clarify'},
+    'booking': {'none', 'create', 'cancel_draft', 'continue', 'clarify'},
+    'booking_management': {'none', 'view', 'cancel', 'reschedule', 'continue', 'clarify'},
     'escalation': {'none', 'clarify'},
     'smalltalk': {'none', 'clarify'},
     'offtopic': {'none', 'clarify'},
@@ -110,7 +110,7 @@ other — прочее по теме центра.
 Явное намерение текущего сообщения важнее состояния формы и каталога.
 mode=catalog_browse означает просмотр каталога, active=false: это не намерение записаться.
 Голое название услуги в каталоге не означает новую запись. После уточнения ассистентом цены
-или длительности ответ названием услуги продолжает consultation/price или consultation/duration.
+или длительности ответ названием услуги продолжает consultation/none с topics=["price"] или topics=["duration"].
 confidence — конечное число от 0 до 1.
 Дополнительные обязательные поля: action, topics, services, date, time_from, time_to, staff, choice.
 action: none для консультации; create для новой записи/просмотра свободного времени;
@@ -147,7 +147,6 @@ class RouteDecision:
     route: str
     confidence: float
     action: str = "none"
-    service: str | None = None
     date: str | None = None
     choice: int | None = None
     topics: tuple[str, ...] = ()
@@ -155,12 +154,6 @@ class RouteDecision:
     time_from: str | None = None
     time_to: str | None = None
     staff: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.service and not self.services:
-            object.__setattr__(self, "services", (self.service,))
-        elif self.service is None and len(self.services) == 1:
-            object.__setattr__(self, "service", self.services[0])
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +190,7 @@ def _parse_router_output(text: str) -> RouteDecision:
         ),
     )
     allowed = {
-        "route", "confidence", "action", "topics", "services", "service",
+        "route", "confidence", "action", "topics", "services",
         "date", "time_from", "time_to", "staff", "choice",
     }
     if not isinstance(data, dict) or not {"route", "confidence"} <= set(data) or set(data) - allowed:
@@ -223,20 +216,13 @@ def _parse_router_output(text: str) -> RouteDecision:
         or any(type(topic) is not str or topic not in TOPICS for topic in topics)
     ):
         raise ValueError("invalid topics")
-    services = data.get("services")
-    legacy_service = data.get("service")
-    if services is None:
-        services = [] if legacy_service is None else [legacy_service]
+    services = data.get("services", [])
     if (
         not isinstance(services, list)
         or len(services) > 3
         or any(type(service) is not str or not 1 <= len(service.strip()) <= 160 for service in services)
     ):
         raise ValueError("invalid services")
-    if legacy_service is not None and (
-        not isinstance(legacy_service, str) or not 1 <= len(legacy_service.strip()) <= 160
-    ):
-        raise ValueError("invalid service")
     day, choice = data.get("date"), data.get("choice")
     if day is not None:
         if not isinstance(day, str) or len(day) != 10:
@@ -256,7 +242,6 @@ def _parse_router_output(text: str) -> RouteDecision:
         route=route,
         confidence=float(confidence),
         action=action,
-        service=clean_services[0] if len(clean_services) == 1 else None,
         date=day,
         choice=choice,
         topics=tuple(topics),
@@ -288,8 +273,8 @@ def valid_route_action(decision: RouteDecision) -> bool:
         or decision.action not in {'continue', 'view', 'cancel', 'reschedule'}
     ):
         return False
-    if decision.action in {'cancel_draft', 'clarify_cancel'}:
-        return decision.service is None and decision.date is None
+    if decision.action == 'cancel_draft':
+        return not decision.services and decision.date is None
     return True
 
 

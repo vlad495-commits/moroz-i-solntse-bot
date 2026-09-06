@@ -84,7 +84,7 @@ async def test_owned_prompt_answers_followup_after_semantic_router():
     class PriceRouter:
         async def route(self, text, context, *, state=None):
             assert context[0]['content'] == 'Расскажи про криомассаж головы'
-            return RouterVerdict(RouteDecision('consultation', .99, service='Криомассаж головы'))
+            return RouterVerdict(RouteDecision('consultation', .99, services=('Криомассаж головы',)))
 
     prompt = 'Криомассаж головы — 1 500 ₽.'
     result = await SecurityPipeline(AnswerGateway(), prompt, extract_structured_facts(prompt),

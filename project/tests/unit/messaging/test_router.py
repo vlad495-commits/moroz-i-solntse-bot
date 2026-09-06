@@ -114,7 +114,6 @@ async def test_router_parses_multi_intent_and_time_window() -> None:
 
     assert verdict.decision.topics == ("price", "duration")
     assert verdict.decision.services == ("криосауна",)
-    assert verdict.decision.service == "криосауна"
     assert verdict.decision.time_from == "18:00"
     assert verdict.decision.time_to is None
 
@@ -346,6 +345,13 @@ async def test_router_current_and_context_share_one_2000_character_budget() -> N
         '{"route":"consultation","confidence":1.1}',
         '{"route":"consultation","confidence":-0.1}',
         '{"route":"escalation","route":"consultation","confidence":0.9}',
+        '{"route":"booking","confidence":0.9,"service":"массаж"}',
+        '{"route":"booking","confidence":0.9,"service":null,"services":[]}',
+        '{"route":"consultation","confidence":0.9,"action":"price"}',
+        '{"route":"consultation","confidence":0.9,"action":"duration"}',
+        '{"route":"consultation","confidence":0.9,"action":"staff"}',
+        '{"route":"booking","confidence":0.9,"action":"clarify_cancel"}',
+        '{"route":"booking_management","confidence":0.9,"action":"clarify_cancel"}',
     ],
 )
 async def test_invalid_router_output_uses_safe_general_route(raw: str) -> None:
@@ -396,16 +402,16 @@ async def test_router_extracts_structured_service_and_date():
     )
     provider = ScriptedProvider(router_response(json.dumps(payload)))
     verdict = await LLMIntentRouter(provider).route('Массаж 7 сентября', [])
-    assert verdict.decision == RouteDecision('booking', .97, 'create', 'массаж', '2026-09-07')
+    assert verdict.decision == RouteDecision('booking', .97, 'create', services=('массаж',), date='2026-09-07')
     schema = ROUTER_RESPONSE_FORMAT['json_schema']['schema']
     assert set(schema['required']) == set(payload)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('field,value', [('date', '2026-02-30'), ('choice', True), ('choice', -1), ('action', 'confirm'), ('action', 'provide_name'), ('service', 12)])
+@pytest.mark.parametrize('field,value', [('date', '2026-02-30'), ('choice', True), ('choice', -1), ('action', 'confirm'), ('action', 'provide_name'), ('services', [12]), ('services', None)])
 async def test_bad_booking_parameters_never_dispatch(field, value):
     payload = {'route': 'booking', 'confidence': .97, 'action': 'create',
-               'service': 'массаж', 'date': None, 'choice': None}
+               'services': ['массаж'], 'date': None, 'choice': None}
     payload[field] = value
     verdict = await LLMIntentRouter(ScriptedProvider(router_response(json.dumps(payload)))).route('запись', [])
     assert verdict.source == 'fallback'
@@ -479,6 +485,15 @@ async def test_global_choice_index_beyond_first_hundred_is_valid():
         state='{"mode":"booking","active":true,"choices":[{"index":108,"label":"Массаж"}]}')
     assert result.source == 'llm'
     assert result.decision.choice == 108
+
+
+@pytest.mark.parametrize('services,day,expected', [
+    ((), None, True), (('A',), None, False), (('A', 'B'), None, False),
+    ((), '2026-09-08', False),
+])
+def test_cancel_draft_rejects_service_and_date(services, day, expected):
+    decision = RouteDecision('booking', .99, 'cancel_draft', services=services, date=day)
+    assert router_module.valid_route_action(decision) is expected
 
 
 def test_bound_routing_state_keeps_conversation_constraints():
