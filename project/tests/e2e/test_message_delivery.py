@@ -749,6 +749,71 @@ async def test_manual_phone_and_name_traverse_worker_semantic_path(
         await database.close()
 
 
+async def test_phone_before_stop_cannot_reach_booking_on_consultation_route(
+    database,
+):
+    from moroz.messaging.booking_stop import register_stop
+
+    class BookingCoordinator:
+        def __init__(self):
+            self.calls = []
+
+        async def routing_context(self, customer_id):
+            raise AssertionError("stopped booking context must stay hidden")
+
+        async def handle(self, connection, **kwargs):
+            self.calls.append((connection, kwargs))
+            return BookingReply("Телефон сохранён", {})
+
+    class MisroutingLLM(FakeLLM):
+        async def __call__(
+            self,
+            text,
+            context,
+            *,
+            recent_message_count=1,
+            dispatch=None,
+            booking_context=None,
+        ):
+            assert booking_context == {}
+            reply = await dispatch(RouteDecision("consultation", 0.99))
+            return SimpleNamespace(
+                text=reply or "Обычный ответ",
+                prompt_tokens=0,
+                completion_tokens=0,
+                cached_tokens=0,
+                total_tokens=0,
+                model="booking-local",
+            )
+
+    repository = MessageRepository(database)
+    coordinator = BookingCoordinator()
+    assert await repository.accept(incoming("890", "+7 900 111-22-33"))
+    async with database.acquire() as connection:
+        assert await register_stop(
+            connection,
+            chat_id="42",
+            update_id="900",
+            occurred_at=datetime(2026, 7, 16, 12, 0, 1, tzinfo=UTC),
+        )
+
+    handler = MessageTaskHandler(
+        database,
+        MisroutingLLM(),
+        TelegramSender(FakeTelegram(), repository),
+        booking_coordinator=coordinator,
+    )
+    await handler.handle(
+        QueueTask(
+            "process_message",
+            {"chat_id": "42", "update_ids": ["890"]},
+            process_message_key(["890"]),
+        )
+    )
+
+    assert coordinator.calls == []
+
+
 async def test_text_batch_is_sent_once_without_menu_splitting(database):
     class BookingCoordinator:
         def __init__(self):

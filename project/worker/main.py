@@ -766,9 +766,11 @@ class MessageTaskHandler:
                 async def dispatch(decision):
                     nonlocal booking_reply
                     is_booking = decision.route in {"booking", "booking_management"}
-                    if booking_stopped and is_booking:
-                        booking_reply = BookingReply(STOPPED_ACTION_REPLY, {})
-                        return booking_reply.text
+                    if booking_stopped:
+                        if is_booking:
+                            booking_reply = BookingReply(STOPPED_ACTION_REPLY, {})
+                            return booking_reply.text
+                        return None
                     if self._booking_coordinator is None:
                         if is_booking:
                             return "Запись внутри Telegram сейчас недоступна. Воспользуйтесь онлайн-записью или напишите администратору."
