@@ -308,7 +308,7 @@ class SecurityPipeline:
             except (LLMUnavailable, NonRetryableLLMError):
                 return _aggregate(
                     accumulated,
-                    SAFE_OUTPUT_FALLBACK,
+                    _combine_reply(SAFE_OUTPUT_FALLBACK, local_reply),
                     "security-fallback",
                 )
             accumulated.append(answer)

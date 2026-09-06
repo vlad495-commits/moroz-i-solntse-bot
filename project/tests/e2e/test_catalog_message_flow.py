@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -20,12 +21,12 @@ from moroz.messaging.outbox import process_message_key
 from moroz.messaging.repository import MessageRepository
 from moroz.messaging.telegram import TelegramSender
 from moroz.messaging.router import RouteDecision, RouterVerdict
-from moroz.security.llm_gateway import LLMResponse
+from moroz.security.llm_gateway import LLMResponse, LLMUnavailable, NonRetryableLLMError
 from moroz.security.input_security import (
     InputSecurityDecision,
     InputSecurityVerdict,
 )
-from moroz.security.pipeline import SecurityPipeline
+from moroz.security.pipeline import SecurityPipeline, SAFE_OUTPUT_FALLBACK
 from moroz.security.validator import extract_structured_facts
 from worker.main import MessageTaskHandler
 
@@ -35,11 +36,14 @@ pytestmark = pytest.mark.asyncio
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("error", [None, LLMUnavailable, NonRetryableLLMError])
+@pytest.mark.parametrize("stage", ["new", "draft", "confirmation"])
 async def test_worker_keeps_real_booking_catalog_with_ground_forbidden(
-    migrated_database_url, monkeypatch
+    migrated_database_url, monkeypatch, error, stage
 ):
     from moroz.booking.catalog import CatalogRepository as RealCatalogRepository
     from tests.e2e.booking.telegram_helpers import coordinator, NOW as BOOKING_NOW
+    from tests.e2e.booking.telegram_helpers import handle as booking_handle
 
     database, bookings, adapter, booking = await coordinator(migrated_database_url)
     list_calls = []
@@ -58,11 +62,27 @@ async def test_worker_keeps_real_booking_catalog_with_ground_forbidden(
     class Router:
         async def route(self, text, context, *, state=None):
             return RouterVerdict(RouteDecision(
-                "booking", 0.99, "create", services=("Криокапсула",),
-                date="2026-09-05", topics=("price",),
+                "booking", 0.99, "create" if stage == "new" else "continue",
+                services=("Криокапсула",) if stage == "new" else (),
+                date="2026-09-05" if stage == "new" else None,
+                topics=("price" if stage == "new" else "preparation",),
             ))
 
     gateway = CatalogAnswerGateway("Криокапсула — 2 400 ₽.")
+    if error:
+        async def unavailable(request):
+            gateway.requests.append(request)
+            raise error()
+        monkeypatch.setattr(gateway, "complete", unavailable)
+    replies = []
+    original_handle = booking.handle
+
+    async def capture_reply(*args, **kwargs):
+        reply = await original_handle(*args, **kwargs)
+        replies.append(reply)
+        return reply
+
+    monkeypatch.setattr(booking, "handle", capture_reply)
     prompt = "Криокапсула — 2 400 ₽."
     pipeline = SecurityPipeline(
         gateway, prompt, extract_structured_facts(prompt),
@@ -73,9 +93,34 @@ async def test_worker_keeps_real_booking_catalog_with_ground_forbidden(
         return await pipeline.respond(text, context, **options)
 
     try:
+        if stage != "new":
+            base = dict(customer_id="42", user_id="7", text="")
+            offered = await booking_handle(
+                booking, database, **base, update_id="setup-start",
+                kind="text", data={}, decision=RouteDecision(
+                    "booking", 0.99, "create", services=("Криокапсула",),
+                    date="2026-09-05",
+                ),
+            )
+            if stage == "confirmation":
+                await booking_handle(
+                    booking, database, **base, update_id="setup-slot", kind="callback",
+                    data={"callback_data": offered.delivery_options[
+                        "reply_markup"]["inline_keyboard"][0][0]["callback_data"]},
+                )
+                await booking_handle(
+                    booking, database, **base, update_id="setup-contact", kind="contact",
+                    data={"contact_user_id": "7", "phone_number": "+79001112233",
+                          "first_name": "Иван"},
+                )
+            replies.clear()
+        before = await bookings.get_active_for_customer("42")
+        if stage == "confirmation":
+            assert before.phase == "awaiting_confirmation"
         repository = MessageRepository(database)
         assert await repository.accept(incoming(
             "real-booking", "Запишите на криокапсулу 5 сентября и сколько стоит?"
+            if stage == "new" else "Продолжим запись. Как подготовиться?"
         ))
         handler = MessageTaskHandler(
             database, llm, TelegramSender(FakeTelegram(), repository),
@@ -87,15 +132,32 @@ async def test_worker_keeps_real_booking_catalog_with_ground_forbidden(
             process_message_key(["real-booking"]),
         ))
         assert list_calls
-        assert await bookings.get_active_for_customer("42") is not None
+        after = await bookings.get_active_for_customer("42")
+        assert after is not None
+        if before:
+            assert after.id == before.id
+            assert after.phase == before.phase
         assert adapter.create_calls == 0
         assert [request.purpose for request in gateway.requests] == ["answer"]
         async with database.acquire() as connection:
             outgoing = await connection.fetchrow(
                 "SELECT text, delivery_options FROM outbound_messages"
             )
-        assert "2 400 ₽" in outgoing["text"]
+        if error:
+            assert outgoing["text"] == SAFE_OUTPUT_FALLBACK + "\n\n" + replies[0].text
+        else:
+            assert "2 400 ₽" in outgoing["text"]
         assert outgoing["delivery_options"]
+        markup = outgoing["delivery_options"]
+        if isinstance(markup, str):
+            markup = json.loads(markup)
+        assert markup == replies[0].delivery_options
+        await handler.handle(QueueTask(
+            "process_message", {"chat_id": "42", "update_ids": ["real-booking"]},
+            process_message_key(["real-booking"]),
+        ))
+        assert len(replies) == 1
+        assert adapter.create_calls == 0
     finally:
         await database.close()
 

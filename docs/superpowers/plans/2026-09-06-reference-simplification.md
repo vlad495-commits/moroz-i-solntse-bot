@@ -220,9 +220,9 @@ def _minute_total(rate: str, minutes: str) -> Decimal | None:
 
 **Interfaces:** `_combine_reply(answer: str, local_reply: str | None) -> str` уже существует; не создавать новый composer. Local reply сформирован trusted dispatch, а worker отдельно сохраняет его markup.
 
-- [ ] Расширить mixed booking test двумя ошибками gateway: `LLMUnavailable` и `NonRetryableLLMError`. Проверить, что ответ содержит прежний local next step и что gateway outage не вызывает повторный dispatch/мутацию. Использовать существующие fake gateway/router/dispatch из test_pipeline.py.
-- [ ] Запустить `test_pipeline.py -k 'unavailable or nonretryable or dispatch'`: новый тест должен воспроизвести потерю local reply.
-- [ ] В существующей ветке исключения выполнить точечную замену:
+- [x] Расширить mixed booking test двумя ошибками gateway: `LLMUnavailable` и `NonRetryableLLMError`. Проверить, что ответ содержит прежний local next step и что gateway outage не вызывает повторный dispatch/мутацию. Использовать существующие fake gateway/router/dispatch из test_pipeline.py.
+- [x] Запустить `test_pipeline.py -k 'unavailable or nonretryable or dispatch'`: новый тест должен воспроизвести потерю local reply.
+- [x] В существующей ветке исключения выполнить точечную замену:
 
 ```python
 except (LLMUnavailable, NonRetryableLLMError):
@@ -233,8 +233,16 @@ except (LLMUnavailable, NonRetryableLLMError):
     )
 ```
 
-- [ ] Проверить mixed ответы в worker: «цена + запись», «подготовка внутри draft», ошибка answer LLM после подготовки подтверждения. Assert: текст и клавиатура описывают одну операцию, draft сохранён, booking success только из результата backend, повторного provider вызова нет.
-- [ ] Прогнать unit pipeline/worker и booking E2E в отдельной инфраструктуре. Коммит `fix: preserve booking reply on answer outage`. Это закрывает P2-2 побочного аудита только при соответствующем regression evidence, остальные дефекты не закрывает.
+- [x] Проверить mixed ответы в worker: «цена + запись», «подготовка внутри draft», ошибка answer LLM после подготовки подтверждения. Assert: текст и клавиатура описывают одну операцию, draft сохранён, booking success только из результата backend, повторного provider вызова нет.
+- [x] Прогнать unit pipeline/worker и booking E2E в отдельной инфраструктуре. Коммит `fix: preserve booking reply on answer outage`. Это закрывает P2-2 побочного аудита только при соответствующем regression evidence, остальные дефекты не закрывает.
+
+**Evidence задачи 4 (2026-09-06):** unit RED 4 failed; worker/coordinator RED 2 failed / 1 passed. Исправление — одна строка existing _combine_reply. Проверены обе ошибки answer gateway, new/draft/awaiting_confirmation, точное совпадение ответа и markup, сохранение draft id/phase, один dispatch при replay и create_calls=0. Docker gate после пересборки: **664 passed in 290.09s** (unit/security, unit/test_worker.py, e2e/test_catalog_message_flow.py, e2e/booking). Read-only review без critical/important; явный assert awaiting_confirmation после замечания — **3 passed in 14.68s**. Закрывает только P2 сохранности mixed reply; не весь аудит и не live-приёмку. Полный suite пакета A остаётся задачей 6.
+
+Точная команда gate из project/ рабочего дерева:
+
+```powershell
+docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docker-compose.yml -f docker-compose.audit-test.yml run --rm --build -w /workspace test pytest --rootdir=/workspace -q -p no:cacheprovider /workspace/tests/unit/security /workspace/tests/unit/test_worker.py /workspace/tests/e2e/test_catalog_message_flow.py /workspace/tests/e2e/booking --tb=short --show-capture=no
+```
 
 ## Задача 5 — обновление промпта и очистка хвостов
 
