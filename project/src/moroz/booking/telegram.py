@@ -17,7 +17,7 @@ from moroz.booking.repository import BookingRepository
 from moroz.booking.service import BookingService
 from moroz.booking.time_display import MOSCOW, format_booking_time
 from moroz.booking.yclients_catalog import walk_in_family
-from moroz.messaging.router import RouteDecision, bound_routing_state, valid_route_action
+from moroz.messaging.router import MAX_CHOICE_INDEX, RouteDecision, bound_routing_state, valid_route_action
 from moroz.messaging.telegram import remove_keyboard_options
 
 
@@ -30,6 +30,7 @@ _CALLBACK_ACTIONS = (
     "booking_action",
     "confirm",
     "confirm_change",
+    "booking_page",
 )
 _MAX_CHOICES = 3
 _ANY_STAFF = {
@@ -237,6 +238,7 @@ class TelegramBookingCoordinator:
         }
         if scenario is not None:
             choices = scenario.state.get("choices", ())
+            offset = int(scenario.state.get("booking_offset", 0)) if scenario.state.get("step") == "booking" else 0
             state.update(
                 {
                     "kind": scenario.kind,
@@ -250,9 +252,9 @@ class TelegramBookingCoordinator:
                     or scenario.state.get("staff_query"),
                     "choices": [
                         {"index": index, "label": str(item.get("label", ""))[:128]}
-                        for index, item in enumerate(choices)
+                        for index, item in enumerate(choices[offset:offset + _MAX_CHOICES], start=offset)
                         if isinstance(item, Mapping)
-                    ][:_MAX_CHOICES],
+                    ],
                 }
             )
             if scenario.state.get("mode") == "management":
@@ -600,7 +602,12 @@ class TelegramBookingCoordinator:
                 {},
             )
         choices = []
-        for booking, raw_state in owned[:_MAX_CHOICES]:
+        if len(owned) > MAX_CHOICE_INDEX + 1:
+            return BookingReply(
+                "Слишком много будущих записей для выбора в чате. "
+                "Для управления ими обратитесь к администратору.", {}
+            )
+        for booking, raw_state in owned:
             state = self._state_item(raw_state)
             service_name = str(state.get("service_name", "Услуга"))
             choices.append(
@@ -628,6 +635,7 @@ class TelegramBookingCoordinator:
                 "origin_update_id": origin_update_id or update_id,
                 "mode": "management",
                 "step": "booking",
+                "booking_offset": 0,
                 "management_operation": decision.action,
                 "requested_date": decision.date,
                 "time_from": decision.time_from,
@@ -811,6 +819,20 @@ class TelegramBookingCoordinator:
                 if current is not None:
                     return await self._offer_slots(current)
             return BookingReply(result.message, {})
+        if action == "booking_page":
+            offset = int(scenario.state.get("booking_offset", 0))
+            choices = scenario.state.get("choices", ())
+            if (
+                scenario.phase != "collecting"
+                or scenario.state.get("step") != "booking"
+                or index not in {offset - _MAX_CHOICES, offset + _MAX_CHOICES}
+                or not 0 <= index < min(len(choices), MAX_CHOICE_INDEX + 1)
+            ):
+                return await self._recover_callback(customer_id)
+            state = self._state(scenario)
+            state["booking_offset"] = index
+            updated = await self._checkpoint(scenario, state, "booking_page_changed")
+            return self._render_current(updated)
         if scenario.phase != "collecting" or scenario.state.get("step") != action:
             return await self._recover_callback(customer_id)
         return await self._apply_choice(
@@ -833,6 +855,10 @@ class TelegramBookingCoordinator:
         if not isinstance(choice, Mapping):
             return await self._recover_callback(scenario.customer_id)
         step = str(scenario.state.get("step", ""))
+        if step == "booking":
+            offset = int(scenario.state.get("booking_offset", 0))
+            if not offset <= index < min(offset + _MAX_CHOICES, MAX_CHOICE_INDEX + 1):
+                return await self._recover_callback(scenario.customer_id)
         if step == "service" and connection is not None:
             services = await self._catalog.list_services(connection, self._now())
             selected = next(
@@ -989,11 +1015,20 @@ class TelegramBookingCoordinator:
     ) -> BookingReply:
         choices = scenario.state.get("choices")
         values = choices if isinstance(choices, tuple) else ()
+        offset = int(scenario.state.get("booking_offset", 0)) if action == "booking" else 0
         rows = [
             [(str(choice["label"]), self._callback(scenario, action, index))]
-            for index, choice in enumerate(values[:_MAX_CHOICES])
+            for index, choice in enumerate(values[offset:offset + _MAX_CHOICES], start=offset)
             if isinstance(choice, Mapping)
         ]
+        if action == "booking":
+            navigation = []
+            if offset:
+                navigation.append(("Назад", self._callback(scenario, "booking_page", offset - _MAX_CHOICES)))
+            if offset + _MAX_CHOICES < len(values):
+                navigation.append(("Далее", self._callback(scenario, "booking_page", offset + _MAX_CHOICES)))
+            if navigation:
+                rows.append(navigation)
         return BookingReply(text, self._inline_options(rows) if rows else {})
 
     @staticmethod
@@ -1043,6 +1078,8 @@ class TelegramBookingCoordinator:
                 "time_to",
             )
         }
+        if "booking_offset" in state:
+            view["booking_offset"] = state["booking_offset"]
         return hashlib.sha256(
             json.dumps(view, sort_keys=True, ensure_ascii=False).encode()
         ).hexdigest()[:12]
