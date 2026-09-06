@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json
 import logging
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +10,6 @@ import bot_control_routes
 from auth import AuthenticatedUser
 import llm as llm_module
 import llm_status
-import prompt_routes
 
 
 class RedisOperationError(RuntimeError):
@@ -144,143 +142,6 @@ async def test_bot_control_toggle_failure_is_redacted_and_client_closes(
     assert client.close_calls == 1
     assert "bot_control_toggle_failed error_type=RedisOperationError" in caplog.text
     assert "toggle-user-sentinel" not in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_prompt_reload_publish_failure_is_redacted_and_client_closes(
-    monkeypatch, caplog
-):
-    client = FailingRedisClient(fail_on="publish")
-    monkeypatch.setattr(
-        prompt_routes.aioredis, "from_url", lambda *_args, **_kwargs: client
-    )
-
-    with caplog.at_level(logging.ERROR, logger=prompt_routes.logger.name):
-        published = await prompt_routes._publish_reload(41, "safe prompt\n")
-
-    assert published == prompt_routes.PROMPT_RELOAD_UNCONFIRMED
-    assert client.close_calls == 1
-    assert "prompt_reload_publish_failed error_type=RedisOperationError" in caplog.text
-    assert "prompt-payload-sentinel" not in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_prompt_reload_requires_an_active_subscriber(monkeypatch):
-    class NoSubscribersClient:
-        def __init__(self):
-            self.close_calls = 0
-
-        async def publish(self, _channel, _value):
-            return 0
-
-        async def aclose(self):
-            self.close_calls += 1
-
-    client = NoSubscribersClient()
-    monkeypatch.setattr(
-        prompt_routes.aioredis, "from_url", lambda *_args, **_kwargs: client
-    )
-
-    assert (
-        await prompt_routes._publish_reload(42, "safe prompt\n")
-        == prompt_routes.PROMPT_RELOAD_REJECTED
-    )
-    assert client.close_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_prompt_reload_requires_worker_ack(monkeypatch):
-    class RejectingClient:
-        def __init__(self):
-            self.payload = None
-            self.close_calls = 0
-
-        async def publish(self, _channel, value):
-            self.payload = json.loads(value)
-            return 1
-
-        async def get(self, _key):
-            return "rejected"
-
-        async def aclose(self):
-            self.close_calls += 1
-
-    client = RejectingClient()
-    monkeypatch.setattr(
-        prompt_routes.aioredis, "from_url", lambda *_args, **_kwargs: client
-    )
-
-    assert (
-        await prompt_routes._publish_reload(43, "safe prompt\n")
-        == prompt_routes.PROMPT_RELOAD_REJECTED
-    )
-    assert client.payload["version_id"] == 43
-    assert client.payload["sha256"] == hashlib.sha256(
-        b"safe prompt\n"
-    ).hexdigest()
-    assert client.close_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_prompt_reload_succeeds_only_after_applied_ack(monkeypatch):
-    class AppliedClient:
-        def __init__(self):
-            self.ack_key = None
-
-        async def publish(self, _channel, value):
-            request_id = json.loads(value)["request_id"]
-            self.ack_key = f"prompt:reload:ack:{request_id}"
-            return 1
-
-        async def get(self, key):
-            assert key == self.ack_key
-            return "applied"
-
-        async def aclose(self):
-            return None
-
-    monkeypatch.setattr(
-        prompt_routes.aioredis,
-        "from_url",
-        lambda *_args, **_kwargs: AppliedClient(),
-    )
-
-    assert (
-        await prompt_routes._publish_reload(44, "safe prompt\n")
-        == prompt_routes.PROMPT_RELOAD_APPLIED
-    )
-
-
-def test_prompt_rejected_restore_uses_compare_and_swap(monkeypatch, tmp_path):
-    prompt_path = tmp_path / "system.md"
-    prompt_path.write_text("newer prompt\n", encoding="utf-8")
-    monkeypatch.setattr(prompt_routes, "PROMPT_FILE", prompt_path)
-
-    assert prompt_routes._restore_prompt_if_current(
-        "rejected prompt\n",
-        "old prompt\n",
-    )
-    assert prompt_path.read_text(encoding="utf-8") == "newer prompt\n"
-
-
-def test_prompt_rejected_restore_recreates_missing_previous_file(
-    monkeypatch, tmp_path
-):
-    prompt_path = tmp_path / "system.md"
-    monkeypatch.setattr(prompt_routes, "PROMPT_FILE", prompt_path)
-
-    assert prompt_routes._restore_prompt_if_current(
-        "rejected prompt\n",
-        "old prompt\n",
-    )
-    assert prompt_path.read_text(encoding="utf-8") == "old prompt\n"
-
-
-def test_prompt_file_write_uses_atomic_replace():
-    source = Path("/app/admin/prompt_routes.py").read_text(encoding="utf-8")
-
-    assert "os.replace(" in source
-    assert ".write_text(content" not in source
 
 
 def test_prompt_reload_rejects_invalid_facts_without_partial_state(

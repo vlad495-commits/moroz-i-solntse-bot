@@ -30,7 +30,7 @@ def test_admin_url_keeps_public_root_path():
     from paths import admin_url
 
     assert admin_url(request(), "/login") == "/admin/login"
-    assert admin_url(request(), "/prompt/?saved=1") == "/admin/prompt/?saved=1"
+    assert admin_url(request(), "/eval/?saved=1") == "/admin/eval/?saved=1"
     assert admin_url(request(root_path=""), "/login") == "/login"
 
 

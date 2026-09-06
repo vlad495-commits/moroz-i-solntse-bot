@@ -1,5 +1,11 @@
 # Changelog
 
+[2026-09-06 09:27] Редактор удалён локально. Первый gate 185 passed / 1 stale menu assertion; после обновления ожидаемого меню и пересборки — 186 passed (9.60s). Compose config и read-only /app/prompts для admin подтверждены. Spec/план/roadmap приведены к решению владельца: файл → проверка → выпуск; editor-save больше не критерий. Удалённые исходники восстановимы из Git; prompt_versions и system.md не изменялись. Worker listener остаётся на отдельный cleanup, задача 5 ещё открыта.
+
+[2026-09-06 09:24] RED удаления: 6 failed / 2 passed. Удалены router CRUD/rollback/publisher, приватный prompt_database и два шаблона; снята регистрация и ссылка меню. Админке оставлен read-only prompt volume для eval_runner; runtime prompt и таблица истории сохранены. Удалены только тесты удалённых функций, добавлены HTTP 404 и навигационные контракты; CSRF/RBAC других функций и worker load/reload проверки сохранены.
+
+[2026-09-06 09:23] Владелец отказался от редактора промпта и явно поручил удалить его из админки. Граница: меню, все /prompt HTTP handlers, шаблоны и приватный CRUD; историю БД и runtime prompt не удалять. Добавлены RED-контракты 404 и отсутствия ссылки для всех ролей. Worker reload/cleanup выделен в следующий шаг; прежняя проверка editor save отменена решением владельца.
+
 [2026-09-06 09:18] Усиленная проверка awaiting_confirmation — 3 passed (14.68s). Задача 4 закрыта локально; план и дорожная карта отражают 1–4 выполненные, следующий шаг 5 (editor/reload и cleanup), затем полный suite задачи 6. Закрыт только P2 потери booking reply, остальные замечания открыты. Подготовлен локальный коммит; main/staging/push не затрагиваются.
 
 [2026-09-06 09:17] Финальный объединённый Docker gate задач 3–4: unit/security, unit/test_worker, catalog E2E и весь e2e/booking — 664 passed (290.09s), exit 0; image пересобран. Независимый review: critical/important нет. По неблокирующему замечанию добавлен явный assert начальной awaiting_confirmation; запускается его повтор. Main чистый на 9e3c5d4, Compose config корректен; live/provider операции не выполнялись.

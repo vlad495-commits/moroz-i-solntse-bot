@@ -139,7 +139,6 @@ def test_owner_sidebar_follows_customer_workflow_order():
         "Эскалации",
         "Маркетинговые коммуникации",
         "Evaluations / Эвалы",
-        "Промпт",
         "Управление",
         "Логи",
     )

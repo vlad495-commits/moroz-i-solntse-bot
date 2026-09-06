@@ -246,13 +246,18 @@ docker compose --env-file ../tmp/audit-test.env -p moroz-reference-test -f docke
 
 ## Задача 5 — обновление промпта и очистка хвостов
 
-**Files:** llm.py, integration/messaging/test_prompt_reload.py, admin/prompt_routes.py при доказанной необходимости; catalog.py, config и tests только по найденным потребителям.
+**Изменение требований владельцем 2026-09-06:** редактор админки не нужен. Прежние пункты editor save/rollback/reload UI отменены, не реализовывать их заново. Промпт меняется в файле проекта и применяется при выпуске.
 
-**Interfaces:** сохранить payload reload `{version_id, request_id, sha256}` и существующий ack; `_load_prompt(expected_sha256=None)` атомарно обновляет system prompt и facts. Никаких новых API админки/таблиц.
+**Files:** admin/app.py, templates/base.html, prompt_routes.py, prompt_database.py, prompt_edit.html, prompt_version.html, docker-compose.yml; admin E2E и active_sanitization. Worker/llm cleanup — следующий отдельный шаг.
 
-- [ ] Добавить к reload integration тесту тарифы 42 → 43; проверить после ack новую пару `_system_prompt` и `_pipeline.facts`, новый расчёт 559 и отказ старого 546. Использовать существующий publisher/listener с test REDIS_URL. В admin save-проверке выполнить ту же обычную замену числа в тарифной строке: успешные save/reload/расчёт без правки Python, регулярных выражений, идентификаторов и таблиц. Не разрешать устаревшую сумму из числового примера как актуальную цену этой услуги: примеры обновляются согласованно либо не дублируют изменяемые тарифы.
-- [ ] Добавить сценарии неверного hash, пустого prompt, rollback и reconnect. Ожидание: ошибочная версия не применяется, отсутствие ack не отображается как успех; следующий подтверждённый reload использует актуальный файл. При выявленной потере reconnect применить минимальное перечитывание через `_load_prompt`, не новую очередь.
-- [ ] Прогнать integration/messaging/test_prompt_reload.py и existing admin prompt save/rollback tests, найденные командой `rg -n 'prompt.*save|rollback|reload' tests`. Не менять owner-only/CSRF проверки.
+- [x] Добавить HTTP-контракты удаления /prompt GET/POST и проверку навигации owner/admin/operator; наблюдать RED перед удалением.
+- [x] Удалить регистрацию router, меню, модуль handlers/publisher, приватный CRUD, два шаблона; заменить тесты удалённых функций контрактами 404. Сохранить CSRF/RBAC остальных разделов.
+- [x] Сохранить файл промпта и чтение eval_runner; admin volume перевести в ro. Не удалять данные prompt_versions и не править миграции.
+- [x] Зафиксировать Docker admin E2E + активную загрузку промпта; локальный коммит удаления редактора.
+
+Evidence удаления редактора: RED 6 failed / 2 passed; промежуточный gate 185 passed / 1 stale navigation assertion, ожидание обновлено. После пересборки test image: **186 passed in 9.60s** — весь e2e/admin, unit/test_active_sanitization.py, unit/test_llm_providers.py, unit/security/test_system_prompt_catalog.py, integration/messaging/test_prompt_reload.py. Compose config и admin prompt read-only mount проверены. Сам prompt и БД не менялись; worker listener пока сохранён для следующего отдельного cleanup.
+- [ ] Проверить оставшийся worker reload listener/lifecycle по потребителям, удалить неиспользуемое после исчезновения publisher отдельным тестируемым шагом. Проверить файл → prompt+facts при старте и новый тариф без admin editor. Не добавлять новую очередь или механизм доставки промпта.
+
 - [ ] Выполнить поиск потребителей:
 
 ```powershell
@@ -274,7 +279,7 @@ git diff --check
 ```
 
 Зафиксировать commit, exact command, pass/fail/skip, происхождение кода /workspace, границы fake-provider проверки. Падение из-за checksum не считать pass и не суммировать результаты разных деревьев.
-- [ ] Пройти матрицу spec: известное/неизвестное, минута/расчёт/сравнение, неверная цена, reload/rollback, mixed draft, LLM outage, YCLIENTS outage, STOP/injection/чужая запись. Для LLM-качества без разрешения paid evals отметить «live не проверено», а не «бот отвечает идеально».
+- [ ] Пройти матрицу spec: известное/неизвестное, минута/расчёт/сравнение, неверная цена, загрузка файла/отсутствие редактора, mixed draft, LLM outage, YCLIENTS outage, STOP/injection/чужая запись. Для LLM-качества без разрешения paid evals отметить «live не проверено», а не «бот отвечает идеально».
 - [ ] Проверить структурное доказательство: consultation не вызывает ground, каждый простой разрешённый FAQ идёт в answer LLM, каталог не входит в его prompt, booking по-прежнему использует list_services и живой слот. До/после перечислить удалённые ветки и сохранённые границы.
 - [ ] Использовать requesting-code-review/verification-before-completion по правилам навыков на стадии реализации. Исправить найденные дефекты, повторить затронутые проверки.
 - [ ] Обновить roadmap и changelog; локальный коммит результата. Не применять промпт/код на staging автоматически. Сообщить владельцу границы выполненного и перейти к аналитической задаче 7, не запрашивая заново цель проекта.

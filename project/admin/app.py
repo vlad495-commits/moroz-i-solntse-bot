@@ -35,7 +35,6 @@ from auth import (  # noqa: E402
     verify_session_token,
 )
 from pricing import calculate_cost, summarize_usage_groups  # noqa: E402
-from prompt_routes import router as prompt_router  # noqa: E402
 from eval_routes import cancel_eval_tasks, router as eval_router  # noqa: E402
 from bot_control_routes import router as bot_control_router  # noqa: E402
 from logs_routes import router as logs_router  # noqa: E402
@@ -80,7 +79,6 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory=_BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=_BASE_DIR / "templates")
 
-app.include_router(prompt_router)
 app.include_router(eval_router)
 app.include_router(bot_control_router)
 app.include_router(logs_router)
