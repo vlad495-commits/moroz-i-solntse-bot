@@ -17,8 +17,8 @@
 
 Files: project/src/moroz/messaging/router.py; project/tests/unit/messaging/test_router.py; затронутые исполняемые callers в project/tests/unit/security/test_semantic_dispatch.py и project/tests/e2e/test_catalog_message_flow.py.
 
-- [ ] RED: legacy service и price/duration/staff/clarify_cancel отклоняются; valid_route_action(RouteDecision('booking', .99, 'cancel_draft', services=('A', 'B'))) возвращает False.
-- [ ] Удалить поле service/__post_init__/legacy parsing; services = data.get('services', []), убрать legacy actions из ROUTE_ACTIONS; для cancel_draft вернуть not decision.services and decision.date is None.
-- [ ] Заменить исполняемые calls service='X' на services=('X',), консультационные actions на none + topics. Проверить позиционные вызовы RouteDecision, не допустить сдвига аргументов.
-- [ ] GREEN: Docker test pytest --rootdir=/workspace -q -p no:cacheprovider /workspace/tests/unit/messaging/test_router.py /workspace/tests/unit/security /workspace/tests/unit/admin/test_router_eval_runner.py /workspace/tests/e2e/test_catalog_message_flow.py --tb=short --show-capture=no (общий изолированный Compose префикс из B0).
-- [ ] Read-only review, исправить замечания, повторить затронутые тесты; root фиксирует отдельный коммит, roadmap и changelog.
+- [x] RED: legacy service и price/duration/staff/clarify_cancel отклоняются; valid_route_action(RouteDecision('booking', .99, 'cancel_draft', services=('A', 'B'))) возвращает False.
+- [x] Удалить поле service/__post_init__/legacy parsing; services = data.get('services', []), убрать legacy actions из ROUTE_ACTIONS; для cancel_draft вернуть not decision.services and decision.date is None.
+- [x] Заменить исполняемые calls service='X' на services=('X',), консультационные actions на none + topics. Проверить позиционные вызовы RouteDecision, не допустить сдвига аргументов.
+- [x] GREEN: Docker test pytest --rootdir=/workspace -q -p no:cacheprovider /workspace/tests/unit/messaging/test_router.py /workspace/tests/unit/security /workspace/tests/unit/admin/test_router_eval_runner.py /workspace/tests/e2e/test_catalog_message_flow.py --tb=short --show-capture=no (общий изолированный Compose префикс из B0).
+- [x] Read-only review, исправить замечания, повторить затронутые тесты; root фиксирует отдельный коммит, roadmap и changelog.

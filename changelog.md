@@ -1,5 +1,7 @@
 # Changelog
 
+[2026-09-06 11:43] Pagination сохранена в eae41c3. FAQ-inline characterization GREEN 2 passed (10.38s); B1/B2 планы и roadmap отмечают локальные пакеты выполненными, общий gate остаётся открыт. Начинается полная пересборка test image и проверка всех /workspace/tests на текущем кандидате. Исторические migrations/datasets не изменены. Файлы замораживаются на время gate.
+
 [2026-09-06 11:41] B2 страницы: расширенный Docker GREEN 125 passed (123.19s), включая семь page cases и границы 10 000/10 001, staff/B0/conversational/unit booking. Review PASS; изменения заморожены. Запущены два FAQ-inline characterization перед полным gate. Pagination сохраняется отдельным локальным commit.
 
 [2026-09-06 11:40] Pagination focused GREEN 6 passed (23.58s); независимое review без блокирующих замечаний. В B2 spec уточнены content-revision (кнопка снова допустима при возврате к тому же представлению) и явный предел 10 000 записей без скрытой обрезки. Расширенный gate с boundary 10 000/10 001 выполняется. В исходном аудите добавлены решения B1/staff, hourly/TTL и сценарное обоснование сохранённых отличий референса; roadmap отражает завершённые пакеты и незавершённые страницы.

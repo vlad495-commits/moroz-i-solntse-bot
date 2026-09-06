@@ -18,20 +18,20 @@
 
 Files: project/src/moroz/booking/telegram.py; project/tests/e2e/booking/test_staff_preference_integrity.py.
 
-- [ ] RED: четыре параметризованных кейса неизвестного/неоднозначного имени, затем даты, затем однозначного имени/«любой специалист».
-- [ ] Убрать условие decision.staff is not None из проверки после merge_draft: достаточно state.get('service_id') and not self._resolve_staff_preference(state).
-- [ ] GREEN: pytest текущего нового файла в изолированном Docker; отдельно commit.
+- [x] RED: четыре параметризованных кейса неизвестного/неоднозначного имени, затем даты, затем однозначного имени/«любой специалист».
+- [x] Убрать условие decision.staff is not None из проверки после merge_draft: достаточно state.get('service_id') and not self._resolve_staff_preference(state).
+- [x] GREEN: pytest текущего нового файла в изолированном Docker; отдельно commit.
 
 ## Задача 2: страницы своих записей
 
 Files: project/src/moroz/booking/telegram.py; новый project/tests/e2e/booking/test_booking_management_pages.py.
 
-- [ ] RED: создать четыре будущих записи реальным сервисом с fake provider; получить следующую страницу и выбрать четвёртую, проверить отмену/перенос только после подтверждения.
-- [ ] Не обрезать сохранённые owned choices до трёх. Хранить booking_offset в scenario. _choice_reply показывает values[offset:offset+3], используя enumerate(..., start=offset), и контекстные page callbacks.
-- [ ] Добавить booking_page в конец _CALLBACK_ACTIONS. Обрабатывать только collecting/step=booking; принимать соседнее существующее смещение страницы, иначе _recover_callback. Сохранить offset через checkpoint.
-- [ ] Включить offset в revision только для новых сценариев с этим полем, чтобы не менять старые revisions без необходимости. Routing context отображает ту же страницу с глобальными индексами.
-- [ ] _apply_choice принимает только видимый booking index; чужая/устаревшая/отрицательная/выходящая за границы кнопка не изменяет состояние/провайдера. Не обходить предел callback 64 bytes/MAX_CHOICE_INDEX; описать поведение на пределе.
-- [ ] GREEN страницы + staff + B0/conversational/unit booking; review обоих исправлений, отдельный commit страниц.
+- [x] RED: создать четыре будущих записи реальным сервисом с fake provider; получить следующую страницу и выбрать четвёртую, проверить отмену/перенос только после подтверждения.
+- [x] Не обрезать сохранённые owned choices до трёх. Хранить booking_offset в scenario. _choice_reply показывает values[offset:offset+3], используя enumerate(..., start=offset), и контекстные page callbacks.
+- [x] Добавить booking_page в конец _CALLBACK_ACTIONS. Обрабатывать только collecting/step=booking; принимать соседнее существующее смещение страницы, иначе _recover_callback. Сохранить offset через checkpoint.
+- [x] Включить offset в revision только для новых сценариев с этим полем, чтобы не менять старые revisions без необходимости. Routing context отображает ту же страницу с глобальными индексами.
+- [x] _apply_choice принимает только видимый booking index; чужая/устаревшая/отрицательная/выходящая за границы кнопка не изменяет состояние/провайдера. Не обходить предел callback 64 bytes/MAX_CHOICE_INDEX; описать поведение на пределе.
+- [x] GREEN страницы + staff + B0/conversational/unit booking; review обоих исправлений, отдельный commit страниц.
 
 ## Проверки и завершение
 
